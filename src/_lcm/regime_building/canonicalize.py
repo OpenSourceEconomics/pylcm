@@ -43,7 +43,7 @@ from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
     _PhaseRegimeTransition,
-    normalize_regime_phases,
+    normalize_all_regime_phases,
 )
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
@@ -66,6 +66,13 @@ def canonicalize_regimes(
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Split every finalized regime into phases and canonicalize its laws.
 
+    Convenience wrapper that normalizes every regime's `Phased` slots and then
+    canonicalizes the resulting specs. The main model path (`process_regimes`)
+    instead calls `normalize_all_regime_phases` and `canonicalize_phased_regimes`
+    explicitly, so that model-level age normalization can sit between the two
+    steps. This wrapper is retained for callers and unit tests that need the
+    former end-to-end behavior.
+
     Args:
         user_regimes: Mapping of regime names to finalized regimes.
 
@@ -80,11 +87,38 @@ def canonicalize_regimes(
             reachable target carrying the state.
 
     """
-    raw_specs = {
-        regime_name: normalize_regime_phases(user_regime)
-        for regime_name, user_regime in user_regimes.items()
-    }
-    all_regime_names = frozenset(user_regimes)
+    raw_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    return canonicalize_phased_regimes(
+        raw_specs=raw_specs,
+        all_regime_names=frozenset(user_regimes),
+    )
+
+
+def canonicalize_phased_regimes(
+    *,
+    raw_specs: Mapping[RegimeName, PhasedRegimeSpec],
+    all_regime_names: frozenset[RegimeName],
+) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
+    """Canonicalize the laws of already phase-normalized regime specs.
+
+    Args:
+        raw_specs: Phase-normalized specs (as produced by
+            `normalize_all_regime_phases`, possibly with model-level age
+            normalization already applied).
+        all_regime_names: The full set of regime names in the model, the
+            authority for reachability and unknown-target checks.
+
+    Returns:
+        Immutable mapping of regime names to per-phase specs whose every
+        `state_transitions` value and every non-terminal regime transition
+        is a canonical per-target mapping.
+
+    Raises:
+        ModelInitializationError: If a per-target regime transition or state
+            law names an unknown regime, or a state law does not cover every
+            reachable target carrying the state.
+
+    """
     errors: list[str] = []
 
     canonical_specs: dict[RegimeName, PhasedRegimeSpec] = {}

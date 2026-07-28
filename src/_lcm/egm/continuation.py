@@ -2018,17 +2018,20 @@ def _build_child_reads(
             target_regime.solver.carry_rows_share_state_grid
             and not target_regime.solver.carry_retains_discrete_action_rows
         )
-        # Under a topology-publishing read, a dim is only foldable when no
-        # jump source reads its node value — otherwise the published jump
-        # preimages (and so the rows' duplicated abscissae) vary along it.
-        if getattr(target_regime.solver, "jump_read", None) == "one_sided":
-            jump_moving = jump_moving_state_names(
+        # A child resolving declared jumps one-sidedly publishes two rows at the
+        # same abscissa, and those abscissae move with any state feeding the
+        # jump's variable or threshold. Folding a stochastic node axis into one
+        # read would then average across jump locations that differ per state,
+        # so those states pin their axis open.
+        jump_moving: frozenset[StateName] = (
+            jump_moving_state_names(
                 functions=target_regime.functions,
                 state_names=frozenset(target_regime.states),
                 euler_state_name=euler_state_name,
             )
-        else:
-            jump_moving = frozenset()
+            if target_regime.solver.publishes_one_sided_jump_reads
+            else frozenset()
+        )
         foldable_stochastic_flags = tuple(
             child_carry_rows_uniform
             and name not in resources_arg_names

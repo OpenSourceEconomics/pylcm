@@ -14,6 +14,7 @@ import numpy as np
 from _lcm.egm.mesh_envelope import SegmentMesh, first_envelope
 from _lcm.egm.two_asset_inverse import RegionCloud
 from _lcm.egm.two_asset_segment_mesh import build_segment_mesh
+from tests.conftest import DECIMAL_PRECISION
 
 
 def _barycentric(triangle, query):
@@ -123,8 +124,12 @@ def test_first_envelope_matches_exhaustive_when_extrapolated_triangle_holds_maxi
     ref_values, ref_policies = _exhaustive_first_envelope(
         mesh=mesh, targets=targets, objective=_identity_objective, threshold=0.25
     )
-    np.testing.assert_allclose(np.asarray(jax_values), ref_values, atol=1e-9)
-    np.testing.assert_allclose(np.asarray(jax_policies), ref_policies, atol=1e-9)
+    np.testing.assert_allclose(
+        np.asarray(jax_values), ref_values, atol=10.0**-DECIMAL_PRECISION
+    )
+    np.testing.assert_allclose(
+        np.asarray(jax_policies), ref_policies, atol=10.0**-DECIMAL_PRECISION
+    )
 
 
 def test_first_envelope_matches_exhaustive_with_a_two_asset_objective():
@@ -154,5 +159,9 @@ def test_first_envelope_matches_exhaustive_with_a_two_asset_objective():
     ref_values, ref_policies = _exhaustive_first_envelope(
         mesh=mesh, targets=targets, objective=objective, threshold=0.25
     )
-    np.testing.assert_allclose(np.asarray(jax_values), ref_values, atol=1e-9)
-    np.testing.assert_allclose(np.asarray(jax_policies), ref_policies, atol=1e-9)
+    np.testing.assert_allclose(
+        np.asarray(jax_values), ref_values, atol=10.0**-DECIMAL_PRECISION
+    )
+    np.testing.assert_allclose(
+        np.asarray(jax_policies), ref_policies, atol=10.0**-DECIMAL_PRECISION
+    )

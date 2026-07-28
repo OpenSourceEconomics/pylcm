@@ -25,9 +25,11 @@ from tests.test_models.nbegm_common import (
 
 
 @lcm.piecewise_affine(
-    "coh_floor",
+    output="coh_floor",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("floor_asset", kind="hard_constraint"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="floor_asset", kind="hard_constraint"),
+    ),
 )
 def coh_floor(liquid: ContinuousState, floor_asset: float) -> FloatND:
     """Floor top-up: lifts effective wealth to `floor_asset` where liquid is below."""

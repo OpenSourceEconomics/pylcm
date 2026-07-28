@@ -19,6 +19,7 @@ from _lcm.typing import (
     FlatRegimeParams,
     FunctionName,
     NextStateSimulationFunction,
+    QAndFFunction,
     RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
@@ -597,6 +598,16 @@ class SimulationPhase:
 
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
+
+    Q_and_F: MappingProxyType[int, QAndFFunction]
+    """Immutable mapping of period to pointwise state-action value functions.
+
+    Evaluates the canonical `Q` and its feasibility at one action value per
+    subject, rather than maximizing over the action grid. It shares the model
+    DAG, transitions, constraints, aggregators, params, and next-period value
+    arrays with `argmax_and_max_Q_over_a`, so a value it reports for an off-grid
+    candidate action is directly comparable with the grid winner's value.
+    """
 
     next_state: MappingProxyType[int, NextStateSimulationFunction]
     """Immutable mapping of period to next-period-state functions."""

@@ -347,34 +347,57 @@ recovered state, and merges the cases on the liquid grid with the branch-aware u
 envelope.
 
 ```python
+import jax.numpy as jnp
+
 import lcm
+from lcm.typing import BoolND, ContinuousState, FloatND
 
 
 @lcm.case_boundary(
-    lcm.boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
 )
-def medicaid_eligible(assets, medicaid_asset_limit):
-    return assets < medicaid_asset_limit
+def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
+    """Medicaid asset test: eligible while liquid wealth is below the limit."""
+    return liquid < medicaid_asset_limit
 
 
-@lcm.piece("oop", when=medicaid_eligible)
-def oop_medicaid(medical_expense): ...
+@lcm.piece(output="subsidy", when=medicaid_eligible)
+def subsidy_medicaid(subsidy_high: float) -> FloatND:
+    """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
+    return jnp.asarray(subsidy_high)
 
 
-@lcm.piece("oop", otherwise=medicaid_eligible)
-def oop_private(medical_expense, insurance_plan): ...
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
+def subsidy_private(subsidy_low: float) -> FloatND:
+    """Subsidy into market resources for the private (high-asset) case."""
+    return jnp.asarray(subsidy_low)
+
+
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
+    return liquid + subsidy
 ```
 
-- `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
+- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
   `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
   `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
   `(variable, threshold)` tuple is rejected.
 - `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
-  `lcm.piece(output, when=…|otherwise=…)` marks the smooth formula for one side of an
+  `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
   output. The decorators only attach metadata and return the function unchanged, so the
-  model still solves identically under `GridSearch`. v1 requires exactly one split
-  output per regime, each output covered by exactly one `when` and one `otherwise`
-  piece.
+  model still solves identically under `GridSearch`.
+- The case-piece route is scoped narrowly, and everything outside it is refused at model
+  build. A case-piece regime must split exactly one output, named `subsidy`, on a
+  boundary that is `equality="otherwise"`, `kind="jump"`, and declared on the liquid
+  state; each piece reads only flat params, never a state or action; and the regime
+  declares no discrete action and no taste shocks. Kinks, floors, and every other
+  bracket shape go through `lcm.piecewise_affine` instead — see
+  `docs/user_guide/nbegm.md`.
 - The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
   nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
   mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to
@@ -515,6 +538,63 @@ assert df["wealth"].notna().all()
 
 `not isnan` and `no exception raised` belong in CI smoke tests, not in the unit tests
 for the feature itself.
+
+### Precision-aware tolerances — take them from the policy, never hardcode
+
+The suite runs at both precisions: `pytest --precision=64` (the default) and
+`pytest --precision=32`. `tests/conftest.py` sets `jax_enable_x64` accordingly and
+publishes the matching tolerance as `DECIMAL_PRECISION` — **12** at float64, **5** at
+float32. Import it; do not write a numeric tolerance that only one precision can meet.
+
+```python
+# Good — one assertion, valid at both precisions
+from numpy.testing import assert_array_almost_equal as aaae
+
+from tests.conftest import DECIMAL_PRECISION
+
+aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+# Bad — float32 cannot represent this at all
+np.testing.assert_allclose(got, expected, rtol=1e-12, atol=1e-12)
+```
+
+A hardcoded `1e-12` is roughly five orders of magnitude below float32 machine epsilon
+(`~1.19e-7`), so such a test fails at `--precision=32` for every implementation, correct
+or not — it reports the format, not the code. Since `jax_enable_x64` is **False** by
+default outside the suite, float32 is what users actually run, so a test that cannot
+pass there leaves the default configuration uncovered.
+
+Choose the instrument by what is being asserted:
+
+- **A reported quantity** (a value, a policy, a moment) carries rounding, so it takes a
+  tolerance — and the tolerance belongs to the precision, i.e. `DECIMAL_PRECISION`.
+- **A structural predicate** — which branch owns a state, whether a constraint binds,
+  which candidate is the argmax — is discrete, and no tolerance is the right instrument.
+  A tie broken the wrong way moves the answer by a finite amount, not by an ULP, so a
+  tolerance wide enough to absorb it is also wide enough to hide a real defect. Assert
+  the decision itself, and let the arithmetic that makes it fail loudly when it cannot
+  decide. See `.ai-instructions/modules/math.md`, "Floating-point decisions".
+- **Absolute vs relative** matters once magnitudes vary: `assert_array_almost_equal` is
+  an *absolute* check, so on large-valued arrays prefer `assert_allclose` with an `rtol`
+  derived from the same policy.
+
+Which invariances a structural predicate has to satisfy is not uniform, so assert only
+the ones that carry numerical content:
+
+- **Across batch size — required, exactly.** `batch_size` partitions a computation whose
+  result does not depend on the partition, so any difference in a published value or
+  policy is a defect, never rounding. Test it as equality of the discrete choice.
+- **Across precision — not required.** Two candidates separated at float64 can be
+  indistinguishable at float32, and the honest float32 answer is then a *deterministic*
+  tie-break, not agreement with float64. Requiring the two to match would forbid the
+  ordinary working pattern of a coarse float32 first pass followed by a float64 polish.
+  What float32 owes is that repeated runs agree with each other, and that the value it
+  publishes is within its own resolution of the optimum — not that it picks the same
+  leg.
+- **Across device — out of scope.** Reduction order and library kernels vary, and a
+  whole program has many places for that to surface. Do not write cross-device equality
+  tests.
 
 ### Mechanics
 

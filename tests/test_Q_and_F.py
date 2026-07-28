@@ -88,7 +88,7 @@ def test_get_Q_and_F_function():
         labor_supply=labor_supply,
         wealth=wealth,
         **flat_params["working_life"],
-        next_regime_to_V_arr=jnp.empty(0),
+        next_regime_to_V_arr=MappingProxyType({}),
         period=3,
         age=ages.period_to_age(3),
     )

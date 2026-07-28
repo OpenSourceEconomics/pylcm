@@ -1,8 +1,8 @@
 ---
-title: Age-specialized functions
+title: Age-specialized functions and grids
 ---
 
-# Age-specialized functions (`AgeSpecializedFunction`)
+# Age-specialized functions and grids
 
 Some model functions do not just *read* the agent's age — their whole definition changes
 with it. The canonical case is a tax-transfer system pinned to a policy date: as a
@@ -35,7 +35,7 @@ def policy_key(age: float):
 
 functions = {
     "net_income": AgeSpecializedFunction(build=make_net_income, signature=policy_key),
-    ...,
+    # ... other regime functions ...
 }
 ```
 
@@ -84,8 +84,10 @@ transition reading an age-specialized helper function**:
 
 ```python
 functions = {
-    "new_pension_points": AgeSpecializedFunction(build=make_points, signature=policy_key),
-    ...,
+    "new_pension_points": AgeSpecializedFunction(
+        build=make_points, signature=policy_key
+    ),
+    # ... other regime functions ...
 }
 
 state_transitions = {
@@ -116,3 +118,40 @@ evaluated under the representative age's policy, not each row's period — so py
 **rejects** such targets with `InvalidAdditionalTargetsError`. Quantities you need per
 period from a specialized function should be carried inside the model (for example as a
 state fed by a plain transition reading the helper).
+
+Age-specialized functions **and grids** are fully resolved during model creation; solve
+and simulation only select the prebuilt period-specific objects — no `build(age)`
+factory is ever called from backward induction, simulation, AOT compilation, or
+diagnostics.
+
+## Age-specialized continuous-state grids
+
+`AgeSpecializedGrid` is the grid counterpart of `AgeSpecializedFunction`. Use it when a
+continuous state's grid bounds or nodes are known from age at model creation, for
+example an age-dependent borrowing limit.
+
+```python
+from lcm import AgeSpecializedGrid, LinSpacedGrid
+
+states = {
+    "assets": AgeSpecializedGrid(
+        build=lambda age: LinSpacedGrid(
+            start=borrowing_floor(age),
+            stop=ASSET_MAX,
+            n_points=40,
+        ),
+        signature=lambda age: borrowing_floor(age),
+    ),
+}
+```
+
+pylcm builds the concrete grid for every active age during model creation. The grid
+class, number of points, node-array shape, and dtype must stay fixed; only bounds or
+node values may change. Equal `signature(age)` values must identify identical grids,
+because those periods may share a compiled program.
+
+`AgeSpecializedGrid` is currently supported for continuous **states**, not actions,
+discrete states, or stochastic-process grids. A grid whose points depend on model
+parameters should use the ordinary runtime-points `IrregSpacedGrid` mechanism instead;
+an `AgeSpecializedGrid` that resolves to a runtime-points grid is rejected at model
+creation.

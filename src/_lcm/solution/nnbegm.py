@@ -191,7 +191,7 @@ class NNBEGM(Solver):
             outer_post_decision=self.outer_post_decision,
             inner_post_decision=spec.post_decision_function,
         )
-        _fail_if_outer_batch_size_negative(self.outer_batch_size)
+        _fail_if_outer_batch_size_negative(self.outer_batch_size, solver_name="NNBEGM")
 
     @property
     def requires_continuation(self) -> bool:
@@ -207,6 +207,28 @@ class NNBEGM(Solver):
     def carry_rows_share_state_grid(self) -> bool:
         """The inner NB-EGM publishes carry rows on the shared state grid."""
         return self.inner.carry_rows_share_state_grid
+
+    def validate(self, *, context: SolverBuildContext) -> None:
+        """Apply the inner solver's build-time gates to the liquid margin.
+
+        The inner NB-EGM kernels run unchanged inside every outer candidate, so
+        a piece that hides branching breaks the inner Euler inversion here
+        exactly as it would under a bare `NBEGM`, and declared taste shocks are
+        ignored by the inner envelopes here exactly as they would be there. The
+        smoothness gate is pointed at the inner spec's Euler state rather than
+        the regime's first state, because the regime also carries the outer
+        margin the pieces never see.
+        """
+        from _lcm.solution.nbegm import (  # noqa: PLC0415
+            fail_if_taste_shocks_declared,
+            validate_case_piece_smoothness,
+        )
+
+        fail_if_taste_shocks_declared(context=context)
+        validate_case_piece_smoothness(
+            context=context,
+            liquid_state_name=get_nnbegm_inner_spec(inner=self.inner).continuous_state,
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one nested period adapter per period, wrapping inner kernels.
@@ -248,6 +270,7 @@ class NNBEGM(Solver):
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         template = keeper_kernels.continuation_template
+        _fail_if_inner_carry_rows_not_grid_aligned(inner=self.inner)
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         outer_grid_values = self.outer_grid.to_jax()
         period_kernels = MappingProxyType(
@@ -513,6 +536,25 @@ def _fail_if_nnbegm_outer_post_decision_is_inner(
             f"'{inner_post_decision}'. The outer post-decision (the next-period "
             "durable stock) and the inner post-decision (the liquid savings) "
             "must be distinct functions."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:
+    """Refuse an inner solver whose carry rows do not sit on the state grid.
+
+    The bridged outer envelope replaces `value` and `marginal_utility` per
+    candidate and rides the keeper's `endog_grid` through unchanged, which is
+    only correct when every candidate publishes rows at the same abscissae.
+    """
+    if not inner.carry_rows_share_state_grid:
+        msg = (
+            f"NNBEGM's inner solver {type(inner).__name__} publishes carry rows "
+            "off the shared state grid, but the bridged outer envelope folds "
+            "candidates pointwise and reuses the keeper's `endog_grid`, so the "
+            "folded rows would pair one candidate's values with another's "
+            "abscissae. Use an inner solver whose "
+            "`carry_rows_share_state_grid` is True."
         )
         raise RegimeInitializationError(msg)
 
