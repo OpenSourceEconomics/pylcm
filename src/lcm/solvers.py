@@ -12,7 +12,11 @@ backward induction:
   consumption-savings problem conditional on that margin (Druedahl 2021,
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
-- `NNBEGM(...)`: the same outer keeper/adjuster search with an inner
+- `NBEGM(...)`: the non-convex-budget endogenous grid method for a 1-D
+  consumption-savings regime whose budget carries declared breakpoints — a
+  means-tested cliff split into case pieces, or a piecewise-affine schedule of
+  kinks, jumps, and floors. See `docs/user_guide/nbegm.md`.
+- `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
   `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
   their exact NB-EGM treatment inside every outer candidate.
 - `OneAssetEGM(...)`: the single-asset endogenous grid method for a regime

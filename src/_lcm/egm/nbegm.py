@@ -12,10 +12,12 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from _lcm.typing import FunctionName
 from lcm.case_piece import CaseBoundaryMeta, PieceMeta, PiecewiseAffineMeta
 from lcm.exceptions import NBEGMCaseError
+from lcm.phased import Phased
 
 
 @dataclass(frozen=True)
@@ -46,31 +48,76 @@ class NBEGMRegistry:
 
 def collect_nbegm_metadata(
     *,
-    functions: Mapping[FunctionName, Callable[..., object]],
+    functions: Mapping[FunctionName, object],
 ) -> NBEGMRegistry:
     """Collect and validate the case-piece metadata of a function pool.
 
     Args:
         functions: Mapping of function name to a regime's DAG functions, some
-            carrying `__lcm_case_boundary__` or `__lcm_piece__` metadata.
+            carrying `__lcm_case_boundary__` or `__lcm_piece__` metadata. A
+            `Phased` entry is read through its solve-phase variant, which is
+            where the declaration lives.
 
     Returns:
         The collected metadata as a `NBEGMRegistry`.
 
     Raises:
         NBEGMCaseError: If a case boundary declares no surface, a split output
-            is not covered by exactly one `when` and one `otherwise` piece, or a
-            piece references a predicate that is not a declared case boundary.
+            is not covered by exactly one `when` and one `otherwise` piece, a
+            piece references a predicate that is not a declared case boundary, a
+            schedule declares no breakpoint or repeats another schedule's
+            output, or an entry is neither callable nor inspectable.
 
     """
-    boundaries = _collect_boundaries(functions)
-    piece_sets = _collect_piece_sets(functions, boundaries=boundaries)
-    schedules = _collect_piecewise_affine_schedules(functions)
+    resolved = resolve_declaration_pool(functions=functions)
+    boundaries = _collect_boundaries(resolved)
+    piece_sets = _collect_piece_sets(resolved, boundaries=boundaries)
+    schedules = _collect_piecewise_affine_schedules(resolved)
     return NBEGMRegistry(
         boundaries=MappingProxyType(boundaries),
         piece_sets=piece_sets,
         piecewise_affine_schedules=schedules,
     )
+
+
+def resolve_declaration_pool(
+    *,
+    functions: Mapping[FunctionName, object],
+) -> dict[FunctionName, Callable[..., object]]:
+    """Return the callable solve-phase pool the NB-EGM declarations live on.
+
+    `Regime.functions` legitimately holds `Phased` entries (a solve/simulate
+    pair) and `None` entries (model-level broadcast masks). Reading decorator
+    attributes straight off those silently yields nothing, so a declaration on
+    the solve variant would be invisible to every collector. Resolving here
+    keeps the collectors' `getattr` fail-open behaviour honest: after this,
+    a missing attribute really does mean "no declaration".
+
+    Args:
+        functions: Mapping of function name to a regime's DAG entries.
+
+    Returns:
+        Mapping of function name to the callable carrying its declarations.
+
+    Raises:
+        NBEGMCaseError: If an entry is neither `None`, a `Phased` pair, nor
+            callable, so its declarations cannot be read.
+
+    """
+    resolved: dict[FunctionName, Callable[..., object]] = {}
+    for name, func in functions.items():
+        entry = func.solve if isinstance(func, Phased) else func
+        if entry is None:
+            continue
+        if not callable(entry):
+            msg = (
+                f"Regime function {name!r} is a {type(entry).__name__}, which "
+                "NBEGM cannot inspect for case-piece or piecewise-affine "
+                "declarations. Provide a callable (or a `Phased` pair of them)."
+            )
+            raise NBEGMCaseError(msg)
+        resolved[name] = cast("Callable[..., object]", entry)
+    return resolved
 
 
 def jump_moving_state_names(
@@ -97,22 +144,21 @@ def jump_moving_state_names(
         Frozen set of the state names that move at least one jump preimage.
 
     """
-    registry = collect_nbegm_metadata(
-        functions={name: func for name, func in functions.items() if callable(func)}
-    )
+    resolved = resolve_declaration_pool(functions=functions)
+    registry = collect_nbegm_metadata(functions=resolved)
     moving: set[str] = set()
     for schedule in registry.piecewise_affine_schedules:
         moving |= _schedule_jump_state_args(
-            schedule=schedule, functions=functions, state_names=state_names
+            schedule=schedule, functions=resolved, state_names=state_names
         )
     for boundary_meta in registry.boundaries.values():
         for surface in boundary_meta.boundaries:
             if surface.kind == "jump":
                 moving |= _transitive_state_args(
-                    surface.variable, functions=functions, state_names=state_names
+                    surface.variable, functions=resolved, state_names=state_names
                 )
                 moving |= _transitive_state_args(
-                    surface.threshold, functions=functions, state_names=state_names
+                    surface.threshold, functions=resolved, state_names=state_names
                 )
     return frozenset(moving) - {euler_state_name}
 
@@ -166,14 +212,34 @@ def _transitive_state_args(
 def _collect_piecewise_affine_schedules(
     functions: Mapping[FunctionName, Callable[..., object]],
 ) -> tuple[PiecewiseAffineMeta, ...]:
-    """Read every declared piecewise-affine schedule, in pool-iteration order."""
+    """Read every declared piecewise-affine schedule, one per schedule output."""
     schedules: list[PiecewiseAffineMeta] = []
-    for func in functions.values():
+    declaring_function: dict[FunctionName, FunctionName] = {}
+    for name, func in functions.items():
         meta: PiecewiseAffineMeta | None = getattr(
             func, "__lcm_piecewise_affine__", None
         )
-        if meta is not None:
-            schedules.append(meta)
+        if meta is None:
+            continue
+        if not meta.breakpoints:
+            msg = (
+                f"Piecewise-affine schedule {name!r} declares no breakpoint. Add "
+                "at least one `lcm.affine_breakpoint(threshold=..., kind=...)`, or "
+                "drop the decorator — an empty schedule still routes the regime "
+                "through the breakpoint-aware kernels."
+            )
+            raise NBEGMCaseError(msg)
+        if meta.output in declaring_function:
+            msg = (
+                f"Piecewise-affine schedules {declaring_function[meta.output]!r} "
+                f"and {name!r} both declare the output {meta.output!r}. NBEGM "
+                "reads one schedule per output; its threshold parameters are "
+                "keyed by output name and would collide. Merge them into one "
+                "schedule with all breakpoints."
+            )
+            raise NBEGMCaseError(msg)
+        declaring_function[meta.output] = name
+        schedules.append(meta)
     return tuple(schedules)
 
 

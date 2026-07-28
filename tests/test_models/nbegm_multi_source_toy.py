@@ -53,9 +53,9 @@ def income_b(liquid: ContinuousState, kind: DiscreteState, base_b: FloatND) -> F
 
 
 @lcm.piecewise_affine(
-    "tax_a",
+    output="tax_a",
     variable="income_a",
-    breakpoints=(lcm.affine_breakpoint("kink_a", kind="continuous_kink"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="kink_a", kind="continuous_kink"),),
 )
 def tax_a(income_a: FloatND, rate_a: float, kink_a: float) -> FloatND:
     """Continuous tax on `income_a`: zero below the kink, `rate_a` on the excess."""
@@ -63,9 +63,9 @@ def tax_a(income_a: FloatND, rate_a: float, kink_a: float) -> FloatND:
 
 
 @lcm.piecewise_affine(
-    "tax_b",
+    output="tax_b",
     variable="income_b",
-    breakpoints=(lcm.affine_breakpoint("kink_b", kind="continuous_kink"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="kink_b", kind="continuous_kink"),),
 )
 def tax_b(income_b: FloatND, rate_b: float, kink_b: float) -> FloatND:
     """Continuous tax on `income_b`: zero below the kink, `rate_b` on the excess."""

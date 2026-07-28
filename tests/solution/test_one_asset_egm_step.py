@@ -36,7 +36,7 @@ def _brute_retired(*, n_consumption=200):
     points); a fine grid converges to the true value the EGM step targets.
     """
     model = get_model(n_periods=5, n_consumption=n_consumption)
-    brute = model.solve(params=get_params(), log_level="off")
+    brute = model.solve(params=get_params(), log_level="debug")
     return jnp.asarray(brute[4]["dead"]), np.asarray(brute[3]["retired"])
 
 

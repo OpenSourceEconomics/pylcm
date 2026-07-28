@@ -47,9 +47,9 @@ def _solver_model():
 
 
 def _solve_both():
-    egm = _solver_model().solve(params=get_params(), log_level="off")
+    egm = _solver_model().solve(params=get_params(), log_level="debug")
     brute = get_model(n_periods=_N_PERIODS, n_consumption=200).solve(
-        params=get_params(), log_level="off"
+        params=get_params(), log_level="debug"
     )
     return egm, brute
 

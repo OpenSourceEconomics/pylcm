@@ -19,7 +19,7 @@ _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
 
 def _solve_period0_alive(model) -> jnp.ndarray:
-    return model.solve(params=_PARAMS, log_level="off")[0]["alive"]
+    return model.solve(params=_PARAMS, log_level="debug")[0]["alive"]
 
 
 def test_negm_solves_when_utility_reads_the_new_durable_stock():

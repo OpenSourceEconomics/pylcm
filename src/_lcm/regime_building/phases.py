@@ -160,6 +160,36 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     )
 
 
+def normalize_all_regime_phases(
+    *,
+    user_regimes: Mapping[RegimeName, lcm.regime.Regime],
+) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
+    """Normalize every regime's `Phased` slots into per-phase specs.
+
+    Model-level convenience wrapper over `normalize_regime_phases`: it applies
+    the single phase resolver to each regime and returns the immutable mapping.
+    Exposing this as its own step lets model-level normalization (age
+    specialization) sit between phase resolution and canonicalization.
+
+    Args:
+        user_regimes: Mapping of regime names to finalized user regimes.
+
+    Returns:
+        Immutable mapping of regime names to per-phase specs.
+
+    Raises:
+        RegimeInitializationError: If any slot value violates the phase
+            grammar (propagated from `normalize_regime_phases`).
+
+    """
+    return MappingProxyType(
+        {
+            regime_name: normalize_regime_phases(user_regime)
+            for regime_name, user_regime in user_regimes.items()
+        }
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class PhasedRegimeSpec:
     """A regime expanded into per-phase slices.

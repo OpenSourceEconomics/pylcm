@@ -20,7 +20,7 @@ _RTOL = 1e-12 if X64_ENABLED else 1e-5
 def _solve(**param_overrides):
     model = get_model()
     params = get_params(**param_overrides)
-    return model.solve(params=params, log_level="off")
+    return model.solve(params=params, log_level="debug")
 
 
 def test_lifecycle_regimes_appear_in_the_right_periods():

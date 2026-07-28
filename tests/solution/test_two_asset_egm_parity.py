@@ -26,7 +26,7 @@ _P = {
 def _egm_and_brute():
     model = get_model(n_periods=2)
     params = get_params(n_periods=2, pension_bequest_weight=0.5)
-    brute = model.solve(params=params, log_level="off")
+    brute = model.solve(params=params, log_level="debug")
     next_value = jnp.asarray(brute[1]["dead"])
 
     m_grid = jnp.linspace(1.0, 100.0, 12)

@@ -253,7 +253,7 @@ def _fail_if_outer_margin_euler_coupled(
         "through the shared continuation"
     )
     for _role, label, func in _savings_stage_candidates(
-        user_regime=user_regime, solver=inner
+        user_regime=user_regime, continuous_state=inner.continuous_state
     ):
         ancestors = _dag_ancestors(functions=opaque_functions, target_func=func)
         if solver.outer_post_decision in ancestors:

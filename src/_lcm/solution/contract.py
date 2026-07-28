@@ -360,6 +360,18 @@ class Solver(ABC):
         return False
 
     @property
+    def publishes_one_sided_jump_reads(self) -> bool:
+        """Whether the published carry duplicates abscissae across a value jump.
+
+        A solver that resolves a declared jump one-sidedly publishes two rows
+        at (essentially) the same abscissa, one per side of the jump. Those
+        abscissae move with any state entering the jump's variable or its
+        threshold, so a parent must not fold its stochastic node axes into a
+        single read across states that move them.
+        """
+        return False
+
+    @property
     def n_stacked_carry_candidates(self) -> int:
         """Length of the published carry's stacked outer-candidate axis.
 

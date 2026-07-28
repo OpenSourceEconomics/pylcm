@@ -33,7 +33,7 @@ def test_two_asset_params_template_matches_get_params():
 def test_two_asset_brute_value_is_finite_and_increases_in_liquid_wealth():
     """Brute-solved value is finite and weakly increasing in liquid wealth."""
     model = get_model()
-    value = model.solve(params=get_params(), log_level="off")
+    value = model.solve(params=get_params(), log_level="debug")
     working_first_period = np.asarray(value[0]["working"])
     assert np.all(np.isfinite(working_first_period))
     # `liquid` is the first state axis; more cash-on-hand is weakly better.
@@ -43,7 +43,7 @@ def test_two_asset_brute_value_is_finite_and_increases_in_liquid_wealth():
 
 def test_two_asset_brute_value_increases_in_pension_wealth():
     """The brute-solved value function is weakly increasing in pension wealth."""
-    value = get_model().solve(params=get_params(), log_level="off")
+    value = get_model().solve(params=get_params(), log_level="debug")
     working_first_period = np.asarray(value[0]["working"])
     pension_diffs = np.diff(working_first_period, axis=1)
     assert np.all(pension_diffs >= -1e-6)

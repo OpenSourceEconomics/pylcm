@@ -482,6 +482,45 @@ def test_query_outside_all_branches_is_nan():
     assert bool(np.isnan(np.asarray(got_marginal)).all())
 
 
+def test_lone_candidate_wins_at_its_own_abscissa():
+    """A branch holding a single candidate is visible where a query lands on it.
+
+    Segment 1 carries one point at `R=1` worth `5.0`; segment 0 spans `[0, 2]` and
+    is worth only `1.0` there. With no consecutive same-segment neighbour the lone
+    point brackets nothing but itself, and a read at its own abscissa must publish
+    its value and policy rather than collapsing onto the lower two-point branch.
+    """
+    value, policy, _marginal = envelope_at_query(
+        endog_grid=jnp.array([0.0, 2.0, 1.0]),
+        policy=jnp.array([1.0, 1.0, 9.0]),
+        value=jnp.array([0.0, 2.0, 5.0]),
+        marginal=jnp.array([1.0, 1.0, 1.0]),
+        segment_id=jnp.array([0.0, 0.0, 1.0]),
+        x_query=jnp.array(1.0),
+    )
+    assert np.isclose(float(value), 5.0)
+    assert np.isclose(float(policy), 9.0)
+
+
+def test_lone_candidate_does_not_displace_a_right_extending_chain():
+    """Where a multi-point branch continues right of the query, it still wins a tie.
+
+    Segment 0 spans `[0, 2]` and segment 1 holds one point at `R=1` with exactly
+    segment 0's value there. The self-bracket is zero-width, so the right-continuous
+    tie-break keeps segment 0's policy.
+    """
+    value, policy, _marginal = envelope_at_query(
+        endog_grid=jnp.array([0.0, 2.0, 1.0]),
+        policy=jnp.array([1.0, 1.0, 9.0]),
+        value=jnp.array([0.0, 2.0, 1.0]),
+        marginal=jnp.array([1.0, 1.0, 1.0]),
+        segment_id=jnp.array([0.0, 0.0, 1.0]),
+        x_query=jnp.array(1.0),
+    )
+    assert np.isclose(float(value), 1.0)
+    assert np.isclose(float(policy), 1.0)
+
+
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])

@@ -44,9 +44,11 @@ def test_iegm_numeric_inverse_matches_analytic_value_function():
     n_periods = 3
     params = get_retirement_only_params(n_periods)
     analytic = get_retirement_only_model("dcegm", n_periods).solve(
-        params=params, log_level="off"
+        params=params, log_level="debug"
     )
-    numeric = _numeric_retirement_model(n_periods).solve(params=params, log_level="off")
+    numeric = _numeric_retirement_model(n_periods).solve(
+        params=params, log_level="debug"
+    )
 
     assert analytic.keys() == numeric.keys()
     for period in analytic:
