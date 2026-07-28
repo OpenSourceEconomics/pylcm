@@ -397,21 +397,36 @@ def _fails_boundary_check(
     the call sites differently, and the check would then be judging the trace
     against readings the trace never saw.
     """
-    readings = jax.vmap(
-        lambda x: _reading_across_cell(
-            x,
+
+    def judge(
+        _carry: None, x_query: FloatND
+    ) -> tuple[None, tuple[IntND, IntND, BoolND, BoolND]]:
+        reading = _reading_across_cell(
+            x_query,
             left=bounds[0],
             right=bounds[-1],
             at_left=at_left,
             at_right=at_right,
             live=live,
         )
-    )(bounds)
-    best = jnp.argmax(readings, axis=1).astype(jnp.int32)
-    contested = jnp.arange(readings.shape[0])
-    without_best = readings.at[contested, best].set(-jnp.inf)
-    runner_up = jnp.argmax(without_best, axis=1).astype(jnp.int32)
-    has_runner_up = jnp.any(jnp.isfinite(without_best), axis=1)
+        leader = jnp.argmax(reading).astype(jnp.int32)
+        without_leader = jnp.where(
+            jnp.arange(reading.shape[0]) == leader, -jnp.inf, reading
+        )
+        closest = jnp.argmax(without_leader).astype(jnp.int32)
+        return None, (
+            leader,
+            closest,
+            jnp.isfinite(without_leader[closest]),
+            reading[leader] == reading[closest],
+        )
+
+    # One boundary at a time: only the leader, its closest competitor and whether
+    # the two read the same double survive the step, so the readings of every link
+    # at every boundary are never all live at once.
+    _carry, (best, runner_up, has_runner_up, same_reading) = jax.lax.scan(
+        judge, None, bounds
+    )
 
     order = certified_margin_sign(
         a_x0=endog_grid[low[best]],
@@ -427,7 +442,6 @@ def _fails_boundary_check(
     # The plain leader is the sole leader only once it is certified above its
     # closest competitor by a margin the published row can carry; an exact tie,
     # or a lead that leaves both readings the same double, leaves both leading.
-    same_reading = readings[contested, best] == readings[contested, runner_up]
     indistinguishable = (order == 0) | same_reading
     leader = jnp.where(indistinguishable, jnp.minimum(best, runner_up), best)
     certified_leader = jnp.where(indistinguishable, jnp.maximum(best, runner_up), best)
@@ -456,14 +470,28 @@ def _emit_envelope(
     n_refined: int,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Turn owned sub-cells into a weakly ascending, NaN-padded envelope row."""
-    n_slots = sub_cells.left.shape[0]
-    order = jnp.argsort(jnp.where(sub_cells.live, 0, 1))
-    left = sub_cells.left[order]
-    right = sub_cells.right[order]
-    low = sub_cells.owner_left_index[order]
-    high = sub_cells.owner_right_index[order]
-    live = sub_cells.live[order]
-    n_live = jnp.sum(live, dtype=jnp.int32)
+    # Owned sub-cells already ascend — node cells ascend and each cell's
+    # sub-cells ascend within it — so dropping the empty ones preserves the
+    # order and needs no sort. Compacting straight into a row-sized workspace
+    # keeps everything downstream independent of the fold capacity: a chain with
+    # more owned sub-cells than the row has slots overflows regardless.
+    n_slots = n_refined
+    keep_at = jnp.cumsum(sub_cells.live.astype(jnp.int32)) - 1
+    target = jnp.where(sub_cells.live, keep_at, n_slots)
+    n_live = jnp.sum(sub_cells.live, dtype=jnp.int32)
+
+    def compact(source: FloatND | IntND, empty: float) -> FloatND | IntND:
+        return (
+            jnp.full(n_slots, empty, dtype=source.dtype)
+            .at[target]
+            .set(source, mode="drop")
+        )
+
+    left = compact(sub_cells.left, jnp.nan)
+    right = compact(sub_cells.right, jnp.nan)
+    low = compact(sub_cells.owner_left_index, 0)
+    high = compact(sub_cells.owner_right_index, 0)
+    live = jnp.arange(n_slots) < n_live
 
     own_value = _line_value(low, high, left, endog_grid, value)
     own_policy = _line_value(low, high, left, endog_grid, policy)
@@ -484,7 +512,7 @@ def _emit_envelope(
     row_value = jnp.stack([prior_value, own_value], axis=1).ravel()
 
     # The final boundary closes the last owned sub-cell.
-    last = jnp.maximum(n_live - 1, 0)
+    last = jnp.clip(n_live - 1, 0, n_slots - 1)
     closing_valid = (n_live > 0)[None]
     closing_grid = right[last][None]
     closing_policy = _line_value(
