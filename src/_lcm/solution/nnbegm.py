@@ -208,6 +208,24 @@ class NNBEGM(Solver):
         """The inner NB-EGM publishes carry rows on the shared state grid."""
         return self.inner.carry_rows_share_state_grid
 
+    def validate(self, *, context: SolverBuildContext) -> None:
+        """Apply the inner solver's case-piece gate to the liquid margin.
+
+        The inner NB-EGM kernels run unchanged inside every outer candidate, so
+        a piece that hides branching breaks the inner Euler inversion here
+        exactly as it would under a bare `NBEGM`. The gate is pointed at the
+        inner spec's Euler state rather than the regime's first state, because
+        the regime also carries the outer margin the pieces never see.
+        """
+        from _lcm.solution.nbegm import (  # noqa: PLC0415
+            validate_case_piece_smoothness,
+        )
+
+        validate_case_piece_smoothness(
+            context=context,
+            liquid_state_name=get_nnbegm_inner_spec(inner=self.inner).continuous_state,
+        )
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one nested period adapter per period, wrapping inner kernels.
 

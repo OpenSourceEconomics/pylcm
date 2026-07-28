@@ -244,50 +244,12 @@ class NBEGM(Solver):
         The boundary predicate is meant to compare, so only the AST gate runs on
         it; the JAXPR gate runs on the smooth pieces alone.
         """
-        import inspect  # noqa: PLC0415
-
-        import jax.numpy as jnp  # noqa: PLC0415
-
-        from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
-        from _lcm.egm.nbegm_validation import (  # noqa: PLC0415
-            find_ast_violations,
-            find_jaxpr_violations,
-            is_smooth_helper,
+        validate_case_piece_smoothness(
+            context=context,
+            liquid_state_name=(
+                self.continuous_state or context.state_action_space.state_names[0]
+            ),
         )
-
-        functions = cast(
-            "Mapping[FunctionName, Callable[..., object]]",
-            context.user_regimes[context.regime_name].functions,
-        )
-        registry = collect_nbegm_metadata(functions=functions)
-        space = context.state_action_space
-        _validate_nbegm_boundary_scope(
-            registry=registry,
-            functions=functions,
-            liquid_state_name=space.state_names[0],
-            reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
-        )
-        violations: list[str] = []
-        for predicate_name in registry.boundaries:
-            violations += find_ast_violations(
-                functions[predicate_name], mode="boundary"
-            )
-        for piece_set in registry.piece_sets:
-            for piece_name in (piece_set.when_func, piece_set.otherwise_func):
-                piece = functions[piece_name]
-                if is_smooth_helper(piece):
-                    continue
-                violations += find_ast_violations(piece, mode="smooth_user")
-                n_params = len(inspect.signature(piece).parameters)
-                abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
-                violations += find_jaxpr_violations(
-                    piece, abstract_args=abstract_args, mode="smooth_user"
-                )
-        if violations:
-            from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
-
-            msg = "NBEGM smoothness gate failed:\n" + "\n".join(violations)
-            raise NBEGMCaseError(msg)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
@@ -972,6 +934,73 @@ class _NBEGMCaseSpec:
 
 # The only split output v1 knows how to route — an additive cash-on-hand shift.
 _NBEGM_V1_OUTPUT = "subsidy"
+
+
+def validate_case_piece_smoothness(
+    *,
+    context: SolverBuildContext,
+    liquid_state_name: StateName,
+) -> None:
+    """Check case coverage and reject hidden branching in a regime's pieces.
+
+    Shared by every solver that runs the case-piece EGM kernels on a liquid
+    margin, so a nested solver applies the same gate to its inner margin as a
+    bare `NBEGM` would.
+
+    Args:
+        context: The regime's solver build context.
+        liquid_state_name: The state the case boundaries are declared on. Named
+            explicitly rather than taken as the regime's first state, because a
+            nested regime carries an outer margin the pieces never see.
+
+    Raises:
+        NBEGMCaseError: A split output is not fully covered, a boundary declares
+            no surface, a piece reaches outside the flat params, or a piece hides
+            branching the Euler inversion cannot absorb.
+
+    """
+    import inspect  # noqa: PLC0415
+
+    import jax.numpy as jnp  # noqa: PLC0415
+
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
+    from _lcm.egm.nbegm_validation import (  # noqa: PLC0415
+        find_ast_violations,
+        find_jaxpr_violations,
+        is_smooth_helper,
+    )
+
+    functions = cast(
+        "Mapping[FunctionName, Callable[..., object]]",
+        context.user_regimes[context.regime_name].functions,
+    )
+    registry = collect_nbegm_metadata(functions=functions)
+    space = context.state_action_space
+    _validate_nbegm_boundary_scope(
+        registry=registry,
+        functions=functions,
+        liquid_state_name=liquid_state_name,
+        reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
+    )
+    violations: list[str] = []
+    for predicate_name in registry.boundaries:
+        violations += find_ast_violations(functions[predicate_name], mode="boundary")
+    for piece_set in registry.piece_sets:
+        for piece_name in (piece_set.when_func, piece_set.otherwise_func):
+            piece = functions[piece_name]
+            if is_smooth_helper(piece):
+                continue
+            violations += find_ast_violations(piece, mode="smooth_user")
+            n_params = len(inspect.signature(piece).parameters)
+            abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
+            violations += find_jaxpr_violations(
+                piece, abstract_args=abstract_args, mode="smooth_user"
+            )
+    if violations:
+        from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
+
+        msg = "NBEGM smoothness gate failed:\n" + "\n".join(violations)
+        raise NBEGMCaseError(msg)
 
 
 def _validate_nbegm_boundary_scope(
