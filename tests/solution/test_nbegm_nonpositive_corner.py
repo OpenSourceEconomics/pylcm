@@ -14,7 +14,6 @@ have one are untouched by the corner that could not exist beside them.
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.nbegm_step import (
     _case_step,
@@ -138,15 +137,24 @@ def test_recurring_jump_case_marks_its_non_positive_corner_dead():
     assert np.isnan(corner_endog[INFEASIBLE]).all()
 
 
-@pytest.mark.parametrize("flat", [False, True])
-def test_interval_corner_is_dead_when_the_whole_floor_is_infeasible(flat: bool):
-    """A floor whose budget is non-positive publishes no corner at all.
+def test_interval_corner_is_dead_when_the_whole_floor_is_infeasible():
+    """A flat interval whose budget is non-positive publishes no corner at all.
 
     On a flat (hard-constraint) interval the budget is the constant intercept.
     A non-positive intercept makes every savings node infeasible, so the corner
     must be dead rather than carry the infeasibility sentinel into the
     envelope, where it evaluates to NaN across the whole interval.
     """
+    assert np.isnan(_infeasible_interval_corner_value(flat=True)).all()
+
+
+def test_interval_corner_is_dead_on_a_sloped_non_positive_budget():
+    """A sloped interval whose budget is non-positive publishes no corner either."""
+    assert np.isnan(_infeasible_interval_corner_value(flat=False)).all()
+
+
+def _infeasible_interval_corner_value(*, flat: bool) -> np.ndarray:
+    """The no-save corner's value channel on an entirely infeasible interval."""
     channels = _interval_corner_candidates(
         corner_coh_grid=jnp.full_like(LIQUID_GRID, -0.5),
         liquid_grid=LIQUID_GRID,
@@ -164,5 +172,4 @@ def test_interval_corner_is_dead_when_the_whole_floor_is_infeasible(flat: bool):
         base=jnp.asarray(0.0),
         next_segment=jnp.asarray(0.0),
     )
-    s0_value = np.asarray(channels[1])
-    assert np.isnan(s0_value).all()
+    return np.asarray(channels[1])
