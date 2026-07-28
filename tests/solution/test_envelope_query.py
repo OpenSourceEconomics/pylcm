@@ -658,3 +658,53 @@ def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
     context = f"{np.dtype(dtype)} order={order} block={block_size}"
     assert float(got_policy[0]) == first[2], context
     assert float(got_marginal[0]) == first[3], context
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", [0, 1, 2])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block_size):
+    """The colliding-key class at a STRICTLY INTERIOR query, not just at a node.
+
+    The audit witness put the tie on a stored node, where the value comparison
+    short-circuits to the stored floats. Interior queries reach the tie through
+    the interpolated double-double path instead, so the two routes deserve
+    separate evidence even though they share one slope comparator.
+
+    Each segment is `(-run, -rise) -> (run, rise)`, which passes exactly through
+    the origin: both endpoints are the stored floats of the collision pair
+    negated, so nothing rounds. The query `q = 0` is interior to both segments
+    and both values there are exactly zero — a true interior tie whose slopes are
+    strictly ordered as rationals yet share one `fl(rise/run)` key. Only the
+    larger exact slope may win.
+    """
+    (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][case]
+    one = dtype(1.0)
+    low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
+    low_rise, high_rise = dtype(low_rise), dtype(high_rise)
+
+    def native_key(rise, run):
+        """Exactly what the selector computes: `fl((v1 - v0) / (x1 - x0))`."""
+        return dtype(dtype(rise - -rise) / dtype(run - -run))
+
+    assert native_key(low_rise, low_run) == native_key(high_rise, high_run), (
+        "the two branches must share one rounded slope key"
+    )
+
+    lower = ([-low_run, low_run], [-low_rise, low_rise], 0.0, 10.0)
+    higher = ([-high_run, high_run], [-high_rise, high_rise], 1.0, 20.0)
+    first, second = (lower, higher) if order == "AB" else (higher, lower)
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(first[0] + second[0], dtype=dtype),
+        policy=jnp.asarray([first[2]] * 2 + [second[2]] * 2, dtype=dtype),
+        value=jnp.asarray(first[1] + second[1], dtype=dtype),
+        marginal=jnp.asarray([first[3]] * 2 + [second[3]] * 2, dtype=dtype),
+        segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.asarray([0.0], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size} case={case}"
+    assert float(got_value[0]) == 0.0, context
+    assert float(got_policy[0]) == 1.0, context
+    assert float(got_marginal[0]) == 20.0, context
