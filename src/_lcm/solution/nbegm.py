@@ -2135,6 +2135,35 @@ def _collect_nbegm_schedule_spec(
     )
 
 
+def _sorted_thresholds(raw: Float1D, *, order_sensitive: bool) -> Float1D:
+    """Sort declared thresholds, poisoning a set that arrives out of order.
+
+    The interval partition is built from the sorted thresholds while the step's
+    `jump_mask` and `flat_mask` are Python statics built from the *declared*
+    breakpoint order, so the two describe the same partition only while the
+    declaration ascends. Thresholds are free parameters, so an estimator draw
+    can swap them and leave the jump mask pointing at a kink — the unified step
+    would then bridge the real cliff and split a continuous point, with no
+    error anywhere. The misaligned partition is made unrepresentable instead:
+    the thresholds are NaN-poisoned and the solve's NaN check reports it.
+
+    A schedule whose breakpoints are all of one kind has an order-independent
+    mask, so its thresholds sort without the check.
+
+    Args:
+        raw: The declared thresholds in declaration order.
+        order_sensitive: Whether the step's masks depend on that order.
+
+    Returns:
+        The ascending thresholds, or NaN where the declared order is violated.
+
+    """
+    if not order_sensitive:
+        return jnp.sort(raw)
+    ascending = jnp.all(jnp.diff(raw) > 0.0)
+    return jnp.where(ascending, jnp.sort(raw), jnp.nan)
+
+
 def _fail_if_single_liquid_schedules_unsupported(
     *,
     schedules: tuple[Any, ...],
@@ -2344,6 +2373,7 @@ def _build_nbegm_continuous_core(
     is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
         _schedule_kind_flags(kinds)
     )
+    order_sensitive = len(set(kinds)) > 1
 
     def core(
         *,
@@ -2362,10 +2392,11 @@ def _build_nbegm_continuous_core(
         # Zero declared breakpoints ⇒ an empty partition: one interval covering
         # the whole liquid axis, solved as plain EGM.
         breakpoints = (
-            jnp.sort(
+            _sorted_thresholds(
                 jnp.stack(
                     [params[name] for name in schedule_spec.threshold_param_names]
-                )
+                ),
+                order_sensitive=order_sensitive,
             )
             if schedule_spec.threshold_param_names
             else jnp.zeros((0,), dtype=canonical_float_dtype())
@@ -2531,21 +2562,27 @@ def _solve_ride_along_cell_step(
 
 
 def _ride_along_jump_config(
-    kinds: tuple[str, ...], *, n_variables: int
+    kinds: tuple[str, ...],
 ) -> tuple[BoolND, int, bool, tuple[int, ...], bool]:
     """Derive the merged partition's jump statics from the declared breakpoint kinds.
 
     Returns the per-breakpoint jump flags, the static jump count, whether any jump
     is present, the declared-order jump positions, and whether the jump positions
-    must be recovered per cell — true only when jump and kink breakpoints declared
-    on several variables interleave differently in each ride-along cell.
+    must be recovered per cell.
+
+    The positions are recovered per cell whenever jumps and kinks are mixed, on
+    however many variables. A single schedule is enough to reorder them: the
+    threshold-to-asset preimage divides by a slope of either sign, so a schedule
+    on a decreasing derived variable (a remaining allowance, a distance to a cap)
+    maps ascending thresholds to *descending* asset preimages, and the sorted
+    order then reverses the declared one.
     """
     jump_flags = tuple(kind == "jump" for kind in kinds)
     n_jumps = sum(jump_flags)
     static_jump_positions = tuple(
         index for index, is_jump in enumerate(jump_flags) if is_jump
     )
-    dynamic_jumps = n_variables > 1 and 0 < n_jumps < len(kinds)
+    dynamic_jumps = 0 < n_jumps < len(kinds)
     return (
         # dtype pinned so the zero-breakpoint (empty) case stays boolean.
         jnp.asarray(jump_flags, dtype=bool),
@@ -2731,9 +2768,8 @@ def _nbegm_ride_along_statics(
             "with a ride-along co-state is a later slice."
         )
         raise RegimeInitializationError(msg)
-    n_variables = len({source.variable for source in sources})
     jump_flags_arr, n_jumps, has_jump, static_jump_positions, dynamic_jumps = (
-        _ride_along_jump_config(kinds, n_variables=n_variables)
+        _ride_along_jump_config(kinds)
     )
 
     liquid_name = schedule_spec.liquid_state_name
@@ -3870,6 +3906,7 @@ def _build_nbegm_schedule_discrete_core(
     is_single_jump, is_multi_jump, is_mixed, jump_mask, flat_mask = (
         _schedule_kind_flags(spec.breakpoint_kinds)
     )
+    order_sensitive = len(set(spec.breakpoint_kinds)) > 1
 
     def core(
         *,
@@ -3879,8 +3916,9 @@ def _build_nbegm_schedule_discrete_core(
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         coh_params = {name: params[name] for name in spec.coh_param_names}
-        breakpoints = jnp.sort(
-            jnp.stack([params[name] for name in spec.threshold_param_names])
+        breakpoints = _sorted_thresholds(
+            jnp.stack([params[name] for name in spec.threshold_param_names]),
+            order_sensitive=order_sensitive,
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
         values: list[Float1D] = []
