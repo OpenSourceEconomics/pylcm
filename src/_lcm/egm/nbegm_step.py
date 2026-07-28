@@ -55,10 +55,6 @@ from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
-# Below this marginal value of liquid the continuation is treated as flat, so the
-# Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
-_DEGENERATE_MARGINAL_TOL = 1e-10
-
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
 # the exponent is NaN-poisoned and the solve's NaN fail-fast reports it.
@@ -200,7 +196,7 @@ def nbegm_multi_interval_step(
     # gives zero marginal value of liquid), the Euler inversion sends consumption to
     # infinity, so those interior candidates are spurious. Drop the ones not already
     # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
-    degenerate = marginal_next <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
     liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
@@ -466,7 +462,7 @@ def nbegm_multi_interval_step_savings(
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
     # inversion diverges; drop those interior candidates.
-    degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = _next_segment_id(interior_segment)
@@ -732,7 +728,9 @@ def nbegm_per_interval_continuation_step_savings(
             jax.vmap(utility_of_action)(consumption) + discount_factor * interval_value
         )
         value_at_no_save = interval_value[0]
-        degenerate = interval_marginal <= _DEGENERATE_MARGINAL_TOL
+        degenerate = _degenerate_inversion(
+            marginal=interval_marginal, consumption=consumption
+        )
 
         coh_case_grid = coh_slope * liquid_grid + coh_intercept
         coh_scale = jnp.maximum(1.0, jnp.max(jnp.abs(coh_case_grid)))
@@ -1077,7 +1075,7 @@ def nbegm_unified_step_savings(
         jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
     )
     value_at_no_save = cont_value[0]
-    degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
 
     endog_parts: list[Float1D] = []
@@ -2108,11 +2106,16 @@ def _bounded_limit_below(
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the last node strictly below `limit`, so the result is
+    always a value from below the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
     """
-    hi = jnp.sum(grid < limit) - 1
+    last_below = jnp.sum(grid < limit) - 1
     floor = jnp.sum(grid <= prev_limit)
-    lo = jnp.clip(jnp.maximum(hi - 1, floor), 0, n - 1).astype(jnp.int32)
-    hi = jnp.clip(jnp.maximum(hi, floor), 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
+    lo = jnp.minimum(lo, hi)
     return jnp.where(lo == hi, values[hi], _extrapolate(grid, values, lo, hi, limit))
 
 
@@ -2129,12 +2132,40 @@ def _bounded_limit_above(
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the first node strictly above `limit`, so the result is
+    always a value from above the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
     """
-    lo = jnp.sum(grid <= limit)
+    first_above = jnp.sum(grid <= limit)
     ceil = jnp.sum(grid < next_limit) - 1
-    hi = jnp.clip(jnp.minimum(lo + 1, ceil), 0, n - 1).astype(jnp.int32)
-    lo = jnp.clip(jnp.minimum(lo, ceil), 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)
+    hi = jnp.maximum(hi, lo)
     return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
+
+
+def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
+    """Flag savings nodes whose Euler inversion carries no candidate.
+
+    A flat continuation has no marginal value of liquid, so the inversion sends
+    consumption to infinity and the recovered point is spurious. The test is on
+    what the inversion produced, not on the marginal's magnitude: marginal
+    utility carries the units of `c**(-crra)`, so a dollar-denominated model at
+    a moderate risk aversion has genuinely tiny marginals everywhere while each
+    inversion stays perfectly well conditioned. A fixed absolute floor would
+    discard that model's whole Euler branch and leave a corner-only policy the
+    solve still reports as successful.
+
+    Args:
+        marginal: Expected marginal continuation at each savings node.
+        consumption: The consumption the Euler inversion recovered there.
+
+    Returns:
+        Per-node flag, `True` where the node contributes no usable candidate.
+
+    """
+    return (marginal <= 0.0) | ~jnp.isfinite(consumption)
 
 
 def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
