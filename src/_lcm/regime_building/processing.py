@@ -1238,24 +1238,27 @@ def _build_simulation_phase(
     )
 
 
+# Upper envelopes whose published row carries every switch a read crosses.
+# Empty: no shipped backend provides the guarantee, so the branch-faithful policy
+# read is off and simulation keeps its grid-argmax. An envelope earns a place here
+# by passing the crossing- and support-completeness suites, not by intending to.
+_CROSSING_COMPLETE_ENVELOPES: frozenset[str] = frozenset()
+
+
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
     """Whether the solver's upper envelope certifies every segment crossing.
 
-    A branch-faithful policy read interpolates a row whose envelope switches sit
-    at duplicated abscissae carrying both branch records:
-    - `"mss"` ⇒ yes: the refinement enumerates every envelope switch — interior
-      crossings via iterated earliest-overtake between adjacent candidate
-      abscissae (where the bracketing segments are full lines), switches and
-      value jumps landing exactly on a candidate abscissa via two-sided node
-      records — and an interval whose switch sequence exceeds the enumeration
-      budget overflows loudly through `n_kept` — as does a live candidate
-      point whose value no interval read can represent — so a published row
-      is never a silently truncated envelope. The guarantee covers the
-      live-covered domain; a row whose segment chain splits (NaN-dead
-      candidates or a finite value decrease between consecutive candidates)
-      is NaN-poisoned in the published policy via the kernel's read-support
-      verdict, so the reader falls back to grid-argmax instead of bridging
-      the gap linearly.
+    No shipped backend qualifies, so the read is off everywhere and simulation
+    keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
+    envelope switches sit at duplicated abscissae carrying both branch records:
+    - `"mss"` ⇒ no: the refinement inserts crossings only between adjacent query
+      winners, so a branch that owns ground strictly inside one candidate
+      interval leaves no record in the row, and a switch landing exactly on a
+      candidate abscissa is suppressed by the strict-interior test. Opening the
+      read on such a row does not merely blur a switch — it publishes a
+      different action, and one the canonical-Q safeguard cannot recover,
+      because that safeguard rescores the emitted candidate against the finite
+      action grid and an omitted owner is in neither set.
     - `"exact"` ⇒ no, and this is the default, so the branch-faithful read is
       off unless a regime asks for `"mss"`. The exclusion is narrower than the
       ones below: ownership is resolved per node cell and certified, a boundary
@@ -1276,7 +1279,7 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       therefore not certified crossing-complete for the read.
     - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
     """
-    return solver.upper_envelope == "mss"
+    return solver.upper_envelope in _CROSSING_COMPLETE_ENVELOPES
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
