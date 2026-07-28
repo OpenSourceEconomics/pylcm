@@ -58,7 +58,10 @@ ownership has passed. See `_handover_state`.
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
+from _lcm.egm.upper_envelope.certified_sign import (
+    UNRESOLVED_SIGN,
+    certified_margin_sign,
+)
 from _lcm.egm.upper_envelope.double_double import (
     dd_add,
     dd_add_float,
@@ -514,14 +517,18 @@ def _fails_all_live_check(
     # gave its ground to someone else, and the row would publish the wrong
     # branch's policy across an interval.
     #
-    # A margin the certificate cannot sign is a different thing. The two links
+    # A margin the certificate cannot *sign* is a different thing. The two links
     # then differ by less than the arithmetic can represent, so no interval
     # exists on which one is demonstrably better — the choice is a selection
     # from options that are indistinguishable at this precision, and the walk's
-    # steepest-slope tie-break makes it deterministically. Refusing here would
+    # steepest-slope tie-break makes it deterministically. Refusing there would
     # discard correct rows over a coin toss the model cannot observe; and the
     # case is not exotic, since cell edges *are* candidate abscissae, so a link
     # routinely ends exactly where the cell does and meets its neighbour there.
-    escapes = order == 1
+    #
+    # A margin the certificate could not *compute* is a defect again, and the
+    # opposite one: no determinant was produced, so the links may be far apart
+    # and the silence says nothing about which owns the ground.
+    escapes = (order == 1) | (order == UNRESOLVED_SIGN)
     escaped = jnp.any(live & ~owns_the_breakpoint & escapes)
     return escaped | not_convex

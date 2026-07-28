@@ -33,9 +33,21 @@ on:
 - otherwise the true determinant is within `dropped` of the computed one, so a
   sign is published only when it is certain.
 
-Everything else — a nonzero determinant too small to separate from its own error
-bound, or a non-finite input — returns `UNRESOLVED_SIGN`. That value is a
-fail-loud signal, never a silently chosen branch. Callers must mask dead
+Two things can stop a sign being published, and they are not the same, so they
+are reported apart:
+
+- `BELOW_RESOLUTION_SIGN` — the determinant was computed, but it is smaller than
+  its own error bound. The links are then within a rounding of each other, so no
+  state between them is demonstrably better and a caller may choose either,
+  provided it chooses deterministically.
+- `UNRESOLVED_SIGN` — no determinant worth reading was produced at all: an input
+  was non-finite, a product left the range where the transforms are exact, or the
+  shared scaling flattened a link that had positive width in the caller's units.
+  Nothing follows about the geometry, which may be far apart, so a caller must
+  fail loud rather than choose.
+
+Collapsing the two would be a fail-open: the second case is exactly the one where
+a large true margin can be reported as no margin. Callers must mask dead
 candidates and zero-width links before calling: a link of zero width has no
 affine value line, and this predicate does not invent one.
 
@@ -57,8 +69,14 @@ from _lcm.egm.upper_envelope.double_double import (
 )
 from lcm.typing import BoolND, FloatND, IntND
 
-# Returned where the sign cannot be certified; callers must fail loud on it.
+# Returned where no usable determinant was produced — a non-finite input, a
+# product outside the transform domain, or a positive width the shared scaling
+# flattened. Nothing is known about the geometry; callers must fail loud.
 UNRESOLVED_SIGN: int = 2
+
+# Returned where the determinant is real but smaller than its own error bound:
+# the links are within a rounding, so either may be chosen, deterministically.
+BELOW_RESOLUTION_SIGN: int = 3
 
 
 def certified_margin_sign(
@@ -93,7 +111,8 @@ def certified_margin_sign(
     Returns:
         `+1` where `A` is certainly above `B`, `-1` where it is certainly below,
         `0` where the difference is certified exactly zero, and
-        `UNRESOLVED_SIGN` where no sign can be certified (including any
+        `BELOW_RESOLUTION_SIGN` where the determinant is under its own error
+        bound, and `UNRESOLVED_SIGN` where none could be computed (including any
         non-finite input).
 
     """
@@ -116,6 +135,14 @@ def certified_margin_sign(
     # products out of the range where the error-free transforms stop being
     # error-free: a determinant that would underflow to zero in the caller's
     # units is an ordinary number in these.
+    # Captured before scaling: the shared exponent comes from the largest
+    # abscissa, so a link far narrower than that one can have both endpoints
+    # round onto the same number. Its width would then be zero, its contribution
+    # to the determinant would vanish, and two strictly separated links would be
+    # certified as tied — a verdict that licenses the caller to take either.
+    source_width_a = a_x1 - a_x0
+    source_width_b = b_x1 - b_x0
+
     abscissa_exponent = normalizing_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
     value_exponent = normalizing_exponent(a_v0, a_v1, b_v0, b_v1)
     a_x0, a_x1, b_x0, b_x1, x_query = (
@@ -142,7 +169,15 @@ def certified_margin_sign(
     in_domain = _product_in_transform_domain(
         numerator_a[0], width_b[0]
     ) & _product_in_transform_domain(numerator_b[0], width_a[0])
-    return _certified_sign_of(determinant, finite=finite & in_domain)
+
+    # A width that was positive in the caller's units must still be positive in
+    # these. Where it is not, the scaling — not the geometry — produced the zero,
+    # and no verdict drawn from the flattened determinant is evidence of
+    # anything.
+    widths_survive = ((source_width_a == 0.0) | (width_a[0] != 0.0)) & (
+        (source_width_b == 0.0) | (width_b[0] != 0.0)
+    )
+    return _certified_sign_of(determinant, finite=finite & in_domain & widths_survive)
 
 
 def affine_numerator(
@@ -178,13 +213,14 @@ def _certified_sign_of(value: DoubleDouble, *, finite: BoolND) -> IntND:
     tolerance = dropped + epsilon * jnp.abs(estimate)
     exactly_zero = (dropped == 0.0) & (estimate == 0.0)
     unresolved = jnp.asarray(UNRESOLVED_SIGN, dtype=jnp.int32)
+    below_resolution = jnp.asarray(BELOW_RESOLUTION_SIGN, dtype=jnp.int32)
     sign = jnp.where(
         estimate > tolerance,
         jnp.int32(1),
         jnp.where(
             estimate < -tolerance,
             jnp.int32(-1),
-            jnp.where(exactly_zero, jnp.int32(0), unresolved),
+            jnp.where(exactly_zero, jnp.int32(0), below_resolution),
         ),
     )
     return jnp.where(finite, sign, unresolved).astype(jnp.int32)
