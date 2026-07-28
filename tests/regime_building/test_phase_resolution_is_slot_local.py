@@ -27,7 +27,7 @@ import jax.numpy as jnp
 import pandas as pd
 
 from lcm import AgeGrid, DiscreteGrid, Model, Phased, Regime, categorical
-from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt, UserFunction
 
 
 @categorical(ordered=True)
@@ -101,7 +101,7 @@ IC = pd.DataFrame(
 _STATES = {"stock": DiscreteGrid(Stock), "tag": DiscreteGrid(Stock)}
 
 
-def _simulate(tag_law: object) -> pd.DataFrame:
+def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
     live = Regime(
         transition=_next_regime,
         state_transitions={

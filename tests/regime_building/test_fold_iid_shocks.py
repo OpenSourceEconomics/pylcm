@@ -30,6 +30,7 @@ multi-period node-count reduction until continuation support for a
 persistent fold lands.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
@@ -48,7 +49,8 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.processes import RouwenhorstAR1Process
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.transition import MarkovTransition
+from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 
 
 @categorical(ordered=True)
@@ -210,8 +212,8 @@ def test_fold_default_path_is_byte_identical():
     omitted = _make_regimes_fold_omitted()["period0"].states["wage_shock"]
     explicit = _make_regimes(fold=False)["period0"].states["wage_shock"]
     # Guard the guard: the default is what makes the omitted branch meaningful.
-    assert omitted.fold is False
-    assert explicit.fold is False
+    assert omitted.fold is False  # ty: ignore[unresolved-attribute]
+    assert explicit.fold is False  # ty: ignore[unresolved-attribute]
     assert omitted == explicit  # identical spec, reached two different ways
 
     default_V = _solve(_make_regimes_fold_omitted())
@@ -316,7 +318,7 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
 def test_fold_on_ar1_process_is_rejected_by_the_type_system():
     """A persistent (non-IID) process has no `fold` field at all."""
     with pytest.raises(TypeError, match="fold"):
-        RouwenhorstAR1Process(n_points=5, rho=0.9, sigma=1.0, mu=0.0, fold=True)  # type: ignore[call-arg]
+        RouwenhorstAR1Process(n_points=5, rho=0.9, sigma=1.0, mu=0.0, fold=True)  # ty: ignore[unknown-argument]
 
 
 def test_fold_on_taste_shocks_regime_is_rejected():
@@ -1061,7 +1063,9 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
             functions={"utility": lambda wage_shock, work: work * (2.0 + wage_shock)},
         )
 
-    def _period0(transition: object) -> Regime:
+    def _period0(
+        transition: UserFunction | MarkovTransition | Mapping[str, MarkovTransition],
+    ) -> Regime:
         return Regime(
             transition=transition,
             active=lambda age: age < 1,
@@ -1393,7 +1397,7 @@ def test_folded_only_per_target_continuation_enters_simulated_value():
     np.testing.assert_allclose(np.asarray(solution[0]["src"]), discount, atol=1e-5)
     # The simulated period-0 decision must reflect the folded-only continuation:
     # route to B (work code 1), recomputed value = discount * 1.0.
-    period_0 = result.raw_results["src"][0]
+    period_0 = result.raw_results["src"][0]  # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(np.asarray(period_0.actions["work"]), [1])
     np.testing.assert_allclose(
         np.asarray(period_0.V_arr).reshape(-1), [discount], atol=1e-5

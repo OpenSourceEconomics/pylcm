@@ -1242,7 +1242,7 @@ def get_edge_simulate_gate_evaluator(
 
     # Published for `route_gated_edges`, which has EVERY regime's flat params in
     # hand and no other way to tell which one an arg belongs to.
-    evaluate_simulate_gate.arg_provenance = arg_provenance  # type: ignore[attr-defined]
+    evaluate_simulate_gate.arg_provenance = arg_provenance  # ty: ignore[unresolved-attribute]
 
     return evaluate_simulate_gate
 
@@ -1391,7 +1391,7 @@ def build_fallback_state_projector(
     # Published for `route_gated_edges` (F3), exactly like the simulate gate
     # evaluator's: the router holds every regime's params and cannot otherwise
     # tell a source-declared projection parameter from a target one.
-    project.arg_provenance = arg_provenance  # type: ignore[attr-defined]
+    project.arg_provenance = arg_provenance  # ty: ignore[unresolved-attribute]
 
     return project
 

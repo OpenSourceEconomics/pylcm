@@ -386,7 +386,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         source_name="src",
         target_name="target",
     )
-    assert float(bound[shift_arg]) == _SRC_SHIFT
+    assert float(bound[shift_arg]) == _SRC_SHIFT  # ty: ignore[invalid-argument-type]
 
     next_states = MappingProxyType(
         {

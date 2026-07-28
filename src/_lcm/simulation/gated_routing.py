@@ -462,7 +462,7 @@ def route_gated_edges(
                 batched_kwargs=candidate_target_states,
                 static_kwargs={
                     **_bind_provenance_params(
-                        simulate_gate_evaluator.arg_provenance,
+                        simulate_gate_evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
                         flat_params=flat_params,
                         source_name=regime.name,
                         target_name=target_name,
@@ -504,7 +504,7 @@ def route_gated_edges(
             # (`backward_induction._evaluate_edge_fold`), so any other binding
             # writes the row into the right fallback REGIME at a STATE the
             # solved policy never priced, and carries it into the next period.
-            projector_provenance = projector.arg_provenance
+            projector_provenance = projector.arg_provenance  # ty: ignore[unresolved-attribute]
             fallback_states = cast(
                 "Mapping[str, FloatND]",
                 projector(

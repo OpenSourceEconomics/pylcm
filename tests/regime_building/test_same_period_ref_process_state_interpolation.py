@@ -182,7 +182,9 @@ def _hand_interpolate(nodes: np.ndarray, V_ref: np.ndarray, value: float) -> flo
 def _target_values() -> np.ndarray:
     """Hand-computed `V_shock_ref` at each wage cell's projected shock value."""
     nodes, V_ref = _solve_shock_ref_only()
-    shock_values = np.asarray([float(_project_shock(w)) for w in [0.0, 2.0]])
+    shock_values = np.asarray(
+        [float(_project_shock(jnp.asarray(w))) for w in [0.0, 2.0]]
+    )
     return np.array([_hand_interpolate(nodes, V_ref, s) for s in shock_values])
 
 
@@ -316,8 +318,8 @@ def test_same_period_ref_value_matches_hand_computed_interpolation():
     # Sanity: the off-grid shock projections really do fall strictly between
     # two quadrature nodes, and the two hand-computed targets differ (this
     # is a genuine interpolation, not a degenerate on-node lookup).
-    assert -1.0 < float(_project_shock(0.0)) < 0.0
-    assert 0.0 < float(_project_shock(2.0)) < 1.0
+    assert -1.0 < float(_project_shock(jnp.asarray(0.0))) < 0.0
+    assert 0.0 < float(_project_shock(jnp.asarray(2.0))) < 1.0
     assert not np.isclose(_TARGET[0], _TARGET[1])
 
 

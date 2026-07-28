@@ -20,6 +20,7 @@ asserts a value that is `nan` pre-fix.
 
 import contextlib
 import itertools
+from collections.abc import Callable
 from fractions import Fraction
 
 import jax
@@ -93,7 +94,9 @@ def _old_weighted_average_axis(a: FloatND, w: FloatND) -> FloatND:
     return numerator / jnp.sum(w2, axis=1)
 
 
-def _raw_corner_sum_interpolator(term_fn: object) -> object:
+def _raw_corner_sum_interpolator(
+    term_fn: Callable[[FloatND, FloatND], FloatND],
+) -> Callable[[FloatND, FloatND], FloatND]:
     """Reimplement `map_coordinates`'s 1-D corner sum with a pluggable `w*v` term.
 
     Uses the SAME internals as `_lcm.regime_building.ndimage.map_coordinates`
@@ -546,7 +549,9 @@ def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> Float
     return _sum_regime_mixture(terms, like=v[0])
 
 
-def _alpha_rename_mixture(reducer: object, names: list[str]) -> FloatND:
+def _alpha_rename_mixture(
+    reducer: Callable[[list[str], FloatND, FloatND], FloatND], names: list[str]
+) -> FloatND:
     """Broadcast the round-10 mixture over an 8x8 carrier through two nested `vmap`s
     inside `jit` — exactly the collective site's structure — and reduce it with
     `reducer` under the alpha-renaming `names`, returning one carrier cell."""
@@ -792,7 +797,7 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
         "functions": {"utility_f": _utility_f, "utility_m": _utility_m},
     }
     base.update(kwargs)
-    return Regime(**base)  # type: ignore[arg-type]
+    return Regime(**base)  # ty: ignore[invalid-argument-type]
 
 
 def test_empty_stakeholders_tuple_is_rejected():
