@@ -130,15 +130,18 @@ class DCEGM(Solver):
     lineage, so prefer the default unless you are reproducing a method.
 
     - `"exact"`: the exact segment envelope. Splits the candidate chain into
-      x-monotone runs, partitions resources at the live abscissae, inserts every
-      certified interior crossing, and reads each resulting open cell's owner at
-      an interior point — so a branch owning only a subinterval survives, and a
-      crossing landing exactly on a node separates the two policies. All
+      x-monotone runs and partitions resources at the live abscissae. Every run
+      covering a cell covers all of it, so the envelope there is the maximum of
+      full lines — convex, with owners in increasing slope order — and its owner
+      sequence is resolved per cell. A branch owning only a subinterval survives,
+      and a crossing landing exactly on a node separates the two policies. All
       structural decisions use a certified sign of the value difference, exact
-      for the represented inputs and invariant to a common value level; an
-      undecidable comparison or a chain folding into more than
-      `envelope_max_runs` runs poisons the row rather than publishing a guess.
-      Costs several times the fast scans (see `envelope_max_runs`).
+      for the represented inputs and invariant to a common value level, and every
+      live branch is certified against the owners rather than only the runner-up;
+      an undecidable comparison, a branch escaping certification, or a chain
+      folding into more than `envelope_max_runs` runs poisons the row rather than
+      publishing a guess. Costs several times the fast scans (see
+      `envelope_max_runs`).
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
       exact segment-crossing points. Fastest, but shares the fast-scan lineage's
       accepted limitation at *exact* endogenous-grid coincidence across branches
@@ -172,10 +175,22 @@ class DCEGM(Solver):
     chain exceeding it poisons the row and surfaces through the solve loop's NaN
     diagnostics instead of silently dropping a branch.
 
-    Work grows roughly quadratically in this value and memory linearly, because
-    the envelope walk visits each cell's active runs once per sub-cell it opens.
+    Three costs scale differently in this value, and the difference matters when
+    tuning it:
+
+    - **memory** is linear. No workspace is shaped by the capacity: ownership is
+      resolved per cell into a row-sized buffer, so the published row bounds the
+      footprint whatever the capacity is.
+    - **certified comparisons** are linear. Clearing a branch that owns nothing
+      takes one exact comparison, at the breakpoint where the envelope's slope
+      brackets the branch's own — not one against every rival.
+    - **ordinary arithmetic** is quadratic: the owner walk can open one piece per
+      run, and each step reads every run covering the cell.
+
     `24` covers the fold counts pylcm's own NEGM and DC-EGM models realize, with
     headroom; lower it for a model known to stay concave to buy back some speed.
+    The quadratic term is the one that pays for it, and it is also what dominates
+    XLA compile time for the solve kernel on GPU.
     """
 
     fues_jump_thresh: float = 2.0
