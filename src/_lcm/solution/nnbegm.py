@@ -992,7 +992,17 @@ def _collapse_finite_candidate_bank(
         )
     return KernelResult(
         V_arr=V_arr,
-        continuation=carry,
+        # The fold seeds from the KEEPER's carry, which — being a standalone
+        # ride-along NBEGM carry — may hold the exact-consumption `policy` leaf
+        # (round-3 audit F2 / round-4 audit F1). The republished NNBEGM
+        # continuation TEMPLATE strips that leaf, so the producer must strip it
+        # too, or the cross-period roll compares a policy-carrying continuation
+        # against a policy-free template. `jax.tree.map` does NOT catch that:
+        # it flattens the FIRST tree, and `flatten_up_to` then hands back the
+        # template's `None` subtree as though it were a leaf, so the mismatch
+        # surfaces only as a type violation deep inside the sharding match.
+        # `simulation_policy` is a separate field and is unaffected.
+        continuation=replace(carry, policy=None),
         simulation_policy=keeper.simulation_policy,
     )
 

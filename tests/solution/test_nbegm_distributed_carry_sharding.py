@@ -34,7 +34,10 @@ _SCRIPT = textwrap.dedent(
     grids = {"kind": DiscreteGrid(ConsumerKind, distributed=True)}
     liquid_grid = jnp.linspace(0.1, 30.0, 24)
     template = _build_ride_along_carry_template(
-        liquid_grid=liquid_grid, ride_shape=(2,), n_breakpoints=1
+        liquid_grid=liquid_grid,
+        ride_shape=(2,),
+        n_breakpoints=1,
+        carry_policy=False,
     )
     sharded = _shard_ride_carry_template(
         template=template,
@@ -58,6 +61,25 @@ _SCRIPT = textwrap.dedent(
         ride_along_state_names=("kind",),
     )
     assert plain is template
+
+    # The policy-carrying branch shards identically: the round-4 F1 leaf must be
+    # laid out like the other rows, or a distributed ride-along solve would lower
+    # against a template whose policy shard disagrees with the runtime carry.
+    with_policy = _build_ride_along_carry_template(
+        liquid_grid=liquid_grid,
+        ride_shape=(2,),
+        n_breakpoints=1,
+        carry_policy=True,
+    )
+    assert with_policy.policy is not None
+    sharded_with_policy = _shard_ride_carry_template(
+        template=with_policy,
+        grids=grids,
+        ride_along_state_names=("kind",),
+    )
+    assert sharded_with_policy.policy.sharding.spec == jax.P("kind")
+    assert sharded_with_policy.value.sharding.spec == jax.P("kind")
+    assert not sharded_with_policy.policy.sharding.is_fully_replicated
 
     # The engine-side templates (living-brute and terminal-wealth children)
     # shard the same way: leading discrete + passive axes, unsharded rows.
