@@ -798,7 +798,7 @@ def envelope_at_query(
 def _right_continuous_winner(
     *,
     tied: BoolND,
-    terms: "_CandidateTerms",
+    terms: _CandidateTerms,
     gather: Callable[[jax.Array], FloatND],
 ) -> tuple[BoolND, jax.Array]:
     """Per-query right-continuous winner among the EXACTLY value-tied candidates.
@@ -844,11 +844,25 @@ def _right_continuous_winner(
         hot = _one_hot(index, n_segment) & state.remaining
         cols = gather(index)
         sign = _exact_slope_compare(cols_a=cols, cols_b=state.lead_cols)
-        # Candidates are visited in increasing index and only a STRICTLY
-        # greater exact slope takes the lead, so the winner is the earliest
-        # index attaining the exact maximum — the documented earliest-on-tie
-        # rule, now conditioned on exact rather than rounded equality.
-        greater = active & (sign > 0)
+        # Candidates are visited in increasing index and a STRICTLY greater
+        # exact slope takes the lead, so the winner is the earliest index
+        # attaining the exact maximum — the documented earliest-on-tie rule,
+        # conditioned on exact rather than rounded equality.
+        #
+        # The `sign == 0` clause is what makes that unconditional. The loop is
+        # seeded from `argmax` over the ROUNDED key, and that key is a doubly
+        # rounded quantity: `fl(fl(v1-v0) / fl(x1-x0))`, whereas the exact ratio
+        # uses the error-free `(hi, lo)` differences. When a stored difference
+        # is not representable the two disagree, so two candidates with EQUAL
+        # exact slopes can carry different rounded keys and `argmax` can seed
+        # the lead at the later of them. Without this clause the last-resort
+        # fallback would then publish the later candidate — the rounded key
+        # deciding an order it has no standing to decide, which is the very
+        # defect this function exists to remove. Taking the lead on an exact tie
+        # from any strictly earlier index closes that without relying on the
+        # rounded key being monotone.
+        earlier_on_exact_tie = (sign == 0) & (index < state.lead_index)
+        greater = active & ((sign > 0) | earlier_on_exact_tie)
         return _SlopeState(
             lead_cols=jnp.where(greater[:, None], cols, state.lead_cols),
             lead_index=jnp.where(greater, index, state.lead_index),
