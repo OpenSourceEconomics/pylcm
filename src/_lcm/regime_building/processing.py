@@ -1256,6 +1256,16 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       is NaN-poisoned in the published policy via the kernel's read-support
       verdict, so the reader falls back to grid-argmax instead of bridging
       the gap linearly.
+    - `"exact"` ⇒ no, and this is the default, so the branch-faithful read is
+      off unless a regime asks for `"mss"`. The exclusion is narrower than the
+      ones below: ownership is resolved per node cell and certified, a boundary
+      whose sides differ in value *or* policy already emits both one-sided
+      records, and a chain with more owned sub-cells than the row has slots
+      overflows loudly through `n_kept`. What is missing is the other half of
+      MSS's guarantee — the exact backend publishes no read-support verdict, so
+      a row whose segment chain splits (NaN-dead candidates, or a value
+      decrease between consecutive candidates) carries no signal that the
+      reader would be bridging a gap rather than interpolating one branch.
     - `"fues"` ⇒ no: segment identity is decided by thresholding the
       implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
       DC-EGM kernel supplies no segment labels. Two value branches whose
