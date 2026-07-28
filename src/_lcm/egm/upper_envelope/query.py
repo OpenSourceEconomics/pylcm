@@ -66,12 +66,18 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
 4. **One winner index.** Each query selects a single winning candidate column
    and gathers value, policy, AND marginal from that same column, so a mixed
    A-value/B-policy result is structurally impossible.
-5. **Right-continuity applies only to exact ties.** Only candidates whose
-   `(hi, lo)` pairs are exactly equal to the maximum enter the right-continuous
-   tie-break (prefer a segment extending strictly right of the query, then the
-   larger value-slope, then the earliest candidate) — which is that rule's
-   actual purpose: choosing among branches that genuinely attain the same
-   value, matching the kernel's `side="right"` read.
+5. **Right-continuity applies only to exact ties, and it too is exact.** Only
+   candidates whose values are EXACTLY equal to the maximum enter the
+   right-continuous tie-break (prefer a segment extending strictly right of the
+   query, then the larger value-slope, then the earliest candidate) — that
+   rule's actual purpose: choosing among branches that genuinely attain the
+   same value, matching the kernel's `side="right"` read. The slope half is
+   settled by the same exact cross-multiplied predicate as the value, because
+   an exact value tie followed by a ROUNDED slope key rebuilds the defect one
+   operation later: two strictly ordered exact slopes can share one float key,
+   `argmax` then falls back to candidate order, and permuting the branches
+   flips the published policy and marginal (round-7 audit F2). Candidate order
+   decides only on EXACT slope equality.
 """
 
 from collections.abc import Callable
@@ -202,6 +208,12 @@ _SCREEN_SLACK = 4.0
 # exactly-representable terms whose sum has the sign of `V_a - V_b`.
 _EXACT_TERMS = 64
 
+# Screen slack on the ROUNDED slope key, in ULPs. The native slope is one
+# division, so a gap wider than a few ULP of the operand scale is already
+# certified by it; anything closer goes to the exact slope predicate. As with
+# the value screen, generous is safe — a superset only costs comparisons.
+_SLOPE_SCREEN_ULPS = 8.0
+
 
 def _one_hot(index: jax.Array, width: int) -> BoolND:
     """Row-wise indicator of `index` over `width` columns."""
@@ -226,7 +238,9 @@ def _node_selection(
     at_right = q == right_grid
     # A zero-width segment sets both flags; publish its higher end (left on a
     # value tie, matching the oracle's vertical-edge rule).
-    use_right = (at_right & ~at_left) | (at_left & at_right & (right_value > left_value))
+    use_right = (at_right & ~at_left) | (
+        at_left & at_right & (right_value > left_value)
+    )
     return at_left | at_right, use_right
 
 
@@ -365,6 +379,71 @@ def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
     return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
 
 
+def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
+    """A candidate's value slope as an exact rational `(v1-v0)/(x1-x0)`.
+
+    Both differences are error-free pairs, so the ratio carries no rounding at
+    all. The denominator is canonically positive so a cross-multiplied
+    comparison reads its sign off the numerator difference.
+    """
+    left_grid, right_grid = cols[..., 0], cols[..., 1]
+    left_value, right_value = cols[..., 2], cols[..., 3]
+    nh, nl = _two_diff(right_value, left_value)
+    dh, dl = _two_diff(right_grid, left_grid)
+    numerator = jnp.stack([nh, nl], axis=-1)
+    denominator = jnp.stack([dh, dl], axis=-1)
+    # A zero-width segment has no grid span; the established convention
+    # publishes its raw value jump as the slope, i.e. a unit denominator.
+    zero_width = (right_grid == left_grid)[..., None]
+    denominator = jnp.where(
+        zero_width,
+        jnp.stack([jnp.ones_like(dh), jnp.zeros_like(dl)], axis=-1),
+        denominator,
+    )
+    flip = (denominator[..., 0] < 0)[..., None]
+    return _ExactRatio(
+        numerator=jnp.where(flip, -numerator, numerator),
+        denominator=jnp.where(flip, -denominator, denominator),
+    )
+
+
+def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
+    """Exact sign of `slope_a - slope_b`: `+1`, `-1`, or `0` for a TRUE tie.
+
+    Same cross-multiplied construction as `_exact_compare`, on the slope ratio
+    instead of the value: `sign(N_a*D_b - N_b*D_a)` over 16 error-free terms.
+
+    This exists because an exact VALUE tie is only half the rule. The
+    right-continuous break then orders slopes, and ordering them on
+    `fl((v1-v0)/(x1-x0))` re-introduces the very defect the exact value
+    predicate removed one operation earlier: two strictly ordered exact slopes
+    can share a single float key, and `argmax` then silently falls back to
+    candidate order, so a pure branch permutation flips the published policy
+    and marginal (round-7 audit F2).
+    """
+    a = _exact_slope_ratio(cols=cols_a)
+    b = _exact_slope_ratio(cols=cols_b)
+    split = _dekker_split_factor(cols_a.dtype)
+    terms: list[FloatND] = []
+    for numerator, denominator, orientation in (
+        (a.numerator, b.denominator, 1.0),
+        (b.numerator, a.denominator, -1.0),
+    ):
+        for i in range(numerator.shape[-1]):
+            for j in range(denominator.shape[-1]):
+                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
+                terms.extend([orientation * head, orientation * tail])
+    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+
+
+class _SlopeState(NamedTuple):
+    """Running state of the exact slope resolution loop, one entry per query."""
+
+    lead_cols: FloatND
+    lead_index: jax.Array
+    remaining: BoolND
+
+
 class _ResolveState(NamedTuple):
     """Running state of the exact resolution loop, one entry per query."""
 
@@ -375,7 +454,7 @@ class _ResolveState(NamedTuple):
 
 def _exactly_maximal(
     *,
-    terms: "_CandidateTerms",
+    terms: _CandidateTerms,
     gather: Callable[[jax.Array], FloatND],
     q: FloatND,
 ) -> BoolND:
@@ -685,10 +764,10 @@ def envelope_at_query(
     # Right-continuous break among the exactly-tied candidates only, then ONE
     # winner index per query; value, policy, and marginal are gathered from that
     # same index (requirements 4 and 5).
-    _, tie_key = _tie_break_slope_key(
-        tied=exact_tie, right_available=terms.right_available, slope=terms.slope
+    _, winner = _right_continuous_winner(
+        tied=exact_tie, terms=terms, gather=lambda index: columns[index]
     )
-    best = jnp.argmax(tie_key, axis=1)[:, None]
+    best = winner[:, None]
     any_bracket = jnp.any(terms.brackets, axis=1)
     # A bracketed query whose candidates cannot be ranked — a non-finite
     # certified value pair (infinite endpoint arithmetic), which also empties
@@ -716,32 +795,76 @@ def envelope_at_query(
     )
 
 
-def _tie_break_slope_key(
-    *, tied: BoolND, right_available: BoolND, slope: FloatND
-) -> tuple[BoolND, FloatND]:
-    """Per-query eligibility flag + per-segment slope key for the exact-tie break.
+def _right_continuous_winner(
+    *,
+    tied: BoolND,
+    terms: "_CandidateTerms",
+    gather: Callable[[jax.Array], FloatND],
+) -> tuple[BoolND, jax.Array]:
+    """Per-query right-continuous winner among the EXACTLY value-tied candidates.
 
-    Applies ONLY to the exactly-tied candidates (`tied`: certified-equal
-    `(hi, lo)` value pairs — requirement 5). Implements "prefer a right-extending
-    tied segment, else the largest tied slope" WITHOUT folding the two keys into
-    one scalar. Folding the right-extends bit and the slope into a single float
-    (an `arctan(slope)/pi + right_available` rank) loses the slope bits for
-    near-equal small slopes in float32, so two genuinely-distinct slopes round to
-    the same rank and `argmax` falls back to the lower index — the wrong branch
-    (round-4 audit F2, second half). Instead: among the tied segments, if ANY
-    extends strictly right, only those compete; else all tied compete. The
-    returned `key` is the raw `slope` for the competing segments and `-inf`
-    otherwise, so `argmax(key)` compares slopes at native precision. Ties on the
-    slope itself resolve to the earliest candidate. `any_eligible` (per query) is
-    also returned so the blocked scan can reconcile the global right-extends
-    priority across blocks lexicographically; the dense path sees every segment
-    on one axis and argmaxes the key directly.
+    Implements "prefer a segment extending strictly right of the query, then
+    the larger value slope, then the earliest candidate" — and implements the
+    slope half EXACTLY.
+
+    The rounded key `fl((v1-v0)/(x1-x0))` is used only as a screen. A slope gap
+    wider than a few ULP is certified by it; anything closer is settled by
+    `_exact_slope_compare`. Ordering on the rounded key alone is unsound: two
+    strictly ordered exact slopes can collapse onto one float key, and `argmax`
+    then resolves by candidate order, so permuting the branches flips the
+    published policy and marginal (round-7 audit F2 — 16 of 16 generated
+    collision classes were order-dependent).
+
+    Keeping the two keys separate rather than folding them into one scalar is
+    still required: an `arctan(slope)/pi + right_available` rank loses slope
+    bits for near-equal small slopes in float32 (round-4 audit F2).
+
+    Returns the per-query right-extension flag (so the blocked scan can
+    reconcile that priority across blocks) and ONE winner index.
     """
-    eligible = tied & right_available
+    n_segment = tied.shape[1]
+    eligible = tied & terms.right_available
     any_eligible = jnp.any(eligible, axis=1, keepdims=True)
     compete = jnp.where(any_eligible, eligible, tied)
-    key = jnp.where(compete, slope, -jnp.inf)
-    return any_eligible[:, 0], key
+
+    key = jnp.where(compete, terms.slope, -jnp.inf)
+    lead = jnp.argmax(key, axis=1)
+    lead_slope = jnp.take_along_axis(terms.slope, lead[:, None], axis=1)
+    eps = jnp.finfo(terms.slope.dtype).eps
+    reach = _SLOPE_SCREEN_ULPS * eps * (jnp.abs(terms.slope) + jnp.abs(lead_slope))
+    contends = compete & (terms.slope >= lead_slope - reach)
+    lead_hot = _one_hot(lead, n_segment)
+
+    def unresolved(state: _SlopeState) -> BoolND:
+        return jnp.any(state.remaining)
+
+    def resolve_one(state: _SlopeState) -> _SlopeState:
+        active = jnp.any(state.remaining, axis=1)
+        index = jnp.argmax(state.remaining, axis=1)
+        hot = _one_hot(index, n_segment) & state.remaining
+        cols = gather(index)
+        sign = _exact_slope_compare(cols_a=cols, cols_b=state.lead_cols)
+        # Candidates are visited in increasing index and only a STRICTLY
+        # greater exact slope takes the lead, so the winner is the earliest
+        # index attaining the exact maximum — the documented earliest-on-tie
+        # rule, now conditioned on exact rather than rounded equality.
+        greater = active & (sign > 0)
+        return _SlopeState(
+            lead_cols=jnp.where(greater[:, None], cols, state.lead_cols),
+            lead_index=jnp.where(greater, index, state.lead_index),
+            remaining=state.remaining & ~hot,
+        )
+
+    final = jax.lax.while_loop(
+        unresolved,
+        resolve_one,
+        _SlopeState(
+            lead_cols=gather(lead),
+            lead_index=lead,
+            remaining=contends & ~lead_hot,
+        ),
+    )
+    return any_eligible[:, 0], final.lead_index
 
 
 class _BlockedCarry(NamedTuple):
@@ -803,12 +926,16 @@ def _combine_blocked(
         )[:, 0],
         q=q,
     )
-    _, key = _tie_break_slope_key(
-        tied=tied, right_available=stacked.right_available, slope=stacked.slope
+    _, winner = _right_continuous_winner(
+        tied=tied,
+        terms=stacked,
+        gather=lambda index: jnp.take_along_axis(
+            pair_cols, index[:, None, None], axis=1
+        )[:, 0],
     )
-    # Column 0 is the carry, so `argmax` keeping the earlier column on a tie is
+    # Column 0 is the carry, so keeping the earlier column on an exact tie is
     # precisely the dense reduction's earliest-candidate rule.
-    take = jnp.argmax(key, axis=1) == 1
+    take = winner == 1
     return _BlockedCarry(
         any_bracket=carry.any_bracket | block.any_bracket,
         poisoned=carry.poisoned | block.poisoned,
@@ -834,7 +961,7 @@ def _envelope_at_query_blocked(
     with the same lexicographic rule as the dense path — certified `(hi, lo)`
     value pairs first, then (only on an exact tie) right-extension and value
     slope. Within a block the winner is found exactly as in the dense reduction
-    (`_tie_break_slope_key` restricted to the block's exactly-tied candidates)
+    (`_right_continuous_winner` restricted to the block's exactly-tied candidates)
     and its value/policy/marginal are gathered from the SAME within-block
     index. Across blocks the carried winner is updated by strict lexicographic
     comparison of the carried keys, which keeps the earliest winner and so
@@ -869,10 +996,9 @@ def _envelope_at_query_blocked(
         # Within-block winner: identical construction to the dense reduction,
         # through the very same certified-screen-then-exact resolution.
         tied = _exactly_maximal(terms=t, gather=lambda index: block[index], q=flat)
-        block_ra, key = _tie_break_slope_key(
-            tied=tied, right_available=t.right_available, slope=t.slope
+        block_ra, winner = _right_continuous_winner(
+            tied=tied, terms=t, gather=lambda index: block[index]
         )
-        winner = jnp.argmax(key, axis=1)
         column = winner[:, None]
         block_has = jnp.any(t.brackets, axis=1)
         block_carry = _BlockedCarry(
@@ -885,7 +1011,7 @@ def _envelope_at_query_blocked(
             lo=jnp.take_along_axis(t.value_lo, column, axis=1)[:, 0],
             radius=jnp.take_along_axis(t.radius, column, axis=1)[:, 0],
             right_extending=block_ra,
-            slope=jnp.take_along_axis(key, column, axis=1)[:, 0],
+            slope=jnp.take_along_axis(t.slope, column, axis=1)[:, 0],
             value=jnp.take_along_axis(t.value_hi, column, axis=1)[:, 0],
             policy=jnp.take_along_axis(t.policy, column, axis=1)[:, 0],
             marginal=jnp.take_along_axis(t.marginal, column, axis=1)[:, 0],
