@@ -85,7 +85,7 @@ class NBEGMCaseError(PyLCMError):
     - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
       comparison, a piecewise primitive inside a helper) in a case's economic
       nodes.
-    - The v1 scope gate: a non-`'subsidy'` split output, a state-dependent
-      piece, a `'when'`-owned equality, a non-`'jump'` boundary kind, or a
-      boundary on a variable other than the liquid state.
+    - The case-piece scope gate: a non-`'subsidy'` split output, a
+      state-dependent piece, a `'when'`-owned equality, a non-`'jump'` boundary
+      kind, or a boundary on a variable other than the liquid state.
     """

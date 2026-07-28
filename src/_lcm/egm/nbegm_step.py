@@ -873,6 +873,12 @@ def nbegm_per_interval_continuation_step_savings(
         ),
     )
 
+    node_segment_base, cliff_segment_base = _point_candidate_segment_bases(
+        interval_block_end=n_padded * interval_stride,
+        n_liquid=liquid_grid.shape[0],
+        n_nodes=savings_grid.shape[-1],
+    )
+
     node_endog, node_value, node_policy, node_marginal, node_segment = (
         _savings_node_point_candidates(
             liquid_grid=liquid_grid,
@@ -885,7 +891,7 @@ def nbegm_per_interval_continuation_step_savings(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             coh_grid=coh_grid,
-            segment_base=float(n_padded * interval_stride),
+            segment_base=float(node_segment_base),
         )
     )
 
@@ -904,7 +910,7 @@ def nbegm_per_interval_continuation_step_savings(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             coh_grid=coh_grid,
-            segment_base=float((n_padded + 1) * interval_stride),
+            segment_base=float(cliff_segment_base),
         )
     else:
         cliff_parts = (jnp.empty(0),) * 5
@@ -926,6 +932,30 @@ def nbegm_per_interval_continuation_step_savings(
         segment_block_size=envelope_segment_block_size,
     )
     return value, marginal, policy
+
+
+def _point_candidate_segment_bases(
+    *, interval_block_end: int, n_liquid: int, n_nodes: int
+) -> tuple[int, int]:
+    """Return the segment-id bases of the savings-node and save-to-cliff blocks.
+
+    Every candidate block owns a half-open id range starting where the previous
+    block's range ends, so two blocks can never share an id and be fused into
+    one envelope segment. The savings-node family spans one id per `(liquid
+    point, node)` pair, which outgrows any fixed per-interval stride once the
+    grids are large — basing the next block on that actual count is what keeps
+    the ranges disjoint at production grid sizes.
+
+    Args:
+        interval_block_end: One past the last id the per-interval blocks own.
+        n_liquid: Number of liquid grid points.
+        n_nodes: Number of post-decision savings nodes per liquid point.
+
+    Returns:
+        Tuple of the savings-node base and the save-to-cliff base.
+
+    """
+    return interval_block_end, interval_block_end + n_liquid * n_nodes
 
 
 def _savings_node_point_candidates(
@@ -2076,12 +2106,28 @@ def _kink_aware_interp(
 
     A query strictly below `limit` then interpolates within the `when` branch, a
     query strictly above within the `otherwise` branch, and neither bridges the
-    discontinuity.
+    discontinuity. A grid node landing exactly on `limit` carries the owning
+    side's value, so each one-sided stencil claims it only for that side; both
+    sides share the stencil rule of the N-cliff reader.
     """
     n = grid.shape[0]
-    last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
-    left_at_limit = _extrapolate(grid, values, last_below - 1, last_below, limit)
-    right_at_limit = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
+    owner_is_when = equality_owner == "when"
+    left_at_limit = _bounded_limit_below(
+        grid,
+        values,
+        limit=limit,
+        prev_limit=-jnp.inf,
+        n=n,
+        owns_limit_node=owner_is_when,
+    )
+    right_at_limit = _bounded_limit_above(
+        grid,
+        values,
+        limit=limit,
+        next_limit=jnp.inf,
+        n=n,
+        owns_limit_node=not owner_is_when,
+    )
 
     limit_at = jnp.asarray(limit, dtype=grid.dtype)
     below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
@@ -2117,6 +2163,7 @@ def _bounded_limit_below(
     limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
     n: int,
+    owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from below, using only nodes strictly
     inside `(prev_limit, limit)` so the stencil never crosses the previous cliff.
@@ -2127,8 +2174,11 @@ def _bounded_limit_below(
     read then stays at the last node strictly below `limit`, so the result is
     always a value from below the cliff even though the grid samples the
     branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
     """
-    last_below = jnp.sum(grid < limit) - 1
+    last_below = jnp.sum(grid <= limit if owns_limit_node else grid < limit) - 1
     floor = jnp.sum(grid <= prev_limit)
     hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
     lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
@@ -2143,6 +2193,7 @@ def _bounded_limit_above(
     limit: ScalarFloat | float,
     next_limit: ScalarFloat | float,
     n: int,
+    owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from above, using only nodes strictly
     inside `(limit, next_limit)` so the stencil never crosses the next cliff.
@@ -2153,8 +2204,11 @@ def _bounded_limit_above(
     read then stays at the first node strictly above `limit`, so the result is
     always a value from above the cliff even though the grid samples the
     branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
     """
-    first_above = jnp.sum(grid <= limit)
+    first_above = jnp.sum(grid < limit if owns_limit_node else grid <= limit)
     ceil = jnp.sum(grid < next_limit) - 1
     lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
     hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)

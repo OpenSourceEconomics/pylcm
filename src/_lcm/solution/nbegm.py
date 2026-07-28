@@ -90,9 +90,8 @@ class NBEGM(Solver):
     The regime's declarations select the kernel:
 
     - Case-piece split (`lcm.case_boundary` / `lcm.piece`): the binary jump step
-      on the two masked subsidy cases. The v1 scope is one binary predicate
-      splitting additive cash-on-hand contributions; multi-predicate and
-      non-additive pieces are deferred.
+      on the two masked subsidy cases. The case-piece route splits exactly
+      one additive cash-on-hand contribution across one binary predicate.
     - Piecewise-affine schedule (`lcm.piecewise_affine`): the breakpoint
       kinds pick the step — kinks/floors only, jumps only, or mixed —
       solved by `coh` inversion per continuous run and masked across the jumps.
@@ -933,7 +932,7 @@ class _RideAlongNBEGMPeriodKernel:
 
 @dataclass(frozen=True, kw_only=True)
 class _NBEGMCaseSpec:
-    """Build-time statics describing one binary case split (v1 scope)."""
+    """Build-time statics describing one binary case split."""
 
     when_callable: Callable
     """The `when` piece — its contribution applies where the predicate holds."""
@@ -955,8 +954,9 @@ class _NBEGMCaseSpec:
     """Predicate side owning the exact-boundary point (`when` or `otherwise`)."""
 
 
-# The only split output v1 knows how to route — an additive cash-on-hand shift.
-_NBEGM_V1_OUTPUT = "subsidy"
+# The only split output the case-piece route knows how to route — an additive
+# cash-on-hand shift.
+_NBEGM_SPLIT_OUTPUT = "subsidy"
 
 
 def fail_if_taste_shocks_declared(*, context: SolverBuildContext) -> None:
@@ -1081,25 +1081,27 @@ def _validate_nbegm_boundary_scope(
     liquid_state_name: str,
     reserved_names: frozenset[str],
 ) -> None:
-    """Reject case-piece declarations outside the v1 NBEGM scope.
+    """Reject case-piece declarations the case-piece kernels cannot solve.
 
-    v1 implements exactly one binary split of an additive cash-on-hand `subsidy`
+    The case-piece route splits exactly one additive cash-on-hand `subsidy`
     across one jump boundary on the liquid state, owned by the `otherwise` side,
     with pieces that read only the flat params (not states or actions). Anything
     else (a `when`-owned boundary, a continuous kink or hard constraint, a
     boundary on another variable, a non-`subsidy` output, a state-dependent piece)
     is rejected here rather than silently solved under the wrong convention.
+    A budget outside that shape is declarable as a `lcm.piecewise_affine`
+    schedule, which carries kinks, jumps, and floors together.
     """
     import inspect  # noqa: PLC0415
 
     from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
 
     for piece_set in registry.piece_sets:
-        if piece_set.output != _NBEGM_V1_OUTPUT:
+        if piece_set.output != _NBEGM_SPLIT_OUTPUT:
             msg = (
-                f"NBEGM v1 only splits an additive cash-on-hand "
-                f"{_NBEGM_V1_OUTPUT!r} output; the regime splits "
-                f"{piece_set.output!r}. Richer split outputs are deferred."
+                f"NBEGM case pieces split exactly one additive cash-on-hand "
+                f"{_NBEGM_SPLIT_OUTPUT!r} output; the regime splits "
+                f"{piece_set.output!r}."
             )
             raise NBEGMCaseError(msg)
         for piece_name in (piece_set.when_func, piece_set.otherwise_func):
@@ -1107,29 +1109,30 @@ def _validate_nbegm_boundary_scope(
             state_action_deps = sorted(set(params) & reserved_names)
             if state_action_deps:
                 msg = (
-                    f"NBEGM v1 pieces read only the flat params; piece "
+                    f"NBEGM case pieces read only the flat params; piece "
                     f"{piece_name!r} depends on the state/action "
-                    f"{state_action_deps!r}. State-dependent pieces are deferred."
+                    f"{state_action_deps!r}."
                 )
                 raise NBEGMCaseError(msg)
     for predicate_name, meta in registry.boundaries.items():
         for surface in meta.boundaries:
             if surface.equality_owner != "otherwise":
                 msg = (
-                    f"NBEGM v1 only supports `equality='otherwise'` boundaries; "
+                    f"NBEGM case boundaries own equality on the "
+                    f"`otherwise` side; "
                     f"{predicate_name!r} owns equality on the "
                     f"{surface.equality_owner!r} side."
                 )
                 raise NBEGMCaseError(msg)
             if surface.kind != "jump":
                 msg = (
-                    f"NBEGM v1 only supports `kind='jump'` boundaries; "
+                    f"NBEGM case boundaries declare `kind='jump'`; "
                     f"{predicate_name!r} declares {surface.kind!r}."
                 )
                 raise NBEGMCaseError(msg)
             if surface.variable != liquid_state_name:
                 msg = (
-                    f"NBEGM v1 only supports a boundary on the liquid state "
+                    f"NBEGM case boundaries compare the liquid state "
                     f"{liquid_state_name!r}; {predicate_name!r} compares "
                     f"{surface.variable!r}."
                 )
@@ -1238,7 +1241,7 @@ def _collect_nbegm_case_spec(
     registry = collect_nbegm_metadata(functions=functions)
     if len(registry.piece_sets) != 1:
         msg = (
-            "NBEGM v1 supports exactly one split output; the regime declares "
+            "NBEGM case pieces split exactly one output; the regime declares "
             f"{len(registry.piece_sets)}."
         )
         raise RegimeInitializationError(msg)
@@ -1246,7 +1249,7 @@ def _collect_nbegm_case_spec(
     surfaces = registry.boundaries[piece_set.predicate_name].boundaries
     if len(surfaces) != 1:
         msg = (
-            "NBEGM v1 supports exactly one boundary surface; the predicate "
+            "NBEGM case boundaries declare exactly one surface; the predicate "
             f"{piece_set.predicate_name!r} declares {len(surfaces)}."
         )
         raise RegimeInitializationError(msg)
@@ -2390,7 +2393,7 @@ def _solve_cliffed_budget(
 
     gross_return = 1.0 + return_liquid
     if is_single_jump:
-        # A single jump in cash-on-hand is the binary case the v1 step solves
+        # A single jump in cash-on-hand is the binary case the case-piece step solves
         # exactly, including its recurring jumped continuation: each interval's
         # affine segment has slope 1, so its intercept is the additive cash-on-hand
         # level on that side of the cliff.
