@@ -41,10 +41,10 @@ are reported apart:
   state between them is demonstrably better and a caller may choose either,
   provided it chooses deterministically.
 - `UNRESOLVED_SIGN` — no determinant worth reading was produced at all: an input
-  was non-finite, a product left the range where the transforms are exact, or the
-  shared scaling flattened a link that had positive width in the caller's units.
-  Nothing follows about the geometry, which may be far apart, so a caller must
-  fail loud rather than choose.
+  was non-finite, a product left the range where the transforms are exact, or an
+  operand did not survive the shared scaling intact. Nothing follows about the
+  geometry, which may be far apart, so a caller must fail loud rather than
+  choose.
 
 Collapsing the two would be a fail-open: the second case is exactly the one where
 a large true margin can be reported as no margin. Callers must mask dead
@@ -55,6 +55,9 @@ Correctness is the design constraint here, not throughput: one comparison costs 
 few hundred flops. The evaluation is branch-free and elementwise, so it stays
 `jax.jit`- and `jax.vmap`-compatible with static shapes.
 """
+
+import operator
+from functools import reduce
 
 import jax.numpy as jnp
 
@@ -130,28 +133,33 @@ def certified_margin_sign(
 
     # `D` is homogeneous of degree two in the abscissae and degree one in the
     # values, so scaling each group by a power of two multiplies `D` by a
-    # positive power of two and leaves its sign alone. Both scalings are exact,
-    # and pulling the operands into the binade around one is what keeps the
-    # products out of the range where the error-free transforms stop being
-    # error-free: a determinant that would underflow to zero in the caller's
-    # units is an ordinary number in these.
-    # Captured before scaling: the shared exponent comes from the largest
-    # abscissa, so a link far narrower than that one can have both endpoints
-    # round onto the same number. Its width would then be zero, its contribution
-    # to the determinant would vanish, and two strictly separated links would be
-    # certified as tied — a verdict that licenses the caller to take either.
-    source_width_a = a_x1 - a_x0
-    source_width_b = b_x1 - b_x0
-
+    # positive power of two and leaves its sign alone. Pulling the operands into
+    # the binade around one is what keeps the products out of the range where the
+    # error-free transforms stop being error-free: a determinant that would
+    # underflow to zero in the caller's units is an ordinary number in these.
     abscissa_exponent = normalizing_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
     value_exponent = normalizing_exponent(a_v0, a_v1, b_v0, b_v1)
-    a_x0, a_x1, b_x0, b_x1, x_query = (
-        jnp.ldexp(term, -abscissa_exponent)
-        for term in (a_x0, a_x1, b_x0, b_x1, x_query)
+    source_abscissae = (a_x0, a_x1, b_x0, b_x1, x_query)
+    source_values = (a_v0, a_v1, b_v0, b_v1)
+    scaled_abscissae = tuple(
+        jnp.ldexp(term, -abscissa_exponent) for term in source_abscissae
     )
-    a_v0, a_v1, b_v0, b_v1 = (
-        jnp.ldexp(term, -value_exponent) for term in (a_v0, a_v1, b_v0, b_v1)
-    )
+    scaled_values = tuple(jnp.ldexp(term, -value_exponent) for term in source_values)
+
+    # That homogeneity argument holds only while the scaling is exact, and the
+    # shared exponent comes from the largest abscissa, so an operand far below it
+    # need not survive: a narrow link's endpoints round onto the same number, and
+    # a query near zero flushes to zero outright. What follows is then a true
+    # statement about geometry the caller never supplied — and its most emphatic
+    # form is a certified tie, which licenses taking either link. Scaling back is
+    # exact whenever the scaling was, so the round trip tests that premise itself
+    # rather than any one way of breaking it.
+    scaling_exact = _round_trips(
+        scaled_abscissae, source_abscissae, abscissa_exponent
+    ) & _round_trips(scaled_values, source_values, value_exponent)
+
+    a_x0, a_x1, b_x0, b_x1, x_query = scaled_abscissae
+    a_v0, a_v1, b_v0, b_v1 = scaled_values
 
     numerator_a = affine_numerator(x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query)
     numerator_b = affine_numerator(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
@@ -170,14 +178,7 @@ def certified_margin_sign(
         numerator_a[0], width_b[0]
     ) & _product_in_transform_domain(numerator_b[0], width_a[0])
 
-    # A width that was positive in the caller's units must still be positive in
-    # these. Where it is not, the scaling — not the geometry — produced the zero,
-    # and no verdict drawn from the flattened determinant is evidence of
-    # anything.
-    widths_survive = ((source_width_a == 0.0) | (width_a[0] != 0.0)) & (
-        (source_width_b == 0.0) | (width_b[0] != 0.0)
-    )
-    return _certified_sign_of(determinant, finite=finite & in_domain & widths_survive)
+    return _certified_sign_of(determinant, finite=finite & in_domain & scaling_exact)
 
 
 def affine_numerator(
@@ -187,6 +188,24 @@ def affine_numerator(
     return dd_add(
         dd_mul_float(dd_from_difference(x1, x_query), v0),
         dd_mul_float(dd_from_difference(x_query, x0), v1),
+    )
+
+
+def _round_trips(
+    scaled: tuple[FloatND, ...], source: tuple[FloatND, ...], exponent: IntND
+) -> BoolND:
+    """Report whether scaling every operand by `2**-exponent` lost nothing.
+
+    Multiplying by a power of two is exact unless the result leaves the normal
+    range, and scaling back is exact under the same condition, so an operand that
+    returns to where it started passed through the scaling untouched.
+    """
+    return reduce(
+        operator.and_,
+        (
+            jnp.ldexp(scaled_term, exponent) == source_term
+            for scaled_term, source_term in zip(scaled, source, strict=True)
+        ),
     )
 
 
