@@ -347,22 +347,35 @@ recovered state, and merges the cases on the liquid grid with the branch-aware u
 envelope.
 
 ```python
+import jax.numpy as jnp
+
 import lcm
+from lcm.typing import BoolND, ContinuousState, FloatND
 
 
 @lcm.case_boundary(
-    lcm.boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    lcm.boundary("liquid", "medicaid_asset_limit", equality="otherwise", kind="jump")
 )
-def medicaid_eligible(assets, medicaid_asset_limit):
-    return assets < medicaid_asset_limit
+def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
+    """Medicaid asset test: eligible while liquid wealth is below the limit."""
+    return liquid < medicaid_asset_limit
 
 
-@lcm.piece("oop", when=medicaid_eligible)
-def oop_medicaid(medical_expense): ...
+@lcm.piece("subsidy", when=medicaid_eligible)
+def subsidy_medicaid(subsidy_high: float) -> FloatND:
+    """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
+    return jnp.asarray(subsidy_high)
 
 
-@lcm.piece("oop", otherwise=medicaid_eligible)
-def oop_private(medical_expense, insurance_plan): ...
+@lcm.piece("subsidy", otherwise=medicaid_eligible)
+def subsidy_private(subsidy_low: float) -> FloatND:
+    """Subsidy into market resources for the private (high-asset) case."""
+    return jnp.asarray(subsidy_low)
+
+
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
+    return liquid + subsidy
 ```
 
 - `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
@@ -372,9 +385,14 @@ def oop_private(medical_expense, insurance_plan): ...
 - `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
   `lcm.piece(output, when=…|otherwise=…)` marks the smooth formula for one side of an
   output. The decorators only attach metadata and return the function unchanged, so the
-  model still solves identically under `GridSearch`. v1 requires exactly one split
-  output per regime, each output covered by exactly one `when` and one `otherwise`
-  piece.
+  model still solves identically under `GridSearch`.
+- The case-piece route is scoped narrowly, and everything outside it is refused at model
+  build. A case-piece regime must split exactly one output, named `subsidy`, on a
+  boundary that is `equality="otherwise"`, `kind="jump"`, and declared on the liquid
+  state; each piece reads only flat params, never a state or action; and the regime
+  declares no discrete action and no taste shocks. Kinks, floors, and every other
+  bracket shape go through `lcm.piecewise_affine` instead — see
+  `docs/user_guide/nbegm.md`.
 - The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
   nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
   mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to

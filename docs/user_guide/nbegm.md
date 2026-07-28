@@ -40,6 +40,14 @@ threshold's exact location from finitely many black-box evaluations, so the mode
 exposes each boundary as metadata. The decorators only attach metadata and return the
 function unchanged, so the same model still solves identically under `GridSearch`.
 
+There are two declaration routes, and which one a boundary belongs to is not a matter of
+taste: **case pieces** describe a means test that hands two different formulas to the
+two sides, and **piecewise-affine schedules** describe a bracket structure — a tax, a
+taper, a floor — that one formula already spans. The case-piece route is deliberately
+narrow; everything else goes through a schedule.
+
+### Case pieces — one means-tested cliff
+
 - `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
   - `equality` — `"when"` or `"otherwise"`: the predicate side that owns the exact
     boundary point. This is part of the feasible-set definition, not a tie-break.
@@ -49,7 +57,21 @@ function unchanged, so the same model still solves identically under `GridSearch
 - `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate.
 - `lcm.piece(output, when=…)` / `lcm.piece(output, otherwise=…)` marks the smooth
   formula for one side of a split output. Every split output must be covered by exactly
-  one `when` and one `otherwise` piece; v1 requires exactly one split output per regime.
+  one `when` and one `otherwise` piece.
+
+The case-piece kernels solve a single means-tested cliff on the liquid margin, so
+`NBEGM` refuses anything wider at model build. A case-piece regime must:
+
+- split exactly one output, named `subsidy` — an additive contribution to cash-on-hand;
+- declare its boundary with `equality="otherwise"` and `kind="jump"`, on the liquid
+  state itself;
+- give each piece a signature of flat params only — no state, no action;
+- declare no discrete action and no taste shocks (the kernels maximize over consumption
+  alone and take a hard maximum).
+
+The `"when"` owner, the other two kinds, and a boundary on any other variable are
+accepted by `lcm.boundary` because a schedule uses them — they are rejected on the
+case-piece route.
 
 ```python
 import jax.numpy as jnp
@@ -85,6 +107,51 @@ def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
 
 The Medicaid-eligible subsidy exceeds the private one, so market resources — and hence
 the value function — jump down as liquid wealth crosses the limit upward.
+
+### Piecewise-affine schedules — brackets, tapers, and floors
+
+A tax schedule, a benefit taper, or a consumption floor is one formula that is affine
+between its thresholds, so there is nothing to split into pieces — the model author
+declares where the thresholds are and what kind of discontinuity each carries.
+
+- `lcm.piecewise_affine(output, *, variable, breakpoints)` marks a DAG function as a
+  schedule: `variable` is the monotone quantity the thresholds compare against (the
+  liquid state, or a derived income the regime computes), and `breakpoints` are its
+  thresholds in ascending order.
+- `lcm.affine_breakpoint(threshold, *, kind)` names one threshold parameter and its kind
+  — `"continuous_kink"` (the slope changes, the level does not), `"jump"` (the level
+  steps), or `"hard_constraint"` (a floor pins the budget flat below it).
+
+```python
+import jax.numpy as jnp
+
+import lcm
+from lcm.typing import ContinuousState, FloatND
+
+
+@lcm.piecewise_affine(
+    "tax",
+    variable="liquid",
+    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+)
+def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+    """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
+    return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
+
+
+def resources(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
+    """Cash-on-hand: liquid wealth plus base income, net of the tax."""
+    return liquid + base_income - tax
+```
+
+The thresholds are ordinary parameters, so an estimator moves them — but the step's case
+structure is fixed at build time from the *declared* order. Declare a schedule's
+breakpoints ascending in value, and keep every parameter draw in that order; a
+mixed-kind schedule whose thresholds arrive reordered is refused rather than solved.
+
+Two further limits apply to a regime with no ride-along co-state: it may declare only
+one schedule (a second schedule's thresholds would not enter the interval partition),
+and it may not combine a `"hard_constraint"` with a `"jump"` in the same schedule.
 
 ## Selecting the solver
 
