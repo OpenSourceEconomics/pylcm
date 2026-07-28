@@ -109,10 +109,17 @@ def nbegm_multi_interval_step(
     optimum. The coh inversion is degenerate there, so a flat interval's interior
     candidates are pulled onto its crossing breakpoint (where they link to the
     rising interior just above) and a flat corner segment carries the constant value
-    across the interval below. A savings-node corner chain per post-decision node
-    competes over the whole grid (the `s = 0` chain is the hard borrowing corner),
-    and the interior path, flat corners, and node chains merge by the branch-aware
-    upper envelope.
+    across the interval below. The `s = 0` corner — consume the whole cash-on-hand,
+    the hard borrowing corner — competes over the whole grid, and the interior path,
+    the flat corners, and that corner merge by the branch-aware upper envelope.
+
+    The candidate set is the Euler path plus those corners; it carries neither the
+    dense per-savings-node corner family nor the `s = savings_grid[-1]` corner that
+    `nbegm_multi_interval_step_savings` builds. A continuation kink strictly between
+    two Euler roots has no Euler root of its own, and the finite-grid optimum at
+    high cash-on-hand can be to save the grid maximum, so a regime with either shape
+    belongs on the savings-space step; here the value would sit below the dense
+    optimum in exactly those two regions.
 
     Args:
         next_value: Next period's value on `liquid_grid`.
@@ -1376,6 +1383,7 @@ def nbegm_unified_step(  # noqa: PLR0915
         next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
     interp_value = _crra_utility(consumption, crra) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
@@ -1405,7 +1413,7 @@ def nbegm_unified_step(  # noqa: PLR0915
         marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
         lower = -jnp.inf if start == 0 else breakpoints[start - 1]
         upper = jnp.inf if end == last_interval else breakpoints[end]
-        in_case = (liquid_endog >= lower) & (liquid_endog < upper)
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
             value=interp_value,
@@ -1667,7 +1675,11 @@ def _recurring_jump_case(
         next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
-    liquid_endog = consumption + savings_grid - subsidy
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
@@ -1930,7 +1942,11 @@ def _case_step(
     )
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
-    liquid_endog = consumption + savings_grid - subsidy
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
