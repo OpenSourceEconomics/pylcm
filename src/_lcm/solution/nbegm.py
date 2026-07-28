@@ -411,7 +411,15 @@ class NBEGM(Solver):
                         taste_shock_scale=0.0,
                     )
                 else:
-                    assert case_spec is not None  # noqa: S101
+                    if case_spec is None:
+                        msg = (
+                            f"Regime {context.regime_name!r} declares neither case "
+                            "pieces, a piecewise-affine schedule, nor a discrete "
+                            "action, so NBEGM has no kernel to build for it. "
+                            "Declare one of them, or use `GridSearch` for this "
+                            "regime."
+                        )
+                        raise RegimeInitializationError(msg)
                     core = _build_nbegm_core(
                         savings_grid=savings_grid, target=target, case_spec=case_spec
                     )
