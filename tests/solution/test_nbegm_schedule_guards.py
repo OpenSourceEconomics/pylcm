@@ -15,11 +15,13 @@ plausible finite solve rather than an error:
 Both are rejected at model build with the alternative named.
 """
 
+from collections.abc import Callable, Mapping
+
 import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import LinSpacedGrid
+from lcm import LinSpacedGrid, Model
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
@@ -72,7 +74,7 @@ def net_transfer(
     cliff_limit: float,
 ) -> FloatND:
     """A consumption floor below `floor_limit` plus a cliffed transfer above it."""
-    floor_part = jnp.maximum(floor_level - liquid, 0.0)
+    floor_part = jnp.maximum(floor_level - jnp.minimum(liquid, floor_limit), 0.0)
     cliff_part = jnp.where(liquid < cliff_limit, cliff_level, 0.0)
     return floor_part + cliff_part
 
@@ -89,7 +91,7 @@ def _resources_floor_and_cliff(
     return liquid + net_transfer
 
 
-def _build(*, alive_functions: dict[str, object]):
+def _build(*, alive_functions: Mapping[str, Callable[..., object]]) -> Model:
     return make_alive_dead_model(
         n_periods=3,
         n_liquid=20,
