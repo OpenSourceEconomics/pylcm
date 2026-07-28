@@ -478,3 +478,51 @@ def test_query_outside_all_branches_is_nan():
     assert bool(np.isnan(np.asarray(got_value)).all())
     assert bool(np.isnan(np.asarray(got_policy)).all())
     assert bool(np.isnan(np.asarray(got_marginal)).all())
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 1, 2, 3])
+@pytest.mark.parametrize("denominator", [3, 5, 7, 9, 11, 13, 17, 31, 63, 127])
+def test_exact_interior_tie_takes_the_right_continuous_branch(
+    dtype, order, block_size, denominator
+):
+    """A TRUE interior tie must be recognised as a tie, not as a strict win.
+
+    Branch A runs `(0, 0) -> (d, 1)` and branch B runs `(-1, 1) -> (2d-1, 2-d)`.
+    At the interior query `q = 1` both attain exactly `1/d` — the values are
+    equal as rationals, not merely close — while A's right-hand slope `+1/d`
+    exceeds B's `(1-d)/2d`. The documented rule therefore requires A's policy
+    and marginal.
+
+    `1/d` is not representable, so each branch's double-double pair carries a
+    low word that depends on how ITS segment is parameterized: the two low
+    words differ even though the exact values coincide. A selector that orders
+    candidates lexicographically on `(hi, lo)` reads that difference as strict
+    order, hands the query to B, and never runs the right-continuous rule —
+    round-6 audit F2, which found 672 wrong policy/marginal choices in 1,680
+    such ties. Only an exact comparison can classify this correctly, so this
+    test is a direct check that one is being made.
+    """
+    end = np.asarray(denominator, dtype=dtype).item()
+    far = np.asarray(2 * denominator - 1, dtype=dtype).item()
+    tail = np.asarray(2 - denominator, dtype=dtype).item()
+    branch_a = ([0.0, end], [0.0, 1.0], 0.0, 10.0)
+    branch_b = ([-1.0, far], [1.0, tail], 1.0, 20.0)
+    first, second = (branch_a, branch_b) if order == "AB" else (branch_b, branch_a)
+    labels = [0.0, 0.0, 1.0, 1.0]
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(first[0] + second[0], dtype=dtype),
+        policy=jnp.asarray([first[2]] * 2 + [second[2]] * 2, dtype=dtype),
+        value=jnp.asarray(first[1] + second[1], dtype=dtype),
+        marginal=jnp.asarray([first[3]] * 2 + [second[3]] * 2, dtype=dtype),
+        segment_id=jnp.asarray(labels, dtype=dtype),
+        x_query=jnp.asarray([1.0], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size} d={denominator}"
+    assert float(got_policy[0]) == 0.0, context
+    assert float(got_marginal[0]) == 10.0, context
+    # The tie means the published level is the shared value either way; it is
+    # the branch attribution that the exact comparison fixes.
+    assert float(got_value[0]) == pytest.approx(1.0 / denominator, rel=1e-6), context

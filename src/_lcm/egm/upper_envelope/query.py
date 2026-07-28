@@ -46,16 +46,23 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
    from the operations performed. The radius is exactly zero at node events and
    second-order small in the interior — it tracks the arithmetic, not the
    operand magnitude.
-3. **Unresolved overlaps follow a documented deterministic rule.** The
-   double-double evaluation IS the recomputation at higher precision: any two
-   candidates whose working-precision values would be ambiguous (within an ULP
-   or two) are ranked on their `(hi, lo)` pairs, compared lexicographically and
-   exactly. Two certified intervals that still overlap without being bitwise
-   equal — a true gap below ~2x the eps^2-level radius, sub-representable in
-   the stored data — are resolved by that same deterministic `(hi, lo)` order,
-   NEVER by right-continuity. A bracketed query whose candidates cannot be
-   ranked at all (non-finite interior arithmetic, e.g. infinite endpoint
-   values) fails loud: all three outputs are NaN.
+3. **What the radii cannot separate is decided EXACTLY.** A double-double pair
+   is more accurate than a float, but it is not a canonical representation of
+   the rational interpolant: two algebraically different segments that attain
+   the same exact value at the query need not produce the same low word. So
+   ordering candidates lexicographically on `(hi, lo)` reads rounding residue
+   as strict order, declares a genuine tie a strict win, and skips the
+   right-continuous rule that tie exists to trigger — publishing the wrong
+   branch's policy and marginal while the value looks right (round-6 audit F2;
+   the round-5 selector did exactly this). The certified radii are therefore
+   consumed, not merely computed: candidates whose certified interval falls
+   below the leader's are certified losers and discarded, and everything the
+   radii leave overlapping is settled by `_exact_compare`, an exact
+   cross-multiplied sign test over error-free products. A comparison thus
+   returns a certified strict sign or a TRUE equality — never an ordering
+   invented by residue. A bracketed query whose candidates cannot be ranked at
+   all (non-finite interior arithmetic, e.g. infinite endpoint values) fails
+   loud: all three outputs are NaN.
 4. **One winner index.** Each query selects a single winning candidate column
    and gathers value, policy, AND marginal from that same column, so a mixed
    A-value/B-policy result is structurally impossible.
@@ -67,6 +74,7 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
    value, matching the kernel's `side="right"` read.
 """
 
+from collections.abc import Callable
 from typing import NamedTuple
 
 import jax
@@ -180,6 +188,282 @@ def _dd_div(
 # from them. It is zero — not merely small — at node events.
 _INTERIOR_RADIUS_ULPS2 = 16.0
 
+# Screen slack on the certified radii. The overlap test compares a
+# double-double difference against the sum of two certified radii, and forming
+# that difference is itself two roundings; widening by a small factor keeps the
+# screen a guaranteed SUPERSET of the candidates that can still win. Widening
+# only ever adds exact comparisons — it can never drop a winner — so this is a
+# performance knob, not a correctness tolerance.
+_SCREEN_SLACK = 4.0
+
+# Exact-comparison expansion width. A candidate's numerator is four error-free
+# products (eight floats) and its denominator one error-free difference (two);
+# cross-multiplying the two candidates therefore yields 2 * 8 * 2 * 2 = 64
+# exactly-representable terms whose sum has the sign of `V_a - V_b`.
+_EXACT_TERMS = 64
+
+
+def _one_hot(index: jax.Array, width: int) -> BoolND:
+    """Row-wise indicator of `index` over `width` columns."""
+    return jnp.arange(width) == index[:, None]
+
+
+def _node_selection(
+    *,
+    q: FloatND,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+) -> tuple[BoolND, BoolND]:
+    """Node-event flag and which stored endpoint the candidate publishes.
+
+    Shared by the double-double evaluation and the exact comparison so the two
+    can never disagree about which lane is a node or which stored float that
+    node publishes.
+    """
+    at_left = q == left_grid
+    at_right = q == right_grid
+    # A zero-width segment sets both flags; publish its higher end (left on a
+    # value tie, matching the oracle's vertical-edge rule).
+    use_right = (at_right & ~at_left) | (at_left & at_right & (right_value > left_value))
+    return at_left | at_right, use_right
+
+
+class _ExactRatio(NamedTuple):
+    """A candidate's value at the query as an exact rational `num / den`.
+
+    `numerator` and `denominator` are unevaluated sums of exactly-representable
+    floats — error-free transforms, so no information has been discarded. The
+    denominator is canonically positive, which lets a cross-multiplied
+    comparison read its sign straight off the numerator difference.
+    """
+
+    numerator: FloatND
+    denominator: FloatND
+
+
+def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
+    """Exact rational value of one candidate per query, from its raw columns.
+
+    `V = (v0*(x1 - q) + v1*(q - x0)) / (x1 - x0)` is the same interpolant
+    `_candidate_terms` evaluates, but every factor is kept as an error-free
+    pair instead of being rounded, so the pair `(numerator, denominator)`
+    represents `V` with no error at all. A node event publishes a STORED float,
+    so its exact value is that float over one.
+    """
+    split = _dekker_split_factor(cols.dtype)
+    left_grid, right_grid = cols[..., 0], cols[..., 1]
+    left_value, right_value = cols[..., 2], cols[..., 3]
+
+    ah, al = _two_diff(right_grid, q)
+    bh, bl = _two_diff(q, left_grid)
+    dh, dl = _two_diff(right_grid, left_grid)
+    products = (
+        _two_prod(left_value, ah, split),
+        _two_prod(left_value, al, split),
+        _two_prod(right_value, bh, split),
+        _two_prod(right_value, bl, split),
+    )
+    numerator = jnp.stack([term for pair in products for term in pair], axis=-1)
+    denominator = jnp.stack([dh, dl], axis=-1)
+
+    # Canonical orientation. Endpoints may be stored in either order within a
+    # branch; negating both numerator and denominator leaves `V` unchanged.
+    flip = (dh < 0)[..., None]
+    numerator = jnp.where(flip, -numerator, numerator)
+    denominator = jnp.where(flip, -denominator, denominator)
+
+    node, use_right = _node_selection(
+        q=q,
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_value=left_value,
+        right_value=right_value,
+    )
+    node_value = jnp.where(use_right, right_value, left_value)
+    zeros = jnp.zeros_like(node_value)
+    is_node = node[..., None]
+    return _ExactRatio(
+        numerator=jnp.where(
+            is_node,
+            jnp.stack([node_value, *([zeros] * 7)], axis=-1),
+            numerator,
+        ),
+        denominator=jnp.where(
+            is_node, jnp.stack([jnp.ones_like(node_value), zeros], axis=-1), denominator
+        ),
+    )
+
+
+def _exact_sign_of_sum(terms: FloatND) -> FloatND:
+    """Exact sign of `terms.sum(-1)`, with no rounding anywhere.
+
+    Accumulates the terms into a non-overlapping floating-point expansion by
+    Shewchuk's GROW-EXPANSION: every TwoSum is exact, so the expansion's sum
+    equals the input's sum bit for bit however catastrophically the terms
+    cancel. Because the expansion is non-overlapping and increasing in
+    magnitude, its highest-index non-zero component dominates the sum of all
+    lower ones and therefore carries the sign.
+
+    Slots at or above the current length are zero and `TwoSum(Q, 0) = (Q, 0)`,
+    so the running total falls through them untouched and lands in the first
+    free slot — which is why a fixed-width buffer suffices for an expansion
+    that grows by one component per term.
+    """
+    n_term = terms.shape[-1]
+    expansion = jnp.zeros_like(terms)
+
+    def absorb_term(k: jax.Array, expansion: FloatND) -> FloatND:
+        term = jax.lax.dynamic_index_in_dim(terms, k, axis=-1, keepdims=False)
+
+        def grow(total: FloatND, component: FloatND) -> tuple[FloatND, FloatND]:
+            return _two_sum(total, component)
+
+        total, residuals = jax.lax.scan(grow, term, jnp.moveaxis(expansion, -1, 0))
+        return jax.lax.dynamic_update_index_in_dim(
+            jnp.moveaxis(residuals, 0, -1), total, k, axis=-1
+        )
+
+    expansion = jax.lax.fori_loop(0, n_term, absorb_term, expansion)
+    # NaN compares unequal to zero, so a non-finite input surfaces as a NaN
+    # sign rather than a silently-ordered comparison.
+    nonzero = expansion != 0
+    top = n_term - 1 - jnp.argmax(nonzero[..., ::-1], axis=-1)
+    leading = jnp.take_along_axis(expansion, top[..., None], axis=-1)[..., 0]
+    return jnp.where(
+        jnp.any(nonzero, axis=-1), jnp.sign(leading), jnp.zeros_like(leading)
+    )
+
+
+def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
+    """Exact sign of `V_a(q) - V_b(q)`: `+1`, `-1`, or `0` for a TRUE tie.
+
+    `V_a - V_b = (N_a*D_b - N_b*D_a) / (D_a*D_b)` with both denominators
+    positive, so the sign is that of the cross-multiplied numerator difference.
+    Every cross product of two exactly-represented terms is itself split into
+    an exact pair, so the 64 terms sum to that difference with no error and
+    `_exact_sign_of_sum` reads its sign exactly. This is the only test that can
+    tell a genuine tie from a strict gap finer than the working precision —
+    double-double values cannot, because algebraically different segment
+    parameterizations of the SAME exact value need not produce the same low
+    word (round-6 audit F2).
+    """
+    a = _exact_ratio(cols=cols_a, q=q)
+    b = _exact_ratio(cols=cols_b, q=q)
+    split = _dekker_split_factor(cols_a.dtype)
+    terms: list[FloatND] = []
+    for numerator, denominator, orientation in (
+        (a.numerator, b.denominator, 1.0),
+        (b.numerator, a.denominator, -1.0),
+    ):
+        for i in range(numerator.shape[-1]):
+            for j in range(denominator.shape[-1]):
+                # Scaling by +-1 is exact, so negation preserves the transform.
+                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
+                terms.extend([orientation * head, orientation * tail])
+    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+
+
+class _ResolveState(NamedTuple):
+    """Running state of the exact resolution loop, one entry per query."""
+
+    lead_cols: FloatND
+    tied: BoolND
+    remaining: BoolND
+
+
+def _exactly_maximal(
+    *,
+    terms: "_CandidateTerms",
+    gather: Callable[[jax.Array], FloatND],
+    q: FloatND,
+) -> BoolND:
+    """Mask of the exactly-maximal bracketing candidates, per query.
+
+    Two stages, and the split is the point of the design:
+
+    1. **Certified screen.** The double-double leader's interval is compared
+       against every other candidate's. Anything whose certified interval lies
+       strictly below the leader's is certified to lose and is discarded with
+       no further work — this is where the radius, previously computed and then
+       ignored, actually enters selection. The screen is deliberately generous:
+       it must be a superset, and a superset only costs comparisons.
+    2. **Exact resolution.** Whatever the screen could not separate is resolved
+       by `_exact_compare`, which is exact and therefore recognises a true tie
+       as a true tie. Candidates that are *certifiably* tied already — node
+       events, whose radius is zero and whose stored `(hi, lo)` pairs are
+       bitwise equal — skip it, since exactness has nothing to add there.
+
+    Consequently the loop body runs zero times on the overwhelmingly common
+    query: at a node every survivor is a certified exact tie, and in the
+    interior the runner-up is certified strictly below. `while_loop` under
+    `vmap` executes only as many iterations as some lane still needs, so an
+    empty screen costs nothing at all.
+    """
+    n_segment = terms.brackets.shape[1]
+    masked_hi = jnp.where(terms.brackets, terms.value_hi, -jnp.inf)
+    max_hi = jnp.max(masked_hi, axis=1, keepdims=True)
+    hi_tied = terms.brackets & (masked_hi == max_hi)
+    masked_lo = jnp.where(hi_tied, terms.value_lo, -jnp.inf)
+    max_lo = jnp.max(masked_lo, axis=1, keepdims=True)
+    dd_tied = hi_tied & (masked_lo == max_lo)
+
+    lead = jnp.argmax(dd_tied, axis=1)
+    lead_hot = _one_hot(lead, n_segment)
+    lead_hi = jnp.take_along_axis(terms.value_hi, lead[:, None], axis=1)
+    lead_lo = jnp.take_along_axis(terms.value_lo, lead[:, None], axis=1)
+    lead_radius = jnp.take_along_axis(terms.radius, lead[:, None], axis=1)
+
+    # Certified screen: keep candidate i when `V_i + r_i >= V_lead - r_lead`,
+    # i.e. when its certified interval still reaches the leader's. Sharing a
+    # high word is kept unconditionally — that is exactly the class where the
+    # low word is rounding residue rather than order.
+    gap_hi, gap_lo = _dd_add(terms.value_hi, terms.value_lo, -lead_hi, -lead_lo)
+    reach = _SCREEN_SLACK * (terms.radius + lead_radius)
+    contends = terms.brackets & (
+        ((gap_hi + gap_lo) >= -reach) | (terms.value_hi == lead_hi)
+    )
+    # Node events carry a zero radius and a stored value, so bitwise-equal
+    # `(hi, lo)` pairs there ARE exactly equal values; nothing to resolve.
+    certified_tie = dd_tied & (terms.radius == 0) & (lead_radius == 0)
+
+    def unresolved(state: _ResolveState) -> BoolND:
+        return jnp.any(state.remaining)
+
+    def resolve_one(state: _ResolveState) -> _ResolveState:
+        active = jnp.any(state.remaining, axis=1)
+        index = jnp.argmax(state.remaining, axis=1)
+        hot = _one_hot(index, n_segment) & state.remaining
+        cols = gather(index)
+        sign = _exact_compare(cols_a=cols, cols_b=state.lead_cols, q=q)
+        # A NaN sign (non-finite candidate arithmetic) is neither greater nor
+        # equal, so it never takes the lead; `poisoned` NaNs the query anyway.
+        greater = active & (sign > 0)
+        equal = active & (sign == 0)
+        return _ResolveState(
+            lead_cols=jnp.where(greater[:, None], cols, state.lead_cols),
+            # A promotion invalidates every earlier tie: those candidates tied
+            # with a leader now known to be strictly smaller.
+            tied=jnp.where(
+                greater[:, None],
+                hot,
+                state.tied | (hot & equal[:, None]),
+            ),
+            remaining=state.remaining & ~hot,
+        )
+
+    final = jax.lax.while_loop(
+        unresolved,
+        resolve_one,
+        _ResolveState(
+            lead_cols=gather(lead),
+            tied=certified_tie | lead_hot,
+            remaining=contends & ~certified_tie & ~lead_hot,
+        ),
+    )
+    return final.tied
+
 
 class _SegmentLinks(NamedTuple):
     """Per-link endpoints of the candidate correspondence (length `n - 1`).
@@ -248,13 +532,12 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     brackets = live[None, :] & (q >= lower) & (q <= upper)
 
     # Node events: the candidate value IS stored data; no arithmetic, radius 0.
-    at_left = q == left_grid
-    at_right = q == right_grid
-    node = at_left | at_right
-    # A zero-width segment sets both flags; publish its higher end (left on a
-    # value tie, matching the oracle's vertical-edge rule).
-    use_right = (at_right & ~at_left) | (
-        at_left & at_right & (right_value > left_value)
+    node, use_right = _node_selection(
+        q=q,
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_value=left_value,
+        right_value=right_value,
     )
 
     # Interior: compensated interpolation `left + (t/w)*d` in double-double.
@@ -392,16 +675,12 @@ def envelope_at_query(
     flat = query.reshape(-1)
     terms = _candidate_terms(block=columns, live=links.live, flat=flat)
 
-    # Certified lexicographic maximum over the exact (hi, lo) value pairs. The
-    # comparisons are exact float comparisons — no tolerance, no band — so a
-    # strict represented gap always selects the higher branch and a common
-    # translation cannot flip a winner.
-    masked_hi = jnp.where(terms.brackets, terms.value_hi, -jnp.inf)
-    max_hi = jnp.max(masked_hi, axis=1, keepdims=True)
-    hi_tied = terms.brackets & (masked_hi == max_hi)
-    masked_lo = jnp.where(hi_tied, terms.value_lo, -jnp.inf)
-    max_lo = jnp.max(masked_lo, axis=1, keepdims=True)
-    exact_tie = hi_tied & (masked_lo == max_lo)
+    # Certified screen followed by exact resolution: the winner set is the
+    # EXACTLY maximal candidates, so right-continuity is applied to genuine
+    # ties and never bypassed by a low-word residue (requirement 3).
+    exact_tie = _exactly_maximal(
+        terms=terms, gather=lambda index: columns[index], q=flat
+    )
 
     # Right-continuous break among the exactly-tied candidates only, then ONE
     # winner index per query; value, policy, and marginal are gathered from that
@@ -480,13 +759,70 @@ class _BlockedCarry(NamedTuple):
 
     any_bracket: BoolND
     poisoned: BoolND
+    has_winner: BoolND
     hi: FloatND
     lo: FloatND
+    radius: FloatND
     right_extending: BoolND
     slope: FloatND
     value: FloatND
     policy: FloatND
     marginal: FloatND
+    cols: FloatND
+
+
+def _combine_blocked(
+    *, carry: _BlockedCarry, block: _BlockedCarry, q: FloatND
+) -> _BlockedCarry:
+    """Fold a block's winner into the running winner, under the shared rule.
+
+    The cross-block comparison is the SAME certified-screen-then-exact
+    resolution the within-block reduction runs, applied to a two-candidate set.
+    Routing both through one implementation is what makes dense and blocked
+    provably agree: a bespoke lexicographic update here would re-introduce
+    exactly the low-word ordering the exact predicate exists to prevent, and
+    only on the block boundary, where no within-block test would see it.
+    """
+    stacked = _CandidateTerms(
+        brackets=jnp.stack([carry.has_winner, block.has_winner], axis=1),
+        value_hi=jnp.stack([carry.hi, block.hi], axis=1),
+        value_lo=jnp.stack([carry.lo, block.lo], axis=1),
+        radius=jnp.stack([carry.radius, block.radius], axis=1),
+        policy=jnp.stack([carry.policy, block.policy], axis=1),
+        marginal=jnp.stack([carry.marginal, block.marginal], axis=1),
+        slope=jnp.stack([carry.slope, block.slope], axis=1),
+        right_available=jnp.stack(
+            [carry.right_extending, block.right_extending], axis=1
+        ),
+    )
+    pair_cols = jnp.stack([carry.cols, block.cols], axis=1)
+    tied = _exactly_maximal(
+        terms=stacked,
+        gather=lambda index: jnp.take_along_axis(
+            pair_cols, index[:, None, None], axis=1
+        )[:, 0],
+        q=q,
+    )
+    _, key = _tie_break_slope_key(
+        tied=tied, right_available=stacked.right_available, slope=stacked.slope
+    )
+    # Column 0 is the carry, so `argmax` keeping the earlier column on a tie is
+    # precisely the dense reduction's earliest-candidate rule.
+    take = jnp.argmax(key, axis=1) == 1
+    return _BlockedCarry(
+        any_bracket=carry.any_bracket | block.any_bracket,
+        poisoned=carry.poisoned | block.poisoned,
+        has_winner=carry.has_winner | block.has_winner,
+        hi=jnp.where(take, block.hi, carry.hi),
+        lo=jnp.where(take, block.lo, carry.lo),
+        radius=jnp.where(take, block.radius, carry.radius),
+        right_extending=jnp.where(take, block.right_extending, carry.right_extending),
+        slope=jnp.where(take, block.slope, carry.slope),
+        value=jnp.where(take, block.value, carry.value),
+        policy=jnp.where(take, block.policy, carry.policy),
+        marginal=jnp.where(take, block.marginal, carry.marginal),
+        cols=jnp.where(take[:, None], block.cols, carry.cols),
+    )
 
 
 def _envelope_at_query_blocked(
@@ -530,68 +866,48 @@ def _envelope_at_query_blocked(
     ) -> tuple[_BlockedCarry, None]:
         block, block_live = block_and_live
         t = _candidate_terms(block=block, live=block_live, flat=flat)
-        # Within-block winner: identical construction to the dense reduction.
-        masked_hi = jnp.where(t.brackets, t.value_hi, -jnp.inf)
-        block_hi = jnp.max(masked_hi, axis=1)
-        hi_tied = t.brackets & (masked_hi == block_hi[:, None])
-        masked_lo = jnp.where(hi_tied, t.value_lo, -jnp.inf)
-        block_lo = jnp.max(masked_lo, axis=1)
-        tied = hi_tied & (masked_lo == block_lo[:, None])
+        # Within-block winner: identical construction to the dense reduction,
+        # through the very same certified-screen-then-exact resolution.
+        tied = _exactly_maximal(terms=t, gather=lambda index: block[index], q=flat)
         block_ra, key = _tie_break_slope_key(
             tied=tied, right_available=t.right_available, slope=t.slope
         )
-        winner = jnp.argmax(key, axis=1)[:, None]
-        block_slope = jnp.take_along_axis(key, winner, axis=1)[:, 0]
-        block_value = jnp.take_along_axis(t.value_hi, winner, axis=1)[:, 0]
-        block_policy = jnp.take_along_axis(t.policy, winner, axis=1)[:, 0]
-        block_marginal = jnp.take_along_axis(t.marginal, winner, axis=1)[:, 0]
-        # Strict lexicographic update on (hi, lo, right-extending, slope); the
-        # strict comparisons keep the earliest winner, matching the dense
-        # `argmax`, and every comparison is between values computed once inside
-        # this same compiled body. NaN keys compare false everywhere, so a
-        # poisoned block never takes; `poisoned` masks the query at the end.
-        value_tie = (block_hi == carry.hi) & (block_lo == carry.lo)
-        take = (
-            (block_hi > carry.hi)
-            | ((block_hi == carry.hi) & (block_lo > carry.lo))
-            | (
-                value_tie
-                & (
-                    (block_ra & ~carry.right_extending)
-                    | (
-                        (block_ra == carry.right_extending)
-                        & (block_slope > carry.slope)
-                    )
-                )
-            )
-        )
-        return _BlockedCarry(
-            any_bracket=carry.any_bracket | jnp.any(t.brackets, axis=1),
-            poisoned=carry.poisoned
-            | jnp.any(
+        winner = jnp.argmax(key, axis=1)
+        column = winner[:, None]
+        block_has = jnp.any(t.brackets, axis=1)
+        block_carry = _BlockedCarry(
+            any_bracket=block_has,
+            poisoned=jnp.any(
                 t.brackets & (jnp.isnan(t.value_hi) | jnp.isnan(t.value_lo)), axis=1
             ),
-            hi=jnp.where(take, block_hi, carry.hi),
-            lo=jnp.where(take, block_lo, carry.lo),
-            right_extending=jnp.where(take, block_ra, carry.right_extending),
-            slope=jnp.where(take, block_slope, carry.slope),
-            value=jnp.where(take, block_value, carry.value),
-            policy=jnp.where(take, block_policy, carry.policy),
-            marginal=jnp.where(take, block_marginal, carry.marginal),
-        ), None
+            has_winner=block_has,
+            hi=jnp.take_along_axis(t.value_hi, column, axis=1)[:, 0],
+            lo=jnp.take_along_axis(t.value_lo, column, axis=1)[:, 0],
+            radius=jnp.take_along_axis(t.radius, column, axis=1)[:, 0],
+            right_extending=block_ra,
+            slope=jnp.take_along_axis(key, column, axis=1)[:, 0],
+            value=jnp.take_along_axis(t.value_hi, column, axis=1)[:, 0],
+            policy=jnp.take_along_axis(t.policy, column, axis=1)[:, 0],
+            marginal=jnp.take_along_axis(t.marginal, column, axis=1)[:, 0],
+            cols=block[winner],
+        )
+        return _combine_blocked(carry=carry, block=block_carry, q=flat), None
 
     final, _ = jax.lax.scan(
         step,
         _BlockedCarry(
             any_bracket=jnp.zeros((n_query,), dtype=bool),
             poisoned=jnp.zeros((n_query,), dtype=bool),
+            has_winner=jnp.zeros((n_query,), dtype=bool),
             hi=jnp.full((n_query,), -jnp.inf, dtype=dtype),
             lo=jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            radius=jnp.zeros((n_query,), dtype=dtype),
             right_extending=jnp.zeros((n_query,), dtype=bool),
             slope=jnp.full((n_query,), -jnp.inf, dtype=dtype),
             value=jnp.full((n_query,), jnp.nan, dtype=dtype),
             policy=jnp.full((n_query,), jnp.nan, dtype=dtype),
             marginal=jnp.full((n_query,), jnp.nan, dtype=dtype),
+            cols=jnp.zeros((n_query, columns.shape[1]), dtype=dtype),
         ),
         (blocks, live_blocks),
     )
