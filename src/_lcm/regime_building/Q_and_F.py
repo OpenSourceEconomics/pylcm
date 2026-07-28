@@ -676,6 +676,7 @@ def get_Q_and_F_terminal_collective(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
 
@@ -698,6 +699,13 @@ def get_Q_and_F_terminal_collective(
             carries `utility_<s>` for each stakeholder in place of `utility`.
         constraints: Immutable mapping of constraint names to internal user functions.
         stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+        next_state_names: The regime's declared `next_<state>` node names, threaded
+            exactly as `get_Q_and_F_terminal` threads them, so the unproduced-read
+            guard can fire here too. A terminal builder supplies no
+            `deterministic_transitions`, so ANY `next_<state>` read by a
+            per-stakeholder utility is unproduced; without this the guard's
+            `read_names & next_state_names` intersects the empty default and the
+            model fails much later with a bare missing-argument error instead.
 
     Returns:
         A function computing the stacked per-stakeholder utilities (Q) and the
@@ -709,6 +717,7 @@ def get_Q_and_F_terminal_collective(
             functions=functions,
             constraints=constraints,
             utility_name=f"utility_{stakeholder}",
+            next_state_names=next_state_names,
         )
         for stakeholder in stakeholders
     }

@@ -1467,6 +1467,7 @@ def _build_solution_phase(
                 functions=core.functions,
                 constraints=core.constraints,
                 stakeholders=stakeholders,
+                next_state_names=next_state_names,
             )
         else:
             terminal_func = get_Q_and_F_terminal(
@@ -2128,6 +2129,7 @@ def _build_simulation_phase(  # noqa: PLR0915
                 functions=functions,
                 constraints=constraints,
                 stakeholders=stakeholders,
+                next_state_names=next_state_names,
             )
         else:
             terminal_func = get_Q_and_F_terminal(
