@@ -20,6 +20,7 @@ that: zero-mass safety survives, the derivative is restored, and no value moves.
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.regime_building.ndimage import map_coordinates
@@ -46,7 +47,7 @@ def test_a_nonzero_weight_still_propagates_an_infinite_value():
     assert float(got) == -jnp.inf
 
 
-def test_values_are_bit_identical_to_the_unrestricted_mask():
+def test_values_are_numerically_equal_to_the_unrestricted_mask():
     """Restricting the mask to non-finite values moves no finite result.
 
     `0 * v == 0` exactly for finite `v`, so masking it or not cannot change the
@@ -61,6 +62,36 @@ def test_values_are_bit_identical_to_the_unrestricted_mask():
     # ...and a -inf parked on every zero-weight node still produces no nan.
     with_infs = values.at[::7].set(-jnp.inf)
     assert not bool(jnp.isnan(zero_safe_weighted_term(weights, with_infs)).any())
+
+
+def test_the_equality_above_is_numerical_and_not_bitwise_at_signed_zero():
+    """Pin the ONE case where the two forms differ in bits: `+0` weight, negative value.
+
+    This test exists because the assertion above was originally named "bit_identical"
+    -- and could never have checked that, since `jnp.array_equal` treats `+0.0 == -0.0`
+    as True. An outside review found the gap (round-3 audit H2). The restricted mask no
+    longer fires at a finite zero-weight node, so the product carries the sign of the
+    value: `-0.0` where the old form gave `+0.0`.
+
+    Nothing downstream can observe it -- equal by comparison, same derivative, and any
+    reduction consuming the term is byte-for-byte unchanged -- but the DOCUMENTATION now
+    says "numerically equal", and this pins the exception so the stronger wording cannot
+    creep back in unchecked.
+    """
+    weight, value = jnp.asarray(0.0), jnp.asarray(-7.0)
+
+    restricted = np.asarray(zero_safe_weighted_term(weight, value))
+    unrestricted = np.asarray(weight * jnp.where(weight == 0, 0.0, value))
+
+    assert restricted == unrestricted == 0.0  # numerically equal ...
+    assert bool(np.signbit(restricted))  # ... but -0.0 ...
+    assert not bool(np.signbit(unrestricted))  # ... vs +0.0 ...
+    assert restricted.tobytes() != unrestricted.tobytes()  # ... so NOT bit-identical.
+
+    # Invisible once reduced, which is why this is documentation-only.
+    summed_new = np.asarray(jnp.sum(jnp.asarray([float(restricted), 3.0])))
+    summed_old = np.asarray(jnp.sum(jnp.asarray([float(unrestricted), 3.0])))
+    assert summed_new.tobytes() == summed_old.tobytes()
 
 
 def test_map_coordinates_gradient_is_correct_on_node():

@@ -37,11 +37,23 @@ the weight is itself a function of the argument being differentiated. An
 interpolation corner weight is exactly that: applying the unrestricted mask
 inside `map_coordinates` made ``jax.grad`` return ``-grid[c]`` instead of the
 segment slope at every on-node coordinate, with the VALUES still correct and so
-nothing but a gradient test able to see it. Restricting the mask costs nothing —
-for finite ``v``, ``0 * v == 0`` either way, so values are bit-identical to the
-unrestricted form — and only the genuine ``0 * +-inf`` case still selects, which
-has no finite derivative to preserve. See
+nothing but a gradient test able to see it. Restricting the mask costs nothing:
+for finite ``v``, ``0 * v == 0`` either way, so values are NUMERICALLY EQUAL to
+the unrestricted form, and only the genuine ``0 * +-inf`` case still selects,
+which has no finite derivative to preserve. See
 `tests/regime_building/test_zero_safe_gradients.py`.
+
+SIGNED-ZERO EXCEPTION (round-3 audit H2; this docstring said "bit-identical" and
+that was WRONG — the third time a confident identity claim here failed to an
+outside check, hence the HISTORY section below). At ``w = +0`` with a NEGATIVE
+finite ``v``, the restricted form returns ``-0.0`` where the unrestricted mask
+returned ``+0.0``: the mask no longer fires, so the sign of the product is the
+sign of ``v``. They compare equal, have the same derivative, and any reduction
+consuming them is byte-for-byte unchanged (``sum([-0.0, 3.0])`` and
+``sum([+0.0, 3.0])`` agree exactly), so no decision moves. **The claim was wrong
+because the CHECK was wrong**: it used `jnp.array_equal`, and ``+0.0 == -0.0`` is
+True, so it could not observe the difference it asserted the absence of. If you
+claim bit identity, compare BITS (`np.signbit`, `.tobytes()`), not values.
 
 HISTORY (this docstring was wrong twice; both errors are recorded because each
 was a confident claim no test could contradict, and an external re-review broke
@@ -309,11 +321,17 @@ def zero_safe_weighted_term(
     #
     # Restricting the mask to non-finite values keeps the load-bearing property and
     # costs nothing: for finite `value` the masked and unmasked products are
-    # `0 * v == 0` either way, so VALUES are bit-identical to the previous form
+    # `0 * v == 0` either way, so VALUES are NUMERICALLY EQUAL to the previous form
     # everywhere, and `d/dw` is now `value` at every finite node. Only the genuine
     # `0 * +-inf` case still selects, which is the case that has no finite derivative
     # to preserve anyway. The select remains on an OPERAND of the multiply, so the
     # FMA-contractibility argument above is unchanged.
+    #
+    # NOT bit-identical, though this comment claimed it was (round-3 audit H2): at
+    # `w = +0` with a NEGATIVE finite value the mask no longer fires, so the product
+    # carries the sign of `value` and is `-0.0` where the old form gave `+0.0`. Equal,
+    # same derivative, and byte-identical once summed -- but a different bit pattern
+    # in isolation. See the module docstring's SIGNED-ZERO EXCEPTION.
     needs_mask = (weight_arr == 0) & ~jnp.isfinite(value_arr)
     safe_value = jnp.where(needs_mask, jnp.zeros((), value_arr.dtype), value_arr)
     return weight_arr * safe_value
