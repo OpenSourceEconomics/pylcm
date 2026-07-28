@@ -11,7 +11,14 @@ import pytest
 
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
@@ -54,6 +61,16 @@ def resources(
     return liquid + subsidy - premium_cost
 
 
+def resources_without_premium(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
+    return liquid + subsidy
+
+
+def keep_health(health: DiscreteState) -> DiscreteState:
+    """Health is an absorbing ride-along state."""
+    return health
+
+
 def test_a_case_piece_regime_with_a_discrete_action_is_rejected():
     """The case-piece kernels optimize over consumption only, so both is invalid."""
     with pytest.raises(RegimeInitializationError, match="discrete action"):
@@ -80,4 +97,47 @@ def test_a_case_piece_regime_with_a_discrete_action_is_rejected():
             ),
             constraints={"feasible": feasible},
             extra_actions={"insurance_plan": DiscreteGrid(InsurancePlan)},
+        )
+
+
+@categorical(ordered=False)
+class Health:
+    good: ScalarInt
+    bad: ScalarInt
+
+
+def test_a_case_piece_regime_with_a_second_state_names_that_state() -> None:
+    """The single-axis kernels carry the liquid axis alone.
+
+    The canonical variable order leads with discrete states, so resolving the
+    liquid axis as the regime's first state would name `health` and reject the
+    boundary for comparing the wrong variable. The rejection names the extra
+    state instead.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"also declares.*health"):
+        make_alive_dead_model(
+            n_periods=3,
+            n_liquid=20,
+            liquid_max=20.0,
+            n_consumption=20,
+            alive_functions={
+                "utility": utility,
+                "savings": savings,
+                "medicaid_eligible": medicaid_eligible,
+                "subsidy_medicaid": subsidy_medicaid,
+                "subsidy_private": subsidy_private,
+                "subsidy": subsidy,
+                "resources": resources_without_premium,
+            },
+            liquid_law=next_liquid_from_savings,
+            alive_solver=resolve_solver(
+                "nbegm",
+                savings_grid=SAVINGS_GRID,
+                post_decision_function="savings",
+            ),
+            constraints={"feasible": feasible},
+            extra_states={"health": DiscreteGrid(Health)},
+            extra_state_transitions={
+                "health": {"alive": keep_health, "dead": keep_health},
+            },
         )

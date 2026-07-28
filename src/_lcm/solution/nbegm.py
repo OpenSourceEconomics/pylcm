@@ -248,8 +248,8 @@ class NBEGM(Solver):
         fail_if_taste_shocks_declared(context=context)
         validate_case_piece_smoothness(
             context=context,
-            liquid_state_name=(
-                self.continuous_state or context.state_action_space.state_names[0]
+            liquid_state_name=resolve_liquid_state_name(
+                context=context, declared=self.continuous_state
             ),
         )
 
@@ -328,10 +328,18 @@ class NBEGM(Solver):
             )
             raise RegimeInitializationError(msg)
 
+        # Every remaining route (case pieces, discrete envelope, schedule+discrete)
+        # carries the liquid axis alone, so the resolver also refuses a second state
+        # rather than letting it surface as a missing-parameter lookup inside the
+        # traced core.
         liquid_state_name = (
             schedule_spec.liquid_state_name
             if schedule_spec is not None
-            else context.state_action_space.state_names[0]
+            else _single_liquid_state_name(
+                context=context,
+                declared=self.continuous_state,
+                path="single-liquid-state kernels",
+            )
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
@@ -339,12 +347,15 @@ class NBEGM(Solver):
                 context=context,
                 budget_target=self.budget_target,
                 post_decision_function=self.post_decision_function,
+                continuous_state=self.continuous_state,
             )
             if is_discrete
             else None
         )
         case_spec = (
-            _collect_nbegm_case_spec(context=context)
+            _collect_nbegm_case_spec(
+                context=context, continuous_state=self.continuous_state
+            )
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
         )
@@ -1117,7 +1128,96 @@ def _validate_nbegm_boundary_scope(
                 raise NBEGMCaseError(msg)
 
 
-def _collect_nbegm_case_spec(*, context: SolverBuildContext) -> _NBEGMCaseSpec:
+def resolve_liquid_state_name(
+    *, context: SolverBuildContext, declared: StateName | None
+) -> StateName:
+    """Resolve a regime's liquid (Euler) axis.
+
+    The canonical variable order leads with *discrete* states, so a regime's
+    first state is its liquid one only when it declares nothing else — the
+    axis is the declared `continuous_state`, or the single continuous state
+    when the regime carries exactly one.
+
+    Args:
+        context: The regime's solver build context.
+        declared: The solver's `continuous_state`, or `None` to infer it.
+
+    Returns:
+        Name of the liquid (Euler) state.
+
+    Raises:
+        RegimeInitializationError: If the declared state is not one of the
+            regime's, or inference finds no unique continuous state.
+
+    """
+    continuous_states = tuple(
+        name
+        for name in context.state_action_space.state_names
+        if isinstance(context.grids[name], ContinuousGrid)
+    )
+    if declared is not None:
+        if declared not in continuous_states:
+            msg = (
+                f"NBEGM `continuous_state={declared!r}` is not a continuous state "
+                f"of regime {context.regime_name!r}; its continuous states are "
+                f"{continuous_states}."
+            )
+            raise RegimeInitializationError(msg)
+        return declared
+    if len(continuous_states) != 1:
+        msg = (
+            "NBEGM infers the liquid (Euler) state only when the regime carries "
+            f"exactly one continuous state; regime {context.regime_name!r} has "
+            f"{continuous_states}. Name the Euler axis with "
+            "`NBEGM(continuous_state=...)`."
+        )
+        raise RegimeInitializationError(msg)
+    return continuous_states[0]
+
+
+def _single_liquid_state_name(
+    *, context: SolverBuildContext, declared: StateName | None, path: str
+) -> StateName:
+    """Resolve the liquid axis of a regime the single-axis kernels solve.
+
+    These kernels carry one grid axis and read every other name as a flat
+    param, so a second state is refused here rather than surfacing as a
+    missing-parameter lookup inside the traced core.
+
+    Args:
+        context: The regime's solver build context.
+        declared: The solver's `continuous_state`, or `None` to infer it.
+        path: Name of the kernel path, for the message.
+
+    Returns:
+        Name of the liquid (Euler) state.
+
+    Raises:
+        RegimeInitializationError: If the regime carries any state besides the
+            liquid one, or the axis cannot be resolved.
+
+    """
+    liquid_state_name = resolve_liquid_state_name(context=context, declared=declared)
+    others = tuple(
+        name
+        for name in context.state_action_space.state_names
+        if name != liquid_state_name
+    )
+    if others:
+        msg = (
+            f"NBEGM's {path} carries the liquid axis alone; regime "
+            f"{context.regime_name!r} also declares {others}. A ride-along "
+            "co-state needs the schedule path (declare a "
+            "`lcm.piecewise_affine` schedule and a `post_decision_function`), "
+            "or use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
+    return liquid_state_name
+
+
+def _collect_nbegm_case_spec(
+    *, context: SolverBuildContext, continuous_state: StateName | None = None
+) -> _NBEGMCaseSpec:
     """Collect the single binary case split from the regime's user functions."""
     import inspect  # noqa: PLC0415
 
@@ -1146,7 +1246,9 @@ def _collect_nbegm_case_spec(*, context: SolverBuildContext) -> _NBEGMCaseSpec:
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
-        liquid_state_name=space.state_names[0],
+        liquid_state_name=_single_liquid_state_name(
+            context=context, declared=continuous_state, path="case-piece path"
+        ),
         reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
     )
     when_callable = functions[piece_set.when_func]
@@ -1989,26 +2091,9 @@ def _collect_nbegm_schedule_spec(
     # axis unambiguously. A schedule on the liquid state varies in it directly; a
     # schedule on a derived monotone quantity (gross income, MAGI) maps each
     # threshold to a per-ride-along-cell asset preimage.
-    continuous_states = tuple(
-        name for name in state_names if isinstance(context.grids[name], ContinuousGrid)
+    liquid_state_name = resolve_liquid_state_name(
+        context=context, declared=continuous_state
     )
-    if continuous_state is not None:
-        if continuous_state not in continuous_states:
-            msg = (
-                f"NBEGM `continuous_state={continuous_state!r}` is not a continuous "
-                f"state of the regime; its continuous states are {continuous_states}."
-            )
-            raise RegimeInitializationError(msg)
-        liquid_state_name = continuous_state
-    elif len(continuous_states) != 1:
-        msg = (
-            "NBEGM schedule path needs exactly one continuous (liquid) state, or "
-            "`continuous_state` naming the Euler axis when the regime carries a "
-            f"continuous co-state; the regime has {continuous_states}."
-        )
-        raise RegimeInitializationError(msg)
-    else:
-        liquid_state_name = continuous_states[0]
     ride_along_state_names = tuple(
         name for name in state_names if name != liquid_state_name
     )
@@ -3709,6 +3794,7 @@ def _collect_nbegm_discrete_spec(
     context: SolverBuildContext,
     budget_target: str = "resources",
     post_decision_function: str | None = None,
+    continuous_state: StateName | None = None,
 ) -> _NBEGMDiscreteSpec:
     """Collect the single binary/multi-valued discrete action of a smooth regime."""
     import inspect  # noqa: PLC0415
@@ -3722,7 +3808,9 @@ def _collect_nbegm_discrete_spec(
         raise RegimeInitializationError(msg)
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
-    liquid_state_name = space.state_names[0]
+    liquid_state_name = _single_liquid_state_name(
+        context=context, declared=continuous_state, path="discrete-envelope path"
+    )
     _fail_if_discrete_action_feeds_continuation(
         context=context,
         action_name=discrete_action_name,
@@ -3797,21 +3885,9 @@ def _collect_nbegm_schedule_discrete_spec(
     discrete_action_name = next(iter(space.discrete_actions))
     codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
 
-    continuous_states = tuple(
-        name
-        for name in space.state_names
-        if isinstance(context.grids[name], ContinuousGrid)
+    liquid_state_name = _single_liquid_state_name(
+        context=context, declared=continuous_state, path="schedule+discrete path"
     )
-    if continuous_state is not None:
-        liquid_state_name = continuous_state
-    elif len(continuous_states) == 1:
-        liquid_state_name = continuous_states[0]
-    else:
-        msg = (
-            "NBEGM schedule+discrete path needs exactly one continuous (liquid) "
-            f"state; the regime has {continuous_states}."
-        )
-        raise RegimeInitializationError(msg)
 
     _fail_if_discrete_action_feeds_continuation(
         context=context,
