@@ -251,6 +251,7 @@ class NBEGM(Solver):
             liquid_state_name=resolve_liquid_state_name(
                 context=context, declared=self.continuous_state
             ),
+            probe_failure=self.probe_failure,
         )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
@@ -991,6 +992,7 @@ def validate_case_piece_smoothness(
     *,
     context: SolverBuildContext,
     liquid_state_name: StateName,
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Check case coverage and reject hidden branching in a regime's pieces.
 
@@ -1003,6 +1005,9 @@ def validate_case_piece_smoothness(
         liquid_state_name: The state the case boundaries are declared on. Named
             explicitly rather than taken as the regime's first state, because a
             nested regime carries an outer margin the pieces never see.
+        probe_failure: What to do with a piece the build-time scalar fills
+            cannot trace — `"reject"` refuses the build, `"assume_declared"`
+            warns and leaves the smoothness claim to the model author.
 
     Raises:
         NBEGMCaseError: A split output is not fully covered, a boundary declares
@@ -1057,7 +1062,10 @@ def validate_case_piece_smoothness(
             n_params = len(inspect.signature(piece).parameters)
             abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
             violations += find_jaxpr_violations(
-                piece, abstract_args=abstract_args, mode="smooth_user"
+                piece,
+                abstract_args=abstract_args,
+                mode="smooth_user",
+                probe_failure=probe_failure,
             )
     if violations:
         from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
@@ -1982,8 +1990,10 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
                         jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
                         leaves = jax.tree_util.tree_leaves(jac)
                         worst = max(
-                            worst,
-                            *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                            [
+                                worst,
+                                *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                            ]
                         )
             return worst
 
@@ -4052,7 +4062,7 @@ def _build_nbegm_schedule_discrete_core(
             endog_grid=liquid,
             value=value,
             marginal_utility=marginal,
-            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
+            taste_shock_scale=jnp.asarray(taste_shock_scale, dtype=value.dtype),
         )
         return value, carry
 
@@ -4122,7 +4132,7 @@ def _build_nbegm_discrete_core(
             endog_grid=liquid,
             value=value,
             marginal_utility=marginal,
-            taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
+            taste_shock_scale=jnp.asarray(taste_shock_scale, dtype=value.dtype),
         )
         return value, carry
 

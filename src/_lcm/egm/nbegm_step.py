@@ -44,6 +44,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.crra import crra_utility
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
@@ -162,7 +163,7 @@ def nbegm_multi_interval_step(
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = slope_endog * consumption ** (-crra)
 
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
@@ -1216,7 +1217,7 @@ def _floor_optimum(
     fractions = jnp.linspace(1e-4, 1.0, n_dense)
     consumption = fractions * floor_coh
     next_liquid = gross_return * (floor_coh - consumption) + income
-    value = _crra_utility(consumption, crra) + discount_factor * jnp.interp(
+    value = crra_utility(consumption, crra) + discount_factor * jnp.interp(
         next_liquid, liquid_grid, next_value
     )
     best = jnp.argmax(value)
@@ -1385,7 +1386,7 @@ def nbegm_unified_step(  # noqa: PLR0915
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
-    interp_value = _crra_utility(consumption, crra) + discount_factor * value_next
+    interp_value = crra_utility(consumption, crra) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
     )
@@ -1529,7 +1530,7 @@ def _boundary_targeting_coh(
     )
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
-        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
     )
     # The targeted saving is fixed to the cliff, so consumption moves with the
     # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
@@ -1680,7 +1681,7 @@ def _recurring_jump_case(
         jnp.nan,
         consumption + savings_grid - subsidy,
     )
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = _next_segment_id(interior_segment)
@@ -1947,7 +1948,7 @@ def _case_step(
         jnp.nan,
         consumption + savings_grid - subsidy,
     )
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
     # so the interior path may carry several monotone segments.
@@ -2038,7 +2039,7 @@ def _boundary_targeting_branch(
     )
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
-        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
     )
     kink_marginal = kink_consumption ** (-crra)
     kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
@@ -2248,16 +2249,8 @@ def _no_save_corner(
     safe = jnp.where(feasible, coh, 1.0)
     return mask_dead_candidates(
         endog_grid=endog_grid,
-        value=_crra_utility(safe, crra) + discount_factor * continuation,
+        value=crra_utility(safe, crra) + discount_factor * continuation,
         policy=coh,
         marginal=coh_slope * safe ** (-crra),
         valid=feasible & valid,
-    )
-
-
-def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
     )

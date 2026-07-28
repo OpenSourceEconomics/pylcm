@@ -270,6 +270,7 @@ class NNBEGM(Solver):
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         template = keeper_kernels.continuation_template
+        _fail_if_inner_carry_rows_not_grid_aligned(inner=self.inner)
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         outer_grid_values = self.outer_grid.to_jax()
         period_kernels = MappingProxyType(
@@ -535,6 +536,25 @@ def _fail_if_nnbegm_outer_post_decision_is_inner(
             f"'{inner_post_decision}'. The outer post-decision (the next-period "
             "durable stock) and the inner post-decision (the liquid savings) "
             "must be distinct functions."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:
+    """Refuse an inner solver whose carry rows do not sit on the state grid.
+
+    The bridged outer envelope replaces `value` and `marginal_utility` per
+    candidate and rides the keeper's `endog_grid` through unchanged, which is
+    only correct when every candidate publishes rows at the same abscissae.
+    """
+    if not inner.carry_rows_share_state_grid:
+        msg = (
+            f"NNBEGM's inner solver {type(inner).__name__} publishes carry rows "
+            "off the shared state grid, but the bridged outer envelope folds "
+            "candidates pointwise and reuses the keeper's `endog_grid`, so the "
+            "folded rows would pair one candidate's values with another's "
+            "abscissae. Use an inner solver whose "
+            "`carry_rows_share_state_grid` is True."
         )
         raise RegimeInitializationError(msg)
 
