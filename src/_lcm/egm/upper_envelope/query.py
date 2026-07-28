@@ -798,7 +798,7 @@ def envelope_at_query(
 def _right_continuous_winner(
     *,
     tied: BoolND,
-    terms: "_CandidateTerms",
+    terms: _CandidateTerms,
     gather: Callable[[jax.Array], FloatND],
 ) -> tuple[BoolND, jax.Array]:
     """Per-query right-continuous winner among the EXACTLY value-tied candidates.
