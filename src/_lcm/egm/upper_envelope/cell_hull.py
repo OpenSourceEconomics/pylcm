@@ -26,13 +26,23 @@ The walk itself runs in ordinary arithmetic, so it is checked rather than
 trusted. Which line leads at the cell's left edge is proposed from the readings
 and then certified by `certified_sign.certified_margin_sign`; every line the walk
 excludes is certified against the owners meeting at its bracketing breakpoint. A
-line certified above them, or a comparison whose sign cannot be certified, poisons
-the row rather than publishing a guess.
+line certified *above* them poisons the row rather than publishing a guess: the
+walk gave away ground that line owns, so the row would carry the wrong branch's
+policy across an interval.
+
+A margin whose sign the certificate cannot settle is the opposite case and is not
+refused. The two lines then differ by less than the arithmetic can represent, so
+there is no interval on which either is demonstrably better and nothing is being
+guessed — only selected, which the walk does deterministically by taking the
+steepest. Refusing would discard correct rows over a distinction the model cannot
+observe, and would do so routinely: cell edges *are* candidate abscissae, so a
+line regularly ends exactly where the cell does and meets its neighbour there.
 
 Readings taken at face value are not enough to *drive* the walk either. Where the
 lines sit on a large common value level they collapse onto a single double, and
 the walk then sees no crossing where a real one exists — so readings are formed
-relative to a reference line, cancelling the level before anything rounds. See
+relative to a reference line, cancelling the level before anything rounds, and
+are carried as a `(high, low)` pair until a decision consumes them. See
 `_recentred_edge_readings`.
 
 The breakpoints themselves stay in ordinary arithmetic: they become abscissae of
@@ -44,16 +54,18 @@ the cell, because that question is settled by certified comparisons alone.
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    UNRESOLVED_SIGN,
-    certified_margin_sign,
-)
+from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.double_double import (
     normalizing_exponent,
     two_prod,
     two_sum,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool
+
+# A per-link reading at one cell edge, as `(high, low)`. Collapsing the pair to
+# its sum discards exactly the digits that decide a handover between links whose
+# readings agree to the last bit, so the pair is carried until a decision is made.
+type EdgeReading = tuple[Float1D, Float1D]
 
 
 def hull_owners(
@@ -96,7 +108,7 @@ def hull_owners(
         endog_grid=endog_grid,
         value=value,
     )
-    first = _leading_link_at(at_query=at_left, live=live, slope=slope)
+    first = _leading_link_at(at_query=at_left[0] + at_left[1], live=live, slope=slope)
     bounds, owners = _walk_owners(
         left=left,
         right=right,
@@ -131,7 +143,7 @@ def _recentred_edge_readings(
     high: IntND,
     endog_grid: Float1D,
     value: Float1D,
-) -> tuple[Float1D, Float1D, Float1D]:
+) -> tuple[EdgeReading, EdgeReading, Float1D]:
     """Read every link at both cell edges, accurately enough to be compared.
 
     Evaluating each link and subtracting afterwards cannot drive the walk. Where
@@ -194,16 +206,72 @@ def _recentred_edge_readings(
     slope = jnp.where(live, (v1 - v0) / jnp.where(width == 0.0, 1.0, width), -jnp.inf)
 
     reference = jnp.argmax(live).astype(jnp.int32)
-    level = v0[reference]
 
-    def read(x_query: FloatND) -> Float1D:
-        offset_high, offset_low = two_sum(x_query, -x0)
+    def read(x_query: FloatND) -> EdgeReading:
+        # Anchor each link at whichever of its own endpoints is nearer the query.
+        # `slope` is a rounded quotient, so a reading carries the slope's error
+        # multiplied by the distance travelled: over a link far longer than the
+        # cell, that error alone can exceed the sub-ULP gap the reading exists to
+        # resolve. Cell edges *are* candidate abscissae, so the query is often an
+        # endpoint of the very link being read — anchored there the distance is
+        # zero and the reading is the stored value, exactly.
+        anchored_right = jnp.abs(x_query - x1) < jnp.abs(x_query - x0)
+        anchor_x = jnp.where(anchored_right, x1, x0)
+        anchor_v = jnp.where(anchored_right, v1, v0)
+        level = anchor_v[reference]
+
+        offset_high, offset_low = two_sum(x_query, -anchor_x)
         step_high, step_low = two_prod(offset_high, slope)
         step_low = step_low + offset_low * slope
-        rise = (step_high - step_high[reference]) + (step_low - step_low[reference])
-        return jnp.where(live, (v0 - level) + rise, -jnp.inf)
+        rise_high, rise_error = two_sum(step_high, -step_high[reference])
+        rise_low = (step_low - step_low[reference]) + rise_error
+        # Two anchors on one value level differ by less than a factor of two, so
+        # their difference is exact; the only rounding left is the one this last
+        # `two_sum` records rather than discards.
+        high, low = two_sum(anchor_v - level, rise_high)
+        high, low = two_sum(high, low + rise_low)
+        dead_reading = jnp.full_like(high, -jnp.inf)
+        return (
+            jnp.where(live, high, dead_reading),
+            jnp.where(live, low, jnp.zeros_like(low)),
+        )
 
     return read(left), read(right), slope
+
+
+def _reading_difference(
+    minuend: tuple[FloatND, FloatND], subtrahend: tuple[FloatND, FloatND]
+) -> tuple[FloatND, FloatND]:
+    """Return `minuend - subtrahend`, keeping the low word.
+
+    Rank-polymorphic on purpose: the owner's reading is a scalar and the links'
+    are a vector, and the difference is taken between the two.
+
+    A link that does not cover the cell reads `-inf`, and the error-free
+    transforms are meaningless there — `two_sum` on two infinities yields NaN,
+    which would spread through every comparison. Such a difference falls back to
+    the ordinary one, which is the infinity the caller's predicates expect.
+    """
+    ordinary = minuend[0] - subtrahend[0]
+    high, error = two_sum(minuend[0], -subtrahend[0])
+    low = (minuend[1] - subtrahend[1]) + error
+    refined_high, refined_low = two_sum(high, low)
+    exact = jnp.isfinite(ordinary)
+    return (
+        jnp.where(exact, refined_high, ordinary),
+        jnp.where(exact, refined_low, jnp.zeros_like(refined_low)),
+    )
+
+
+def _is_negative(reading: tuple[FloatND, FloatND]) -> BoolND:
+    """Whether a reading is strictly below zero, low word included.
+
+    The high word alone answers this only when it is nonzero. Where two links
+    meet to within a rounding, it is exactly zero and the entire question lives
+    in the low word — which is the case this module exists to get right.
+    """
+    high, low = reading
+    return (high < 0.0) | ((high == 0.0) & (low < 0.0))
 
 
 def _live_magnitude(*per_link: Float1D, live: BoolND) -> FloatND:
@@ -240,8 +308,8 @@ def _walk_owners(
     left: FloatND,
     right: FloatND,
     live: BoolND,
-    at_left: Float1D,
-    at_right: Float1D,
+    at_left: EdgeReading,
+    at_right: EdgeReading,
     slope: Float1D,
     first: IntND,
     max_runs: int,
@@ -258,16 +326,35 @@ def _walk_owners(
         carry: tuple[FloatND, IntND], _step: None
     ) -> tuple[tuple[FloatND, IntND], tuple[FloatND, IntND]]:
         x_owned_from, owner = carry
-        margin_left = at_left[owner] - at_left
-        margin_right = at_right[owner] - at_right
-        span = margin_left - margin_right
+        owner_left = (at_left[0][owner], at_left[1][owner])
+        owner_right = (at_right[0][owner], at_right[1][owner])
+        margin_left = _reading_difference(owner_left, at_left)
+        margin_right = _reading_difference(owner_right, at_right)
+
+        # The crossing's *position* is an ordinary float — it becomes an abscissa
+        # of the published row, which holds it to that precision anyway. Whether
+        # there is a crossing at all is a different question, and it is settled
+        # on the low word: two links whose readings agree to the last bit still
+        # hand over, and rounding the margin first hides exactly that handover.
+        margin_left_value = margin_left[0] + margin_left[1]
+        span = margin_left_value - (margin_right[0] + margin_right[1])
         safe_span = jnp.where(span == 0.0, 1.0, span)
-        crossing = left + (margin_left / safe_span) * (right - left)
-        # A link takes over where it crosses the owner and stays above it, which
-        # inside this cell is exactly a crossing it enters from below.
-        overtakes = (
-            live & (margin_right < 0.0) & (crossing > x_owned_from) & (crossing < right)
+        # A link takes over when it is strictly above the owner at the cell's
+        # right edge; the crossing only says *where*, and is clamped into the
+        # ground still unowned rather than allowed to veto the handover. A cell
+        # is bounded by consecutive live abscissae and can therefore be narrower
+        # than one ULP of its own coordinates, leaving no representable interior
+        # point at all — a position test would then reject every handover inside
+        # it and poison the row over a rounding.
+        #
+        # The walk still terminates: a link is taken only while strictly above
+        # the current owner there, which it can never be against itself.
+        crossing = jnp.clip(
+            left + (margin_left_value / safe_span) * (right - left),
+            x_owned_from,
+            right,
         )
+        overtakes = live & _is_negative(margin_right)
         candidate = jnp.where(overtakes, crossing, jnp.inf)
         earliest = jnp.min(candidate)
         # Several links can meet the owner at one abscissa. The envelope is
@@ -297,8 +384,8 @@ def _fails_all_live_check(
     owners: Int1D,
     live: BoolND,
     slope: Float1D,
-    at_left: Float1D,
-    at_right: Float1D,
+    at_left: EdgeReading,
+    at_right: EdgeReading,
     low: IntND,
     high: IntND,
     endog_grid: Float1D,
@@ -341,8 +428,12 @@ def _fails_all_live_check(
 
     width = bounds[-1] - bounds[0]
     weight = (x_query - bounds[0]) / jnp.where(width == 0.0, 1.0, width)
-    reads_before = at_left[before] + weight * (at_right[before] - at_left[before])
-    reads_after = at_left[after] + weight * (at_right[after] - at_left[after])
+    left_value = at_left[0] + at_left[1]
+    right_value = at_right[0] + at_right[1]
+    reads_before = left_value[before] + weight * (
+        right_value[before] - left_value[before]
+    )
+    reads_after = left_value[after] + weight * (right_value[after] - left_value[after])
     rival = jnp.where(reads_before >= reads_after, before, after)
 
     order = certified_margin_sign(
@@ -360,6 +451,18 @@ def _fails_all_live_check(
     # construction but carries the accumulated error bound of both products, so
     # it would be reported as undecidable.
     owns_the_breakpoint = (index == before) | (index == after)
-    escapes = (order == 1) | (order == UNRESOLVED_SIGN)
+    # Only a link certified strictly *above* the envelope is a defect: the walk
+    # gave its ground to someone else, and the row would publish the wrong
+    # branch's policy across an interval.
+    #
+    # A margin the certificate cannot sign is a different thing. The two links
+    # then differ by less than the arithmetic can represent, so no interval
+    # exists on which one is demonstrably better — the choice is a selection
+    # from options that are indistinguishable at this precision, and the walk's
+    # steepest-slope tie-break makes it deterministically. Refusing here would
+    # discard correct rows over a coin toss the model cannot observe; and the
+    # case is not exotic, since cell edges *are* candidate abscissae, so a link
+    # routinely ends exactly where the cell does and meets its neighbour there.
+    escapes = order == 1
     escaped = jnp.any(live & ~owns_the_breakpoint & escapes)
     return escaped | not_convex

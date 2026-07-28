@@ -38,6 +38,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
 )
+from tests.conftest import X64_ENABLED
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -262,10 +263,13 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
     are dense-search truth rather than an out-of-domain extrapolation.
 
     The constants are pinned on CPU x64. The dense grid-search argmax breaks
-    near-ties between adjacent action nodes differently across backends, so exact
-    reproduction is a same-platform regression guard, not a cross-platform one.
+    near-ties between adjacent action nodes differently across backends and across
+    precisions — at float32 the two sides of a near-tie are not resolvable at all,
+    so the winner is a legitimately different action node and the value moves by a
+    finite amount rather than by rounding. Exact reproduction is therefore a
+    same-platform, same-precision regression guard.
     """
-    if jax.default_backend() != "cpu":
+    if jax.default_backend() != "cpu" or not X64_ENABLED:
         pytest.skip("Oracle constants are pinned on CPU x64 (grid-search argmax ties).")
     for (ix, iz), expected in _ORACLE_CELLS.items():
         np.testing.assert_allclose(

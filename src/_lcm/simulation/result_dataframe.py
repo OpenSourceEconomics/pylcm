@@ -117,7 +117,19 @@ def _process_regime(
                 regime_params=regime_params,
                 subject_batch_size=subject_batch_size,
             )
-            data.update(target_values)
+            n_rows = len(data["period"])
+            data.update(
+                {
+                    # A target that reads no per-subject variable evaluates to one
+                    # value for the whole regime and arrives 0-d. Give it its rows
+                    # here rather than leaving pandas to broadcast it: pandas does
+                    # not recognize a 0-d device array as a numeric scalar and
+                    # would build an object column, costing it arithmetic,
+                    # aggregation and Arrow round-tripping.
+                    name: jnp.full(n_rows, value) if jnp.ndim(value) == 0 else value
+                    for name, value in target_values.items()
+                }
+            )
 
     return pd.DataFrame(data)
 

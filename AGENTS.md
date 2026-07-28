@@ -539,6 +539,63 @@ assert df["wealth"].notna().all()
 `not isnan` and `no exception raised` belong in CI smoke tests, not in the unit tests
 for the feature itself.
 
+### Precision-aware tolerances — take them from the policy, never hardcode
+
+The suite runs at both precisions: `pytest --precision=64` (the default) and
+`pytest --precision=32`. `tests/conftest.py` sets `jax_enable_x64` accordingly and
+publishes the matching tolerance as `DECIMAL_PRECISION` — **12** at float64, **5** at
+float32. Import it; do not write a numeric tolerance that only one precision can meet.
+
+```python
+# Good — one assertion, valid at both precisions
+from numpy.testing import assert_array_almost_equal as aaae
+
+from tests.conftest import DECIMAL_PRECISION
+
+aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+# Bad — float32 cannot represent this at all
+np.testing.assert_allclose(got, expected, rtol=1e-12, atol=1e-12)
+```
+
+A hardcoded `1e-12` is roughly five orders of magnitude below float32 machine epsilon
+(`~1.19e-7`), so such a test fails at `--precision=32` for every implementation, correct
+or not — it reports the format, not the code. Since `jax_enable_x64` is **False** by
+default outside the suite, float32 is what users actually run, so a test that cannot
+pass there leaves the default configuration uncovered.
+
+Choose the instrument by what is being asserted:
+
+- **A reported quantity** (a value, a policy, a moment) carries rounding, so it takes a
+  tolerance — and the tolerance belongs to the precision, i.e. `DECIMAL_PRECISION`.
+- **A structural predicate** — which branch owns a state, whether a constraint binds,
+  which candidate is the argmax — is discrete, and no tolerance is the right instrument.
+  A tie broken the wrong way moves the answer by a finite amount, not by an ULP, so a
+  tolerance wide enough to absorb it is also wide enough to hide a real defect. Assert
+  the decision itself, and let the arithmetic that makes it fail loudly when it cannot
+  decide. See `.ai-instructions/modules/math.md`, "Floating-point decisions".
+- **Absolute vs relative** matters once magnitudes vary: `assert_array_almost_equal` is
+  an *absolute* check, so on large-valued arrays prefer `assert_allclose` with an `rtol`
+  derived from the same policy.
+
+Which invariances a structural predicate has to satisfy is not uniform, so assert only
+the ones that carry numerical content:
+
+- **Across batch size — required, exactly.** `batch_size` partitions a computation whose
+  result does not depend on the partition, so any difference in a published value or
+  policy is a defect, never rounding. Test it as equality of the discrete choice.
+- **Across precision — not required.** Two candidates separated at float64 can be
+  indistinguishable at float32, and the honest float32 answer is then a *deterministic*
+  tie-break, not agreement with float64. Requiring the two to match would forbid the
+  ordinary working pattern of a coarse float32 first pass followed by a float64 polish.
+  What float32 owes is that repeated runs agree with each other, and that the value it
+  publishes is within its own resolution of the optimum — not that it picks the same
+  leg.
+- **Across device — out of scope.** Reduction order and library kernels vary, and a
+  whole program has many places for that to surface. Do not write cross-device equality
+  tests.
+
 ### Mechanics
 
 - Use plain pytest functions, never test classes (`class TestFoo`)
