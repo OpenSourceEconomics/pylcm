@@ -21,11 +21,11 @@ cross-multiplied determinant
 D = N_a w_b - N_b w_a .
 ```
 
-`D` is evaluated in double-double arithmetic built from error-free transforms
-(Knuth's `two_sum`, Dekker's `two_prod`), which are exact. The only inexactness
-is the low-order tail each renormalization discards, and that tail is captured
-exactly and accumulated into a `dropped` bound. Two properties follow, and they
-are what the envelope relies on:
+`D` is evaluated in the double-double arithmetic of `double_double`, whose
+error-free transforms are exact. The only inexactness is the low-order tail each
+renormalization discards, and that tail is captured exactly and accumulated into
+a `dropped` bound. Two properties follow, and they are what the envelope relies
+on:
 
 - `dropped` is exactly zero whenever the whole evaluation was exact, so a genuine
   tie (a crossing sitting exactly on a node, or a link compared with itself) is
@@ -46,6 +46,15 @@ few hundred flops. The evaluation is branch-free and elementwise, so it stays
 
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope.double_double import (
+    DoubleDouble,
+    dd_add,
+    dd_from_difference,
+    dd_mul,
+    dd_mul_float,
+    dd_negate,
+    normalizing_exponent,
+)
 from lcm.typing import BoolND, FloatND, IntND
 
 # Returned where the sign cannot be certified; callers must fail loud on it.
@@ -88,16 +97,6 @@ def certified_margin_sign(
         non-finite input).
 
     """
-    numerator_a = _affine_numerator(x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query)
-    numerator_b = _affine_numerator(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
-    width_a = _dd_from_difference(a_x1, a_x0)
-    width_b = _dd_from_difference(b_x1, b_x0)
-
-    determinant = _dd_add(
-        _dd_mul(numerator_a, width_b),
-        _dd_negate(_dd_mul(numerator_b, width_a)),
-    )
-
     finite = (
         jnp.isfinite(a_x0)
         & jnp.isfinite(a_x1)
@@ -109,22 +108,68 @@ def certified_margin_sign(
         & jnp.isfinite(b_v1)
         & jnp.isfinite(x_query)
     )
-    return _certified_sign_of(determinant, finite=finite)
+
+    # `D` is homogeneous of degree two in the abscissae and degree one in the
+    # values, so scaling each group by a power of two multiplies `D` by a
+    # positive power of two and leaves its sign alone. Both scalings are exact,
+    # and pulling the operands into the binade around one is what keeps the
+    # products out of the range where the error-free transforms stop being
+    # error-free: a determinant that would underflow to zero in the caller's
+    # units is an ordinary number in these.
+    abscissa_exponent = normalizing_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
+    value_exponent = normalizing_exponent(a_v0, a_v1, b_v0, b_v1)
+    a_x0, a_x1, b_x0, b_x1, x_query = (
+        jnp.ldexp(term, -abscissa_exponent)
+        for term in (a_x0, a_x1, b_x0, b_x1, x_query)
+    )
+    a_v0, a_v1, b_v0, b_v1 = (
+        jnp.ldexp(term, -value_exponent) for term in (a_v0, a_v1, b_v0, b_v1)
+    )
+
+    numerator_a = affine_numerator(x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query)
+    numerator_b = affine_numerator(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
+    width_a = dd_from_difference(a_x1, a_x0)
+    width_b = dd_from_difference(b_x1, b_x0)
+
+    product_a = dd_mul(numerator_a, width_b)
+    product_b = dd_mul(numerator_b, width_a)
+    determinant = dd_add(product_a, dd_negate(product_b))
+
+    # Normalization makes an underflowed product unreachable for representable
+    # inputs, but it is the premise the certificate rests on rather than an
+    # observation, so it is checked: outside the domain where `two_prod` is
+    # exact, a zero is not evidence of a tie and the sign stays unresolved.
+    in_domain = _product_in_transform_domain(
+        numerator_a[0], width_b[0]
+    ) & _product_in_transform_domain(numerator_b[0], width_a[0])
+    return _certified_sign_of(determinant, finite=finite & in_domain)
 
 
-def _affine_numerator(
+def affine_numerator(
     *, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND, x_query: FloatND
-) -> tuple[FloatND, FloatND, FloatND]:
+) -> DoubleDouble:
     """Return `v0*(x1 - x) + v1*(x - x0)`, the width-scaled value at `x`."""
-    return _dd_add(
-        _dd_mul_float(_dd_from_difference(x1, x_query), v0),
-        _dd_mul_float(_dd_from_difference(x_query, x0), v1),
+    return dd_add(
+        dd_mul_float(dd_from_difference(x1, x_query), v0),
+        dd_mul_float(dd_from_difference(x_query, x0), v1),
     )
 
 
-def _certified_sign_of(
-    value: tuple[FloatND, FloatND, FloatND], *, finite: BoolND
-) -> IntND:
+def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
+    """Report whether `two_prod(a, b)` stays inside its exact domain.
+
+    Dekker's transform is exact only while the product and the splitting
+    intermediates stay normal. A product that underflows to zero, or lands among
+    the subnormals, silently loses the tail the certificate reads — so such a
+    product must never be mistaken for an exact zero.
+    """
+    product = jnp.abs(a * b)
+    tiny = jnp.finfo(product.dtype).tiny
+    both_nonzero = (a != 0.0) & (b != 0.0)
+    return jnp.isfinite(product) & (~both_nonzero | (product >= tiny))
+
+
+def _certified_sign_of(value: DoubleDouble, *, finite: BoolND) -> IntND:
     """Turn a double-double with an error bound into a certified sign."""
     high, low, dropped = value
     estimate = high + low
@@ -143,124 +188,3 @@ def _certified_sign_of(
         ),
     )
     return jnp.where(finite, sign, unresolved).astype(jnp.int32)
-
-
-def _two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Return `(s, e)` with `a + b == s + e` exactly (Knuth)."""
-    s = a + b
-    b_virtual = s - a
-    a_virtual = s - b_virtual
-    return s, (a - a_virtual) + (b - b_virtual)
-
-
-def _split(a: FloatND) -> tuple[FloatND, FloatND]:
-    """Split `a` into two half-precision halves with `a == hi + lo` exactly."""
-    n_mantissa = jnp.finfo(a.dtype).nmant
-    factor = jnp.asarray(2.0 ** ((n_mantissa + 2) // 2) + 1.0, dtype=a.dtype)
-    c = factor * a
-    a_big = c - a
-    a_hi = c - a_big
-    return a_hi, a - a_hi
-
-
-def _two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Return `(p, e)` with `a * b == p + e` exactly (Dekker)."""
-    p = a * b
-    a_hi, a_lo = _split(a)
-    b_hi, b_lo = _split(b)
-    error = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
-    return p, error
-
-
-def _dd_from_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, FloatND]:
-    """Return the exact difference `a - b` as a double-double."""
-    high, low = _two_sum(a, -b)
-    return high, low, jnp.zeros_like(high)
-
-
-def _dd_negate(
-    value: tuple[FloatND, FloatND, FloatND],
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Return the negation of a double-double, preserving its error bound."""
-    high, low, dropped = value
-    return -high, -low, dropped
-
-
-def _dd_add_float(
-    value: tuple[FloatND, FloatND, FloatND], addend: FloatND
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Add a plain float to a double-double, accumulating the discarded tail."""
-    high, low, dropped = value
-    sum_high, error_high = _two_sum(high, addend)
-    low_sum, error_low = _two_sum(low, error_high)
-    new_high, new_low = _two_sum(sum_high, low_sum)
-    return new_high, new_low, dropped + jnp.abs(error_low)
-
-
-def _dd_add(
-    left: tuple[FloatND, FloatND, FloatND],
-    right: tuple[FloatND, FloatND, FloatND],
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Add two double-doubles, accumulating both error bounds and the tail."""
-    left_high, left_low, left_dropped = left
-    right_high, right_low, right_dropped = right
-    sum_high, error_high = _two_sum(left_high, right_high)
-    sum_low, error_low = _two_sum(left_low, right_low)
-    low_sum, tail = _two_sum(error_high, sum_low)
-    new_high, new_low = _two_sum(sum_high, low_sum)
-    dropped = left_dropped + right_dropped + jnp.abs(tail) + jnp.abs(error_low)
-    return new_high, new_low, dropped
-
-
-def _dd_mul_float(
-    value: tuple[FloatND, FloatND, FloatND], factor: FloatND
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Multiply a double-double by a plain float."""
-    high, low, dropped = value
-    product_high, error_high = _two_prod(high, factor)
-    product_low, error_low = _two_prod(low, factor)
-    accumulated = (
-        product_high,
-        jnp.zeros_like(product_high),
-        jnp.zeros_like(product_high),
-    )
-    for term in (error_high, product_low, error_low):
-        accumulated = _dd_add_float(accumulated, term)
-    new_high, new_low, new_dropped = accumulated
-    return new_high, new_low, new_dropped + dropped * jnp.abs(factor)
-
-
-def _dd_mul(
-    left: tuple[FloatND, FloatND, FloatND],
-    right: tuple[FloatND, FloatND, FloatND],
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Multiply two double-doubles, accumulating both error bounds and the tail."""
-    left_high, left_low, left_dropped = left
-    right_high, right_low, right_dropped = right
-    product, error = _two_prod(left_high, right_high)
-    cross_high, cross_high_error = _two_prod(left_high, right_low)
-    cross_low, cross_low_error = _two_prod(left_low, right_high)
-    tail, tail_error = _two_prod(left_low, right_low)
-
-    accumulated = (product, jnp.zeros_like(product), jnp.zeros_like(product))
-    for term in (
-        error,
-        cross_high,
-        cross_high_error,
-        cross_low,
-        cross_low_error,
-        tail,
-        tail_error,
-    ):
-        accumulated = _dd_add_float(accumulated, term)
-
-    left_scale = jnp.abs(left_high) + jnp.abs(left_low)
-    right_scale = jnp.abs(right_high) + jnp.abs(right_low)
-    new_high, new_low, new_dropped = accumulated
-    dropped = (
-        new_dropped
-        + left_dropped * right_scale
-        + right_dropped * left_scale
-        + left_dropped * right_dropped
-    )
-    return new_high, new_low, dropped
