@@ -13,9 +13,10 @@ or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
 Both helpers below apply the same fix pattern: replace the VALUE with an
-explicit `0.0` wherever the weight is exactly zero, via ``jnp.where``, BEFORE
-multiplying. `weight * where(weight==0, 0, value)` annihilates a zero-weight
-``+-inf`` (the multiply sees ``w * 0 = 0``, never ``0 * -inf``) AND leaves the
+explicit `0.0` wherever the weight is exactly zero AND the value is NON-FINITE,
+via ``jnp.where``, BEFORE multiplying. `weight * where(mask, 0, value)`
+annihilates a zero-weight ``+-inf`` (the multiply sees ``w * 0 = 0``, never
+``0 * -inf``) AND leaves the
 multiply as a bare operation feeding the downstream reduction, which XLA CAN fuse
 into an FMA — so the all-positive-weight path is bit-identical to the naive
 ``jnp.average`` / raw corner sum **on the currently pinned jaxlib**. That identity
@@ -25,6 +26,22 @@ policy explicitly does not promise across releases, backends, or jit contexts
 (ROUND-4 CAVEAT below). Where the reduction MUST tolerate an exact zero (the
 runtime call sites), that is a safety requirement, not a bit-exactness one; the
 bit-exactness is a convenient property of the current toolchain, not a contract.
+
+WHY THE MASK IS RESTRICTED TO NON-FINITE VALUES. ``jnp.where`` is a hard select,
+so a mask that fires on EVERY zero-weight node also kills ``d/dw`` there: the
+branch taken is a constant, whose derivative w.r.t. the weight is ``0`` rather
+than ``value``. That is invisible while the weight is a CONSTANT of the
+differentiation — a Pareto weight, a transition probability, a quadrature
+weight, i.e. every call site this module was written for — and WRONG the moment
+the weight is itself a function of the argument being differentiated. An
+interpolation corner weight is exactly that: applying the unrestricted mask
+inside `map_coordinates` made ``jax.grad`` return ``-grid[c]`` instead of the
+segment slope at every on-node coordinate, with the VALUES still correct and so
+nothing but a gradient test able to see it. Restricting the mask costs nothing —
+for finite ``v``, ``0 * v == 0`` either way, so values are bit-identical to the
+unrestricted form — and only the genuine ``0 * +-inf`` case still selects, which
+has no finite derivative to preserve. See
+`tests/regime_building/test_zero_safe_gradients.py`.
 
 HISTORY (this docstring was wrong twice; both errors are recorded because each
 was a confident claim no test could contradict, and an external re-review broke
@@ -224,12 +241,13 @@ summation, which is not implemented.
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, ScalarFloat
+from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
 
 
 def zero_safe_weighted_term(
-    weight: FloatND | ScalarFloat | float, value: FloatND | ScalarFloat | float
-) -> FloatND:
+    weight: FloatND | ScalarFloat | IntND | ScalarInt | float,
+    value: FloatND | ScalarFloat | IntND | ScalarInt | float,
+) -> FloatND | IntND:
     """``weight * value``, exactly ``0.0`` wherever ``weight == 0`` — never ``nan``.
 
     Standard floating-point multiplication computes ``0.0 * (+-inf) = nan``; on
@@ -275,7 +293,29 @@ def zero_safe_weighted_term(
     # property of this source expression: the module ROUND-5 CAVEAT reproduces a
     # dynamic-per-cell divergence on one 0.10.1 CPU. Do not read this as guaranteed
     # bit-identity.
-    safe_value = jnp.where(weight_arr == 0, jnp.zeros((), value_arr.dtype), value_arr)
+    #
+    # Mask ONLY where the value is NON-FINITE. `jnp.where` is a hard select, so a
+    # mask that fires on every zero-weight node also kills `d/dw` THERE: the branch
+    # taken is the constant `0`, whose derivative w.r.t. `weight` is `0` rather than
+    # `value`. That is invisible whenever `weight` is a constant of the
+    # differentiation -- a Pareto weight, a regime-transition probability, a
+    # quadrature weight, which is what this helper was written for -- but WRONG as
+    # soon as the weight is itself a function of the argument being differentiated.
+    # The live instance was `map_coordinates`: an interpolation corner weight is a
+    # function of the coordinate, an exactly-on-node coordinate makes one corner
+    # weight exactly `0`, and masking there dropped precisely the corner whose weight
+    # was changing -- so `jax.grad` returned `-grid[c]` instead of the segment slope
+    # at every on-node coordinate, while the VALUES stayed correct and hid it.
+    #
+    # Restricting the mask to non-finite values keeps the load-bearing property and
+    # costs nothing: for finite `value` the masked and unmasked products are
+    # `0 * v == 0` either way, so VALUES are bit-identical to the previous form
+    # everywhere, and `d/dw` is now `value` at every finite node. Only the genuine
+    # `0 * +-inf` case still selects, which is the case that has no finite derivative
+    # to preserve anyway. The select remains on an OPERAND of the multiply, so the
+    # FMA-contractibility argument above is unchanged.
+    needs_mask = (weight_arr == 0) & ~jnp.isfinite(value_arr)
+    safe_value = jnp.where(needs_mask, jnp.zeros((), value_arr.dtype), value_arr)
     return weight_arr * safe_value
 
 
