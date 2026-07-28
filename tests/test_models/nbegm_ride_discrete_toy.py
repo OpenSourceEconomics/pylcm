@@ -338,7 +338,7 @@ def utility_with_action(
     return crra_utility(consumption, crra) + LEISURE_UTILITY * buy_private
 
 
-def build_model(  # noqa: C901, PLR0912
+def build_model(  # noqa: C901, PLR0912, PLR0915
     *,
     variant: str = "brute",
     n_periods: int = 4,
