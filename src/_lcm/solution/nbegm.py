@@ -1007,6 +1007,18 @@ def validate_case_piece_smoothness(
     )
     registry = collect_nbegm_metadata(functions=functions)
     space = context.state_action_space
+    if registry.piece_sets and space.discrete_actions:
+        msg = (
+            f"Regime '{context.regime_name}' declares case pieces alongside the "
+            f"discrete action(s) {sorted(space.discrete_actions)}. The "
+            "case-piece kernels solve a one-asset consumption-saving problem "
+            "and maximize over the continuous action only, so the discrete "
+            "choice would never enter the published value and simulation would "
+            "draw its policy from a value function that never saw it. Declare "
+            "the discrete choice with a `lcm.piecewise_affine` schedule, or use "
+            "`GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
@@ -2006,6 +2018,12 @@ def _collect_nbegm_schedule_spec(
         )
         raise RegimeInitializationError(msg)
 
+    _fail_if_single_liquid_schedules_unsupported(
+        schedules=schedules,
+        ride_along_state_names=ride_along_state_names,
+        regime_name=context.regime_name,
+    )
+
     # Cache the composed derived-variable DAG per variable across its breakpoints.
     derived_dags: dict[str, tuple[Callable, tuple[str, ...], tuple[str, ...]]] = {}
 
@@ -2115,6 +2133,63 @@ def _collect_nbegm_schedule_spec(
         discrete_action_name=discrete_action_name,
         discrete_action_codes=discrete_action_codes,
     )
+
+
+def _fail_if_single_liquid_schedules_unsupported(
+    *,
+    schedules: tuple[Any, ...],
+    ride_along_state_names: tuple[StateName, ...],
+    regime_name: RegimeName,
+) -> None:
+    """Reject schedule declarations the single-liquid cores cannot represent.
+
+    Without a ride-along axis the interval partition and the step dispatch both
+    come from one schedule's breakpoints, so two declarations fall outside what
+    the cores solve:
+
+    - **more than one liquid-direct schedule** — only the first schedule's
+      thresholds enter the partition, so an interval straddling a second
+      schedule's discontinuity is tangented as if the budget were smooth
+      across it;
+    - **a hard constraint declared alongside a jump** — the mixed kinds route
+      to the unified step, which takes no flat-interval mask, so the floor's
+      constant-budget plateau reaches an inversion that assumes a strictly
+      increasing cash-on-hand.
+
+    Args:
+        schedules: The regime's declared piecewise-affine schedules.
+        ride_along_state_names: The regime's ride-along co-states; a non-empty
+            tuple means the ride path handles the schedules instead.
+        regime_name: Name of the regime, for the message.
+
+    Raises:
+        RegimeInitializationError: On either unsupported declaration.
+
+    """
+    if ride_along_state_names:
+        return
+    if len(schedules) > 1:
+        outputs = tuple(schedule.output for schedule in schedules)
+        msg = (
+            f"Regime '{regime_name}' declares {len(schedules)} piecewise-affine "
+            f"schedules {outputs} on the liquid state. NBEGM's single-liquid "
+            "partition is built from one liquid-direct schedule's thresholds, so "
+            "the others' breakpoints would not split the budget and an interval "
+            "straddling them would be solved as if it were smooth. Merge them "
+            "into one schedule, or declare a ride-along co-state."
+        )
+        raise RegimeInitializationError(msg)
+    kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
+    if "hard_constraint" in kinds and "jump" in kinds:
+        msg = (
+            f"Regime '{regime_name}' declares a hard-constraint (floor) "
+            f"breakpoint alongside a jump; got breakpoint kinds {kinds}. The "
+            "mixed jump-and-kink step carries no flat-interval mask, so the "
+            "floor's constant-budget plateau would reach an inversion that "
+            "assumes a strictly increasing cash-on-hand. Declare the floor "
+            "without a jump, or model the cliff as a continuous kink."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _schedule_kind_flags(
@@ -3711,6 +3786,11 @@ def _collect_nbegm_schedule_discrete_spec(
             "only; a derived-variable schedule needs the ride-along path."
         )
         raise RegimeInitializationError(msg)
+    _fail_if_single_liquid_schedules_unsupported(
+        schedules=schedules,
+        ride_along_state_names=(),
+        regime_name=context.regime_name,
+    )
 
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
