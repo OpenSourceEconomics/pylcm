@@ -28,17 +28,21 @@ class RegimeId:
     dead: ScalarInt
 
 
-@case_boundary(boundary("wealth", "means_test", equality="otherwise", kind="jump"))
+@case_boundary(
+    boundary(
+        variable="wealth", threshold="means_test", equality="otherwise", kind="jump"
+    )
+)
 def eligible(wealth: ContinuousState, means_test: float) -> FloatND:
     return wealth < means_test
 
 
-@piece("subsidy", when=eligible)
+@piece(output="subsidy", when=eligible)
 def subsidy_eligible(medical_expense: float) -> FloatND:
     return jnp.asarray(0.1 * medical_expense)
 
 
-@piece("subsidy", otherwise=eligible)
+@piece(output="subsidy", otherwise=eligible)
 def subsidy_private(medical_expense: float) -> FloatND:
     """Hide a branch behind a `jnp.where` the AST gate cannot see as Python."""
     return jnp.where(medical_expense > 0.0, 0.9 * medical_expense, 0.0)

@@ -23,11 +23,11 @@ from tests.test_models.nbegm_common import (
 
 
 @lcm.piecewise_affine(
-    "net_transfer",
+    output="net_transfer",
     variable="liquid",
     breakpoints=(
-        lcm.affine_breakpoint("cliff", kind="jump"),
-        lcm.affine_breakpoint("exemption", kind="continuous_kink"),
+        lcm.affine_breakpoint(threshold="cliff", kind="jump"),
+        lcm.affine_breakpoint(threshold="exemption", kind="continuous_kink"),
     ),
 )
 def net_transfer(

@@ -29,7 +29,10 @@ def medicaid_eligible(assets, medicaid_asset_limit):
 def test_boundary_captures_variable_threshold_equality_and_kind():
     """`boundary(...)` records the equality surface, its owner, and its kind."""
     surface = boundary(
-        "assets", "medicaid_asset_limit", equality="otherwise", kind="jump"
+        variable="assets",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
     )
     assert surface == BoundarySurface(
         variable="assets",
@@ -43,7 +46,12 @@ def test_case_boundary_attaches_one_boundary_surface():
     """`case_boundary` stores each declared surface in `__lcm_case_boundary__`."""
 
     @case_boundary(
-        boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+        boundary(
+            variable="assets",
+            threshold="medicaid_asset_limit",
+            equality="otherwise",
+            kind="jump",
+        )
     )
     def predicate(assets, medicaid_asset_limit):
         return assets < medicaid_asset_limit
@@ -67,7 +75,12 @@ def test_case_boundary_returns_the_same_function_object():
         return assets < medicaid_asset_limit
 
     decorated = case_boundary(
-        boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+        boundary(
+            variable="assets",
+            threshold="medicaid_asset_limit",
+            equality="otherwise",
+            kind="jump",
+        )
     )(predicate)
     assert decorated is predicate
 
@@ -81,7 +94,7 @@ def test_case_boundary_rejects_bare_two_tuple_without_explicit_ownership():
 def test_piece_records_output_predicate_and_when_side():
     """`piece(output, when=pred)` labels the `when` branch of the split."""
 
-    @piece("oop", when=medicaid_eligible)
+    @piece(output="oop", when=medicaid_eligible)
     def oop_medicaid(medical_expense):
         return medical_expense
 
@@ -93,7 +106,7 @@ def test_piece_records_output_predicate_and_when_side():
 def test_piece_records_otherwise_side():
     """`piece(output, otherwise=pred)` labels the complementary branch."""
 
-    @piece("oop", otherwise=medicaid_eligible)
+    @piece(output="oop", otherwise=medicaid_eligible)
     def oop_private(medical_expense):
         return medical_expense
 
@@ -108,7 +121,7 @@ def test_piece_returns_the_same_function_object():
     def oop_medicaid(medical_expense):
         return medical_expense
 
-    decorated = piece("oop", when=medicaid_eligible)(oop_medicaid)
+    decorated = piece(output="oop", when=medicaid_eligible)(oop_medicaid)
     assert decorated is oop_medicaid
 
 
@@ -122,12 +135,12 @@ def test_piece_returns_the_same_function_object():
 def test_piece_requires_exactly_one_side(kwargs):
     """Neither or both of `when=`/`otherwise=` is rejected — exactly one is required."""
     with pytest.raises(NBEGMCaseError, match="exactly one"):
-        piece("oop", **kwargs)
+        piece(output="oop", **kwargs)
 
 
 def test_affine_breakpoint_captures_threshold_and_kind():
     """`affine_breakpoint(...)` records one threshold of a schedule and its kind."""
-    bracket = affine_breakpoint("bracket_top", kind="continuous_kink")
+    bracket = affine_breakpoint(threshold="bracket_top", kind="continuous_kink")
     assert bracket == AffineBreakpoint(threshold="bracket_top", kind="continuous_kink")
 
 
@@ -135,11 +148,11 @@ def test_piecewise_affine_attaches_schedule_metadata():
     """`piecewise_affine` records the output, monotone variable, and breakpoints."""
 
     @piecewise_affine(
-        "tax",
+        output="tax",
         variable="capital_income",
         breakpoints=(
-            affine_breakpoint("bracket_low", kind="continuous_kink"),
-            affine_breakpoint("bracket_high", kind="continuous_kink"),
+            affine_breakpoint(threshold="bracket_low", kind="continuous_kink"),
+            affine_breakpoint(threshold="bracket_high", kind="continuous_kink"),
         ),
     )
     def tax_schedule(capital_income, rate):
@@ -162,9 +175,11 @@ def test_piecewise_affine_returns_the_same_function_object():
         return rate * capital_income
 
     decorated = piecewise_affine(
-        "tax",
+        output="tax",
         variable="capital_income",
-        breakpoints=(affine_breakpoint("bracket_low", kind="continuous_kink"),),
+        breakpoints=(
+            affine_breakpoint(threshold="bracket_low", kind="continuous_kink"),
+        ),
     )(tax_schedule)
     assert decorated is tax_schedule
 

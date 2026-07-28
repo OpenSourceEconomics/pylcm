@@ -48,14 +48,14 @@ narrow; everything else goes through a schedule.
 
 ### Case pieces — one means-tested cliff
 
-- `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
+- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
   - `equality` — `"when"` or `"otherwise"`: the predicate side that owns the exact
     boundary point. This is part of the feasible-set definition, not a tie-break.
   - `kind` — `"continuous_kink"`, `"jump"`, or `"hard_constraint"`.
   - A bare `(variable, threshold)` tuple is rejected — `equality` and `kind` are
     required.
 - `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate.
-- `lcm.piece(output, when=…)` / `lcm.piece(output, otherwise=…)` marks the smooth
+- `lcm.piece(output=…, when=…)` / `lcm.piece(output=…, otherwise=…)` marks the smooth
   formula for one side of a split output. Every split output must be covered by exactly
   one `when` and one `otherwise` piece.
 
@@ -81,20 +81,25 @@ from lcm.typing import BoolND, ContinuousState, FloatND
 
 
 @lcm.case_boundary(
-    lcm.boundary("liquid", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
 )
 def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
     """Medicaid asset test: eligible while liquid wealth is below the limit."""
     return liquid < medicaid_asset_limit
 
 
-@lcm.piece("subsidy", when=medicaid_eligible)
+@lcm.piece(output="subsidy", when=medicaid_eligible)
 def subsidy_medicaid(subsidy_high: float) -> FloatND:
     """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
     return jnp.asarray(subsidy_high)
 
 
-@lcm.piece("subsidy", otherwise=medicaid_eligible)
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
 def subsidy_private(subsidy_low: float) -> FloatND:
     """Subsidy into market resources for the private (high-asset) case."""
     return jnp.asarray(subsidy_low)
@@ -114,11 +119,11 @@ A tax schedule, a benefit taper, or a consumption floor is one formula that is a
 between its thresholds, so there is nothing to split into pieces — the model author
 declares where the thresholds are and what kind of discontinuity each carries.
 
-- `lcm.piecewise_affine(output, *, variable, breakpoints)` marks a DAG function as a
+- `lcm.piecewise_affine(*, output, variable, breakpoints)` marks a DAG function as a
   schedule: `variable` is the monotone quantity the thresholds compare against (the
   liquid state, or a derived income the regime computes), and `breakpoints` are its
   thresholds in ascending order.
-- `lcm.affine_breakpoint(threshold, *, kind)` names one threshold parameter and its kind
+- `lcm.affine_breakpoint(*, threshold, kind)` names one threshold parameter and its kind
   — `"continuous_kink"` (the slope changes, the level does not), `"jump"` (the level
   steps), or `"hard_constraint"` (a floor pins the budget flat below it).
 
@@ -130,9 +135,11 @@ from lcm.typing import ContinuousState, FloatND
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
+    ),
 )
 def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""

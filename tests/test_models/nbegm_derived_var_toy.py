@@ -53,9 +53,9 @@ def gross_income(
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="gross_income",
-    breakpoints=(lcm.affine_breakpoint("tax_kink", kind="continuous_kink"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="tax_kink", kind="continuous_kink"),),
 )
 def tax(gross_income: FloatND, tax_rate: float, tax_kink: float) -> FloatND:
     """Continuous tax: zero below the kink, `tax_rate` on income above it."""

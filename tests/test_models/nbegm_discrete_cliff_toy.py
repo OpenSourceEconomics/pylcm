@@ -38,9 +38,9 @@ class BuyPrivate:
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_cliff(
     liquid: ContinuousState, tax_exemption: float, tax_lump: float
@@ -54,11 +54,11 @@ def tax_cliff(
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
     breakpoints=(
-        lcm.affine_breakpoint("tax_exemption", kind="jump"),
-        lcm.affine_breakpoint("tax_bracket", kind="continuous_kink"),
+        lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),
+        lcm.affine_breakpoint(threshold="tax_bracket", kind="continuous_kink"),
     ),
 )
 def tax_mixed(

@@ -354,20 +354,25 @@ from lcm.typing import BoolND, ContinuousState, FloatND
 
 
 @lcm.case_boundary(
-    lcm.boundary("liquid", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
 )
 def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
     """Medicaid asset test: eligible while liquid wealth is below the limit."""
     return liquid < medicaid_asset_limit
 
 
-@lcm.piece("subsidy", when=medicaid_eligible)
+@lcm.piece(output="subsidy", when=medicaid_eligible)
 def subsidy_medicaid(subsidy_high: float) -> FloatND:
     """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
     return jnp.asarray(subsidy_high)
 
 
-@lcm.piece("subsidy", otherwise=medicaid_eligible)
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
 def subsidy_private(subsidy_low: float) -> FloatND:
     """Subsidy into market resources for the private (high-asset) case."""
     return jnp.asarray(subsidy_low)
@@ -378,12 +383,12 @@ def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     return liquid + subsidy
 ```
 
-- `lcm.boundary(variable, threshold, *, equality, kind)` declares one equality surface:
+- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
   `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
   `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
   `(variable, threshold)` tuple is rejected.
 - `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
-  `lcm.piece(output, when=…|otherwise=…)` marks the smooth formula for one side of an
+  `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
   output. The decorators only attach metadata and return the function unchanged, so the
   model still solves identically under `GridSearch`.
 - The case-piece route is scoped narrowly, and everything outside it is refused at model

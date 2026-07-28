@@ -47,9 +47,11 @@ class BuyPrivate:
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
+    ),
 )
 def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
@@ -57,9 +59,9 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_jump(liquid: ContinuousState, tax_lump: float, tax_exemption: float) -> FloatND:
     """Cliff tax: zero below the exemption, a flat lump above (an additive jump).
@@ -85,9 +87,11 @@ def derived_income(
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="derived_income",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
+    ),
 )
 def tax_derived(
     derived_income: FloatND, tax_rate: float, tax_exemption: float
@@ -97,9 +101,9 @@ def tax_derived(
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="derived_income",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_derived_jump(
     derived_income: FloatND, tax_rate: float, tax_exemption: float
@@ -124,9 +128,11 @@ def resources(
 
 
 @lcm.piecewise_affine(
-    "surcharge",
+    output="surcharge",
     variable="derived_income",
-    breakpoints=(lcm.affine_breakpoint("surcharge_start", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="surcharge_start", kind="continuous_kink"),
+    ),
 )
 def surcharge(
     derived_income: FloatND, surcharge_rate: float, surcharge_start: float

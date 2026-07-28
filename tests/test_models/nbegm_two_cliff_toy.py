@@ -21,11 +21,11 @@ from tests.test_models.nbegm_common import (
 
 
 @lcm.piecewise_affine(
-    "subsidy",
+    output="subsidy",
     variable="liquid",
     breakpoints=(
-        lcm.affine_breakpoint("cliff_low", kind="jump"),
-        lcm.affine_breakpoint("cliff_high", kind="jump"),
+        lcm.affine_breakpoint(threshold="cliff_low", kind="jump"),
+        lcm.affine_breakpoint(threshold="cliff_high", kind="jump"),
     ),
 )
 def subsidy(

@@ -11,7 +11,7 @@ from lcm.phased import Phased
 @lcm.piecewise_affine(
     output="subsidy",
     variable="income",
-    breakpoints=(lcm.affine_breakpoint("cutoff", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="cutoff", kind="jump"),),
 )
 def subsidy(income, cutoff):
     return income - cutoff
@@ -20,7 +20,9 @@ def subsidy(income, cutoff):
 @lcm.piecewise_affine(
     output="subsidy",
     variable="income",
-    breakpoints=(lcm.affine_breakpoint("other_cutoff", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="other_cutoff", kind="continuous_kink"),
+    ),
 )
 def subsidy_again(income, other_cutoff):
     return income - other_cutoff

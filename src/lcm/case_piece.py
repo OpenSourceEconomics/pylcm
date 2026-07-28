@@ -95,9 +95,9 @@ class PiecewiseAffineMeta:
 
 
 def boundary(
+    *,
     variable: str,
     threshold: str,
-    *,
     equality: EqualityOwner,
     kind: BoundaryKind,
 ) -> BoundarySurface:
@@ -139,7 +139,9 @@ def case_boundary[F: Callable[..., object]](
         unchanged.
 
     """
-    coerced = tuple(_coerce_boundary(boundary_spec) for boundary_spec in boundaries)
+    coerced = tuple(
+        _coerce_boundary(spec=boundary_spec) for boundary_spec in boundaries
+    )
 
     def attach_boundary(func: F) -> F:
         func.__lcm_case_boundary__ = CaseBoundaryMeta(coerced)  # ty: ignore[unresolved-attribute]
@@ -149,8 +151,8 @@ def case_boundary[F: Callable[..., object]](
 
 
 def piece[F: Callable[..., object]](
-    output: str,
     *,
+    output: str,
     when: Callable[..., object] | None = None,
     otherwise: Callable[..., object] | None = None,
 ) -> Callable[[F], F]:
@@ -203,8 +205,8 @@ def piece[F: Callable[..., object]](
 
 
 def affine_breakpoint(
-    threshold: str,
     *,
+    threshold: str,
     kind: BoundaryKind = "continuous_kink",
     indexed_by: str | None = None,
     static_index: int | None = None,
@@ -251,8 +253,8 @@ def affine_breakpoint(
 
 
 def piecewise_affine[F: Callable[..., object]](
-    output: str,
     *,
+    output: str,
     variable: str,
     breakpoints: tuple[AffineBreakpoint, ...],
 ) -> Callable[[F], F]:
@@ -306,7 +308,7 @@ def smooth_helper[F: Callable[..., object]](func: F) -> F:
     return func
 
 
-def _coerce_boundary(spec: BoundarySurface | tuple[str, str]) -> BoundarySurface:
+def _coerce_boundary(*, spec: BoundarySurface | tuple[str, str]) -> BoundarySurface:
     """Coerce a boundary specification into a `BoundarySurface`.
 
     A `BoundarySurface` passes through. A bare `(variable, threshold)` tuple is

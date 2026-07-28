@@ -49,9 +49,9 @@ def resources(
 
 
 @lcm.piecewise_affine(
-    "medicaid_transfer",
+    output="medicaid_transfer",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("medicaid_limit", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="medicaid_limit", kind="jump"),),
 )
 def medicaid_transfer(
     liquid: ContinuousState, medicaid_limit: float, transfer_amount: float

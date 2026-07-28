@@ -22,9 +22,9 @@ from tests.test_models.nbegm_common import (
 
 
 @lcm.piecewise_affine(
-    "subsidy",
+    output="subsidy",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("cliff", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="cliff", kind="jump"),),
 )
 def subsidy(
     liquid: ContinuousState, subsidy_low: float, subsidy_high: float, cliff: float

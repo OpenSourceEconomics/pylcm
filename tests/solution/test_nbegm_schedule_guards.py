@@ -37,9 +37,9 @@ SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=28.0, n_points=40)
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_kink", kind="continuous_kink"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="tax_kink", kind="continuous_kink"),),
 )
 def tax(liquid: ContinuousState, tax_rate: float, tax_kink: float) -> FloatND:
     """Continuous tax on liquid wealth above the kink."""
@@ -47,9 +47,9 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_kink: float) -> FloatND:
 
 
 @lcm.piecewise_affine(
-    "subsidy",
+    output="subsidy",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("subsidy_limit", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="subsidy_limit", kind="jump"),),
 )
 def subsidy(
     liquid: ContinuousState, subsidy_level: float, subsidy_limit: float
@@ -59,11 +59,11 @@ def subsidy(
 
 
 @lcm.piecewise_affine(
-    "net_transfer",
+    output="net_transfer",
     variable="liquid",
     breakpoints=(
-        lcm.affine_breakpoint("floor_limit", kind="hard_constraint"),
-        lcm.affine_breakpoint("cliff_limit", kind="jump"),
+        lcm.affine_breakpoint(threshold="floor_limit", kind="hard_constraint"),
+        lcm.affine_breakpoint(threshold="cliff_limit", kind="jump"),
     ),
 )
 def net_transfer(

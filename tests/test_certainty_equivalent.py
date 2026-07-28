@@ -365,9 +365,9 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         return wealth + 0.5 * kind
 
     @piecewise_affine(
-        "subsidy",
+        output="subsidy",
         variable="gross_income",
-        breakpoints=(affine_breakpoint("fpl_cliff", kind="jump"),),
+        breakpoints=(affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
     )
     def _subsidy(gross_income: FloatND, fpl_cliff: float) -> FloatND:
         return jnp.where(gross_income < fpl_cliff, 1.0, 0.0)

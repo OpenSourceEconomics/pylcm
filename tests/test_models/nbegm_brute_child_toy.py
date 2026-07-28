@@ -60,9 +60,11 @@ class WorkChoice:
 
 
 @lcm.piecewise_affine(
-    "tax",
+    output="tax",
     variable="liquid",
-    breakpoints=(lcm.affine_breakpoint("tax_exemption", kind="continuous_kink"),),
+    breakpoints=(
+        lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
+    ),
 )
 def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
