@@ -206,7 +206,7 @@ def nbegm_multi_interval_step(
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -469,7 +469,7 @@ def nbegm_multi_interval_step_savings(
     degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
     liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     # Savings-node corner points: for every post-decision node `s_i`, consume
     # `coh - s_i` at each liquid grid point and earn that node's continuation. The
@@ -764,11 +764,7 @@ def nbegm_per_interval_continuation_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        # A flat interval kills every interior candidate, so `segment` is all-NaN and
-        # `nanmax` would be NaN; fall back to `0` there so the live corners still get a
-        # finite segment id.
-        segment_max = jnp.nanmax(segment)
-        next_segment = jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + 1.0
+        next_segment = _next_segment_id(segment)
 
         # Corners consume the true cash-on-hand at each grid point when supplied, so a
         # no-save/upper-savings corner stays feasible where the interval's affine budget
@@ -1120,7 +1116,7 @@ def nbegm_unified_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = jnp.nanmax(segment) + 1.0
+        next_segment = _next_segment_id(segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -1420,7 +1416,7 @@ def nbegm_unified_step(  # noqa: PLR0915
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = jnp.nanmax(segment) + 1.0
+        next_segment = _next_segment_id(segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -1677,7 +1673,7 @@ def _recurring_jump_case(
     value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = jnp.nanmax(interior_segment) + 1.0
+    next_segment = _next_segment_id(interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -1957,7 +1953,7 @@ def _case_step(
         prev_limit=liquid_grid[0] - 1.0,
     )
     kink_segment = jnp.where(
-        jnp.isnan(kink_grid), jnp.nan, jnp.nanmax(interior_segment) + 1.0
+        jnp.isnan(kink_grid), jnp.nan, _next_segment_id(interior_segment)
     )
 
     # Hard borrowing corner: saving nothing consumes all cash-on-hand and lands
@@ -1976,7 +1972,7 @@ def _case_step(
         continuation=value_at_income,
     )
     s0_segment = jnp.where(
-        jnp.isnan(s0_grid), jnp.nan, jnp.nanmax(interior_segment) + 2.0
+        jnp.isnan(s0_grid), jnp.nan, _next_segment_id(interior_segment, offset=2.0)
     )
 
     value, consumption_on_grid, marginal = envelope_at_query(
@@ -2139,6 +2135,27 @@ def _bounded_limit_above(
     hi = jnp.clip(jnp.minimum(lo + 1, ceil), 0, n - 1).astype(jnp.int32)
     lo = jnp.clip(jnp.minimum(lo, ceil), 0, n - 1).astype(jnp.int32)
     return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
+
+
+def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
+    """Return the first free segment id above a candidate block's ids.
+
+    A block whose candidates are all dead carries an all-NaN id column, and
+    `jnp.nanmax` of it is NaN. Handing that on as the next block's base id makes
+    every later block's ids NaN too, and the envelope links only equal *finite*
+    ids — so one dead block silently kills every corner behind it. An all-dead
+    block occupies no id, so the count simply restarts at zero.
+
+    Args:
+        segment: The block's per-candidate segment ids, NaN where dead.
+        offset: How far above the block's highest id to start.
+
+    Returns:
+        The next block's base segment id, always finite.
+
+    """
+    segment_max = jnp.nanmax(segment)
+    return jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + offset
 
 
 def _no_save_corner(
