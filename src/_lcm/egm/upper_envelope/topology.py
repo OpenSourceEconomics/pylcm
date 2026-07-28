@@ -75,6 +75,21 @@ def count_linked_runs(
     count is the realized branch count a static capacity must be validated
     against.
 
+    Runs end only where resources fall, along the producer's candidate order.
+    That is exact rather than heuristic because of what the producer hands over:
+    one connected savings-ordered chain per cell — the constrained run, then the
+    interior Euler run — with within-period discrete choices maximized on an
+    outer axis after refinement, so the input order already encodes branch
+    connectivity, and `segment_id` only splits runs further. No production path
+    concatenates two unrelated monotone branches into one run.
+
+    A repeated abscissa stays inside its run: a zero-width link spans no interval
+    and carries no value line. Euler inversion saturates once implied consumption
+    dwarfs the savings node, and `savings + consumption` then rounds to one double
+    across many nodes, so splitting there would manufacture runs out of rounding.
+    An exact coincidence of two branches at one abscissa therefore does not split
+    a run — it does not have to, since ownership is resolved per node cell.
+
     Args:
         endog_grid: Candidate endogenous grid points in producer (savings) order.
         dead: Per-candidate dead mask; a dead candidate joins no run.

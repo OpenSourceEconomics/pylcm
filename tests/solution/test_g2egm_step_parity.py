@@ -42,7 +42,7 @@ _B_GRID = jnp.linspace(0.0, 46.0, 16)
 def _solve():
     model = get_model(n_periods=2)
     params = get_params(n_periods=2, pension_bequest_weight=0.5)
-    brute = model.solve(params=params, log_level="off")
+    brute = model.solve(params=params, log_level="debug")
     next_value = jnp.asarray(brute[1]["dead"])
     g2egm = np.asarray(
         g2egm_step(
@@ -125,7 +125,7 @@ def test_g2egm_publishes_a_feasible_policy_on_the_covered_region():
     """
     model = get_model(n_periods=2)
     params = get_params(n_periods=2, pension_bequest_weight=0.5)
-    next_value = jnp.asarray(model.solve(params=params, log_level="off")[1]["dead"])
+    next_value = jnp.asarray(model.solve(params=params, log_level="debug")[1]["dead"])
     result = g2egm_step(
         next_value=next_value,
         m_grid=_M_GRID,
