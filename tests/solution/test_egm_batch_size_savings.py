@@ -18,6 +18,7 @@ from _lcm.typing import PeriodToRegimeToVArr
 from lcm import LinSpacedGrid, MarkovTransition, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
+from tests.conftest import DECIMAL_PRECISION
 from tests.solution.test_egm_batch_size_euler import (
     CONSUMPTION_GRID,
     N_WEALTH,
@@ -94,8 +95,10 @@ def test_savings_grid_batch_size_leaves_value_function_unchanged(savings_batch_s
     `batch_size` on the savings grid only changes how the per-savings-node
     continuation is scheduled (blocks via `lax.map` instead of one fused vmap),
     so the value function at every period matches the unsplayed `batch_size=0`
-    solve exactly — including block sizes that do not divide the grid, and the
-    boundary size equal to the grid length (which falls back to the vmap).
+    solve to the working precision — including block sizes that do not divide the
+    grid, and the boundary size equal to the grid length (which falls back to the
+    vmap). The two graphs fuse differently and so may associate a sum differently,
+    which moves a node by an ULP; nothing about the partition reaches the algorithm.
     """
     reference = _solve(0)
     splayed = _solve(savings_batch_size)
@@ -109,7 +112,7 @@ def test_savings_grid_batch_size_leaves_value_function_unchanged(savings_batch_s
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=1e-12,
-                atol=1e-12,
+                rtol=10.0**-DECIMAL_PRECISION,
+                atol=10.0**-DECIMAL_PRECISION,
                 err_msg=f"period={period}, regime={regime_name}",
             )
