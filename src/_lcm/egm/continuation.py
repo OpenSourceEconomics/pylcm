@@ -39,6 +39,7 @@ from _lcm.egm.interp import (
     locate_on_grid,
     prepare_padded_grid,
 )
+from _lcm.egm.nbegm import jump_moving_state_names
 from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -2017,9 +2018,20 @@ def _build_child_reads(
             target_regime.solver.carry_rows_share_state_grid
             and not target_regime.solver.carry_retains_discrete_action_rows
         )
-        # No solver here publishes a one-sided jump read, so no state is
-        # pinned by a jump source reading its node value.
-        jump_moving: frozenset[StateName] = frozenset()
+        # A child resolving declared jumps one-sidedly publishes two rows at the
+        # same abscissa, and those abscissae move with any state feeding the
+        # jump's variable or threshold. Folding a stochastic node axis into one
+        # read would then average across jump locations that differ per state,
+        # so those states pin their axis open.
+        jump_moving: frozenset[StateName] = (
+            jump_moving_state_names(
+                functions=target_regime.functions,
+                state_names=frozenset(target_regime.states),
+                euler_state_name=euler_state_name,
+            )
+            if target_regime.solver.publishes_one_sided_jump_reads
+            else frozenset()
+        )
         foldable_stochastic_flags = tuple(
             child_carry_rows_uniform
             and name not in resources_arg_names

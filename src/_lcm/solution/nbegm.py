@@ -227,6 +227,11 @@ class NBEGM(Solver):
         """The case-piece ride-along carry sits on the shared liquid grid."""
         return True
 
+    @property
+    def publishes_one_sided_jump_reads(self) -> bool:
+        """One-sided jump resolution duplicates abscissae across each jump."""
+        return self.jump_read == "one_sided"
+
     def validate(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.
 
@@ -3153,6 +3158,51 @@ def _nbegm_cell_breakpoints(
     )
 
 
+# How many units of the liquid law's rounding error to step past a cliff, and the
+# largest share of the distance to a neighbouring cliff's preimage that step may
+# consume.
+_CLIFF_MARGIN_ROUNDINGS = 4.0
+_CLIFF_MARGIN_GAP_SHARE = 0.25
+
+
+def cliff_target_margin(
+    *,
+    s_star: FloatND,
+    slope: FloatND,
+    intercept: FloatND,
+    dtype: Any,  # noqa: ANN401
+) -> FloatND:
+    """Return the savings displacement that lands just past each cliff preimage.
+
+    The target reaches the child's liquid axis through the affine savings law
+    `next_liquid = slope * s + intercept`, whose evaluation rounds by about
+    `eps * (|slope * s| + |intercept|)` in liquid units. Stepping a fixed number
+    of those roundings, converted back to savings units by dividing by `|slope|`,
+    clears the cliff on the intended side at every scale and in every precision —
+    a margin scaled by `|s_star|` alone is both wrong in scale (it ignores the
+    intercept) and precision-dependent in relative size.
+
+    The step is also capped at a share of the distance to the nearest other
+    preimage, so a nudge can never overshoot a neighbouring cliff.
+
+    Args:
+        s_star: Savings preimage of each jump, shape `(n_jumps,)`.
+        slope: Slope of the savings-form liquid law.
+        intercept: Intercept of the savings-form liquid law.
+        dtype: Floating dtype the solve runs in.
+
+    Returns:
+        Per-jump displacement, same shape as `s_star`.
+
+    """
+    rounding = jnp.finfo(dtype).eps * (jnp.abs(slope * s_star) + jnp.abs(intercept))
+    margin = _CLIFF_MARGIN_ROUNDINGS * rounding / jnp.abs(slope)
+    n_jumps = s_star.shape[0]
+    separation = jnp.abs(s_star[:, None] - s_star[None, :])
+    separation = jnp.where(jnp.eye(n_jumps, dtype=bool), jnp.inf, separation)
+    return jnp.minimum(margin, _CLIFF_MARGIN_GAP_SHARE * jnp.min(separation, axis=-1))
+
+
 def _cliff_savings_targets(
     *,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
@@ -3172,7 +3222,7 @@ def _cliff_savings_targets(
     inside the cliff's owning side — that generically falls strictly between
     savings nodes. Per ride cell this recovers the cell's jump preimages in
     the child's liquid space, inverts the affine savings-form liquid law, and
-    returns one target one float margin inside each side of every jump
+    returns one target a few float margins inside each side of every jump
     (`2 * n_jumps` entries). Targets outside the savings grid's span, or under
     a non-increasing liquid law, are NaN — the envelope's point-candidate
     family treats NaN entries as dead.
@@ -3194,7 +3244,9 @@ def _cliff_savings_targets(
         intercept = next_euler_state(jnp.asarray(0.0, dtype=dtype))
         slope = next_euler_state(jnp.asarray(1.0, dtype=dtype)) - intercept
         s_star = (jumps - intercept) / slope
-        margin = jnp.maximum(jnp.abs(s_star), 1.0) * jnp.finfo(dtype).eps * 1e4
+        margin = cliff_target_margin(
+            s_star=s_star, slope=slope, intercept=intercept, dtype=dtype
+        )
         candidates = jnp.stack([s_star - margin, s_star + margin], axis=-1).reshape(-1)
         valid = (
             (candidates >= savings_grid[0])
