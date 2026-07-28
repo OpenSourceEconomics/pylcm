@@ -6,6 +6,8 @@ the cases that distinguish the topology contract: a clean crossing, a folded
 branch, and a non-bridging branch the inference backends get wrong.
 """
 
+from fractions import Fraction
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -526,3 +528,133 @@ def test_exact_interior_tie_takes_the_right_continuous_branch(
     # The tie means the published level is the shared value either way; it is
     # the branch attribution that the exact comparison fixes.
     assert float(got_value[0]) == pytest.approx(1.0 / denominator, rel=1e-6), context
+
+
+def _slope_collision_pairs(dtype, *, seed, target=1.0 / 3.0, draws=40_000, want=3):
+    """Segment pairs whose exact slopes differ but whose `fl(rise/run)` keys agree.
+
+    Each candidate segment runs from the shared node `(1, 0)` to `(x1, rise)`. The
+    exact slope is the rational `rise / (x1 - 1)` read off the STORED floats; the
+    native key is the working-dtype division the selector used to compute. Drawing
+    the run over a wide exponent range makes distinct rationals collapse onto one
+    key routinely — the returned pairs are `(lower_exact, higher_exact)`.
+    """
+    rng = np.random.default_rng(seed)
+    span = 12 if dtype is np.float32 else 24
+    runs = np.asarray(
+        rng.uniform(0.5, 2.0, size=draws) * 2.0 ** rng.integers(-span, span + 1, draws),
+        dtype=dtype,
+    )
+    x1 = np.asarray(dtype(1.0) + runs, dtype=dtype)
+    run = np.asarray(x1 - dtype(1.0), dtype=dtype)
+    rise = np.asarray(dtype(target) * run, dtype=dtype)
+    keep = np.isfinite(x1) & np.isfinite(rise) & (run > 0)
+    x1, run, rise = x1[keep], run[keep], rise[keep]
+
+    seen, pairs = {}, []
+    keys = np.asarray(rise / run, dtype=dtype)
+    for node, height, key in zip(x1, rise, keys, strict=True):
+        exact = Fraction.from_float(float(height)) / (
+            Fraction.from_float(float(node)) - Fraction(1)
+        )
+        previous = seen.setdefault(float(key), (exact, float(node), float(height)))
+        if previous[0] == exact:
+            continue
+        pairs.append(
+            tuple(
+                sorted(
+                    (previous, (exact, float(node), float(height))), key=lambda p: p[0]
+                )
+            )
+        )
+        if len(pairs) == want:
+            break
+    if len(pairs) < want:  # the generator, not the selector, has failed
+        raise AssertionError(f"only {len(pairs)} slope collisions for {dtype}")
+    return pairs
+
+
+_SLOPE_COLLISIONS = {
+    np.float32: _slope_collision_pairs(np.float32, seed=20260728),
+    np.float64: _slope_collision_pairs(np.float64, seed=20260764),
+}
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", [0, 1, 2])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
+    dtype, case, order, block_size
+):
+    """An exact VALUE tie must be broken by the exact slope, not a rounded key.
+
+    Round-6 made the value comparison exact; round-7 audit F2 found the class
+    reopened one operation later. Both branches leave the stored node `(1, 0)`,
+    so the values are exactly tied and right-continuity decides — and the rule is
+    "larger value-slope, then earliest candidate". The selector computed that
+    slope as `fl((v1 - v0) / (x1 - x0))`, and two strictly ordered exact slopes
+    can share one such float. `argmax` then fell through to candidate order, so a
+    pure branch permutation flipped the published policy and marginal. The level
+    is exactly zero either way; it is the attribution that is wrong, and the
+    marginal it publishes feeds the parent Euler inversion.
+
+    The lower-exact-slope branch carries policy 0, the higher policy 1. Only the
+    higher may win, in every dtype, order and block layout.
+    """
+    (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][case]
+    one = dtype(1.0)
+    # A probe that proves a negative must show it CAN fail: assert the keys really
+    # do collide here, or the test would pass by never posing the question.
+    low_key = dtype(dtype(low_rise) / dtype(dtype(low_node) - one))
+    high_key = dtype(dtype(high_rise) / dtype(dtype(high_node) - one))
+    assert low_key == high_key, "the two branches must share one rounded slope key"
+
+    lower = ([1.0, low_node], [0.0, low_rise], 0.0, 10.0)
+    higher = ([1.0, high_node], [0.0, high_rise], 1.0, 20.0)
+    first, second = (lower, higher) if order == "AB" else (higher, lower)
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(first[0] + second[0], dtype=dtype),
+        policy=jnp.asarray([first[2]] * 2 + [second[2]] * 2, dtype=dtype),
+        value=jnp.asarray(first[1] + second[1], dtype=dtype),
+        marginal=jnp.asarray([first[3]] * 2 + [second[3]] * 2, dtype=dtype),
+        segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.asarray([1.0], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size} case={case}"
+    assert float(got_value[0]) == 0.0, context
+    assert float(got_policy[0]) == 1.0, context
+    assert float(got_marginal[0]) == 20.0, context
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
+    dtype, order, block_size
+):
+    """Candidate order decides only when the exact slopes are genuinely equal.
+
+    The counterpart to the collision test above: branches `(1, 0) -> (4, 1)` and
+    `(1, 0) -> (7, 2)` have the SAME exact slope `1/3` and the same exact value
+    at the shared node, so no comparison can separate them and the documented
+    fallback — earliest candidate — applies. This pins the other side of the
+    predicate: an exact selector must not manufacture an order here either, so
+    whichever branch is listed first wins.
+    """
+    lead = ([1.0, 4.0], [0.0, 1.0], 0.0, 10.0)
+    trail = ([1.0, 7.0], [0.0, 2.0], 1.0, 20.0)
+    first, second = (lead, trail) if order == "AB" else (trail, lead)
+    _value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(first[0] + second[0], dtype=dtype),
+        policy=jnp.asarray([first[2]] * 2 + [second[2]] * 2, dtype=dtype),
+        value=jnp.asarray(first[1] + second[1], dtype=dtype),
+        marginal=jnp.asarray([first[3]] * 2 + [second[3]] * 2, dtype=dtype),
+        segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+        x_query=jnp.asarray([1.0], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size}"
+    assert float(got_policy[0]) == first[2], context
+    assert float(got_marginal[0]) == first[3], context
