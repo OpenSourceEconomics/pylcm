@@ -341,6 +341,9 @@ class NBEGM(Solver):
                 path="single-liquid-state kernels",
             )
         )
+        fail_if_kernel_naming_contract_unmet(
+            context=context, liquid_state_name=liquid_state_name
+        )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
             _collect_nbegm_discrete_spec(
@@ -1137,6 +1140,91 @@ def _validate_nbegm_boundary_scope(
                     f"{surface.variable!r}."
                 )
                 raise NBEGMCaseError(msg)
+
+
+# The fixed names the single-liquid kernels read: the state their grid argument
+# binds to, the function and parameter carrying the CRRA coefficient, and the
+# liquid law's budget parameters.
+_KERNEL_LIQUID_STATE = "liquid"
+_KERNEL_UTILITY = ("utility", "crra")
+_KERNEL_LIQUID_LAW_PARAMS = ("return_liquid", "income")
+
+
+def fail_if_kernel_naming_contract_unmet(
+    *, context: SolverBuildContext, liquid_state_name: StateName
+) -> None:
+    """Check the fixed names the single-liquid NB-EGM kernels read.
+
+    Those kernels are not DAG-composed: they bind the Euler grid to a keyword
+    named `liquid` and read the CRRA coefficient, gross return, and income
+    under fixed qualified parameter names. A regime naming any of them
+    differently otherwise fails deep inside a traced kernel with a
+    missing-argument or missing-parameter error, which says nothing about the
+    contract it broke. The ride-along schedule route composes its budget from
+    the DAG and is exempt.
+
+    Args:
+        context: The regime's solver build context.
+        liquid_state_name: The resolved Euler axis.
+
+    Raises:
+        RegimeInitializationError: If the liquid state, the utility function's
+            CRRA parameter, or the liquid law's budget parameters are named
+            differently.
+
+    """
+    regime_name = context.regime_name
+    if liquid_state_name != _KERNEL_LIQUID_STATE:
+        msg = (
+            f"NBEGM's single-liquid kernels bind the Euler grid to a state named "
+            f"{_KERNEL_LIQUID_STATE!r}; regime {regime_name!r} names it "
+            f"{liquid_state_name!r}. Rename the state, or declare a "
+            "`lcm.piecewise_affine` schedule with a `post_decision_function` so "
+            "the budget is composed from the DAG instead."
+        )
+        raise RegimeInitializationError(msg)
+    utility_name, crra_name = _KERNEL_UTILITY
+    utility_func = context.functions.get(utility_name)
+    qualified_crra = f"{utility_name}__{crra_name}"
+    if not callable(utility_func) or qualified_crra not in _parameter_names(
+        utility_func
+    ):
+        msg = (
+            f"NBEGM's single-liquid kernels read the CRRA coefficient as the "
+            f"{crra_name!r} parameter of a function named {utility_name!r} "
+            f"(the flat param {qualified_crra!r}); regime {regime_name!r} does "
+            "not declare it."
+        )
+        raise RegimeInitializationError(msg)
+    liquid_law_name = f"next_{_KERNEL_LIQUID_STATE}"
+    for target, target_transitions in context.transitions.items():
+        liquid_law = target_transitions.get(liquid_law_name)
+        law_params = (
+            _parameter_names(liquid_law) if callable(liquid_law) else frozenset()
+        )
+        missing = tuple(
+            f"{target}__{liquid_law_name}__{name}"
+            for name in _KERNEL_LIQUID_LAW_PARAMS
+            if f"{target}__{liquid_law_name}__{name}" not in law_params
+        )
+        if missing:
+            msg = (
+                f"NBEGM's single-liquid kernels read the budget as the "
+                f"{list(_KERNEL_LIQUID_LAW_PARAMS)} parameters of the liquid law "
+                f"{liquid_law_name!r}; regime {regime_name!r}'s transition to "
+                f"{target!r} is missing the flat param(s) {list(missing)}."
+            )
+            raise RegimeInitializationError(msg)
+
+
+def _parameter_names(func: Callable[..., object]) -> frozenset[str]:
+    """Return a function's parameter names, empty when it has no signature."""
+    import inspect  # noqa: PLC0415
+
+    try:
+        return frozenset(inspect.signature(func).parameters)
+    except TypeError, ValueError:
+        return frozenset()
 
 
 def resolve_liquid_state_name(
