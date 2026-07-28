@@ -230,28 +230,40 @@ def trim_pad_from_raw_results(
             before any pylcm-internal padding.
 
     Returns:
-        New immutable mapping with the trailing pad rows removed from every
-        per-subject array (`V_arr`, `actions`, `states`, `in_regime`).
+        New immutable mapping with the trailing pad rows removed from EVERY
+        per-subject field of `PeriodRegimeSimulationData`.
+
+    Note:
+        The fields are read off the dataclass rather than enumerated here. An
+        enumeration is a second, silent copy of the structure's definition, and it
+        went stale: `nested_policy_fallback` was added to
+        `PeriodRegimeSimulationData` without being added to this list, so
+        `dataclasses.replace` carried the untrimmed field straight through. The
+        result was a leaf `batch_size`-padded to 24 rows against a 21-row
+        `_in_regime` mask, and `to_dataframe` died on the boolean index. Deriving
+        the list means the next field added cannot reintroduce that.
 
     """
     trimmed: dict[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]] = {}
+    field_names = [f.name for f in dataclasses.fields(PeriodRegimeSimulationData)]
     for regime_name, periods in raw_results.items():
         new_periods: dict[int, PeriodRegimeSimulationData] = {}
         for period, data in periods.items():
             if data.V_arr.shape[0] == original_n_subjects:
                 new_periods[period] = data
                 continue
-            new_periods[period] = dataclasses.replace(
-                data,
-                V_arr=data.V_arr[:original_n_subjects],
-                actions=MappingProxyType(
-                    {k: v[:original_n_subjects] for k, v in data.actions.items()}
-                ),
-                states=MappingProxyType(
-                    {k: v[:original_n_subjects] for k, v in data.states.items()}
-                ),
-                in_regime=data.in_regime[:original_n_subjects],
-            )
+            sliced: dict[str, object] = {}
+            for name in field_names:
+                value = getattr(data, name)
+                # `actions` and `states` are name -> array mappings; every other
+                # field is a per-subject array with subjects on the leading axis.
+                if isinstance(value, Mapping):
+                    sliced[name] = MappingProxyType(
+                        {k: v[:original_n_subjects] for k, v in value.items()}
+                    )
+                else:
+                    sliced[name] = value[:original_n_subjects]
+            new_periods[period] = dataclasses.replace(data, **sliced)
         trimmed[regime_name] = MappingProxyType(new_periods)
     return MappingProxyType(trimmed)
 
