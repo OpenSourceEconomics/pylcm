@@ -138,7 +138,8 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
 
     The alive regime carries the given boundary predicate and subsidy pieces and
     solves under NBEGM, so building the `Model` runs the case-piece validation
-    (coverage, smoothness gate, v1 scope gate) against exactly that split.
+    (coverage, smoothness gate, case-piece scope gate) against exactly that
+    split.
     """
     grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
     alive = Regime(
@@ -180,16 +181,18 @@ def test_nbegm_rejects_a_piece_with_a_hidden_where():
     """A smooth piece hiding `jnp.where` fails the smoothness gate at model build."""
 
     @lcm.case_boundary(
-        lcm.boundary("liquid", "limit", equality="otherwise", kind="jump")
+        lcm.boundary(
+            variable="liquid", threshold="limit", equality="otherwise", kind="jump"
+        )
     )
     def predicate(liquid, limit):
         return liquid < limit
 
-    @lcm.piece("subsidy", when=predicate)
+    @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(subsidy_high):
         return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
 
-    @lcm.piece("subsidy", otherwise=predicate)
+    @lcm.piece(output="subsidy", otherwise=predicate)
     def subsidy_otherwise(subsidy_low):
         return jnp.asarray(subsidy_low)
 
@@ -206,15 +209,17 @@ def _build_nbegm_with_boundary(
 ) -> Model:
     """Assemble a one-period NBEGM toy whose boundary carries given metadata."""
 
-    @lcm.case_boundary(lcm.boundary(variable, "limit", equality=equality, kind=kind))
+    @lcm.case_boundary(
+        lcm.boundary(variable=variable, threshold="limit", equality=equality, kind=kind)
+    )
     def predicate(liquid, limit):
         return liquid < limit
 
-    @lcm.piece("subsidy", when=predicate)
+    @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(subsidy_high):
         return jnp.asarray(subsidy_high)
 
-    @lcm.piece("subsidy", otherwise=predicate)
+    @lcm.piece(output="subsidy", otherwise=predicate)
     def subsidy_otherwise(subsidy_low):
         return jnp.asarray(subsidy_low)
 
@@ -226,14 +231,14 @@ def _build_nbegm_with_boundary(
 
 
 def test_nbegm_rejects_a_when_owned_boundary():
-    """v1 supports only `equality='otherwise'`; a `when`-owned boundary is rejected."""
-    with pytest.raises(NBEGMCaseError, match="v1"):
+    """Case boundaries own equality on the `otherwise` side; `when` is rejected."""
+    with pytest.raises(NBEGMCaseError, match="own equality on the"):
         _build_nbegm_with_boundary(equality="when", kind="jump")
 
 
 def test_nbegm_rejects_a_non_jump_boundary_kind():
-    """v1 supports only `kind='jump'`; a continuous-kink boundary is rejected."""
-    with pytest.raises(NBEGMCaseError, match="v1"):
+    """Case boundaries declare `kind='jump'`; a continuous kink is rejected."""
+    with pytest.raises(NBEGMCaseError, match="declare `kind='jump'`"):
         _build_nbegm_with_boundary(equality="otherwise", kind="continuous_kink")
 
 
@@ -243,28 +248,31 @@ def test_nbegm_accepts_the_supported_otherwise_jump_boundary():
 
 
 def test_nbegm_rejects_a_state_dependent_subsidy_piece():
-    """A subsidy piece reading the liquid state is rejected — v1 pieces are pure.
+    """A subsidy piece reading the liquid state is rejected — pieces are pure.
 
     The one-asset core evaluates each piece from the flat params alone, so a piece
-    that depends on a state or action cannot be the additive cash-on-hand shift v1
-    routes. It is rejected at build rather than failing obscurely at solve.
+    that depends on a state or action cannot be the additive cash-on-hand shift the
+    case-piece route carries. It is rejected at build rather than failing obscurely
+    at solve.
     """
 
     @lcm.case_boundary(
-        lcm.boundary("liquid", "limit", equality="otherwise", kind="jump")
+        lcm.boundary(
+            variable="liquid", threshold="limit", equality="otherwise", kind="jump"
+        )
     )
     def predicate(liquid, limit):
         return liquid < limit
 
-    @lcm.piece("subsidy", when=predicate)
+    @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(liquid, subsidy_high):
         return subsidy_high * jnp.ones_like(liquid)
 
-    @lcm.piece("subsidy", otherwise=predicate)
+    @lcm.piece(output="subsidy", otherwise=predicate)
     def subsidy_otherwise(subsidy_low):
         return jnp.asarray(subsidy_low)
 
-    with pytest.raises(NBEGMCaseError, match="v1"):
+    with pytest.raises(NBEGMCaseError, match="read only the flat params"):
         _build_model(
             predicate=predicate,
             subsidy_when=subsidy_when,
@@ -284,16 +292,18 @@ def test_nbegm_rejects_a_piece_whose_helper_hides_a_where():
         return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
 
     @lcm.case_boundary(
-        lcm.boundary("liquid", "limit", equality="otherwise", kind="jump")
+        lcm.boundary(
+            variable="liquid", threshold="limit", equality="otherwise", kind="jump"
+        )
     )
     def predicate(liquid, limit):
         return liquid < limit
 
-    @lcm.piece("subsidy", when=predicate)
+    @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(subsidy_high):
         return hidden_subsidy_helper(subsidy_high)
 
-    @lcm.piece("subsidy", otherwise=predicate)
+    @lcm.piece(output="subsidy", otherwise=predicate)
     def subsidy_otherwise():
         return jnp.asarray(0.0)
 

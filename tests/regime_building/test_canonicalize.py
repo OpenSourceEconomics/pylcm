@@ -22,8 +22,12 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.canonicalize import canonicalize_regimes
+from _lcm.regime_building.canonicalize import (
+    canonicalize_phased_regimes,
+    canonicalize_regimes,
+)
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.phases import normalize_all_regime_phases
 from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
@@ -244,3 +248,39 @@ def test_terminal_regime_has_empty_canonical_transitions() -> None:
     assert specs["dead"].solution.state_transitions == {}
     assert specs["dead"].solution.regime_transition is None
     assert specs["dead"].terminal
+
+
+def test_two_step_seam_matches_wrapper() -> None:
+    """`canonicalize_phased_regimes` over `normalize_all_regime_phases` equals
+    the `canonicalize_regimes` wrapper.
+
+    The main model path splits the wrapper into an explicit phase-normalization
+    step and a canonicalization step so that model-level age normalization can
+    sit between them. The split must not change the end result.
+    """
+    finalized = finalize_regimes(
+        user_regimes={
+            "work": _regime(state_transitions={"wealth": _next_wealth}),
+            "retire": _regime(state_transitions={"wealth": _next_wealth}),
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        derived_categoricals={},
+    )
+
+    wrapper = canonicalize_regimes(user_regimes=finalized)
+
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    two_step = canonicalize_phased_regimes(
+        raw_specs=raw_specs,
+        all_regime_names=frozenset(finalized),
+    )
+
+    assert set(wrapper) == set(two_step)
+    for regime_name in wrapper:
+        for phase in ("solution", "simulation"):
+            wrapped_slice = getattr(wrapper[regime_name], phase)
+            two_step_slice = getattr(two_step[regime_name], phase)
+            assert dict(wrapped_slice.state_transitions) == dict(
+                two_step_slice.state_transitions
+            )
+            assert wrapped_slice.regime_transition == two_step_slice.regime_transition

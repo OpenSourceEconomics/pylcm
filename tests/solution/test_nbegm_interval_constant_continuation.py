@@ -8,7 +8,10 @@ breakpoints is zero. A smoothly varying dependence makes the midpoint-bound row
 wrong for the interval's other liquid points, so it is refused at model build.
 """
 
+import inspect
+from collections.abc import Mapping
 from types import SimpleNamespace
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
@@ -17,6 +20,7 @@ from _lcm.solution.nbegm import (
     _fail_if_liquid_reading_next_state_varies_within_interval,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.transition import MarkovTransition
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
 
 
@@ -38,8 +42,12 @@ def test_costate_law_varying_smoothly_in_liquid_is_rejected_at_build() -> None:
 
 
 def test_costate_law_piecewise_constant_in_liquid_builds() -> None:
-    """A co-state whose law switches at a liquid threshold builds without error."""
-    ride_toy.build_model(
+    """A co-state whose law switches at a liquid threshold builds, carrying the state.
+
+    Asserting the co-state is actually declared pins down that the guard passed on
+    the ride-along configuration under test, not on a model that quietly lost it.
+    """
+    model = ride_toy.build_model(
         variant="nbegm",
         n_liquid=12,
         liquid_max=30.0,
@@ -49,6 +57,7 @@ def test_costate_law_piecewise_constant_in_liquid_builds() -> None:
         costate_reads_liquid=True,
         costate_smooth=False,
     )
+    assert "tracker" in model.user_regimes["alive"].states
 
 
 def test_transition_prob_varying_smoothly_in_liquid_is_rejected_at_build() -> None:
@@ -69,8 +78,12 @@ def test_transition_prob_varying_smoothly_in_liquid_is_rejected_at_build() -> No
 
 
 def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
-    """A survival probability switched at a liquid threshold builds without error."""
-    ride_toy.build_model(
+    """A survival probability switched at a liquid threshold builds, reading liquid.
+
+    Asserting the transition really reads the liquid state pins down that the guard
+    passed on the configuration under test, not on a liquid-independent fallback.
+    """
+    model = ride_toy.build_model(
         variant="nbegm",
         n_liquid=12,
         liquid_max=30.0,
@@ -80,6 +93,10 @@ def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
         transition_reads_liquid=True,
         transition_smooth=False,
     )
+    transition = cast(
+        "Mapping[str, MarkovTransition]", model.user_regimes["alive"].transition
+    )
+    assert "liquid" in inspect.signature(transition["alive"].func).parameters
 
 
 def test_costate_law_the_probe_cannot_evaluate_is_rejected_at_build() -> None:

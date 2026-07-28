@@ -87,20 +87,30 @@ def test_value_is_invariant_to_chunk_size(n_intervals, chunk_size, monkeypatch):
     np.testing.assert_allclose(policy, ref_policy, atol=1e-6, rtol=1e-6, equal_nan=True)
 
 
-def test_solved_value_is_finite_where_the_budget_is_covered():
-    """The per-interval merge yields a finite value where the budget funds a solve.
+def test_solved_value_dominates_the_no_save_corner_where_the_budget_is_covered():
+    """The merged value is at least the analytic no-save payoff at every liquid point.
 
-    A chunk-size-invariant NaN would pass the invariance test but hide a solve that
-    dropped a covered interval; over the low-to-mid liquid range the intervals'
-    cash-on-hand funds an interior or no-save candidate, so the merged value is finite
-    there. (High-liquid points can legitimately be NaN when no interval's coh reaches
-    them — the invariance test still guards those.)
+    Consuming the point's own cash-on-hand and saving nothing is always feasible over
+    the low-to-mid liquid range, so its payoff `u(coh) + beta * cont_value[0]` is a
+    lower bound on the envelope. A solve that dropped a covered interval — or merged
+    the wrong interval's continuation — falls below it, while a chunk-size-invariant
+    NaN would still pass the invariance test. (High-liquid points can legitimately be
+    NaN when no interval's coh reaches them; the invariance test guards those.)
     """
     inputs = _build_inputs(n_intervals=12)
     value, _, _ = nbegm_per_interval_continuation_step_savings(**inputs)
     liquid_grid = np.asarray(inputs["liquid_grid"])
     covered = (liquid_grid > 1.0) & (liquid_grid < 15.0)
-    assert np.isfinite(np.asarray(value)[covered]).all()
+    interval = np.searchsorted(np.asarray(inputs["breakpoints"]), liquid_grid, "right")
+    coh = (
+        np.asarray(inputs["coh_slopes"])[interval] * liquid_grid
+        + np.asarray(inputs["coh_intercepts"])[interval]
+    )
+    no_save = (
+        _utility_of_action(coh)
+        + _DISCOUNT * np.asarray(inputs["cont_value"])[interval, 0]
+    )
+    np.testing.assert_array_less(no_save[covered] - 1e-6, np.asarray(value)[covered])
 
 
 def test_chunk_size_is_a_small_positive_constant():

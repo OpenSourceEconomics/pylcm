@@ -38,6 +38,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
 )
+from tests.conftest import X64_ENABLED
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -215,7 +216,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
 @pytest.fixture(scope="module")
 def matched_negm_value() -> FloatND:
     """The matched 3-period NEGM model's period-0 `alive` value array."""
-    return _build_matched_negm_model().solve(params=_PARAMS, log_level="off")[0][
+    return _build_matched_negm_model().solve(params=_PARAMS, log_level="debug")[0][
         "alive"
     ]
 
@@ -224,7 +225,7 @@ def matched_negm_value() -> FloatND:
 def oracle_value() -> FloatND:
     """The 4-period brute oracle's period-0 `alive` value array."""
     return kinked_toy_oracle.build_model().solve(
-        params=kinked_toy_oracle.PARAMS, log_level="off"
+        params=kinked_toy_oracle.PARAMS, log_level="debug"
     )[0]["alive"]
 
 
@@ -262,10 +263,13 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
     are dense-search truth rather than an out-of-domain extrapolation.
 
     The constants are pinned on CPU x64. The dense grid-search argmax breaks
-    near-ties between adjacent action nodes differently across backends, so exact
-    reproduction is a same-platform regression guard, not a cross-platform one.
+    near-ties between adjacent action nodes differently across backends and across
+    precisions — at float32 the two sides of a near-tie are not resolvable at all,
+    so the winner is a legitimately different action node and the value moves by a
+    finite amount rather than by rounding. Exact reproduction is therefore a
+    same-platform, same-precision regression guard.
     """
-    if jax.default_backend() != "cpu":
+    if jax.default_backend() != "cpu" or not X64_ENABLED:
         pytest.skip("Oracle constants are pinned on CPU x64 (grid-search argmax ties).")
     for (ix, iz), expected in _ORACLE_CELLS.items():
         np.testing.assert_allclose(
@@ -302,7 +306,7 @@ def test_negm_weakly_improves_on_the_matched_brute_value(
     """
     brute_value = _build_matched_brute_model(
         n_consumption=n_consumption, n_investment=n_investment
-    ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+    ).solve(params=_PARAMS, log_level="debug")[0]["alive"]
     improvement = matched_negm_value - brute_value
     assert bool(jnp.all(jnp.isfinite(brute_value)))
     assert float(jnp.min(improvement)) >= -1e-4
@@ -323,7 +327,7 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
     for n_points in (15, 25, 45, 80):
         brute_value = _build_matched_brute_model(
             n_consumption=n_points, n_investment=n_points
-        ).solve(params=_PARAMS, log_level="off")[0]["alive"]
+        ).solve(params=_PARAMS, log_level="debug")[0]["alive"]
         max_gaps.append(float(jnp.max(jnp.abs(matched_negm_value - brute_value))))
     # The finest grid is strictly closer to NEGM than the coarsest (overall
     # convergence), and lands within a tight band of NEGM everywhere.
@@ -339,15 +343,23 @@ def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int)
     processing the outer-grid nodes in chunks of `outer_batch_size` instead of all
     at once reduces them in the same order, so the solved value function is
     bit-identical — the knob trades parallelism for bounded memory only.
+
+    Both solves must also be finite throughout. Equality alone would be satisfied
+    by two solves that agree only in being NaN, which is how a solver that gave
+    up on every cell would look.
     """
-    base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
+    base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="debug")
     chunked = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     assert base.keys() == chunked.keys()
     for period in base:
         for regime in base[period]:
+            solved = np.asarray(base[period][regime])
+            assert np.all(np.isfinite(solved)), (
+                f"period {period}, regime {regime!r} is not solved throughout"
+            )
             np.testing.assert_array_equal(
                 np.asarray(chunked[period][regime]),
-                np.asarray(base[period][regime]),
+                solved,
             )

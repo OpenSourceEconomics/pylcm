@@ -19,6 +19,7 @@ A reviewed numerical helper opts out with `lcm.smooth_helper`.
 import ast
 import inspect
 import textwrap
+import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import Literal
 
@@ -44,6 +45,21 @@ _PIECEWISE_CALL_NAMES = frozenset(
         "digitize",
         "interp",
         "piecewise",
+        "floor",
+        "ceil",
+        "trunc",
+        "round",
+        "argmax",
+        "argmin",
+        "greater",
+        "greater_equal",
+        "less",
+        "less_equal",
+        "equal",
+        "not_equal",
+        "logical_and",
+        "logical_or",
+        "logical_not",
     }
 )
 
@@ -60,9 +76,16 @@ _SMOOTH_FORBIDDEN_PRIMS = frozenset(
         "switch",
         "max",
         "min",
+        "reduce_max",
+        "reduce_min",
         "clamp",
         "abs",
         "sign",
+        "floor",
+        "ceil",
+        "round",
+        "argmax",
+        "argmin",
         "sort",
         "searchsorted",
     }
@@ -100,6 +123,7 @@ def find_jaxpr_violations(
     *,
     abstract_args: Iterable[object],
     mode: CheckMode,
+    probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> list[str]:
     """Find piecewise JAX primitives in a user function's traced jaxpr.
 
@@ -108,6 +132,14 @@ def find_jaxpr_violations(
         abstract_args: Positional sample arguments to trace `func` against.
         mode: `"smooth_user"` bans piecewise primitives; `"boundary"` permits
             them (a predicate is meant to compare).
+        probe_failure: What to do when `func` cannot be traced against
+            `abstract_args` at all — a piece that indexes an array-valued or
+            `MappingLeaf` parameter does not evaluate on the scalar fills:
+
+            - `"reject"` reports the failure as a violation, so the build stops
+              on an unverified piece.
+            - `"assume_declared"` warns and reports no violation, leaving the
+              smoothness claim to the model author.
 
     Returns:
         List of human-readable violation messages; empty when the jaxpr uses no
@@ -116,8 +148,28 @@ def find_jaxpr_violations(
     """
     if mode != "smooth_user":
         return []
-    jaxpr = jax.make_jaxpr(func)(*abstract_args)
     name = getattr(func, "__name__", "<unknown>")
+    try:
+        jaxpr = jax.make_jaxpr(func)(*abstract_args)
+    except Exception as probe_error:  # noqa: BLE001 - any trace failure is unverified
+        msg = (
+            f"NBEGM piece {name!r} could not be traced on the build-time scalar "
+            f"fills ({type(probe_error).__name__}: {probe_error}), so its "
+            "smoothness is unverified."
+        )
+        if probe_failure == "assume_declared":
+            warnings.warn(
+                msg + " Building anyway (`probe_failure='assume_declared'`): the "
+                "model author asserts the piece is smooth; validate the solve "
+                "against an independent reference.",
+                stacklevel=2,
+            )
+            return []
+        return [
+            msg + " Restructure it to evaluate on scalar inputs, mark a reviewed "
+            "helper with `lcm.smooth_helper`, or set "
+            "`probe_failure='assume_declared'` to assert smoothness yourself."
+        ]
     violations: list[str] = []
     for eqn in _iter_jaxpr_eqns(jaxpr):
         prim = eqn.primitive.name  # ty: ignore[unresolved-attribute]

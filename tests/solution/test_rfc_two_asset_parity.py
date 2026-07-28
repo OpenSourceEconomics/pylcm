@@ -35,7 +35,7 @@ _INTERIOR = np.s_[4:, :9]
 def _solve():
     model = get_model(n_periods=2)
     params = get_params(n_periods=2, pension_bequest_weight=0.5)
-    brute = model.solve(params=params, log_level="off")
+    brute = model.solve(params=params, log_level="debug")
     next_value = jnp.asarray(brute[1]["dead"])
     result = rfc_two_asset_step(
         next_value=next_value,

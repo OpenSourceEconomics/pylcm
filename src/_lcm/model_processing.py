@@ -16,6 +16,7 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
 from _lcm.egm.negm_validation import validate_negm_regimes
+from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
@@ -189,6 +190,7 @@ def validate_model_inputs(
     # one.
     validate_dcegm_regimes(user_regimes=user_regimes)
     validate_negm_regimes(user_regimes=user_regimes)
+    validate_nnbegm_regimes(user_regimes=user_regimes)
 
     error_messages: list[str] = []
 
@@ -517,6 +519,12 @@ def _partial_fixed_params_into_regimes(
                 {
                     period: functools.partial(func, **regime_fixed)
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
+                }
+            ),
+            Q_and_F=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.Q_and_F.items()
                 }
             ),
             next_state=MappingProxyType(

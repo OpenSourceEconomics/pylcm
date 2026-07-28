@@ -48,7 +48,7 @@ def _rfc_model():
 
 def test_rfc_solver_publishes_every_period_and_regime():
     """The RFC-driven lifecycle solve publishes working/retired/dead end-to-end."""
-    egm = _rfc_model().solve(params=get_params(), log_level="off")
+    egm = _rfc_model().solve(params=get_params(), log_level="debug")
     assert "working" in egm[0]
     assert "retired" in egm[_RETIREMENT_PERIOD]
     assert "dead" in egm[_N_PERIODS - 1]
@@ -57,9 +57,9 @@ def test_rfc_solver_publishes_every_period_and_regime():
 @pytest.mark.parametrize("period", [0, 1, 2])
 def test_rfc_solver_working_value_tracks_brute_on_the_pension_interior(period):
     """Each working period's RFC value tracks brute on the covered pension interior."""
-    egm = _rfc_model().solve(params=get_params(), log_level="off")
+    egm = _rfc_model().solve(params=get_params(), log_level="debug")
     brute = get_model(n_periods=_N_PERIODS, n_consumption=200).solve(
-        params=get_params(), log_level="off"
+        params=get_params(), log_level="debug"
     )
     sl = _WORKING_INTERIOR[period]
     egm_v = np.asarray(egm[period]["working"])[sl]

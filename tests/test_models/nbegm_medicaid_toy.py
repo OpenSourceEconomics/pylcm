@@ -38,20 +38,25 @@ from tests.test_models.nbegm_common import (
 
 
 @lcm.case_boundary(
-    lcm.boundary("liquid", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
 )
 def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
     """Medicaid asset test: eligible while liquid wealth is below the limit."""
     return liquid < medicaid_asset_limit
 
 
-@lcm.piece("subsidy", when=medicaid_eligible)
+@lcm.piece(output="subsidy", when=medicaid_eligible)
 def subsidy_medicaid(subsidy_high: float) -> FloatND:
     """Subsidy into cash-on-hand for the Medicaid-eligible (low-asset) case."""
     return jnp.asarray(subsidy_high)
 
 
-@lcm.piece("subsidy", otherwise=medicaid_eligible)
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
 def subsidy_private(subsidy_low: float) -> FloatND:
     """Subsidy into cash-on-hand for the private (high-asset) case."""
     return jnp.asarray(subsidy_low)

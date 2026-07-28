@@ -34,7 +34,10 @@ flowchart TD
     q0 -->|"2"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
 
     q2d -->|"Yes"| twodim["TwoDimEGM (G2EGM)"]
-    q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| negm["NEGM"]
+    q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| qnest{"Declared breakpoints on the liquid margin?"}
+
+    qnest -->|"Yes"| nnbegm["NNBEGM"]
+    qnest -->|"No"| negm["NEGM"]
 
     qbp -->|"Yes"| nbegm["NBEGM"]
     qbp -->|"No"| qdc{"Discrete choice induces non-concavity (secondary kinks)?"}
@@ -42,6 +45,12 @@ flowchart TD
     qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see hardware tree)"]
     qdc -->|"No — smooth and concave"| egm["OneAssetEGM or GridSearch"]
 ```
+
+Under the 2-continuous-state nest, `NEGM` and `NNBEGM` differ only in the inner solver:
+`NEGM` nests a `DCEGM` solve, `NNBEGM` an `NBEGM` one, so declared liquid kinks, jumps,
+and floors keep their exact treatment inside every outer candidate. Both re-solve the
+whole inner problem per outer-grid node, so neither restricts how the outer margin
+enters the model — only the finite outer grid limits them.
 
 At the secondary-kink leaf, both `DCEGM` and `NBEGM` are correct. `DCEGM` is the natural
 choice for a plain discrete–continuous problem with no institutional breakpoints;
@@ -89,6 +98,7 @@ Two cross-cutting factors:
 | `DCEGM`       | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `upper_envelope` |
 | `NEGM`        | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
 | `TwoDimEGM`   | Two continuous assets whose first-order conditions are genuinely coupled (the G2EGM setting).                                                         | `a_grid`, `b_grid`, `consumption_grid`, `threshold`                                    |
+| `NNBEGM`      | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
 | `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                            |
 
 `DCEGM`'s upper-envelope backend is selectable via `upper_envelope=` (`"fues"`, `"rfc"`,

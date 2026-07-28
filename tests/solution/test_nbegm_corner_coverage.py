@@ -108,20 +108,21 @@ def test_corners_use_true_cash_on_hand_where_the_affine_model_goes_negative():
         breakpoints=jnp.asarray([], dtype=liquid_grid.dtype),
         coh_grid=true_coh,
     )
-    value = np.asarray(value)
-    assert np.isfinite(value).all()
-
-    # The no-save corner at the lowest grid point is a feasible action, so the envelope
-    # value there is at least its value under the true cash-on-hand.
-    no_save = _utility_of_action(3.0) + _DISCOUNT * float(cont_value[0, 0])
-    assert value[0] >= no_save - 1e-4
+    # Each grid point's no-save corner is a feasible action under the true
+    # cash-on-hand, so the envelope dominates its payoff everywhere — which also
+    # pins down that no point collapsed to the affine budget's negative coh.
+    no_save = _utility_of_action(np.asarray(true_coh)) + _DISCOUNT * float(
+        cont_value[0, 0]
+    )
+    np.testing.assert_array_less(no_save - 1e-4, np.asarray(value))
 
 
 def test_corner_is_visible_when_an_interval_holds_one_grid_point():
     """A corner in a singleton interval is not lost by the link-only envelope.
 
     With a coarse liquid grid and breakpoints that put a single grid point inside an
-    interval, that point's feasible corner must still be recovered as a finite value.
+    interval, that point's feasible corner must still dominate the envelope's value
+    there — a corner dropped for want of a bracketing neighbour falls below it.
     """
     liquid_grid = jnp.asarray([1.0, 5.0, 20.0])
     savings_grid = jnp.linspace(0.0, 4.0, 40)
@@ -144,4 +145,9 @@ def test_corner_is_visible_when_an_interval_holds_one_grid_point():
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
     )
-    assert np.isfinite(np.asarray(value)).all()
+    coh = (
+        np.asarray(coh_slopes)[[0, 1, 2]] * np.asarray(liquid_grid)
+        + np.asarray(coh_intercepts)[[0, 1, 2]]
+    )
+    no_save = _utility_of_action(coh) + _DISCOUNT * np.asarray(cont_value)[:, 0]
+    np.testing.assert_array_less(no_save - 1e-4, np.asarray(value))
