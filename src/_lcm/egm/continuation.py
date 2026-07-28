@@ -39,7 +39,6 @@ from _lcm.egm.interp import (
     locate_on_grid,
     prepare_padded_grid,
 )
-from _lcm.egm.nbegm import jump_moving_state_names
 from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -2018,17 +2017,9 @@ def _build_child_reads(
             target_regime.solver.carry_rows_share_state_grid
             and not target_regime.solver.carry_retains_discrete_action_rows
         )
-        # Under a topology-publishing read, a dim is only foldable when no
-        # jump source reads its node value — otherwise the published jump
-        # preimages (and so the rows' duplicated abscissae) vary along it.
-        if getattr(target_regime.solver, "jump_read", None) == "one_sided":
-            jump_moving = jump_moving_state_names(
-                functions=target_regime.functions,
-                state_names=frozenset(target_regime.states),
-                euler_state_name=euler_state_name,
-            )
-        else:
-            jump_moving = frozenset()
+        # No solver here publishes a one-sided jump read, so no state is
+        # pinned by a jump source reading its node value.
+        jump_moving: frozenset[StateName] = frozenset()
         foldable_stochastic_flags = tuple(
             child_carry_rows_uniform
             and name not in resources_arg_names
