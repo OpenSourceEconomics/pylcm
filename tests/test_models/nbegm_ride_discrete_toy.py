@@ -123,6 +123,35 @@ def resources(
     return liquid + base_income - tax - premium * buy_private
 
 
+@lcm.piecewise_affine(
+    "surcharge",
+    variable="derived_income",
+    breakpoints=(lcm.affine_breakpoint("surcharge_start", kind="continuous_kink"),),
+)
+def surcharge(
+    derived_income: FloatND, surcharge_rate: float, surcharge_start: float
+) -> FloatND:
+    """Continuous surcharge on the derived income above its start.
+
+    A *kink* source whose variable reads the discrete action, declared beside a
+    liquid-direct jump. The jump publishes an augmented query grid the branches
+    must share, so the action cannot enter any source's variable there.
+    """
+    return surcharge_rate * jnp.maximum(derived_income - surcharge_start, 0.0)
+
+
+def resources_with_surcharge(
+    liquid: ContinuousState,
+    tax: FloatND,
+    surcharge: FloatND,
+    buy_private: DiscreteAction,
+    base_income: float,
+    premium: float,
+) -> FloatND:
+    """Cash-on-hand net of both the tax cliff and the derived-income surcharge."""
+    return liquid + base_income - tax - surcharge - premium * buy_private
+
+
 def next_liquid(
     resources: FloatND,
     consumption: ContinuousAction,
@@ -324,6 +353,7 @@ def build_model(  # noqa: C901, PLR0912
     action_in_regime_transition: bool = False,
     action_in_schedule_variable: bool = False,
     jump_schedule: bool = False,
+    derived_kink_alongside_jump: bool = False,
     costate_reads_liquid: bool = False,
     costate_smooth: bool = False,
     costate_unprobeable: bool = False,
@@ -362,6 +392,16 @@ def build_model(  # noqa: C901, PLR0912
         alive_functions = {
             **alive_functions,
             "discount_factor": discount_factor_action,
+        }
+    if derived_kink_alongside_jump:
+        # A liquid-direct jump publishes the cliff on a shared query grid while a
+        # second, kink-only schedule sits on a derived income the action shifts.
+        alive_functions = {
+            **alive_functions,
+            "tax": tax_jump,
+            "surcharge": surcharge,
+            "derived_income": derived_income,
+            "resources": resources_with_surcharge,
         }
     if action_in_schedule_variable:
         # The tax cliff sits on a derived income that reads the action, so its asset
@@ -467,6 +507,9 @@ def build_params(
     oop_uninsured: float = 1.0,
     action_in_schedule_variable: bool = False,
     income_offset: float = 4.0,
+    derived_kink_alongside_jump: bool = False,
+    surcharge_rate: float = 0.1,
+    surcharge_start: float = 8.0,
 ) -> dict:
     """Get parameters for the ride-along discrete-choice toy."""
     alive_budget = {"return_liquid": return_liquid}
@@ -477,7 +520,17 @@ def build_params(
     )
     derived_income_params = (
         {"derived_income": {"income_offset": income_offset}}
-        if action_in_schedule_variable
+        if action_in_schedule_variable or derived_kink_alongside_jump
+        else {}
+    )
+    surcharge_params = (
+        {
+            "surcharge": {
+                "surcharge_rate": surcharge_rate,
+                "surcharge_start": surcharge_start,
+            }
+        }
+        if derived_kink_alongside_jump
         else {}
     )
     oop_params = (
@@ -492,6 +545,7 @@ def build_params(
             "tax": tax_params,
             **oop_params,
             **derived_income_params,
+            **surcharge_params,
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

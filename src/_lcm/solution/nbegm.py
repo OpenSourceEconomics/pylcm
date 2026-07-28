@@ -449,26 +449,35 @@ class NBEGM(Solver):
             post_decision_function=self.post_decision_function,
             allow_continuation_feed=True,
         )
-        # An action entering the schedule variable gives each branch its own
-        # breakpoint partition (its own asset preimage of every threshold), which the
-        # envelope solves per branch. A *published* jump is the exception: its
-        # one-sided cliff limits ride a jump-augmented query grid whose extra
-        # abscissae would then sit at a different liquid per branch, so the branches'
-        # rows would no longer share a grid to take the discrete max over.
+        # An action entering a schedule variable gives each branch its own
+        # breakpoint partition (its own asset preimage of every threshold), which
+        # the envelope solves per branch. Publishing a jump is the exception: the
+        # one-sided cliff limits ride a jump-augmented query grid built once,
+        # outside the per-branch loop, so *any* source whose variable the action
+        # shifts would move that grid's extra abscissae per branch and the
+        # branches' rows would no longer share a grid to take the discrete max
+        # over. The kink sources are not spared: they are augmented on the same
+        # grid, and the cell-breakpoint DAG the augmentation evaluates is called
+        # without an action binding there.
+        publishes_jumps = self.jump_read == "one_sided" and any(
+            source.kind == "jump" for source in schedule_spec.sources
+        )
+        if not publishes_jumps:
+            return
         for source in schedule_spec.sources:
             dag = source.derived_of_liquid_dag
             if dag is None or action_name not in inspect.signature(dag).parameters:
                 continue
-            if source.kind == "jump" and self.jump_read == "one_sided":
-                msg = (
-                    "NBEGM's schedule+ride-along discrete envelope publishes the jump "
-                    f"breakpoint on a shared query grid, so the action {action_name!r} "
-                    f"must not enter the jumped schedule variable {source.variable!r} "
-                    "under `jump_read='one_sided'` (its cliff would sit at a different "
-                    f"liquid per branch); regime {context.regime_name!r} reads it "
-                    "there. Use `jump_read='bridged'` or a non-jump breakpoint."
-                )
-                raise RegimeInitializationError(msg)
+            msg = (
+                "NBEGM's schedule+ride-along discrete envelope publishes the jump "
+                f"breakpoint on a shared query grid, so the action {action_name!r} "
+                f"must not enter any schedule variable — regime "
+                f"{context.regime_name!r} reads it in {source.variable!r} (a "
+                f"{source.kind} source), whose breakpoints would then sit at a "
+                "different liquid per branch. Use `jump_read='bridged'`, or "
+                "declare the schedule on a variable the action does not shift."
+            )
+            raise RegimeInitializationError(msg)
 
     def _schedule_has_ride_along(self, *, context: SolverBuildContext) -> bool:
         """Whether the schedule regime carries a ride-along co-state.

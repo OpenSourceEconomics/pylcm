@@ -44,3 +44,24 @@ def test_action_in_jumped_schedule_variable_under_one_sided_is_rejected() -> Non
             action_in_schedule_variable=True,
             jump_schedule=True,
         )
+
+
+def test_action_in_a_kink_variable_beside_a_published_jump_is_rejected() -> None:
+    """Any source's variable is off limits to the action once a jump is published.
+
+    A liquid-direct jump publishes its cliff limits on an augmented query grid
+    every branch shares. A second, kink-only schedule sitting on a derived
+    income the action shifts would move that grid's extra abscissae per branch,
+    so the branches' rows would no longer share a grid to take the discrete max
+    over.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"one_sided|jump"):
+        ride_toy.build_model(
+            variant="nbegm",
+            n_liquid=12,
+            liquid_max=30.0,
+            n_savings=20,
+            savings_max=28.0,
+            n_consumption=8,
+            derived_kink_alongside_jump=True,
+        )
