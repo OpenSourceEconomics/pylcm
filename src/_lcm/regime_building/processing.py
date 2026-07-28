@@ -21,6 +21,7 @@ from _lcm.egm.budget import (
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
 from _lcm.egm.negm_validation import validate_negm_regimes
+from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -201,6 +202,7 @@ def process_regimes(
     # `process_regimes` callers.
     validate_dcegm_regimes(user_regimes=user_regimes)
     validate_negm_regimes(user_regimes=user_regimes)
+    validate_nnbegm_regimes(user_regimes=user_regimes)
 
     # Normalize phases first (local to one regime), then age specialization (needs
     # the model AgeGrid and each regime's active periods). After normalization every

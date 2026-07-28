@@ -242,8 +242,10 @@ class NBEGM(Solver):
           see. A piece attested with `lcm.smooth_helper` is exempt.
 
         The boundary predicate is meant to compare, so only the AST gate runs on
-        it; the JAXPR gate runs on the smooth pieces alone.
+        it; the JAXPR gate runs on the smooth pieces alone. Declared EV1 taste
+        shocks are refused here too — the kernels solve the hard maximum.
         """
+        fail_if_taste_shocks_declared(context=context)
         validate_case_piece_smoothness(
             context=context,
             liquid_state_name=(
@@ -934,6 +936,35 @@ class _NBEGMCaseSpec:
 
 # The only split output v1 knows how to route — an additive cash-on-hand shift.
 _NBEGM_V1_OUTPUT = "subsidy"
+
+
+def fail_if_taste_shocks_declared(*, context: SolverBuildContext) -> None:
+    """Reject EV1 taste shocks on a regime solved by the case-piece kernels.
+
+    Every NB-EGM envelope takes a hard maximum over branches and every carry it
+    publishes pins the taste-shock scale to zero, while the simulate phase draws
+    the declared shocks and applies the smoothed choice probabilities. Solving
+    the hard-max problem and simulating the smoothed one yields an inconsistent
+    policy and a biased simulated distribution, so the declaration is refused
+    rather than ignored.
+
+    Args:
+        context: The regime's solver build context.
+
+    Raises:
+        RegimeInitializationError: If the regime declares taste shocks.
+
+    """
+    if context.has_taste_shocks:
+        msg = (
+            f"Regime '{context.regime_name}' declares EV1 taste shocks, but "
+            "NB-EGM does not implement taste shocks: its envelopes take a hard "
+            "maximum over the discrete branches and the carry it publishes "
+            "fixes the taste-shock scale at zero, while the simulate phase "
+            "would apply the declared shocks. Remove the taste shocks, or use "
+            "`GridSearch` or `DCEGM` for this regime."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def validate_case_piece_smoothness(
