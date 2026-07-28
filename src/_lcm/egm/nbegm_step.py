@@ -818,7 +818,6 @@ def nbegm_per_interval_continuation_step_savings(
     pad = n_padded - n_intervals
 
     interval_indices = jnp.arange(n_padded, dtype=jnp.int32)
-    edge = jnp.array([jnp.inf], dtype=breakpoints.dtype)
     padded_cont_value = jnp.concatenate(
         [cont_value, jnp.zeros((pad, cont_value.shape[1]), dtype=cont_value.dtype)]
     )

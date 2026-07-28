@@ -212,6 +212,23 @@ class NBEGM(Solver):
       to be validated empirically (e.g. full-model brute-agreement gates).
     """
 
+    def __post_init__(self) -> None:
+        for name in (
+            "stochastic_node_batch_size",
+            "envelope_segment_block_size",
+            "interval_batch_size",
+            "cell_block_size",
+            "branch_batch_size",
+        ):
+            size = getattr(self, name)
+            if size < 0:
+                msg = (
+                    f"NBEGM.{name} must be non-negative, got {size}. Use 0 to run "
+                    "the whole axis in one vectorized pass, or a positive value "
+                    "to stream it in blocks of that many entries."
+                )
+                raise RegimeInitializationError(msg)
+
     @property
     def requires_continuation(self) -> bool:
         """The case-piece EGM step reads its continuation's marginal value."""
@@ -1779,11 +1796,16 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
         raise RegimeInitializationError(msg)
 
     slopes = _liquid_slopes() if require_unit_slope else None
-    if slopes is not None and any(abs(slope - 1.0) > tol for slope in slopes):
+    offending = (
+        next((slope for slope in slopes if abs(slope - 1.0) > tol), None)
+        if slopes is not None
+        else None
+    )
+    if offending is not None:
         msg = (
             f"NBEGM's all-jump path solves the budget from per-interval intercepts "
             f"assuming unit slope in the liquid state, but regime {regime_name!r} has "
-            f"a budget slope of {slopes[0]:.4g} in {liquid_name!r}. Declare a "
+            f"a budget slope of {offending:.4g} in {liquid_name!r}. Declare a "
             "coincident `continuous_kink` so the non-unit affine slope routes to the "
             "mixed step, or keep the jump-only budget additive (unit slope)."
         )

@@ -880,12 +880,16 @@ def _with_outer_post_decision(
     )
 
 
-def _fail_if_outer_batch_size_negative(outer_batch_size: int) -> None:
+def _fail_if_outer_batch_size_negative(
+    outer_batch_size: int, *, solver_name: str = "NEGM"
+) -> None:
+    """Reject a negative outer batch size, naming the solver that declared it."""
     if outer_batch_size < 0:
         msg = (
-            f"NEGM.outer_batch_size must be non-negative, got {outer_batch_size}. "
-            "Use 0 to solve every outer-grid node at once, or a positive value to "
-            "fold the outer search in chunks of that many nodes."
+            f"{solver_name}.outer_batch_size must be non-negative, got "
+            f"{outer_batch_size}. Use 0 to solve every outer-grid node at once, "
+            "or a positive value to fold the outer search in chunks of that "
+            "many nodes."
         )
         raise RegimeInitializationError(msg)
 

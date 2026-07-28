@@ -4,7 +4,7 @@ A *case* is a region of the state space carved out by a Boolean predicate (e.g.
 Medicaid eligibility); a *piece* is the smooth formula a DAG output takes inside
 one side of that predicate. The decorators here only attach metadata to a user's
 existing DAG functions and return them unchanged — they never wrap or alter
-runtime behavior, so a model still solves identically under BruteForce. NBEGM
+runtime behavior, so a model still solves identically under `GridSearch`. NBEGM
 reads the metadata to lower each case to a smooth per-case DAG and to apply
 open/closed endpoint eligibility at the exact boundary query.
 """
@@ -141,11 +141,11 @@ def case_boundary[F: Callable[..., object]](
     """
     coerced = tuple(_coerce_boundary(boundary_spec) for boundary_spec in boundaries)
 
-    def deco(func: F) -> F:
+    def attach_boundary(func: F) -> F:
         func.__lcm_case_boundary__ = CaseBoundaryMeta(coerced)  # ty: ignore[unresolved-attribute]
         return func
 
-    return deco
+    return attach_boundary
 
 
 def piece[F: Callable[..., object]](
@@ -166,7 +166,8 @@ def piece[F: Callable[..., object]](
         function unchanged.
 
     Raises:
-        ValueError: If neither or both of `when`/`otherwise` are given.
+        NBEGMCaseError: If neither or both of `when`/`otherwise` are given, or the
+            predicate has no resolvable name (a lambda) to key the piece by.
 
     """
     if when is not None and otherwise is None:
@@ -176,18 +177,29 @@ def piece[F: Callable[..., object]](
         predicate = otherwise
         side = "otherwise"
     else:
-        msg = "Use exactly one of when= or otherwise=."
-        raise ValueError(msg)
+        msg = (
+            f"Piece for output {output!r} must name exactly one of `when=` or "
+            "`otherwise=`."
+        )
+        raise NBEGMCaseError(msg)
+    predicate_name = getattr(predicate, "__name__", "<lambda>")
+    if predicate_name == "<lambda>":
+        msg = (
+            f"Piece for output {output!r} names a lambda as its case boundary. "
+            "Pieces are keyed by the predicate's name, so every lambda would "
+            "collide on '<lambda>'; declare the predicate with `def`."
+        )
+        raise NBEGMCaseError(msg)
 
-    def deco(func: F) -> F:
+    def attach_piece(func: F) -> F:
         func.__lcm_piece__ = PieceMeta(  # ty: ignore[unresolved-attribute]
             output=output,
-            predicate_name=predicate.__name__,  # ty: ignore[unresolved-attribute]
+            predicate_name=predicate_name,
             side=side,
         )
         return func
 
-    return deco
+    return attach_piece
 
 
 def affine_breakpoint(
@@ -201,8 +213,9 @@ def affine_breakpoint(
 
     Args:
         threshold: Name of the DAG variable or parameter holding the threshold. A
-            dotted name `leaf.subkey` reads the threshold from a `MappingLeaf`
-            param: `leaf` is the parameter, `subkey` the entry within its `.data`.
+            single-dotted name `leaf.subkey` reads the threshold from a
+            `MappingLeaf` param: `leaf` is the parameter, `subkey` the entry
+            within its `.data`.
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
         indexed_by: Name of the ride-along state indexing the threshold table. When
@@ -215,8 +228,19 @@ def affine_breakpoint(
     Returns:
         The threshold as an `AffineBreakpoint`.
 
+    Raises:
+        NBEGMCaseError: If `threshold` carries more than one dot — a `MappingLeaf`
+            holds a flat `.data`, so there is no nested entry to reach.
+
     """
     leaf, _, subkey = threshold.partition(".")
+    if "." in subkey:
+        msg = (
+            f"Breakpoint threshold {threshold!r} carries more than one dot. A "
+            "`MappingLeaf` param holds a flat `.data`, so a threshold names at "
+            "most `leaf.subkey`."
+        )
+        raise NBEGMCaseError(msg)
     return AffineBreakpoint(
         threshold=leaf,
         kind=kind,
@@ -250,7 +274,7 @@ def piecewise_affine[F: Callable[..., object]](
 
     """
 
-    def deco(func: F) -> F:
+    def attach_schedule(func: F) -> F:
         func.__lcm_piecewise_affine__ = PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
             output=output,
             variable=variable,
@@ -258,7 +282,7 @@ def piecewise_affine[F: Callable[..., object]](
         )
         return func
 
-    return deco
+    return attach_schedule
 
 
 def smooth_helper[F: Callable[..., object]](func: F) -> F:

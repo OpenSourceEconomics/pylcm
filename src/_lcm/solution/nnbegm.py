@@ -191,7 +191,7 @@ class NNBEGM(Solver):
             outer_post_decision=self.outer_post_decision,
             inner_post_decision=spec.post_decision_function,
         )
-        _fail_if_outer_batch_size_negative(self.outer_batch_size)
+        _fail_if_outer_batch_size_negative(self.outer_batch_size, solver_name="NNBEGM")
 
     @property
     def requires_continuation(self) -> bool:

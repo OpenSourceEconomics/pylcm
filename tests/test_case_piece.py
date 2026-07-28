@@ -121,7 +121,7 @@ def test_piece_returns_the_same_function_object():
 )
 def test_piece_requires_exactly_one_side(kwargs):
     """Neither or both of `when=`/`otherwise=` is rejected — exactly one is required."""
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(NBEGMCaseError, match="exactly one"):
         piece("oop", **kwargs)
 
 
