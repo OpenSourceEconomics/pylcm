@@ -80,6 +80,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_quotient,
     dd_quotient_bounded,
     normalizing_exponent,
+    scale_by_power_of_two,
     two_prod,
     two_sum,
 )
@@ -231,9 +232,10 @@ def _recentred_edge_readings(
     )
     value_exponent = normalizing_exponent(_live_magnitude(v0, v1, live=live))
     x0, x1, left, right = (
-        jnp.ldexp(term, -abscissa_exponent) for term in (x0, x1, left, right)
+        scale_by_power_of_two(term, -abscissa_exponent)
+        for term in (x0, x1, left, right)
     )
-    v0, v1 = (jnp.ldexp(term, -value_exponent) for term in (v0, v1))
+    v0, v1 = (scale_by_power_of_two(term, -value_exponent) for term in (v0, v1))
 
     width = x1 - x0
     slope = jnp.where(live, (v1 - v0) / jnp.where(width == 0.0, 1.0, width), -jnp.inf)
