@@ -80,6 +80,7 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
    decides only on EXACT slope equality.
 """
 
+import functools
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -257,6 +258,149 @@ class _ExactRatio(NamedTuple):
     denominator: FloatND
 
 
+def _to_safe_binade(ratio: _ExactRatio) -> _ExactRatio:
+    """Rescale one candidate's ratio into a binade where cross products are safe.
+
+    An error-free transform is exact only while its results stay representable.
+    `_two_prod` is not: at a small enough operand scale the product underflows
+    into the subnormal range and its residual is silently lost, and at a large
+    enough scale it overflows to infinity and poisons the expansion with NaN.
+    The cross-multiplied predicates below then read a strict sign as `0` or as
+    NaN, and the caller falls back to candidate order — so a pure power-of-two
+    rescaling of an entire model, which changes nothing mathematically, flips
+    the published policy and marginal (round-8 audit F2).
+
+    The repair is to divide the problem out rather than to widen a tolerance.
+    Scaling a numerator AND its denominator by one common power of two leaves
+    the rational `num / den` **identically** unchanged, so it cannot change any
+    ordering. Applied per candidate, it also cancels from the comparison
+    itself: with `a` scaled by `2**-i` and `b` by `2**-j`, the two cross
+    products `N_a*D_b` and `N_b*D_a` both acquire the same factor `2**-(i+j)`,
+    so the sign of their difference survives the transformation exactly.
+
+    Choosing the scale from the largest component puts every component at or
+    below one, which makes overflow in the subsequent products impossible and
+    is exactly the normalization that undoes a uniform rescaling of the model.
+    Powers of two scale a float without rounding, so the transform costs no
+    accuracy. Zero and non-finite magnitudes have no binade and are passed
+    through untouched: a NaN must stay NaN so it surfaces rather than being
+    ordered.
+    """
+    components = jnp.concatenate([ratio.numerator, ratio.denominator], axis=-1)
+    exponent = _binade_exponent(jnp.max(jnp.abs(components), axis=-1))[..., None]
+    return _ExactRatio(
+        numerator=jnp.ldexp(ratio.numerator, -exponent),
+        denominator=jnp.ldexp(ratio.denominator, -exponent),
+    )
+
+
+def _binade_exponent(magnitude: FloatND) -> jax.Array:
+    """Exponent `e` with `magnitude` in `[2**(e-1), 2**e)`; `0` where there is none.
+
+    Returned as an exponent rather than a factor so callers scale with `ldexp`.
+    Materializing `2**-e` as a float would itself be lossy at the extremes: for
+    a float32 magnitude near the top of the range `2**-e` is SUBNORMAL, so the
+    factor carries fewer bits than the scaling it is meant to perform exactly.
+    `ldexp` adjusts the exponent field directly and has no such failure mode.
+    """
+    _, exponent = jnp.frexp(magnitude)
+    usable = (magnitude > 0) & jnp.isfinite(magnitude)
+    return jnp.where(usable, exponent, jnp.zeros_like(exponent))
+
+
+def _finite_magnitude(*arrays: FloatND) -> FloatND:
+    """Largest finite absolute value across `arrays`; `0` if none is finite.
+
+    Dead candidates are marked by NaN and padding may be infinite, so a plain
+    `max` would poison the scale and silently disable normalization on exactly
+    the inputs that need it.
+    """
+    parts = [
+        jnp.max(jnp.where(jnp.isfinite(a), jnp.abs(a), jnp.zeros_like(a)))
+        for a in arrays
+    ]
+    return functools.reduce(jnp.maximum, parts)
+
+
+def _to_safe_columns(
+    *, cols_a: FloatND, cols_b: FloatND, q: FloatND
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Rescale both candidates' raw columns so the exact products cannot overflow.
+
+    `_to_safe_binade` normalizes a ratio's components, but `_exact_ratio` has
+    already FORMED those components by then: its numerator is a sum of
+    `value * (grid - q)` products. At a large enough model scale that
+    multiplication overflows to infinity while every stored input is still
+    finite normal — measured at float32 scale `2**60`, where the interpolant's
+    products exceed the float32 range and the exact predicate returns NaN
+    instead of a sign. Normalizing after the fact is too late, so the columns
+    are moved into a safe binade first.
+
+    Two independent scales are used, and which axis gets which matters:
+
+    - the grid columns and the query share ONE scale, because `q` is compared
+      against the grid for node detection and a common power of two preserves
+      those equalities exactly;
+    - the value columns share ANOTHER scale, common to BOTH candidates.
+
+    A per-candidate grid scale would also be sound — the interpolant is
+    invariant to it — but the value scale must be shared: `V_a - V_b` only
+    keeps its sign if both values are measured in the same units. Scaling the
+    values by a common positive power of two multiplies that difference by a
+    positive constant, which cannot change its sign.
+    """
+    grid = jnp.concatenate([cols_a[..., :2], cols_b[..., :2], q[..., None]], axis=-1)
+    value = jnp.concatenate([cols_a[..., 2:4], cols_b[..., 2:4]], axis=-1)
+    grid_exp = _binade_exponent(jnp.max(jnp.abs(grid), axis=-1))[..., None]
+    value_exp = _binade_exponent(jnp.max(jnp.abs(value), axis=-1))[..., None]
+    exponent = jnp.concatenate(
+        [
+            jnp.broadcast_to(grid_exp, (*cols_a.shape[:-1], 2)),
+            jnp.broadcast_to(value_exp, (*cols_a.shape[:-1], 2)),
+            jnp.zeros((*cols_a.shape[:-1], cols_a.shape[-1] - 4), dtype=grid_exp.dtype),
+        ],
+        axis=-1,
+    )
+    return (
+        jnp.ldexp(cols_a, -exponent),
+        jnp.ldexp(cols_b, -exponent),
+        jnp.ldexp(q, -grid_exp[..., 0]),
+    )
+
+
+def _exact_cross_sign(*, a: _ExactRatio, b: _ExactRatio, dtype: jnp.dtype) -> FloatND:
+    """Exact sign of `a - b` for two rationals with positive denominators.
+
+    `a - b = (N_a*D_b - N_b*D_a) / (D_a*D_b)`, so with both denominators
+    canonically positive the sign is that of the cross-multiplied numerator
+    difference. Every cross product of two exactly-represented components is
+    itself split into an exact pair, so the terms sum to that difference with
+    no error and `_exact_sign_of_sum` reads its sign exactly.
+
+    Both operands are moved into a safe binade first — see `_to_safe_binade`.
+    That step is what makes "exact" mean exact at every model scale rather than
+    only at the scale the tests happened to use.
+
+    This is the single ordering kernel: value selection and the
+    right-continuous slope tie-break share it, so the two can never disagree
+    about what an exact tie is.
+    """
+    a = _to_safe_binade(a)
+    b = _to_safe_binade(b)
+    split = _dekker_split_factor(dtype)
+    terms: list[FloatND] = []
+    for numerator, denominator, orientation in (
+        (a.numerator, b.denominator, 1.0),
+        (b.numerator, a.denominator, -1.0),
+    ):
+        for i in range(numerator.shape[-1]):
+            for j in range(denominator.shape[-1]):
+                # Scaling by +-1 is exact, so negation preserves the transform.
+                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
+                terms.extend([orientation * head, orientation * tail])
+    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+
+
 def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     """Exact rational value of one candidate per query, from its raw columns.
 
@@ -363,20 +507,12 @@ def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
     parameterizations of the SAME exact value need not produce the same low
     word (round-6 audit F2).
     """
-    a = _exact_ratio(cols=cols_a, q=q)
-    b = _exact_ratio(cols=cols_b, q=q)
-    split = _dekker_split_factor(cols_a.dtype)
-    terms: list[FloatND] = []
-    for numerator, denominator, orientation in (
-        (a.numerator, b.denominator, 1.0),
-        (b.numerator, a.denominator, -1.0),
-    ):
-        for i in range(numerator.shape[-1]):
-            for j in range(denominator.shape[-1]):
-                # Scaling by +-1 is exact, so negation preserves the transform.
-                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
-                terms.extend([orientation * head, orientation * tail])
-    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+    safe_a, safe_b, safe_q = _to_safe_columns(cols_a=cols_a, cols_b=cols_b, q=q)
+    return _exact_cross_sign(
+        a=_exact_ratio(cols=safe_a, q=safe_q),
+        b=_exact_ratio(cols=safe_b, q=safe_q),
+        dtype=cols_a.dtype,
+    )
 
 
 def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
@@ -420,20 +556,23 @@ def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
     can share a single float key, and `argmax` then silently falls back to
     candidate order, so a pure branch permutation flips the published policy
     and marginal (round-7 audit F2).
+
+    Round 8 made that predicate exact but not exponent-safe: it multiplied the
+    cross terms at their native scale, so a uniformly rescaled model could
+    underflow a strict sign to zero or overflow it to NaN. `_exact_cross_sign`
+    normalizes each ratio into a safe binade first, which is a no-op on the
+    rational being compared (round-8 audit F2).
     """
-    a = _exact_slope_ratio(cols=cols_a)
-    b = _exact_slope_ratio(cols=cols_b)
-    split = _dekker_split_factor(cols_a.dtype)
-    terms: list[FloatND] = []
-    for numerator, denominator, orientation in (
-        (a.numerator, b.denominator, 1.0),
-        (b.numerator, a.denominator, -1.0),
-    ):
-        for i in range(numerator.shape[-1]):
-            for j in range(denominator.shape[-1]):
-                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
-                terms.extend([orientation * head, orientation * tail])
-    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+    # The slope needs no query, but it goes through the same column
+    # normalization so that value and slope selection see one set of units.
+    safe_a, safe_b, _ = _to_safe_columns(
+        cols_a=cols_a, cols_b=cols_b, q=jnp.zeros_like(cols_a[..., 0])
+    )
+    return _exact_cross_sign(
+        a=_exact_slope_ratio(cols=safe_a),
+        b=_exact_slope_ratio(cols=safe_b),
+        dtype=cols_a.dtype,
+    )
 
 
 class _SlopeState(NamedTuple):
@@ -691,6 +830,28 @@ def envelope_at_query(
         and all gathered from the same winning segment. A query no live segment
         brackets yields NaN in all three.
     """
+    # Move the whole problem into a safe binade before any error-free transform
+    # runs. Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`,
+    # which OVERFLOWS once `|a| > 2**(emax - s)` — `2**115` in float32 and
+    # `2**996` in float64 — well inside the finite-normal range. The compensated
+    # interior interpolation then produces a non-finite pair, the `poisoned`
+    # rule below correctly refuses to rank it, and a model that merely uses
+    # large units gets NaN for value, policy and marginal (round-8 audit F2).
+    #
+    # Grid and value are scaled independently, each by a power of two, so:
+    #   * the interpolant `left + (t/w)*d` is unchanged in the grid scale (`t/w`
+    #     is a ratio) and homogeneous of degree one in the value scale, so only
+    #     the returned VALUE needs undoing;
+    #   * policy and marginal are carried, not derived from these units, and so
+    #     are returned as-is;
+    #   * every `q == grid` node test is preserved exactly, because a common
+    #     power of two cannot change which floats are equal.
+    grid_exp = _binade_exponent(_finite_magnitude(endog_grid, jnp.asarray(x_query)))
+    value_exp = _binade_exponent(_finite_magnitude(value))
+    endog_grid = jnp.ldexp(endog_grid, -grid_exp)
+    x_query = jnp.ldexp(jnp.asarray(x_query), -grid_exp)
+    value = jnp.ldexp(value, -value_exp)
+
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
@@ -747,8 +908,14 @@ def envelope_at_query(
     query = jnp.asarray(x_query)
     n_segment = links.live.shape[0]
     if 0 < segment_block_size < n_segment:
-        return _envelope_at_query_blocked(
+        blocked_value, blocked_policy, blocked_marginal = _envelope_at_query_blocked(
             columns=columns, live=links.live, query=query, block_size=segment_block_size
+        )
+        # Only the value carries the value scale; see the note at the top.
+        return (
+            jnp.ldexp(blocked_value, value_exp),
+            blocked_policy,
+            blocked_marginal,
         )
 
     flat = query.reshape(-1)
@@ -789,7 +956,8 @@ def envelope_at_query(
         ok, jnp.take_along_axis(terms.marginal, best, axis=1)[:, 0], jnp.nan
     )
     return (
-        env_value.reshape(query.shape),
+        # Only the value carries the value scale; see the note at the top.
+        jnp.ldexp(env_value.reshape(query.shape), value_exp),
         env_policy.reshape(query.shape),
         env_marginal.reshape(query.shape),
     )

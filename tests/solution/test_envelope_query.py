@@ -12,7 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.query import _candidate_terms, envelope_at_query
+from _lcm.egm.upper_envelope.query import (
+    _candidate_terms,
+    _exact_compare,
+    _exact_slope_compare,
+    envelope_at_query,
+)
 from tests.solution._envelope_oracle import exact_envelope
 
 
@@ -747,3 +752,136 @@ def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block
     assert float(got_value[0]) == 0.0, context
     assert float(got_policy[0]) == 1.0, context
     assert float(got_marginal[0]) == 20.0, context
+
+
+# Operand magnitude above which Dekker's TwoProd splitting itself overflows: the
+# split multiplies by `2**s + 1`, so it needs `|a| < 2**(emax - s)`. These are the
+# thresholds the round-8 selector silently crossed, and a scale test that stays
+# below them cannot detect the defect at all.
+_SPLIT_OVERFLOW_EXPONENT = {np.float32: 127 - 12, np.float64: 1023 - 27}
+
+
+def _rescaling_exponents(entries, dtype):
+    """Power-of-two exponents keeping every entry finite normal, spanning the range.
+
+    Derived from the case's own magnitudes rather than hardcoded, so the ladder
+    stretches to the true representable limits for whatever collision pair the
+    generator produced instead of to a constant someone picked once.
+    """
+    info = np.finfo(dtype)
+    magnitudes = [abs(float(x)) for x in entries if float(x) != 0.0]
+    top = int(np.frexp(max(magnitudes))[1])
+    bottom = int(np.frexp(min(magnitudes))[1])
+    highest = int(info.maxexp) - 1 - top
+    lowest = int(info.minexp) + 1 - bottom
+    span = highest - lowest
+    return sorted({lowest, lowest + span // 4, 0, highest - span // 4, highest})
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 3])
+def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
+    dtype, order, block_size
+):
+    """Choosing a unit must not choose a policy (round-8 audit F2).
+
+    Multiplying every grid and value coordinate by one positive power of two is
+    a change of units: exact in binary floating point, and it leaves the value
+    ordering and every slope ordering algebraically untouched, so the published
+    policy and marginal must be identical. Round 8 failed this three ways at
+    once -- the cross products, the interpolant's products, and Dekker's own
+    splitting each break at their own scale -- and each turned a strict exact
+    ordering into a branch-order coin flip.
+
+    The ladder is derived per case from the representable range, so it reaches
+    the real limits, and the test asserts IN-LINE that its top rung crosses the
+    splitting threshold. Without that check a green result would only say the
+    scales happened to be comfortable.
+    """
+    (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][0]
+    one = dtype(1.0)
+    low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
+    low_rise, high_rise = dtype(low_rise), dtype(high_rise)
+    base = [low_run, high_run, low_rise, high_rise]
+
+    exponents = _rescaling_exponents(base, dtype)
+    reached = max(int(np.frexp(abs(float(x)))[1]) for x in base) + max(exponents)
+    assert reached > _SPLIT_OVERFLOW_EXPONENT[dtype], (
+        f"the ladder tops out at 2**{reached}, below the "
+        f"2**{_SPLIT_OVERFLOW_EXPONENT[dtype]} splitting edge, so it could not "
+        "have caught the round-8 defect"
+    )
+
+    tiny = np.finfo(dtype).tiny
+    for exponent in exponents:
+        scale = dtype(np.ldexp(1.0, exponent))
+        lr, hr = dtype(low_run * scale), dtype(high_run * scale)
+        lv, hv = dtype(low_rise * scale), dtype(high_rise * scale)
+        assert all(np.isfinite(v) and abs(v) >= tiny for v in (lr, hr, lv, hv)), (
+            f"rescaled input left the finite-normal range at 2**{exponent}"
+        )
+        # Rescaling is exact, so the exact slope order is the SAME order.
+        assert (Fraction(float(hv)) / Fraction(float(hr))) > (
+            Fraction(float(lv)) / Fraction(float(lr))
+        )
+
+        lower = ([-lr, lr], [-lv, lv], 0.0, 10.0)
+        higher = ([-hr, hr], [-hv, hv], 1.0, 20.0)
+        first, second = (lower, higher) if order == "AB" else (higher, lower)
+        got_value, got_policy, got_marginal = envelope_at_query(
+            endog_grid=jnp.asarray(first[0] + second[0], dtype=dtype),
+            policy=jnp.asarray([first[2]] * 2 + [second[2]] * 2, dtype=dtype),
+            value=jnp.asarray(first[1] + second[1], dtype=dtype),
+            marginal=jnp.asarray([first[3]] * 2 + [second[3]] * 2, dtype=dtype),
+            segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+            x_query=jnp.asarray([0.0], dtype=dtype),
+            segment_block_size=block_size,
+        )
+        context = f"{np.dtype(dtype)} order={order} block={block_size} 2**{exponent}"
+        assert float(got_value[0]) == 0.0, context
+        assert float(got_policy[0]) == 1.0, context
+        assert float(got_marginal[0]) == 20.0, context
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_both_exact_predicates_match_a_rational_oracle_at_every_scale(dtype):
+    """The VALUE predicate is rescaled too, and needs its own evidence.
+
+    The audit's artifacts exercise the slope comparator only. The repair changed
+    the value comparator as well, and a regression covering only the half that
+    was reported is how this class has already come back twice. This drives both
+    predicates directly against `Fraction` across the same ladder.
+    """
+    (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][0]
+    one = dtype(1.0)
+    low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
+    low_rise, high_rise = dtype(low_rise), dtype(high_rise)
+    base = [low_run, high_run, low_rise, high_rise]
+
+    checked = 0
+    for exponent in _rescaling_exponents(base, dtype):
+        scale = dtype(np.ldexp(1.0, exponent))
+        lr, hr = dtype(low_run * scale), dtype(high_run * scale)
+        lv, hv = dtype(low_rise * scale), dtype(high_rise * scale)
+        cols_low = jnp.asarray([[-lr, lr, -lv, lv]], dtype=dtype)
+        cols_high = jnp.asarray([[-hr, hr, -hv, hv]], dtype=dtype)
+        q = jnp.asarray([0.0], dtype=dtype)
+
+        # Both segments pass exactly through the origin: a TRUE value tie.
+        value_sign = float(
+            np.asarray(_exact_compare(cols_a=cols_low, cols_b=cols_high, q=q))[0]
+        )
+        assert value_sign == 0.0, f"2**{exponent}: exact value tie not detected"
+
+        slope_sign = float(
+            np.asarray(_exact_slope_compare(cols_a=cols_low, cols_b=cols_high))[0]
+        )
+        expected = Fraction(float(lv)) / Fraction(float(lr)) - Fraction(
+            float(hv)
+        ) / Fraction(float(hr))
+        assert slope_sign == float(np.sign(float(expected))), (
+            f"2**{exponent}: slope sign {slope_sign} disagrees with the oracle"
+        )
+        checked += 1
+    assert checked >= 5
