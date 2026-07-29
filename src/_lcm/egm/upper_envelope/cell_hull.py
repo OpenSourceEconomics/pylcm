@@ -49,10 +49,17 @@ Which lines own the cell is settled by certified comparisons alone, but *where*
 they hand over is not merely cosmetic. The refined row carries a switch as a
 duplicated abscissa holding both records, and a right-continuous read there
 returns the incoming line, so a breakpoint one float below the true crossing
-publishes the incoming policy on a state the outgoing line still owns. The
-handover is therefore placed at the smallest float at or above the crossing —
-the root rounded **up**, not to nearest — which is exactly the first state whose
-ownership has passed. See `_handover_state`.
+publishes the incoming policy — and its marginal — on a state the outgoing line
+still owns, and one float above withholds them after ownership has passed. The
+handover belongs at the smallest float at or above the crossing.
+
+The walk cannot supply that abscissa. Its readings travel at a rounded slope, so
+the crossing it sees is right to within a reading and not to within a float, and
+rounding a crossing that is itself uncertain up rather than to nearest does not
+recover the missing digits. So the walk only *ranks* — which line leads, and in
+what order they hand over — and the abscissae it settles on are re-derived
+afterwards from the lines' stored endpoints, where the difference of two lines is
+affine with exactly representable coefficients. See `_place_handovers`.
 """
 
 import jax
@@ -63,11 +70,15 @@ from _lcm.egm.upper_envelope.certified_sign import (
     certified_margin_sign,
 )
 from _lcm.egm.upper_envelope.double_double import (
+    DoubleDouble,
     dd_add,
     dd_add_float,
+    dd_from_difference,
+    dd_mul,
     dd_mul_float,
     dd_negate,
     dd_quotient,
+    dd_quotient_bounded,
     normalizing_exponent,
     two_prod,
     two_sum,
@@ -131,6 +142,16 @@ def hull_owners(
         first=first,
         max_runs=max_runs,
     )
+    bounds, misplaced = _place_handovers(
+        bounds=bounds,
+        owners=owners,
+        low=low,
+        high=high,
+        endog_grid=endog_grid,
+        value=value,
+        left=left,
+        right=right,
+    )
     uncertified = _fails_all_live_check(
         bounds=bounds,
         owners=owners,
@@ -143,7 +164,7 @@ def hull_owners(
         endog_grid=endog_grid,
         value=value,
     )
-    return bounds, owners, uncertified
+    return bounds, owners, uncertified | misplaced
 
 
 def _recentred_edge_readings(
@@ -286,33 +307,181 @@ def _is_negative(reading: tuple[FloatND, FloatND]) -> BoolND:
     return (high < 0.0) | ((high == 0.0) & (low < 0.0))
 
 
-def _handover_state(
+def _place_handovers(
+    *,
+    bounds: Float1D,
+    owners: Int1D,
+    low: IntND,
+    high: IntND,
+    endog_grid: Float1D,
+    value: Float1D,
+    left: FloatND,
+    right: FloatND,
+) -> tuple[Float1D, ScalarBool]:
+    """Re-place every breakpoint at the first state its incoming link owns.
+
+    The refined row carries a switch as a duplicated abscissa holding both links'
+    records, and a right-continuous read there returns the incoming link. The
+    abscissa is therefore structural, not descriptive: one state below the true
+    crossing the row publishes the incoming policy — and its marginal — over
+    ground the outgoing link still owns; one state above it withholds them after
+    ownership has passed.
+
+    Neither placement can be read off the walk's edge readings, which travel at a
+    rounded slope. Cross-multiplied, the difference of two links is
+
+    ```{math}
+    f(x) = N_a(x)\\,w_b - N_b(x)\\,w_a,
+    ```
+
+    affine in `x`, and both its value at the cell's left edge and its slope are
+    exact double-double expressions in the two links' stored endpoints, each
+    carrying its own error bound. Because the walk orders owners by increasing
+    slope, `f` decreases across a handover, so the state to publish is the
+    smallest representable one at or above the root — and *which* one that is
+    the quotient's low word already says: a positive low word puts the root
+    above the high word, anything else at or below it. The certificate is that
+    the low word outweighs the error propagated into it, and where it does not
+    the ulp is genuinely undecidable at this precision and the row is poisoned
+    rather than placed on a guess.
+
+    This runs once per cell over all breakpoints at once, not inside the walk.
+    The walk decides *who* owns what, which is certified separately; only the
+    boundaries it settles on need locating, and there are at most `max_runs` of
+    them however many steps the walk took.
+    """
+    outgoing, incoming = owners[:-1], owners[1:]
+    a_x0, a_x1 = endog_grid[low[outgoing]], endog_grid[high[outgoing]]
+    a_v0, a_v1 = value[low[outgoing]], value[high[outgoing]]
+    b_x0, b_x1 = endog_grid[low[incoming]], endog_grid[high[incoming]]
+    b_v0, b_v1 = value[low[incoming]], value[high[incoming]]
+
+    width_a = dd_from_difference(a_x1, a_x0)
+    width_b = dd_from_difference(b_x1, b_x0)
+
+    # Subtracting one common constant from all four values leaves `f` unchanged
+    # — each numerator loses `c` times its own width, and the cross-multiplication
+    # cancels the two — so the level the lines sit on can be taken out before it
+    # is ever multiplied. Leaving it in would set the coefficients' error bounds
+    # by the *level* while the slope they are divided by is set by the value
+    # *differences*, and where the two are orders of magnitude apart the located
+    # root inherits an error far wider than the float it is meant to pick out.
+    reference = a_v0
+    numerator_a = _recentred_numerator(
+        x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, reference=reference, x_query=left
+    )
+    numerator_b = _recentred_numerator(
+        x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, reference=reference, x_query=left
+    )
+    at_edge = dd_add(
+        dd_mul(numerator_a, width_b),
+        dd_negate(dd_mul(numerator_b, width_a)),
+    )
+    rate = dd_add(
+        dd_mul(dd_from_difference(a_v1, a_v0), width_b),
+        dd_negate(dd_mul(dd_from_difference(b_v1, b_v0), width_a)),
+    )
+    degenerate = (rate[0] + rate[1]) == 0.0
+    safe_rate = (
+        jnp.where(degenerate, jnp.ones_like(rate[0]), rate[0]),
+        jnp.where(degenerate, jnp.zeros_like(rate[1]), rate[1]),
+        rate[2],
+    )
+    step_high, step_low, step_error = dd_quotient_bounded(dd_negate(at_edge), safe_rate)
+    root_high, root_low, root_dropped = dd_add_float(
+        (step_high, step_low, jnp.zeros_like(step_high)), left
+    )
+
+    # Everything the low word has to be read against: the two coefficients' own
+    # bounds carried through the division, what the division could not clear, and
+    # the tail the shift back to absolute coordinates discarded.
+    magnitude = jnp.abs(rate[0] + rate[1])
+    safe_magnitude = jnp.where(degenerate, jnp.ones_like(magnitude), magnitude)
+    step = jnp.abs(step_high) + jnp.abs(step_low)
+    root_error = (
+        (at_edge[2] + step * rate[2]) / safe_magnitude + step_error + root_dropped
+    )
+
+    # The question is one-sided — whether the root clears `root_high`, not
+    # whether it equals it — so the two verdicts are not mirror images. Strictly
+    # above takes the next float up; at or below keeps `root_high`, and an exact
+    # root sits there by right rather than by tolerance: it is the *equality*
+    # that is decidable, so a division that clears its remainder and a crossing
+    # that lands on a representable abscissa resolve with no margin at all. Only
+    # a root the bound straddles from above is genuinely undecidable.
+    above = root_low > root_error
+    at_or_below = (root_low + root_error) <= 0.0
+    resolved = above | at_or_below
+    candidate = jnp.where(above, jnp.nextafter(root_high, jnp.inf), root_high)
+
+    # Breakpoints where ownership does not change are not handovers; the walk
+    # parks them on the cell's right edge and they must stay there.
+    interior = bounds[1:-1]
+    hands_over = outgoing != incoming
+    placed = jnp.where(hands_over, jnp.clip(candidate, left, right), interior)
+
+    # Where several lines meet at one abscissa the walk gives the ones between
+    # the outer two no width at all, and that is the topology, not an accident of
+    # arithmetic: the middle lines own nothing and must emit nothing. Each pair's
+    # root is derived on its own here, so two pairs meeting at one point can
+    # round to states an ULP apart and hand a line an interval it does not own.
+    # Re-placement therefore inherits the walk's coincidences: only the first
+    # breakpoint of a coincident group is placed, and the rest follow it. The
+    # running maximum does both jobs — it carries a group's placement across its
+    # members and keeps the sequence ascending where a placement moved.
+    opens_group = jnp.concatenate(
+        [jnp.ones_like(interior[:1], dtype=bool), interior[1:] != interior[:-1]]
+    )
+    placed = jax.lax.cummax(jnp.where(opens_group, placed, -jnp.inf))
+    finite = jnp.isfinite(at_edge[0] + at_edge[1]) & jnp.isfinite(rate[0] + rate[1])
+    unresolved = jnp.any(hands_over & (~finite | ~resolved))
+    return jnp.concatenate([bounds[:1], placed, bounds[-1:]]), unresolved
+
+
+def _recentred_numerator(
+    *,
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    reference: FloatND,
+    x_query: FloatND,
+) -> DoubleDouble:
+    """Return `(v0 - ref)*(x1 - x) + (v1 - ref)*(x - x0)` with nothing dropped.
+
+    The width-scaled value at `x`, measured from `reference` rather than from
+    zero. Each recentred value is formed as an exact pair, so the shift costs no
+    accuracy even where the two values are too far apart to subtract exactly in
+    one float.
+    """
+    return dd_add(
+        dd_mul(dd_from_difference(x1, x_query), dd_from_difference(v0, reference)),
+        dd_mul(dd_from_difference(x_query, x0), dd_from_difference(v1, reference)),
+    )
+
+
+def _approximate_crossing(
     *,
     margin_left: tuple[FloatND, FloatND],
     margin_right: tuple[FloatND, FloatND],
     left: FloatND,
     right: FloatND,
 ) -> Float1D:
-    """Return the first state at which a link is no longer below the owner.
+    """Return roughly where each link catches the owner, for ranking only.
 
-    The refined row carries a switch as a duplicated abscissa holding both links'
-    records, and a right-continuous read there returns the incoming link. The
-    abscissa is therefore structural, not descriptive: rounded to the nearest
-    float it can land one state below the true crossing, and the row then hands
-    over while the outgoing link is still strictly higher — publishing the
-    incoming policy, and its marginal, one representable state too early.
+    The walk needs an order over the candidates before it can know which one it
+    will take, and this supplies it from the edge readings. It is not where the
+    handover is published: a reading travels from its link's anchor to the query
+    at a *rounded* slope, so it carries that slope's error times the distance
+    travelled, and the root of two such readings can sit on the wrong side of a
+    representable state. Where the links share endpoints that distance is zero
+    and the readings are the stored values exactly, which is why the error shows
+    up only once the supports are shifted.
 
-    What the read needs is the *smallest float at which the incoming link owns
-    the ground*. Ownership passes at the exact root, where the two are equal and
-    the tie goes to the incoming link, so that float is the root rounded **up**,
-    not to nearest. Rounding up is the whole correction: the margin is affine and
-    the root is computed from margins that are exact, so the only question left
-    is which side of it the published float falls on.
-
-    The quotient carries no certificate — it locates a structure rather than
-    proving one — but it does not need to. A root off by an ULP moves a boundary
-    by an ULP; what it cannot do is put the boundary on the wrong side of a state
-    whose ownership the walk has already settled by certified comparison.
+    Ranking on it is sound because the *choice* of owner is certified elsewhere:
+    a link this order strands is caught by the all-live check, which poisons the
+    row. `_place_handovers` then re-places the breakpoints the walk settled on,
+    from the stored endpoints.
     """
     numerator = (margin_left[0], margin_left[1], jnp.zeros_like(margin_left[0]))
     span = dd_add(
@@ -407,7 +576,7 @@ def _walk_owners(
         # The walk still terminates: a link is taken only while strictly above
         # the current owner there, which it can never be against itself.
         crossing = jnp.clip(
-            _handover_state(
+            _approximate_crossing(
                 margin_left=margin_left,
                 margin_right=margin_right,
                 left=left,
