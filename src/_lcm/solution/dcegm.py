@@ -178,9 +178,11 @@ class DCEGM(Solver):
     Three costs scale differently in this value, and the difference matters when
     tuning it:
 
-    - **memory** is linear. No workspace is shaped by the capacity: ownership is
-      resolved per cell into a row-sized buffer, so the published row bounds the
-      footprint whatever the capacity is.
+    - **memory** is linear. Ownership is resolved per cell, so the capacity sets
+      how wide each cell's working set is; the published row is row-sized
+      whatever the capacity, but the intermediates that produce it are not. What
+      bounds the peak is `envelope_cell_batch_size`, which caps how many cells
+      are in flight at once.
     - **certified comparisons** are linear. Clearing a branch that owns nothing
       takes one exact comparison, at the breakpoint where the envelope's slope
       brackets the branch's own — not one against every rival.
@@ -191,6 +193,22 @@ class DCEGM(Solver):
     headroom; lower it for a model known to stay concave to buy back some speed.
     The quadratic term is the one that pays for it, and it is also what dominates
     XLA compile time for the solve kernel on GPU.
+    """
+
+    envelope_cell_batch_size: int | None = 32
+    """How many node cells the `"exact"` envelope resolves at once.
+
+    Node cells are independent — each is resolved from the links covering it
+    alone — so this partitions the work and can never change a published value or
+    policy. What it bounds is the working set. Resolving the whole axis at once
+    puts an intermediate the size of the cell axis times `envelope_max_runs` in
+    flight for every row simultaneously, and the rows are themselves mapped over,
+    so the peak carries the product of all three and grows with the resource grid.
+    Batching replaces the cell factor with this value.
+
+    `None` resolves every cell at once, which is the fastest and the largest.
+    A chain with fewer cells than the batch size resolves in one batch either
+    way, so small models pay nothing for the bound.
     """
 
     fues_jump_thresh: float = 2.0
@@ -263,6 +281,7 @@ class DCEGM(Solver):
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
         _fail_if_fues_scan_unroll_too_few(self.fues_scan_unroll)
         _fail_if_envelope_max_runs_too_few(self.envelope_max_runs)
+        _fail_if_envelope_cell_batch_size_non_positive(self.envelope_cell_batch_size)
         _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
         _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
@@ -571,6 +590,18 @@ def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
             f"got {envelope_max_runs}. It is the fold capacity of the exact "
             "upper envelope; a non-concave candidate chain folds into at "
             "least two resource-increasing runs."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_envelope_cell_batch_size_non_positive(
+    envelope_cell_batch_size: int | None,
+) -> None:
+    if envelope_cell_batch_size is not None and envelope_cell_batch_size < 1:
+        msg = (
+            f"DCEGM.envelope_cell_batch_size must be at least 1, got "
+            f"{envelope_cell_batch_size}. It is how many node cells the exact "
+            "upper envelope resolves at once; use None to resolve them all."
         )
         raise RegimeInitializationError(msg)
 

@@ -56,6 +56,13 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, Scala
 # capacity, never an assumed bound: exceeding it poisons the row.
 DEFAULT_MAX_RUNS: int = 24
 
+# How many node cells to resolve at once. Cells are independent, so this changes
+# only the working set, never a published value. Small enough to keep the peak
+# off the whole cell axis, large enough that the per-batch fixed cost stays
+# amortized; a chain with fewer cells than this resolves in a single batch and
+# pays nothing for the knob.
+DEFAULT_CELL_BATCH_SIZE: int = 32
+
 
 def refine_envelope_exact(
     *,
@@ -65,6 +72,7 @@ def refine_envelope_exact(
     n_refined: int,
     segment_id: Float1D | None = None,
     max_runs: int = DEFAULT_MAX_RUNS,
+    cell_batch_size: int | None = DEFAULT_CELL_BATCH_SIZE,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its exact upper envelope.
 
@@ -77,6 +85,9 @@ def refine_envelope_exact(
         segment_id: Optional per-candidate branch label. Runs are always split
             where resources stop increasing; a label change splits them further.
         max_runs: Static capacity for the number of x-monotone runs.
+        cell_batch_size: How many node cells to resolve at once; `None` resolves
+            the whole axis in one go. Cells are independent, so this partitions
+            the work without changing any published value.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each of
@@ -106,6 +117,7 @@ def refine_envelope_exact(
         endog_grid=endog_grid,
         value=value,
         max_runs=max_runs,
+        cell_batch_size=cell_batch_size,
     )
 
     out_grid, out_policy, out_value, n_kept = _emit_envelope(
@@ -221,11 +233,18 @@ def _sub_cells_per_node_cell(
     endog_grid: Float1D,
     value: Float1D,
     max_runs: int,
+    cell_batch_size: int | None,
 ) -> _SubCells:
     """Resolve the envelope's owners across every node cell.
 
     Ownership is decided on value alone; the policy is read afterwards from the
     owning link, so it never influences which branch wins.
+
+    Cells are independent, so `cell_batch_size` partitions them without changing
+    anything published. What it does change is the working set: resolving the
+    whole axis at once puts a `n_cells * max_runs` intermediate in flight per
+    row, and rows are themselves mapped over, so the peak carries the product of
+    all three. Chunking replaces the cell factor with the batch size.
     """
 
     def split(
@@ -257,9 +276,18 @@ def _sub_cells_per_node_cell(
             unresolved,
         )
 
-    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
-        split, in_axes=(0, 0, 1, 1, 1)
-    )(cell_left, cell_right, active.live, active.left_index, active.right_index)
+    # `lax.map` maps over a leading axis, so the per-run arrays are transposed to
+    # put cells first; `vmap` read them along axis 1 instead.
+    per_cell = (
+        cell_left,
+        cell_right,
+        active.live.T,
+        active.left_index.T,
+        active.right_index.T,
+    )
+    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.lax.map(
+        lambda cell: split(*cell), per_cell, batch_size=cell_batch_size
+    )
 
     return _SubCells(
         left=sub_left.reshape(-1),
