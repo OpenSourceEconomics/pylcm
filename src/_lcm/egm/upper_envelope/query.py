@@ -80,7 +80,6 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
    decides only on EXACT slope equality.
 """
 
-import functools
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -306,20 +305,6 @@ def _binade_exponent(magnitude: FloatND) -> jax.Array:
     _, exponent = jnp.frexp(magnitude)
     usable = (magnitude > 0) & jnp.isfinite(magnitude)
     return jnp.where(usable, exponent, jnp.zeros_like(exponent))
-
-
-def _finite_magnitude(*arrays: FloatND) -> FloatND:
-    """Largest finite absolute value across `arrays`; `0` if none is finite.
-
-    Dead candidates are marked by NaN and padding may be infinite, so a plain
-    `max` would poison the scale and silently disable normalization on exactly
-    the inputs that need it.
-    """
-    parts = [
-        jnp.max(jnp.where(jnp.isfinite(a), jnp.abs(a), jnp.zeros_like(a)))
-        for a in arrays
-    ]
-    return functools.reduce(jnp.maximum, parts)
 
 
 def _to_safe_columns(
