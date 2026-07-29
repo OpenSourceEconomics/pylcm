@@ -168,7 +168,12 @@ def test_simulate_using_model_methods(
         additional_targets=["utility", "borrowing_constraint"]
     ).query('regime_name == "working_life"')
 
-    # Check expected columns
+    # Check expected columns. `nested_policy_fallback` is deliberately absent:
+    # this is a plain discrete-continuous model with no nested (continuous-outer)
+    # policy read, so there is no fallback that could ever fire. The column is
+    # published only by regimes that can actually take that path -- see
+    # `test_nested_policy_fallback_column_is_published` in
+    # `test_simulate_n_nbegm_continuous.py` for the other half of the contract.
     expected_cols = {
         "period",
         "age",
@@ -180,7 +185,6 @@ def test_simulate_using_model_methods(
         "borrowing_constraint",
         "subject_id",
         "regime_name",
-        "nested_policy_fallback",
     }
     assert expected_cols == set(df.columns)
 

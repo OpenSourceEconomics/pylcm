@@ -94,6 +94,24 @@ def test_recorded_pairs_respect_the_intrinsic_budget(simulated: pd.DataFrame) ->
     assert np.all(next_illiquid <= toy.OUTER_GRID.stop + 1e-9)
 
 
+def test_nested_policy_fallback_column_is_published(simulated: pd.DataFrame) -> None:
+    """Round-3 audit F4: the refused-nested-read flag must be observable.
+
+    A regime that can take the nested continuous-outer policy read must publish
+    the per-subject flag saying whether that read was refused and the grid
+    argmax kept, otherwise inference on this path cannot refuse the fallback
+    rows. The complementary half -- that models without a nested read do NOT
+    get the column -- is asserted in `test_simulate.py`.
+    """
+    assert "nested_policy_fallback" in simulated.columns
+    # Rows of the other regime are NaN-padded, as for any regime-specific column,
+    # so only the nested-read regime's own rows carry the flag.
+    alive = simulated[simulated["regime_name"] == "alive"]
+    flags = alive["nested_policy_fallback"]
+    assert flags.notna().all()
+    assert set(np.unique(np.asarray(flags))) <= {False, True}
+
+
 def test_simulation_is_deterministic(simulated: pd.DataFrame) -> None:
     again = _simulate(seed=42)
     for column in ("wealth", "illiquid", "consumption", "illiquid_investment"):

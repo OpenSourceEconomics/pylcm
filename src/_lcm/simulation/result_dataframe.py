@@ -46,6 +46,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
+            publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=flat_params[name],
             additional_targets=additional_targets,
             ages=ages,
@@ -69,6 +70,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
+    publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
@@ -87,6 +89,7 @@ def _process_regime(
             period=period,
             regime_states=regime_states,
             regime_actions=regime_actions,
+            publishes_nested_policy=publishes_nested_policy,
         )
         for period, result in regime_results.items()
     ]
@@ -140,6 +143,7 @@ def _extract_period_data(
     period: int,
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
+    publishes_nested_policy: bool,
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
@@ -147,11 +151,16 @@ def _extract_period_data(
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
-        # F4: per-subject flag that the continuous-outer off-grid policy read
-        # was refused and the grid-argmax pair kept. All-False off that path;
-        # inference on the continuous-outer path must refuse any True.
-        "nested_policy_fallback": result.nested_policy_fallback,
     }
+
+    # F4: per-subject flag that the continuous-outer off-grid policy read was
+    # refused and the grid-argmax pair kept; inference on that path must refuse
+    # any True. Emitted ONLY for regimes that can publish a nested read (NNBEGM).
+    # Unconditionally it is a constant-False column in every other model's
+    # dataframe -- a silent schema change for every user, which is what it was
+    # from d0d655c until this gate.
+    if publishes_nested_policy:
+        data["nested_policy_fallback"] = result.nested_policy_fallback
 
     for name in regime_states:
         if name in result.states:

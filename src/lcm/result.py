@@ -46,6 +46,7 @@ class SimulationResult:
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
+        nested_policy_regimes: frozenset[RegimeName] = frozenset(),
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
@@ -58,6 +59,7 @@ class SimulationResult:
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
             ages=ages,
+            nested_policy_regimes=nested_policy_regimes,
         )
         self._available_targets = sorted(_collect_all_available_targets(regimes))
 
