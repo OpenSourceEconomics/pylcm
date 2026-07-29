@@ -154,13 +154,37 @@ def dd_quotient(
     carries no certificate: one Newton correction on the remainder leaves a
     result good to roughly twice the working precision, which is enough to *find*
     a structure but never enough to *prove* one. Decisions that must hold exactly
-    go through `certified_sign` instead.
+    go through `certified_sign`, or through `dd_quotient_bounded` where the
+    quotient itself is the quantity being decided on.
+    """
+    high, low, _bound = dd_quotient_bounded(numerator, denominator)
+    return high, low
+
+
+def dd_quotient_bounded(
+    numerator: DoubleDouble, denominator: DoubleDouble
+) -> DoubleDouble:
+    """Return `numerator / denominator` with a bound on how far off it is.
+
+    The bound is what separates a quotient that merely *looks* exact from one
+    that is. A division whose Newton correction clears the remainder completely
+    leaves nothing behind, and this reports a bound of zero for it — so a root
+    landing on a representable abscissa, which is the ordinary case when two
+    lines meet at a node, is known to be *at* that abscissa rather than merely
+    near it. Charging every division a blanket second-order term would erase
+    that distinction and refuse the rows that are easiest to be sure about.
+
+    What survives the correction is the part of the remainder the double-double
+    could not hold, plus the rounding of the correction itself, both referred
+    back through the denominator.
     """
     denominator_high, _low, _dropped = denominator
     estimate = numerator[0] / denominator_high
     remainder = dd_add(numerator, dd_negate(dd_mul_float(denominator, estimate)))
     correction = (remainder[0] + remainder[1]) / denominator_high
-    return two_sum(estimate, correction)
+    high, low = two_sum(estimate, correction)
+    residual = remainder[2] + jnp.finfo(estimate.dtype).eps * jnp.abs(remainder[0])
+    return high, low, residual / jnp.abs(denominator_high)
 
 
 def _split(a: FloatND) -> tuple[FloatND, FloatND]:
