@@ -185,8 +185,11 @@ def dd_quotient(
     go through `certified_sign`, or through `dd_quotient_bounded` where the
     quotient itself is the quantity being decided on.
     """
-    high, low, _bound = dd_quotient_bounded(numerator, denominator)
-    return high, low
+    denominator_high, _low, _dropped = denominator
+    estimate = numerator[0] / denominator_high
+    remainder = dd_add(numerator, dd_negate(dd_mul_float(denominator, estimate)))
+    correction = (remainder[0] + remainder[1]) / denominator_high
+    return two_sum(estimate, correction)
 
 
 def dd_quotient_bounded(
@@ -195,24 +198,34 @@ def dd_quotient_bounded(
     """Return `numerator / denominator` with a bound on how far off it is.
 
     The bound is what separates a quotient that merely *looks* exact from one
-    that is. A division whose Newton correction clears the remainder completely
-    leaves nothing behind, and this reports a bound of zero for it — so a root
-    landing on a representable abscissa, which is the ordinary case when two
-    lines meet at a node, is known to be *at* that abscissa rather than merely
-    near it. Charging every division a blanket second-order term would erase
-    that distinction and refuse the rows that are easiest to be sure about.
+    that is, so it is **measured rather than assumed**: the quotient is
+    multiplied back by the denominator and what fails to reproduce the numerator
+    is what is reported, referred back through the denominator. A division that
+    reproduces its numerator exactly is exact, and this says so with a bound of
+    zero.
 
-    What survives the correction is the part of the remainder the double-double
-    could not hold, plus the rounding of the correction itself, both referred
-    back through the denominator.
+    That distinction is the whole point. A crossing that lands on a representable
+    abscissa — the ordinary case, since two lines routinely meet at a node — has
+    an exact quotient, and a consumer asking which side of it the truth falls on
+    can be told. A blanket second-order charge on every division would leave that
+    consumer with a positive bound around an exactly located answer, and it would
+    refuse precisely the cases that are easiest to be sure about.
+
+    Referring the left-over back through the denominator is itself rounded, and
+    a bound rounded down is not a bound, so the result is widened by a few
+    rounding steps. The widening is multiplicative, which leaves an exact zero
+    exactly zero: nothing needs covering where nothing was left over. It also
+    absorbs dividing by the denominator's leading word rather than its full
+    value, a relative slack of the same order.
     """
-    denominator_high, _low, _dropped = denominator
-    estimate = numerator[0] / denominator_high
-    remainder = dd_add(numerator, dd_negate(dd_mul_float(denominator, estimate)))
-    correction = (remainder[0] + remainder[1]) / denominator_high
-    high, low = two_sum(estimate, correction)
-    residual = remainder[2] + jnp.finfo(estimate.dtype).eps * jnp.abs(remainder[0])
-    return high, low, residual / jnp.abs(denominator_high)
+    high, low = dd_quotient(numerator, denominator)
+    left_over = dd_add(
+        numerator,
+        dd_negate(dd_mul(denominator, (high, low, jnp.zeros_like(high)))),
+    )
+    unreproduced = jnp.abs(left_over[0] + left_over[1]) + left_over[2]
+    referred = unreproduced / jnp.abs(denominator[0])
+    return high, low, referred * (1.0 + 4.0 * jnp.finfo(referred.dtype).eps)
 
 
 def _split(a: FloatND) -> tuple[FloatND, FloatND]:
