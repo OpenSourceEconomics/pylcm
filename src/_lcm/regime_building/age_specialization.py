@@ -20,6 +20,7 @@ import numpy as np
 
 from _lcm.grids.continuous import ContinuousGrid
 from lcm.transition import AgeSpecializedFunction
+from lcm.typing import Float1D
 
 
 class _Invariant:
@@ -68,9 +69,6 @@ def tree_signature(tree: Mapping[str, object], age: float) -> Hashable:
     return tuple(pairs)
 
 
-# --------------------------------------------------------------------------- #
-# Age-specialized GRIDS (shape-invariant continuous-state grids)              #
-# --------------------------------------------------------------------------- #
 class _GridTraitsError(Exception):
     """A resolved grid is internally inconsistent (message is user-facing)."""
 
@@ -83,10 +81,10 @@ class _GridTraits:
     runtime-supplied grids, whose nodes do not exist at build time.
 
     `dtype` holds the exact `np.dtype` object, not `dtype.str`, which is not injective
-    over JAX's extended floating types and would let a dtype change past the validator
-    (audit round-4 F1). `weak_type` is JAX array metadata that `np.asarray` drops, yet
-    it steers promotion in the shared trace (audit round-5 hardening note), so a
-    `weak_type` change across ages is rejected as a shape-invariance violation.
+    over JAX's extended floating types and would let a dtype change past the validator.
+    `weak_type` is JAX array metadata that `np.asarray` drops, yet it steers promotion
+    in the shared trace, so a `weak_type` change across ages is rejected as a
+    shape-invariance violation.
     """
 
     cls: type
@@ -98,8 +96,12 @@ class _GridTraits:
     weak_type: bool | None
 
 
-def _grid_traits(grid: ContinuousGrid) -> _GridTraits:
-    """Resolve the invariants of one concrete grid; raise if self-inconsistent."""
+def _grid_traits(grid: ContinuousGrid, *, nodes: Float1D | None = None) -> _GridTraits:
+    """Resolve the invariants of one concrete grid; raise if self-inconsistent.
+
+    Pass `nodes` when the caller already resolved `grid.to_jax()`, so it is not
+    recomputed here.
+    """
     runtime = bool(getattr(grid, "pass_points_at_runtime", False))
     declared = getattr(grid, "n_points", None)
     if runtime:
@@ -120,8 +122,9 @@ def _grid_traits(grid: ContinuousGrid) -> _GridTraits:
             weak_type=None,
         )
     # Concrete grid: the resolved array is the source of truth. `n_points` is not part
-    # of the `Grid` base contract, but `to_jax()` is (re-review F2).
-    nodes = grid.to_jax()
+    # of the `Grid` base contract, but `to_jax()` is.
+    if nodes is None:
+        nodes = grid.to_jax()
     arr = np.asarray(nodes)
     if arr.ndim != 1:
         msg = (

@@ -34,7 +34,10 @@ from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
     PeriodizedUserFunction,
+    assert_continuation_grids_agree,
     continuation_grid_signature_from_schedule,
+    expand_groups_to_periods,
+    group_periods_by_key,
     normalize_age_specialization,
     periodized_tree_signature,
     resolve_periodized_nodes,
@@ -710,7 +713,7 @@ def _build_simulation_phase(
     # `_process_regime_core` excludes constraint names from `functions`, but the
     # additional-target pool re-merges constraints (`_build_functions_pool`) and
     # advertises them as targets; without the constraint namespace here a
-    # periodized constraint would escape the guard (round-11 F3). Both mappings are
+    # periodized constraint would escape the guard. Both mappings are
     # core-processed and still carry `PeriodizedEconFunction` markers.
     age_specialized_function_names = frozenset(
         name
@@ -1992,8 +1995,7 @@ def _build_Q_and_F_per_period(
             }
         )
 
-    configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
-    for period in active_periods:
+    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = get_period_targets(
             period=period,
             transitions=transitions,
@@ -2011,16 +2013,23 @@ def _build_Q_and_F_per_period(
             periodized_tree_signature(constraints, period),
             continuation_sig,
         )
-        configs.setdefault((complete, signature), []).append(period)
+        return (complete, signature)
+
+    configs = group_periods_by_key(active_periods, group_key)
 
     # Build one Q_and_F per distinct group, resolving periodized functions and
     # constraints at the group's representative period. Equal signature ⇒ identical
     # closures, so any period in the group is a valid representative.
     built: dict[tuple[tuple[RegimeName, ...], Hashable], QAndFFunction] = {}
-    for group_key, periods in configs.items():
-        period_targets = group_key[0]
+    for key, periods in configs.items():
+        period_targets = key[0]
         representative_period = periods[0]
-        built[group_key] = get_Q_and_F(
+        assert_continuation_grids_agree(
+            grid_schedule=grid_schedule,
+            target_regimes=period_targets,
+            periods=tuple(periods),
+        )
+        built[key] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
@@ -2039,13 +2048,7 @@ def _build_Q_and_F_per_period(
             certainty_equivalent=certainty_equivalent,
         )
 
-    # Map each period to its group's function
-    result: dict[int, QAndFFunction] = {}
-    for group_key, periods in configs.items():
-        for period in periods:
-            result[period] = built[group_key]
-
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _build_argmax_and_max_Q_over_a_per_period(
@@ -2107,11 +2110,9 @@ def _build_next_state_vmapped(
     same closures share one compiled function; with no age-specialized node every
     period shares a single function, exactly as an age-invariant model.
     """
-    configs: dict[Hashable, list[int]] = {}
-    for period in active_periods:
-        configs.setdefault(periodized_tree_signature(functions, period), []).append(
-            period
-        )
+    configs = group_periods_by_key(
+        active_periods, lambda period: periodized_tree_signature(functions, period)
+    )
 
     built: dict[Hashable, NextStateSimulationFunction] = {}
     for signature, periods in configs.items():
@@ -2137,11 +2138,7 @@ def _build_next_state_vmapped(
             jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
         )
 
-    result: dict[int, NextStateSimulationFunction] = {}
-    for signature, periods in configs.items():
-        for period in periods:
-            result[period] = built[signature]
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _fail_if_action_has_batch_size(

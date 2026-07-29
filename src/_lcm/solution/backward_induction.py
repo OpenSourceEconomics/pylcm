@@ -631,7 +631,7 @@ def _raise_at(
     state_action_space = regime.solution.state_action_space(regime_params=regime_params)
     # The live solve tabulated period t on period t's grid, so the diagnostic has to as
     # well — otherwise a moving current-state grid reports U/F/E/Q fractions on state
-    # values the failing solve never saw (audit F5).
+    # values the failing solve never saw.
     state_action_space = dataclasses.replace(
         state_action_space,
         states=MappingProxyType(

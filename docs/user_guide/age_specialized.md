@@ -148,7 +148,9 @@ states = {
 pylcm builds the concrete grid for every active age during model creation. The grid
 class, number of points, node-array shape, and dtype must stay fixed; only bounds or
 node values may change. Equal `signature(age)` values must identify identical grids,
-because those periods may share a compiled program.
+because those periods may share a compiled program; pylcm cross-checks a shared group's
+resolved nodes at build time and raises if an equal signature turns out to hide
+genuinely different grids.
 
 `AgeSpecializedGrid` is currently supported for continuous **states**, not actions,
 discrete states, or stochastic-process grids. A grid whose points depend on model

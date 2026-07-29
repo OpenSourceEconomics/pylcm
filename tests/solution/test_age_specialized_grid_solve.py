@@ -102,6 +102,26 @@ def _model(wealth_grid):
     )
 
 
+def test_under_specified_signature_merging_distinct_grids_is_rejected():
+    """Two periods sharing a `signature(age)` but resolving to distinct grids raise.
+
+    `signature(age)` is a cheap, user-supplied dedup pre-filter, not a substitute
+    for comparing resolved nodes: an equal signature across periods whose grids
+    genuinely differ must be caught at build time (a loud, actionable error), not
+    silently solved against the wrong period's continuation grid.
+    """
+
+    def floor(age):
+        return -2.0 + 0.3 * (age - 20)
+
+    under_specified = AgeSpecializedGrid(
+        build=lambda age: LinSpacedGrid(start=floor(age), stop=20.0, n_points=12),
+        signature=lambda _age: "constant",
+    )
+    with pytest.raises(RegimeInitializationError, match="resolved nodes"):
+        _model(under_specified).solve(params=_PARAMS, log_level="off")
+
+
 def test_age_invariant_grid_reproduces_plain_solve():
     """An age-invariant `AgeSpecializedGrid` equals the plain fixed-grid solve."""
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
@@ -203,11 +223,11 @@ def test_non_shape_invariant_grid_is_rejected():
 def test_weak_type_change_across_ages_is_rejected():
     """JAX `weak_type` steers promotion but is erased by `np.asarray`.
 
-    Round-5 hardening note: two axes can agree on dtype, shape and raw bytes yet
-    promote differently in the shared trace, changing the argmax. Varying it across
-    ages violates the only-node-values-may-vary contract, so the shape-invariance
-    validation covers `weak_type` too and surfaces the change as a construction-time
-    error, not a silent mis-share.
+    Two axes can agree on dtype, shape and raw bytes yet promote differently in
+    the shared trace, changing the argmax. Varying it across ages violates the
+    only-node-values-may-vary contract, so the shape-invariance validation covers
+    `weak_type` too and surfaces the change as a construction-time error, not a
+    silent mis-share.
     """
 
     @dataclass(frozen=True)
@@ -269,12 +289,13 @@ def test_builtin_grids_are_never_weak_typed():
 
 
 def test_validation_rejects_actual_node_count_change_without_n_points():
-    """A custom grid with no `n_points` must be validated on its resolved array
-    (round-3 re-review F2).
+    """A custom grid with no `n_points` must be validated on its resolved array.
 
     `n_points` is not part of the `Grid` base contract — only `to_jax()` is — so
-    `getattr(grid, "n_points", 0)` silently agreed at 0 for two grids of different
-    actual length, and the shape change slipped through to the compiled kernel.
+    validation must derive shape from the resolved array rather than
+    `getattr(grid, "n_points", 0)`, which would silently agree at 0 for two grids
+    of different actual length and let the shape change reach the compiled kernel
+    unnoticed.
     """
 
     @dataclass(frozen=True)
@@ -298,7 +319,7 @@ def test_validation_rejects_actual_node_count_change_without_n_points():
 
 
 def test_validation_rejects_node_dtype_change():
-    """A dtype change at constant `n_points` must be rejected (round-3 re-review F2).
+    """A dtype change at constant `n_points` must be rejected.
 
     The shared kernel is lowered against the representative axis, so a later period axis
     of the same shape but a different dtype is rejected by the compiled executable.
@@ -342,12 +363,12 @@ def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
 
 
 def test_grid_mode_switch_across_ages_is_rejected():
-    """A grid may not supply points concretely at one age and at runtime at another
-    (re-review F2).
+    """A grid may not supply points concretely at one age and at runtime at another.
 
-    Class and `n_points` stay equal, so the shape check passed and the failure surfaced
-    much later, out of `to_jax()` during period-axis construction, as an error about
-    the wrong thing entirely.
+    Class and `n_points` stay equal, so the shape check alone cannot catch this;
+    without an explicit points-mode check, the failure would surface much later,
+    out of `to_jax()` during period-axis construction, as an error naming the
+    wrong cause entirely.
     """
 
     def build(age):
@@ -361,11 +382,11 @@ def test_grid_mode_switch_across_ages_is_rejected():
 
 
 def test_age_specialized_grid_on_never_active_regime_is_rejected():
-    """An age-specialized grid on a regime active at no age is a modelling error
-    (re-review F3).
+    """An age-specialized grid on a regime active at no age is a modelling error.
 
-    There is no age at which to resolve the builder, so the unresolved marker used to
-    travel into the ordinary grid machinery instead of being rejected up front.
+    There is no age at which to resolve the builder, so the marker must be
+    rejected up front, rather than travelling unresolved into the ordinary grid
+    machinery it does not satisfy.
     """
     grid = AgeSpecializedGrid(
         build=lambda _age: LinSpacedGrid(start=0.5, stop=25.0, n_points=15),
@@ -385,13 +406,14 @@ def test_age_specialized_grid_on_never_active_regime_is_rejected():
 
 def test_builder_undefined_outside_active_ages_still_solves():
     """A grid builder that is undefined outside its regime's active ages must still
-    build and solve (audit F2).
+    build and solve.
 
-    Validation and per-period resolution used to call `build(age)` over the whole model
-    horizon, so a builder that deliberately raises where its regime is inactive turned a
-    valid age-limited/terminal-only specialization into a construction failure. Here the
-    `alive` regime is active through age 24 and inactive at the terminal age 25; the
-    builder raises at every inactive age.
+    Validation and per-period resolution must call `build(age)` only at the
+    regime's active ages, not the whole model horizon — otherwise a builder that
+    deliberately raises outside its regime's active ages would turn a valid
+    age-limited/terminal-only specialization into a construction failure. Here
+    the `alive` regime is active through age 24 and inactive at the terminal age
+    25; the builder raises at every inactive age.
     """
     inactive_age = 20 + _N - 1  # the terminal (dead) age; alive is inactive here
 
