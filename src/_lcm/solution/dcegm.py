@@ -195,20 +195,22 @@ class DCEGM(Solver):
     XLA compile time for the solve kernel on GPU.
     """
 
-    envelope_cell_batch_size: int | None = 32
-    """How many node cells the `"exact"` envelope resolves at once.
+    envelope_cell_batch_size: int | None = None
+    """How many node cells the `"exact"` envelope resolves in parallel.
 
     Node cells are independent — each is resolved from the links covering it
     alone — so this partitions the work and can never change a published value or
-    policy. What it bounds is the working set. Resolving the whole axis at once
-    puts an intermediate the size of the cell axis times `envelope_max_runs` in
-    flight for every row simultaneously, and the rows are themselves mapped over,
-    so the peak carries the product of all three and grows with the resource grid.
-    Batching replaces the cell factor with this value.
+    policy. What it sets is how much of that work is in flight, and so the
+    working set: an intermediate of this value times `envelope_max_runs` per row,
+    with the rows themselves mapped over, so the peak carries the product of all
+    three.
 
-    `None` resolves every cell at once, which is the fastest and the largest.
-    A chain with fewer cells than the batch size resolves in one batch either
-    way, so small models pay nothing for the bound.
+    `None` resolves the cells one at a time and is the floor on the working set.
+    An integer trades that memory for parallelism across cells, which pays when a
+    single cell leaves the device idle and costs both memory and time when it
+    does not — so measure on the model at hand rather than raising it on
+    principle. A chain with fewer cells than the batch size resolves in one step
+    either way, so small models pay nothing for the knob.
     """
 
     fues_jump_thresh: float = 2.0
@@ -601,7 +603,8 @@ def _fail_if_envelope_cell_batch_size_non_positive(
         msg = (
             f"DCEGM.envelope_cell_batch_size must be at least 1, got "
             f"{envelope_cell_batch_size}. It is how many node cells the exact "
-            "upper envelope resolves at once; use None to resolve them all."
+            "upper envelope resolves in parallel; use None to resolve them one "
+            "at a time."
         )
         raise RegimeInitializationError(msg)
 

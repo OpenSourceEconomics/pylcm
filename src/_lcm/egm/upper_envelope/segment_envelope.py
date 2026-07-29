@@ -56,12 +56,13 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, Scala
 # capacity, never an assumed bound: exceeding it poisons the row.
 DEFAULT_MAX_RUNS: int = 24
 
-# How many node cells to resolve at once. Cells are independent, so this changes
-# only the working set, never a published value. Small enough to keep the peak
-# off the whole cell axis, large enough that the per-batch fixed cost stays
-# amortized; a chain with fewer cells than this resolves in a single batch and
-# pays nothing for the knob.
-DEFAULT_CELL_BATCH_SIZE: int = 32
+# How many node cells to resolve in parallel. Cells are independent, so this
+# changes only the working set, never a published value. `None` scans them one
+# at a time: the smallest working set, and on the models pylcm measures also the
+# fastest, since one cell already carries enough work to occupy the device and a
+# wider step only adds intermediates. Raise it for a model whose cells are small
+# enough to leave a device idle — after measuring, not on principle.
+DEFAULT_CELL_BATCH_SIZE: int | None = None
 
 
 def refine_envelope_exact(
@@ -85,9 +86,10 @@ def refine_envelope_exact(
         segment_id: Optional per-candidate branch label. Runs are always split
             where resources stop increasing; a label change splits them further.
         max_runs: Static capacity for the number of x-monotone runs.
-        cell_batch_size: How many node cells to resolve at once; `None` resolves
-            the whole axis in one go. Cells are independent, so this partitions
-            the work without changing any published value.
+        cell_batch_size: How many node cells to resolve in parallel; `None`
+            resolves them one at a time, which is the smallest working set
+            available. Cells are independent, so this partitions the work
+            without changing any published value.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each of
@@ -241,10 +243,10 @@ def _sub_cells_per_node_cell(
     owning link, so it never influences which branch wins.
 
     Cells are independent, so `cell_batch_size` partitions them without changing
-    anything published. What it does change is the working set: resolving the
-    whole axis at once puts a `n_cells * max_runs` intermediate in flight per
-    row, and rows are themselves mapped over, so the peak carries the product of
-    all three. Chunking replaces the cell factor with the batch size.
+    anything published. What it does change is the working set: the intermediate
+    in flight per row is `cell_batch_size * max_runs`, and rows are themselves
+    mapped over, so the peak carries the product of all three. `None` scans the
+    cells one at a time and so holds a single cell's worth — the floor.
     """
 
     def split(
