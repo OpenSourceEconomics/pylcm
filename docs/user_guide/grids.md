@@ -8,6 +8,10 @@ Grids define the outcome space for state and action variables — what values th
 take. They are passed via the `states` and `actions` mappings on a
 [Regime](regimes.ipynb).
 
+A grid is ordinarily the same for every period the regime is active. For a continuous
+state, see [Age-specialized functions and grids](age_specialized.md) to let the grid's
+bounds or node values vary with age instead (e.g., an age-dependent borrowing limit).
+
 ## Quick Reference
 
 | Grid Type                | Use Case                  | Key Parameters                               |
@@ -160,3 +164,5 @@ provide `get_coordinate()` for mapping values to grid coordinates, used in
   built-in transitions
 - [Interpolation](../explanations/interpolation.ipynb) — coordinate math for continuous
   grids
+- [Age-specialized functions and grids](age_specialized.md) — let a continuous state's
+  grid vary with age
