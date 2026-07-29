@@ -256,6 +256,16 @@ def simulate(
             original_n_subjects=original_n_subjects,
         )
 
+    # Which regimes can publish a nested continuous-outer read. A solve-time
+    # property of the model, so the `nested_policy_fallback` column it gates is
+    # not data-dependent.
+    nested_policy_regimes = frozenset(
+        regime_name
+        for regime_to_policy in (period_to_regime_to_sim_policy or {}).values()
+        for regime_name, policy in regime_to_policy.items()
+        if isinstance(policy, NestedEGMSimPolicy)
+    )
+
     return SimulationResult(
         raw_results=wrapped_results,
         regimes=regimes,
@@ -264,6 +274,7 @@ def simulate(
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
         subject_batch_size=subject_batch_size,
+        nested_policy_regimes=nested_policy_regimes,
     )
 
 
