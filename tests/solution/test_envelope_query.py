@@ -967,3 +967,94 @@ def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
         assert float(got_value[0]) == float(adjacent), context
         assert float(got_policy[0]) == 0.0, context
         assert float(got_marginal[0]) == 20.0, context
+
+
+def _slope_overflow_cases(dtype):
+    """(value_exponent, width_exponent) pairs whose rounded slope is not finite.
+
+    Derived from the representable range rather than pinned: the screen key is
+    `Δvalue / Δgrid`, so the condition is `value_exp - width_exp > maxexp`. Each
+    pair is checked in-line below, so a case that stops overflowing fails loud
+    instead of quietly testing nothing.
+    """
+    maxexp = int(np.finfo(dtype).maxexp)
+    minexp = int(np.finfo(dtype).minexp)
+    cases = []
+    for width_exp in (minexp + 64, minexp + 40, minexp + 8, -6):
+        # Overflow needs `value_exp - width_exp > maxexp`; +6 clears it with
+        # margin, and the cap keeps the value itself finite normal.
+        value_exp = min(maxexp - 2, maxexp + width_exp + 6)
+        if value_exp - width_exp > maxexp:
+            cases.append((value_exp, width_exp))
+    # A generator that silently produced nothing would make the test vacuous.
+    assert cases
+    return cases
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("block_size", [0, 3])
+def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block_size):
+    """The rounded slope screen must never decide by falling silent.
+
+    `slope` is computed in ORIGINAL units on purpose -- it is a key compared
+    ACROSS candidates, so every candidate has to express it in the same units.
+    That makes it overflow to an infinity when a large value gap meets a small
+    grid width, while every stored input is still finite normal. The screen
+    band `reach = 8*eps*(|slope| + |lead_slope|)` is then infinite,
+    `lead_slope - reach` is NaN, and every `>=` against it is False -- so the
+    contender set empties, `_exact_slope_compare` never runs, and the winner is
+    whatever `argmax` over the rounded key returned: candidate order.
+
+    That is the round-7 F2 signature exactly -- the value is tied either way and
+    only the published policy and marginal are wrong -- so it is pinned the same
+    way: the answer must not depend on the order the branches are listed in.
+    """
+    for value_exp, width_exp in _slope_overflow_cases(dtype):
+        width = dtype(np.ldexp(1.0, width_exp))
+        big = dtype(np.ldexp(1.0, value_exp))
+        taller = np.nextafter(big, dtype(np.inf))
+        # Both candidates are finite normal as STORED ...
+        assert np.isfinite(big)
+        assert np.isfinite(taller)
+        assert abs(width) >= np.finfo(dtype).tiny
+        # ... while the screen key they produce is not. The overflow is the
+        # point of the case, so it is not a warning worth emitting.
+        with np.errstate(over="ignore"):
+            assert not np.isfinite(big / width)
+        # and the two slopes are strictly ordered as exact rationals.
+        assert Fraction(float(taller)) / Fraction(float(width)) > Fraction(
+            float(big)
+        ) / Fraction(float(width))
+
+        a = ([0.0, float(width)], [dtype(0.0), big], 1.0, 10.0)
+        b = ([0.0, float(width)], [dtype(0.0), taller], 2.0, 20.0)
+
+        seen = {}
+        for order in ("AB", "BA"):
+            rows = [a, b] if order == "AB" else [b, a]
+            grid, value, policy, marginal, segment_id = [], [], [], [], []
+            for sid, (g, v, p, m) in enumerate(rows):
+                grid += g
+                value += list(v)
+                policy += [p] * 2
+                marginal += [m] * 2
+                segment_id += [float(sid)] * 2
+            got = envelope_at_query(
+                endog_grid=jnp.asarray(grid, dtype=dtype),
+                policy=jnp.asarray(policy, dtype=dtype),
+                value=jnp.asarray(value, dtype=dtype),
+                marginal=jnp.asarray(marginal, dtype=dtype),
+                segment_id=jnp.asarray(segment_id, dtype=dtype),
+                x_query=jnp.asarray([0.0], dtype=dtype),
+                segment_block_size=block_size,
+            )
+            seen[order] = tuple(float(x[0]) for x in got)
+
+        context = (
+            f"{np.dtype(dtype)} block={block_size} "
+            f"value=2**{value_exp} width=2**{width_exp}"
+        )
+        assert seen["AB"] == seen["BA"], context
+        # The strictly steeper candidate wins, in both orders.
+        assert seen["AB"][1] == 2.0, context
+        assert seen["AB"][2] == 20.0, context

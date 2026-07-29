@@ -1010,7 +1010,21 @@ def _right_continuous_winner(
     lead_slope = jnp.take_along_axis(terms.slope, lead[:, None], axis=1)
     eps = jnp.finfo(terms.slope.dtype).eps
     reach = _SLOPE_SCREEN_ULPS * eps * (jnp.abs(terms.slope) + jnp.abs(lead_slope))
-    contends = compete & (terms.slope >= lead_slope - reach)
+    # A screen that cannot discriminate must DEFER to the exact comparison, not
+    # decide. `slope` is a rounded key in ORIGINAL units — deliberately, since
+    # it is compared across candidates — so it overflows to an infinity when a
+    # large value gap meets a small grid width, with every stored input still
+    # finite normal. `reach` is then infinite, `lead_slope - reach` is NaN,
+    # every `>=` is False, and `contends` would be EMPTY: the exact loop never
+    # runs and the winner is whatever `argmax` over the rounded key returned,
+    # i.e. candidate order. That is precisely the round-7 F2 failure — level
+    # tied either way, only the published policy and marginal wrong — and it is
+    # reachable at `|Δvalue| / Δgrid > max_float` (probe: float32 values at
+    # `2**100` over a width of `2**-60` flip policy 1.0 <-> 2.0 under a branch
+    # permutation). Where the screen's own arithmetic is not finite it admits
+    # every competitor and lets `_exact_slope_compare` settle the order.
+    screen_usable = jnp.isfinite(reach) & jnp.isfinite(lead_slope)
+    contends = compete & (~screen_usable | (terms.slope >= lead_slope - reach))
     lead_hot = _one_hot(lead, n_segment)
 
     def unresolved(state: _SlopeState) -> BoolND:
