@@ -26,6 +26,21 @@ _MIN_COMPILE_TIME_VAR = "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS"
 _CACHE_DIR_VAR = "JAX_COMPILATION_CACHE_DIR"
 
 
+def _env_with_home(tmp_path: Path) -> dict[str, str]:
+    """Environment whose home directory is `tmp_path`, with the cache unset.
+
+    `Path.home()` reads `USERPROFILE` on Windows and `HOME` everywhere else, so
+    both have to point at the sandbox for the default cache directory to land
+    inside it.
+    """
+    kept = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in (_MIN_COMPILE_TIME_VAR, _CACHE_DIR_VAR)
+    }
+    return kept | {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
+
+
 def _run_in_fresh_interpreter(code: str, *, env: dict[str, str]) -> str:
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -83,14 +98,9 @@ def test_import_sets_the_cache_dir_even_when_jax_is_imported_first(tmp_path: Pat
     while defining its config options — so with `jax` already imported, exporting
     it is not enough and the value has to reach `jax.config` directly.
     """
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in (_MIN_COMPILE_TIME_VAR, _CACHE_DIR_VAR)
-    } | {"HOME": str(tmp_path)}
     stdout = _run_in_fresh_interpreter(
         "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
-        env=env,
+        env=_env_with_home(tmp_path),
     )
     assert stdout == str(tmp_path / ".cache" / "jax")
 
@@ -102,11 +112,6 @@ def test_default_cache_dir_populates_when_jax_is_imported_first(tmp_path: Path):
     process recompiles the whole model, which is minutes on a production grid and
     is invisible because nothing reports it.
     """
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in (_MIN_COMPILE_TIME_VAR, _CACHE_DIR_VAR)
-    } | {"HOME": str(tmp_path)}
     code = """
 import jax
 import lcm
@@ -114,7 +119,7 @@ import jax.numpy as jnp
 
 jax.jit(lambda x: jnp.sin(x) + 1.0)(jnp.arange(3.0)).block_until_ready()
 """
-    _run_in_fresh_interpreter(code, env=env)
+    _run_in_fresh_interpreter(code, env=_env_with_home(tmp_path))
     assert len(list((tmp_path / ".cache" / "jax").iterdir())) > 0
 
 
