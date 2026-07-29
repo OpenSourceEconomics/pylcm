@@ -885,3 +885,85 @@ def test_both_exact_predicates_match_a_rational_oracle_at_every_scale(dtype):
         )
         checked += 1
     assert checked >= 5
+
+
+def _far_segment_exponents(dtype):
+    """Exponents for a remote segment that stay finite normal, spanning the range.
+
+    Includes the top of the range deliberately: that is where a whole-array
+    normalization does its damage, and a ladder that stops short of it cannot
+    detect the defect at all.
+    """
+    info = np.finfo(dtype)
+    return [int(info.minexp) + 4, -60, 0, 23, int(info.maxexp) - 2]
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 3])
+@pytest.mark.parametrize("far_first", [False, True])
+def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
+    dtype, order, block_size, far_first
+):
+    """A candidate that cannot bracket the query is mathematically irrelevant.
+
+    Round 9 normalized the whole problem by ONE grid exponent and ONE value
+    exponent chosen from the largest candidate anywhere in the input. That map
+    is not injective: a remote segment which does not bracket the query still
+    selected the scale, and two adjacent local floats collapsed into the same
+    subnormal BEFORE the certified comparator saw them. The comparator then
+    correctly reported an exact tie between values that are distinct as stored,
+    and the published value, policy and marginal all moved in response to a
+    segment that cannot affect the answer (round-9 audit F2).
+
+    Exact arithmetic cannot rebuild bits discarded upstream of it, so this is
+    pinned at the public boundary: inserting the far segment must change
+    nothing at all.
+    """
+    info = np.finfo(dtype)
+    one = dtype(1)
+    adjacent = np.nextafter(one, dtype(np.inf), dtype=dtype)
+    # The strict local ordering the selector must preserve, as exact rationals.
+    assert Fraction(float(adjacent)) > Fraction(float(one))
+
+    query = 0.5
+    far_bounds = [10.0, 11.0]
+    lower = ([0.0, 1.0], [one, one], 1.0, 10.0)
+    higher = ([0.0, 1.0], [adjacent, adjacent], 0.0, 20.0)
+    local = [lower, higher] if order == "AB" else [higher, lower]
+
+    for exponent in _far_segment_exponents(dtype):
+        far_value = dtype(-np.ldexp(1.0, exponent))
+        # The far segment must itself be finite normal, or the witness is about
+        # non-representable input rather than about the normalization.
+        assert np.isfinite(far_value)
+        assert abs(far_value) >= info.tiny
+        far = (far_bounds, [far_value, far_value], 9.0, 9.0)
+        # It cannot bracket the query, so it cannot affect the answer there.
+        assert not far_bounds[0] <= query <= far_bounds[1]
+
+        rows = [far, *local] if far_first else [*local, far]
+        grid, value, policy, marginal, segment_id = [], [], [], [], []
+        for sid, (g, v, p, m) in enumerate(rows):
+            grid += g
+            value += list(v)
+            policy += [p] * 2
+            marginal += [m] * 2
+            segment_id += [float(sid)] * 2
+
+        got_value, got_policy, got_marginal = envelope_at_query(
+            endog_grid=jnp.asarray(grid, dtype=dtype),
+            policy=jnp.asarray(policy, dtype=dtype),
+            value=jnp.asarray(value, dtype=dtype),
+            marginal=jnp.asarray(marginal, dtype=dtype),
+            segment_id=jnp.asarray(segment_id, dtype=dtype),
+            x_query=jnp.asarray([query], dtype=dtype),
+            segment_block_size=block_size,
+        )
+        context = (
+            f"{np.dtype(dtype)} order={order} block={block_size} "
+            f"far_first={far_first} far=2**{exponent}"
+        )
+        assert float(got_value[0]) == float(adjacent), context
+        assert float(got_policy[0]) == 0.0, context
+        assert float(got_marginal[0]) == 20.0, context
