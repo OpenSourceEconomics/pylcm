@@ -12,13 +12,14 @@ If some other slot's law calls `f_solve` as an ordinary Python function, that ca
 invisible to phase resolution: it is not a DAG node, so there is no slot to rewrite. The
 second slot silently keeps the SOLVE behaviour in both phases.
 
-This is not hypothetical. It is the defect class `phase-incomplete-state-consumer-closure`
-found in the EKL (2019) replication: phasing the `experience` transition left
-`_job_offer_probs` -- a *different* transition that called the capped `_next_experience`
-helper directly -- computing its offer/retention logits on capped experience in the
-simulate phase, so only part of the intended belief/truth wedge took effect. The repair is
-never "phase the state harder"; it is to enumerate every consumer and phase each slot, or
-route them all through one phase-resolved DAG helper.
+This is not hypothetical. It is the defect class
+`phase-incomplete-state-consumer-closure` found in the EKL (2019) replication:
+phasing the `experience` transition left `_job_offer_probs` -- a *different*
+transition that called the capped `_next_experience` helper directly -- computing
+its offer/retention logits on capped experience in the simulate phase, so only part
+of the intended belief/truth wedge took effect. The repair is never "phase the
+state harder"; it is to enumerate every consumer and phase each slot, or route them
+all through one phase-resolved DAG helper.
 
 Both cases below are asserted, so the test documents the defect AND its repair.
 """
