@@ -165,6 +165,7 @@ asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 channels = [ "conda-forge" ]
 platforms = [
   "linux-64",
+  "linux-aarch64",
   "osx-arm64",
   "win-64",
   { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
