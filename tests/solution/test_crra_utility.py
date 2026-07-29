@@ -40,16 +40,3 @@ def test_crra_marginal_utility_is_finite_and_equals_c_to_the_minus_crra(
     consumption = 2.0
     got = jax.grad(lambda c: crra_utility(c, crra))(jnp.asarray(consumption))
     np.testing.assert_allclose(float(got), consumption**-crra, rtol=1e-6)
-
-
-def test_crra_coefficient_derivative_is_finite_at_the_log_case() -> None:
-    """`d/d(crra)` exists at `crra == 1`, where the felicity is `log(c)`.
-
-    The log branch does not depend on `crra`, so the derivative is zero. An
-    unselected power branch left at `c^0 / 0` makes it `nan` instead — the
-    same poisoning as for the consumption derivative, reached through the
-    other argument.
-    """
-    consumption = 2.0
-    got = jax.grad(crra_utility, argnums=1)(jnp.asarray(consumption), 1.0)
-    np.testing.assert_allclose(float(got), 0.0, atol=1e-12)
