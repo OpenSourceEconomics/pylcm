@@ -761,20 +761,54 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # Interior: compensated interpolation `left + (t/w)*d` in double-double.
     # TwoDiff makes t, w, d exact dd representations; division and product are
     # dd-accurate, so (hi, lo) carries the interpolant to O(eps^2) relative.
+    #
+    # The arithmetic runs in a PER-CANDIDATE binade. Dekker's TwoProd splits an
+    # operand by multiplying it by `2**s + 1`, so it needs `|a| < 2**(emax - s)`
+    # — `2**115` in float32, `2**996` in float64 — and past that the interior
+    # pair goes non-finite and the query fails loud with NaN (round-8 audit F2).
+    #
+    # Round 9 bought that headroom with ONE exponent for the whole array, which
+    # was the wrong scope: the exponent could be set by a candidate that does
+    # not even bracket the query, and it merged adjacent local floats into one
+    # subnormal before the certified comparator ran (round-9 audit F2). Here the
+    # scale is derived from a single candidate's OWN endpoints and applied only
+    # to that candidate's arithmetic, so no candidate can perturb another and no
+    # represented distinction between candidates is touched.
+    #
+    # Two independent scales, each a power of two and therefore exact:
+    #   * `grid_exp` cancels completely — `t/w` is a ratio of two grid-scaled
+    #     quantities, so `rh, rl` are identical to what unscaled operands give,
+    #     which is also why policy/marginal interpolation below needs no undo;
+    #   * `value_exp` is degree-one homogeneous, so the value pair and the
+    #     certified radius are scaled back by `+value_exp` immediately.
+    # `q` rides the grid scale so `t` stays the same quantity.
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
-    th, tl = _two_diff(q, left_grid)
-    wh, wl = _two_diff(right_grid, left_grid)
+
+    grid_exp = _binade_exponent(
+        jnp.maximum(jnp.maximum(jnp.abs(left_grid), jnp.abs(right_grid)), jnp.abs(q))
+    )
+    value_exp = _binade_exponent(jnp.maximum(jnp.abs(left_value), jnp.abs(right_value)))
+    s_q = jnp.ldexp(q, -grid_exp)
+    s_left_grid = jnp.ldexp(left_grid, -grid_exp)
+    s_right_grid = jnp.ldexp(right_grid, -grid_exp)
+    s_left_value = jnp.ldexp(left_value, -value_exp)
+    s_right_value = jnp.ldexp(right_value, -value_exp)
+
+    th, tl = _two_diff(s_q, s_left_grid)
+    wh, wl = _two_diff(s_right_grid, s_left_grid)
     wh = jnp.where(zero_width, jnp.ones_like(wh), wh)
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
-    dh, dl = _two_diff(right_value, left_value)
+    dh, dl = _two_diff(s_right_value, s_left_value)
     rh, rl = _dd_div(th, tl, wh, wl, split)
     ph, pl = _dd_mul(rh, rl, dh, dl, split)
-    vh, vl = _dd_add_fp(ph, pl, left_value)
+    vh, vl = _dd_add_fp(ph, pl, s_left_value)
+    vh, vl = jnp.ldexp(vh, value_exp), jnp.ldexp(vl, value_exp)
 
     eps = jnp.finfo(block.dtype).eps
-    interior_radius = (
-        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(left_value) + jnp.abs(ph))
+    interior_radius = jnp.ldexp(
+        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(s_left_value) + jnp.abs(ph)),
+        value_exp,
     )
 
     zero = jnp.zeros_like(vh)
@@ -793,7 +827,12 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
             jnp.where(use_right, right_marginal, left_marginal),
             left_marginal + rh * (right_marginal - left_marginal),
         ),
-        slope=dh / jnp.where(zero_width, jnp.ones_like(wh), right_grid - left_grid),
+        # In ORIGINAL units, not the per-candidate binade: this is a screen key
+        # compared ACROSS candidates, so every candidate must express it in the
+        # same units. It is one subtraction over another, with no Dekker split,
+        # so it carries no overflow risk of its own.
+        slope=(right_value - left_value)
+        / jnp.where(zero_width, jnp.ones_like(right_grid), right_grid - left_grid),
         right_available=q < upper,
     )
 
@@ -830,28 +869,21 @@ def envelope_at_query(
         and all gathered from the same winning segment. A query no live segment
         brackets yields NaN in all three.
     """
-    # Move the whole problem into a safe binade before any error-free transform
-    # runs. Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`,
-    # which OVERFLOWS once `|a| > 2**(emax - s)` — `2**115` in float32 and
-    # `2**996` in float64 — well inside the finite-normal range. The compensated
-    # interior interpolation then produces a non-finite pair, the `poisoned`
-    # rule below correctly refuses to rank it, and a model that merely uses
-    # large units gets NaN for value, policy and marginal (round-8 audit F2).
+    # NO global rescaling happens here, deliberately. Round 9 normalized the
+    # whole problem at this point to keep Dekker's splitting in range, and that
+    # map is NOT INJECTIVE over a mixed-scale array: one exponent was chosen
+    # from the largest candidate anywhere in the input, including candidates
+    # that cannot bracket the query, so a remote segment at `2**126` collapsed
+    # two adjacent local floats into the same subnormal BEFORE the certified
+    # comparator ever saw them. Exact arithmetic downstream cannot rebuild bits
+    # that were discarded upstream, and the published value, policy and marginal
+    # all changed in response to a segment that is mathematically irrelevant
+    # (round-9 audit F2).
     #
-    # Grid and value are scaled independently, each by a power of two, so:
-    #   * the interpolant `left + (t/w)*d` is unchanged in the grid scale (`t/w`
-    #     is a ratio) and homogeneous of degree one in the value scale, so only
-    #     the returned VALUE needs undoing;
-    #   * policy and marginal are carried, not derived from these units, and so
-    #     are returned as-is;
-    #   * every `q == grid` node test is preserved exactly, because a common
-    #     power of two cannot change which floats are equal.
-    grid_exp = _binade_exponent(_finite_magnitude(endog_grid, jnp.asarray(x_query)))
-    value_exp = _binade_exponent(_finite_magnitude(value))
-    endog_grid = jnp.ldexp(endog_grid, -grid_exp)
-    x_query = jnp.ldexp(jnp.asarray(x_query), -grid_exp)
-    value = jnp.ldexp(value, -value_exp)
-
+    # Exponent safety is therefore established PER CANDIDATE, inside
+    # `_candidate_terms`, where the operands of each error-free transform are
+    # known and nothing another candidate does can perturb them. Topology and
+    # node events stay on the ORIGINAL represented coordinates.
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
@@ -908,14 +940,8 @@ def envelope_at_query(
     query = jnp.asarray(x_query)
     n_segment = links.live.shape[0]
     if 0 < segment_block_size < n_segment:
-        blocked_value, blocked_policy, blocked_marginal = _envelope_at_query_blocked(
+        return _envelope_at_query_blocked(
             columns=columns, live=links.live, query=query, block_size=segment_block_size
-        )
-        # Only the value carries the value scale; see the note at the top.
-        return (
-            jnp.ldexp(blocked_value, value_exp),
-            blocked_policy,
-            blocked_marginal,
         )
 
     flat = query.reshape(-1)
@@ -956,8 +982,7 @@ def envelope_at_query(
         ok, jnp.take_along_axis(terms.marginal, best, axis=1)[:, 0], jnp.nan
     )
     return (
-        # Only the value carries the value scale; see the note at the top.
-        jnp.ldexp(env_value.reshape(query.shape), value_exp),
+        env_value.reshape(query.shape),
         env_policy.reshape(query.shape),
         env_marginal.reshape(query.shape),
     )
