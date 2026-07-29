@@ -1,10 +1,10 @@
-"""Chunking the node-cell axis bounds the exact envelope's working set.
+"""Batching the node-cell axis trades the exact envelope's working set for width.
 
-The exact envelope resolves ownership one node cell at a time, and resolving
-every cell of every row at once makes the live intermediate scale with the whole
-cell axis. `DCEGM.envelope_cell_batch_size` caps how many cells are in flight,
-which is a pure partition of the work: the partition may change how much memory
-the solve needs but may never change a published value or policy.
+Ownership is resolved per node cell, and `DCEGM.envelope_cell_batch_size` sets
+how many cells are in flight: `None` scans them one at a time and holds a single
+cell, an integer resolves that many in parallel and holds that many. Either way
+it is a pure partition of the work — it may change how much memory the solve
+needs but may never change a published value or policy.
 """
 
 import jax
@@ -82,16 +82,14 @@ def _solver(**overrides):
     )
 
 
-def test_cell_batch_size_defaults_to_a_bounded_working_set():
-    """The default caps cells in flight rather than resolving the whole axis."""
-    batch_size = _solver().envelope_cell_batch_size
-    assert batch_size is not None
-    assert batch_size >= 1
+def test_cell_batch_size_defaults_to_the_smallest_working_set():
+    """The default scans cells one at a time rather than putting several in flight."""
+    assert _solver().envelope_cell_batch_size is None
 
 
-def test_cell_batch_size_accepts_none_to_resolve_every_cell_at_once():
-    """Opting out of the bound is available to a caller with memory to spare."""
-    assert _solver(envelope_cell_batch_size=None).envelope_cell_batch_size is None
+def test_cell_batch_size_accepts_an_integer_to_resolve_cells_in_parallel():
+    """Widening the step is available to a caller whose cells leave a device idle."""
+    assert _solver(envelope_cell_batch_size=8).envelope_cell_batch_size == 8
 
 
 @pytest.mark.parametrize("invalid", [0, -1])

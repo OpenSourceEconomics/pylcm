@@ -341,11 +341,22 @@ def _place_handovers(
     carrying its own error bound. Because the walk orders owners by increasing
     slope, `f` decreases across a handover, so the state to publish is the
     smallest representable one at or above the root — and *which* one that is
-    the quotient's low word already says: a positive low word puts the root
-    above the high word, anything else at or below it. The certificate is that
-    the low word outweighs the error propagated into it, and where it does not
-    the ulp is genuinely undecidable at this precision and the row is poisoned
-    rather than placed on a guess.
+    the quotient's low word says: a positive low word puts the root above the
+    high word, anything else at or below it.
+
+    What the row is asked to certify is that the bound fits inside a state, so
+    that only those two candidates are in play. It is deliberately not asked to
+    beat the low word as well. Where the bound straddles zero the crossing is
+    within the bound of the published state — a sub-state quantity, far finer
+    than the states the row is written in — and refusing there would discard the
+    row over a distinction it has no way to express. A bound wider than a state
+    is the genuinely undecided case, and that one is refused.
+
+    The margin predicate is not the instrument for this. Adjacent to a crossing
+    the two links are within a rounding of each other, so
+    `certified_sign.certified_margin_sign` reports a determinant under its own
+    resolution there — by construction, not by accident — and a placement driven
+    by it would hand over a state early whenever it did.
 
     This runs once per cell over all breakpoints at once, not inside the walk.
     The walk decides *who* owns what, which is certified separately; only the
@@ -394,9 +405,9 @@ def _place_handovers(
         (step_high, step_low, jnp.zeros_like(step_high)), left
     )
 
-    # Everything the low word has to be read against: the two coefficients' own
-    # bounds carried through the division, what the division could not clear, and
-    # the tail the shift back to absolute coordinates discarded.
+    # Everything the located root has to be read against: the two coefficients'
+    # own bounds carried through the division, what the division could not clear,
+    # and the tail the shift back to absolute coordinates discarded.
     magnitude = jnp.abs(rate[0] + rate[1])
     safe_magnitude = jnp.where(degenerate, jnp.ones_like(magnitude), magnitude)
     step = jnp.abs(step_high) + jnp.abs(step_low)
@@ -404,17 +415,16 @@ def _place_handovers(
         (at_edge[2] + step * rate[2]) / safe_magnitude + step_error + root_dropped
     )
 
-    # The question is one-sided — whether the root clears `root_high`, not
-    # whether it equals it — so the two verdicts are not mirror images. Strictly
-    # above takes the next float up; at or below keeps `root_high`, and an exact
-    # root sits there by right rather than by tolerance: it is the *equality*
-    # that is decidable, so a division that clears its remainder and a crossing
-    # that lands on a representable abscissa resolve with no margin at all. Only
-    # a root the bound straddles from above is genuinely undecidable.
-    above = root_low > root_error
-    at_or_below = (root_low + root_error) <= 0.0
-    resolved = above | at_or_below
-    candidate = jnp.where(above, jnp.nextafter(root_high, jnp.inf), root_high)
+    # What has to hold is that the bound fits inside a state: the crossing is
+    # then known to lie in `root_high` or the state above it, and no third
+    # candidate is in play. The low word is not part of that test — it is the
+    # exact residual of the located pair, routinely half a state wide, and it is
+    # what *chooses* between the two: a positive residual puts the crossing above
+    # `root_high`, so ownership passes at the state above it, and anything else
+    # puts it at or below, so `root_high` is already the incoming link's.
+    resolution = jnp.nextafter(root_high, jnp.inf) - root_high
+    resolved = 2.0 * root_error < resolution
+    candidate = jnp.where(root_low > 0.0, jnp.nextafter(root_high, jnp.inf), root_high)
 
     # Breakpoints where ownership does not change are not handovers; the walk
     # parks them on the cell's right edge and they must stay there.
