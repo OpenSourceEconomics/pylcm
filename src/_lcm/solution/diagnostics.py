@@ -8,13 +8,15 @@ enriched `validate_V` breakdown, warning per Inf row, and logging the debug
 stats. A healthy solve materialises nothing per row.
 """
 
+import dataclasses
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax.numpy as jnp
 
-from _lcm.engine import Regime
+from _lcm.engine import Regime, StateActionSpace
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -204,6 +206,15 @@ def _raise_at(
         {**regime.resolved_fixed_params, **regime_params}
     )
     state_action_space = regime.solution.state_action_space(regime_params=regime_params)
+    # The live solve tabulated period t on period t's grid, so the diagnostic has to as
+    # well — otherwise a moving current-state grid reports U/F/E/Q fractions on state
+    # values the failing solve never saw.
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, row.period))
+        ),
+    )
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
         regimes=regimes,
@@ -231,6 +242,24 @@ def _raise_at(
         flat_params=effective_regime_params,
         period=row.period,
     )
+
+
+def _states_for_period(
+    regime: Regime, state_action_space: StateActionSpace, period: int
+) -> Mapping[str, object]:
+    """Current-period state axes, overriding age-varying states with period-t nodes.
+
+    For a regime with `AgeSpecializedGrid` states, replace the representative base
+    axis with this period's grid nodes so period-t's value function is tabulated on
+    period-t's grid (consistent with the continuation interpolation, which reads
+    V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
+    kernel is not retraced. Age-invariant regimes return the base axis unchanged.
+    """
+    # getattr (not direct access) so a duck-typed mock regime without the field works.
+    axes = getattr(regime.solution, "period_state_axes", None)
+    if axes is not None and period in axes:
+        return {**state_action_space.states, **axes[period]}
+    return state_action_space.states
 
 
 def _reconstruct_next_regime_to_V_arr(

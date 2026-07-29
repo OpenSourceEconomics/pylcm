@@ -228,18 +228,21 @@ def _first_age_specialized_ancestor_of_transition(
     *,
     transition: object,
     functions: Mapping[str, object],
+    constraints: Mapping[str, object],
 ) -> str | None:
     """Return the name of an `AgeSpecializedFunction` the transition reads, if any.
 
     Walks the regime transition's parameter names transitively through plain
-    entries of `functions` (unwrapping `Phased` sides, per-target dicts, and
-    `MarkovTransition` wrappers along the way). Returns the first specialized
-    function name reached, or `None` when the transition's dependency graph is
-    policy-free.
+    entries of `functions` and `constraints` (unwrapping `Phased` sides, per-target
+    dicts, and `MarkovTransition` wrappers along the way) — both are documented,
+    equally legal homes for an `AgeSpecializedFunction`. Returns the first
+    specialized function name reached, or `None` when the transition's dependency
+    graph is policy-free.
     """
+    pool: dict[str, object] = {**functions, **constraints}
     specialized_names = {
         name
-        for name, value in functions.items()
+        for name, value in pool.items()
         if any(
             isinstance(node, AgeSpecializedFunction)
             for node in _iter_transition_nodes(value)
@@ -268,8 +271,8 @@ def _first_age_specialized_ancestor_of_transition(
         seen.add(name)
         if name in specialized_names:
             return name
-        if name in functions:
-            stack.extend(arg_names_of(functions[name]))
+        if name in pool:
+            stack.extend(arg_names_of(pool[name]))
     return None
 
 
@@ -319,7 +322,7 @@ def _age_specialized_scope_errors(
         )
 
     specialized_ancestor = _first_age_specialized_ancestor_of_transition(
-        transition=transition, functions=functions
+        transition=transition, functions=functions, constraints=constraints
     )
     if specialized_ancestor is not None:
         error_messages.append(

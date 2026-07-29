@@ -45,17 +45,29 @@ relative to a reference line, cancelling the level before anything rounds, and
 are carried as a `(high, low)` pair until a decision consumes them. See
 `_recentred_edge_readings`.
 
-The breakpoints themselves stay in ordinary arithmetic: they become abscissae of
-the published row, which carries them to float precision anyway. A misplaced
-breakpoint moves an owner boundary by an ULP; it cannot change which lines own
-the cell, because that question is settled by certified comparisons alone.
+Which lines own the cell is settled by certified comparisons alone, but *where*
+they hand over is not merely cosmetic. The refined row carries a switch as a
+duplicated abscissa holding both records, and a right-continuous read there
+returns the incoming line, so a breakpoint one float below the true crossing
+publishes the incoming policy on a state the outgoing line still owns. The
+handover is therefore placed at the smallest float at or above the crossing —
+the root rounded **up**, not to nearest — which is exactly the first state whose
+ownership has passed. See `_handover_state`.
 """
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
+from _lcm.egm.upper_envelope.certified_sign import (
+    UNRESOLVED_SIGN,
+    certified_margin_sign,
+)
 from _lcm.egm.upper_envelope.double_double import (
+    dd_add,
+    dd_add_float,
+    dd_mul_float,
+    dd_negate,
+    dd_quotient,
     normalizing_exponent,
     two_prod,
     two_sum,
@@ -274,6 +286,54 @@ def _is_negative(reading: tuple[FloatND, FloatND]) -> BoolND:
     return (high < 0.0) | ((high == 0.0) & (low < 0.0))
 
 
+def _handover_state(
+    *,
+    margin_left: tuple[FloatND, FloatND],
+    margin_right: tuple[FloatND, FloatND],
+    left: FloatND,
+    right: FloatND,
+) -> Float1D:
+    """Return the first state at which a link is no longer below the owner.
+
+    The refined row carries a switch as a duplicated abscissa holding both links'
+    records, and a right-continuous read there returns the incoming link. The
+    abscissa is therefore structural, not descriptive: rounded to the nearest
+    float it can land one state below the true crossing, and the row then hands
+    over while the outgoing link is still strictly higher — publishing the
+    incoming policy, and its marginal, one representable state too early.
+
+    What the read needs is the *smallest float at which the incoming link owns
+    the ground*. Ownership passes at the exact root, where the two are equal and
+    the tie goes to the incoming link, so that float is the root rounded **up**,
+    not to nearest. Rounding up is the whole correction: the margin is affine and
+    the root is computed from margins that are exact, so the only question left
+    is which side of it the published float falls on.
+
+    The quotient carries no certificate — it locates a structure rather than
+    proving one — but it does not need to. A root off by an ULP moves a boundary
+    by an ULP; what it cannot do is put the boundary on the wrong side of a state
+    whose ownership the walk has already settled by certified comparison.
+    """
+    numerator = (margin_left[0], margin_left[1], jnp.zeros_like(margin_left[0]))
+    span = dd_add(
+        numerator,
+        dd_negate((margin_right[0], margin_right[1], jnp.zeros_like(margin_right[0]))),
+    )
+    degenerate = (span[0] + span[1]) == 0.0
+    safe_span = (
+        jnp.where(degenerate, jnp.ones_like(span[0]), span[0]),
+        jnp.where(degenerate, jnp.zeros_like(span[1]), span[1]),
+        span[2],
+    )
+    weight_high, weight_low = dd_quotient(numerator, safe_span)
+    width = right - left
+    offset = dd_mul_float((weight_high, weight_low, jnp.zeros_like(weight_high)), width)
+    state_high, state_low, _dropped = dd_add_float(offset, left)
+    # Round the root up: a residual above the published float means the true
+    # crossing lies beyond it, so the incoming link does not own it yet.
+    return jnp.where(state_low > 0.0, jnp.nextafter(state_high, jnp.inf), state_high)
+
+
 def _live_magnitude(*per_link: Float1D, live: BoolND) -> FloatND:
     """Return the largest magnitude any live link contributes, as a scalar."""
     magnitude = jnp.zeros((), dtype=per_link[0].dtype)
@@ -336,9 +396,6 @@ def _walk_owners(
         # there is a crossing at all is a different question, and it is settled
         # on the low word: two links whose readings agree to the last bit still
         # hand over, and rounding the margin first hides exactly that handover.
-        margin_left_value = margin_left[0] + margin_left[1]
-        span = margin_left_value - (margin_right[0] + margin_right[1])
-        safe_span = jnp.where(span == 0.0, 1.0, span)
         # A link takes over when it is strictly above the owner at the cell's
         # right edge; the crossing only says *where*, and is clamped into the
         # ground still unowned rather than allowed to veto the handover. A cell
@@ -350,7 +407,12 @@ def _walk_owners(
         # The walk still terminates: a link is taken only while strictly above
         # the current owner there, which it can never be against itself.
         crossing = jnp.clip(
-            left + (margin_left_value / safe_span) * (right - left),
+            _handover_state(
+                margin_left=margin_left,
+                margin_right=margin_right,
+                left=left,
+                right=right,
+            ),
             x_owned_from,
             right,
         )
@@ -455,14 +517,18 @@ def _fails_all_live_check(
     # gave its ground to someone else, and the row would publish the wrong
     # branch's policy across an interval.
     #
-    # A margin the certificate cannot sign is a different thing. The two links
+    # A margin the certificate cannot *sign* is a different thing. The two links
     # then differ by less than the arithmetic can represent, so no interval
     # exists on which one is demonstrably better — the choice is a selection
     # from options that are indistinguishable at this precision, and the walk's
-    # steepest-slope tie-break makes it deterministically. Refusing here would
+    # steepest-slope tie-break makes it deterministically. Refusing there would
     # discard correct rows over a coin toss the model cannot observe; and the
     # case is not exotic, since cell edges *are* candidate abscissae, so a link
     # routinely ends exactly where the cell does and meets its neighbour there.
-    escapes = order == 1
+    #
+    # A margin the certificate could not *compute* is a defect again, and the
+    # opposite one: no determinant was produced, so the links may be far apart
+    # and the silence says nothing about which owns the ground.
+    escapes = (order == 1) | (order == UNRESOLVED_SIGN)
     escaped = jnp.any(live & ~owns_the_breakpoint & escapes)
     return escaped | not_convex

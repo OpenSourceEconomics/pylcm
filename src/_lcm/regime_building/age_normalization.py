@@ -19,17 +19,23 @@ After this step:
   simulation, AOT compilation, diagnostics, and output only *select* prebuilt objects.
 
 Grid sharing across periods is keyed on the explicit, user-declared
-`AgeSpecializedGrid.signature(age)` contract (recorded in the schedule), not on a
-numeric fingerprint of the resolved nodes.
+`AgeSpecializedGrid.signature(age)` contract (recorded in the schedule);
+`assert_continuation_grids_agree` cross-checks a shared group's resolved nodes at
+build time, so an under-specified signature raises instead of silently merging
+periods with genuinely different grids.
 """
 
 import dataclasses
-from collections.abc import Hashable, Mapping
+import inspect
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, TypeVar, cast
+
+from jax import numpy as jnp
 
 from _lcm.grids.continuous import ContinuousGrid
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building.age_specialization import (
     INVARIANT,
     _describe_trait_mismatch,
@@ -46,9 +52,8 @@ from lcm.phased import Phased
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import Float1D, UserFunction
 
-# --------------------------------------------------------------------------- #
-# Public, build-time-resolved containers                                      #
-# --------------------------------------------------------------------------- #
+T = TypeVar("T")
+K = TypeVar("K", bound=Hashable)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -135,18 +140,6 @@ class AgeGridSchedule:
     ]
     specialized_states_by_regime: MappingProxyType[RegimeName, frozenset[StateName]]
 
-    def current_nodes(
-        self,
-        *,
-        period: int,
-        regime_name: RegimeName,
-    ) -> MappingProxyType[StateName, Float1D]:
-        """Concrete node arrays for a regime's age-specialized states at `period`."""
-        entries = self.by_period.get(period, {}).get(regime_name, {})
-        return MappingProxyType(
-            {state_name: entry.nodes for state_name, entry in entries.items()}
-        )
-
     def grid_signature(
         self,
         *,
@@ -172,11 +165,6 @@ class AgeNormalizationResult:
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
     grid_schedule: AgeGridSchedule | None
-
-
-# --------------------------------------------------------------------------- #
-# Period-based resolution of processed periodized functions                    #
-# --------------------------------------------------------------------------- #
 
 
 def resolve_periodized_node(node: object, period: int) -> object:
@@ -253,9 +241,82 @@ def continuation_grid_signature_from_schedule(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Internal per-marker resolution caches                                        #
-# --------------------------------------------------------------------------- #
+def assert_continuation_grids_agree(
+    *,
+    grid_schedule: AgeGridSchedule | None,
+    target_regimes: tuple[RegimeName, ...],
+    periods: tuple[int, ...],
+) -> None:
+    """Raise if periods sharing a Q_and_F group disagree on resolved continuation nodes.
+
+    `AgeSpecializedGrid.signature(age)` is a cheap, user-supplied pre-filter for
+    program sharing, not a correctness guarantee: two periods can share a signature
+    while `build(age)` resolves to genuinely different grids (an under-specified or
+    constant signature). Comparing every group member's resolved nodes at build
+    time turns that mistake into a loud, actionable error instead of a silently
+    wrong Q_and_F.
+    """
+    if grid_schedule is None or not periods[1:]:
+        return
+    representative_period = periods[0]
+    for target_regime in target_regimes:
+        for state_name in grid_schedule.specialized_states_by_regime.get(
+            target_regime, frozenset()
+        ):
+            rep_entry = (
+                grid_schedule.by_period.get(representative_period + 1, {})
+                .get(target_regime, {})
+                .get(state_name)
+            )
+            if rep_entry is None:
+                continue
+            for period in periods[1:]:
+                entry = (
+                    grid_schedule.by_period.get(period + 1, {})
+                    .get(target_regime, {})
+                    .get(state_name)
+                )
+                if entry is None or entry.nodes.shape != rep_entry.nodes.shape:
+                    continue
+                if not bool(jnp.array_equal(entry.nodes, rep_entry.nodes)):
+                    msg = (
+                        f"Periods {representative_period} and {period} share an "
+                        f"`AgeSpecializedGrid.signature(age)` for state "
+                        f"'{state_name}' in regime '{target_regime}', but their "
+                        f"resolved nodes differ. Equal signatures are a dedup "
+                        f"pre-filter, not a correctness guarantee: the signature "
+                        f"function must distinguish every period whose grid "
+                        f"actually differs."
+                    )
+                    raise RegimeInitializationError(msg)
+
+
+def group_periods_by_key(
+    active_periods: tuple[int, ...],
+    key: Callable[[int], K],
+) -> dict[K, list[int]]:
+    """Group a regime's active periods by a caller-supplied signature key.
+
+    Periods with an equal key share one compiled program downstream; each
+    group's period order is preserved, so its first entry is a valid
+    representative period to resolve periodized nodes at.
+    """
+    configs: dict[K, list[int]] = {}
+    for period in active_periods:
+        configs.setdefault(key(period), []).append(period)
+    return configs
+
+
+def expand_groups_to_periods(
+    grouped_periods: Mapping[K, list[int]],
+    built_by_group: Mapping[K, T],
+) -> MappingProxyType[int, T]:
+    """Map each period back to the compiled object built for its group."""
+    result: dict[int, T] = {}
+    for group_key, periods in grouped_periods.items():
+        for period in periods:
+            result[period] = built_by_group[group_key]
+    return MappingProxyType(result)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -273,16 +334,38 @@ class _ResolvedGridMarker:
 
 def _resolve_function_marker(
     *,
+    regime_name: RegimeName,
     marker: AgeSpecializedFunction,
     active_periods: tuple[int, ...],
     ages: AgeGrid,
 ) -> _ResolvedFunctionMarker:
-    """Build one function marker's concrete callables over its active periods."""
+    """Build one function marker's concrete callables over its active periods.
+
+    Every active period's `build(age)` must return a callable exposing the same
+    parameter names; only the callable's behavior may vary. This mirrors the
+    shape-invariance contract `_resolve_grid_marker` enforces for grids.
+    """
     concrete_by_period: dict[int, UserFunction] = {}
     signature_by_period: dict[int, Hashable] = {}
+    first_params: frozenset[str] | None = None
+    first_period: int | None = None
     for period in active_periods:
-        age = ages.period_to_age(period)
-        concrete_by_period[period] = marker.build(age)
+        age = float(ages.period_to_age(period))
+        concrete = marker.build(age)
+        params = frozenset(inspect.signature(concrete).parameters)
+        if first_params is None:
+            first_params, first_period = params, period
+        elif first_params != params:
+            msg = (
+                f"AgeSpecializedFunction in regime '{regime_name}' is not "
+                f"parameter-invariant: build(age) returned parameters "
+                f"{sorted(first_params)} at period {first_period}, but "
+                f"{sorted(params)} at period {period}. Every concrete function "
+                f"returned by build must expose the same call signature; only "
+                f"its behavior may vary."
+            )
+            raise RegimeInitializationError(msg)
+        concrete_by_period[period] = concrete
         signature_by_period[period] = marker.signature(age)
     representative_period = active_periods[0]
     return _ResolvedFunctionMarker(
@@ -333,20 +416,24 @@ def _resolve_grid_marker(
     first_traits: _GridTraits | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = ages.period_to_age(period)
+        age = float(ages.period_to_age(period))
         grid = marker.build(age)
-        if not isinstance(grid, ContinuousGrid):
+        if not isinstance(grid, ContinuousGrid) or isinstance(
+            grid, _ContinuousStochasticProcess
+        ):
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' "
-                f"build(age) must return a ContinuousGrid; got "
-                f"{type(grid).__name__} at period {period}."
+                f"build(age) must return a plain ContinuousGrid, not a stochastic "
+                f"process; got {type(grid).__name__} at period {period}. "
+                f"Age-varying process states are not supported."
             )
             raise RegimeInitializationError(msg)
         _reject_runtime_points_grid(
             regime_name=regime_name, state_name=state_name, grid=grid
         )
+        nodes = grid.to_jax()
         try:
-            traits = _grid_traits(grid)
+            traits = _grid_traits(grid, nodes=nodes)
         except _GridTraitsError as error:
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' at "
@@ -367,7 +454,7 @@ def _resolve_grid_marker(
             raise RegimeInitializationError(msg)
         concrete_by_period[period] = ResolvedAgeGrid(
             grid=grid,
-            nodes=grid.to_jax(),
+            nodes=nodes,
             signature=marker.signature(age),
         )
     representative_period = active_periods[0]
@@ -375,11 +462,6 @@ def _resolve_grid_marker(
         representative=concrete_by_period[representative_period].grid,
         concrete_by_period=MappingProxyType(concrete_by_period),
     )
-
-
-# --------------------------------------------------------------------------- #
-# Representative-regime and phase-spec rewriting                               #
-# --------------------------------------------------------------------------- #
 
 
 def _representative_function(
@@ -432,7 +514,7 @@ def _representative_regime(
         name: (
             grid_cache[id(spec)].representative
             if isinstance(spec, AgeSpecializedGrid)
-            else spec
+            else _representative_function(spec, function_cache)
         )
         for name, spec in user_regime.states.items()
     }
@@ -505,8 +587,18 @@ def _rewrite_phase_slice(
 
 
 def _regime_has_markers(user_regime: FinalizedUserRegime) -> bool:
-    """Whether a regime declares any age-specialized function or grid marker."""
-    for value in (*user_regime.functions.values(), *user_regime.constraints.values()):
+    """Whether a regime declares any age-specialized function or grid marker.
+
+    A carried state's `Phased.solve` side is a first-class regime function
+    elsewhere in the pipeline (params template, DAG discovery), so it is checked
+    alongside `functions`/`constraints`, not just the state's `AgeSpecializedGrid`
+    case.
+    """
+    for value in (
+        *user_regime.functions.values(),
+        *user_regime.constraints.values(),
+        *user_regime.states.values(),
+    ):
         if isinstance(value, AgeSpecializedFunction):
             return True
         if isinstance(value, Phased) and (
@@ -522,7 +614,12 @@ def _regime_has_markers(user_regime: FinalizedUserRegime) -> bool:
 def _collect_function_markers(
     user_regime: FinalizedUserRegime,
 ) -> dict[int, AgeSpecializedFunction]:
-    """Every distinct age-function marker on a regime, keyed by object identity."""
+    """Every distinct age-function marker on a regime, keyed by object identity.
+
+    Scans `functions`, `constraints`, and `states` (for a carried state's
+    `Phased.solve` side), since a function marker may legally appear in any of
+    the three.
+    """
     markers: dict[int, AgeSpecializedFunction] = {}
 
     def _visit(value: object) -> None:
@@ -532,7 +629,11 @@ def _collect_function_markers(
             _visit(value.solve)
             _visit(value.simulate)
 
-    for value in (*user_regime.functions.values(), *user_regime.constraints.values()):
+    for value in (
+        *user_regime.functions.values(),
+        *user_regime.constraints.values(),
+        *user_regime.states.values(),
+    ):
         _visit(value)
     return markers
 
@@ -590,7 +691,10 @@ def normalize_age_specialization(
 
         function_cache: dict[int, _ResolvedFunctionMarker] = {
             marker_id: _resolve_function_marker(
-                marker=marker, active_periods=active_periods, ages=ages
+                regime_name=regime_name,
+                marker=marker,
+                active_periods=active_periods,
+                ages=ages,
             )
             for marker_id, marker in _collect_function_markers(user_regime).items()
         }
