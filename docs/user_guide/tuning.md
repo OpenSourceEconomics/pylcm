@@ -170,6 +170,16 @@ pylcm sets three JAX defaults at import and leaves the rest to the environment.
   Cache hits skip XLA compilation only; tracing and lowering still run on each fresh
   process, so re-runs get faster, not free.
 
+Both cache settings are applied through `jax.config` as well as the environment, so they
+hold whether `lcm` is imported before or after `jax`. Worth checking when a run is
+inexplicably slow, because a disabled cache reports nothing — it just recompiles:
+
+```python
+import jax
+
+print(jax.config.jax_compilation_cache_dir)  # `None` means no caching at all
+```
+
 **Knobs you set yourself**, with the trade-off each carries:
 
 - `XLA_PYTHON_CLIENT_PREALLOCATE=true` — preallocate a single pool. At production scale
