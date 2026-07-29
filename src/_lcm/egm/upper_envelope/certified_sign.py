@@ -69,6 +69,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_mul_float,
     dd_negate,
     normalizing_exponent,
+    scale_by_power_of_two,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -142,9 +143,11 @@ def certified_margin_sign(
     source_abscissae = (a_x0, a_x1, b_x0, b_x1, x_query)
     source_values = (a_v0, a_v1, b_v0, b_v1)
     scaled_abscissae = tuple(
-        jnp.ldexp(term, -abscissa_exponent) for term in source_abscissae
+        scale_by_power_of_two(term, -abscissa_exponent) for term in source_abscissae
     )
-    scaled_values = tuple(jnp.ldexp(term, -value_exponent) for term in source_values)
+    scaled_values = tuple(
+        scale_by_power_of_two(term, -value_exponent) for term in source_values
+    )
 
     # That homogeneity argument holds only while the scaling is exact, and the
     # shared exponent comes from the largest abscissa, so an operand far below it
@@ -203,7 +206,7 @@ def _round_trips(
     return reduce(
         operator.and_,
         (
-            jnp.ldexp(scaled_term, exponent) == source_term
+            scale_by_power_of_two(scaled_term, exponent) == source_term
             for scaled_term, source_term in zip(scaled, source, strict=True)
         ),
     )

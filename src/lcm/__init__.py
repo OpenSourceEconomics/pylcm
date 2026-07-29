@@ -25,6 +25,18 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
 
 import jax
 
+# The environment variable above only reaches JAX if `jax` has not been imported
+# yet: JAX reads it once, while defining its config options. Anything that
+# imports `jax` before `lcm` — a test suite's `conftest`, a notebook, another
+# library — therefore leaves the cache silently disabled and pays a full compile
+# in every process. Applying the same value through `jax.config` afterwards makes
+# the setting hold whichever order the two were imported in.
+if not jax.config.jax_compilation_cache_dir:
+    _cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR")
+    if _cache_dir:
+        jax.config.update("jax_compilation_cache_dir", _cache_dir)
+    del _cache_dir
+
 # JAX only writes an executable to the persistent cache when its compile time
 # exceeds `jax_persistent_cache_min_compile_time_secs` (default: 1 second). A
 # pylcm model compiles as many small per-regime/per-period programs, most of

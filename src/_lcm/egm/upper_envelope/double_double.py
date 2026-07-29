@@ -22,6 +22,7 @@ Everything is branch-free and elementwise, so it stays `jax.jit`- and
 `jax.vmap`-compatible with static shapes.
 """
 
+import jax
 import jax.numpy as jnp
 
 from lcm.typing import FloatND, IntND
@@ -45,6 +46,33 @@ def two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
     b_hi, b_lo = _split(b)
     error = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
     return p, error
+
+
+def scale_by_power_of_two(value: FloatND, exponent: IntND) -> FloatND:
+    """Return `value * 2**exponent`, exactly, wherever the result stays normal.
+
+    Scaling by a power of two moves no information, and every decision built on
+    the transforms here relies on that. `jnp.ldexp` does not deliver it
+    uniformly: on a CUDA backend it is exact once XLA has compiled it and wrong
+    for a substantial share of inputs when evaluated eagerly, so a primitive that
+    is supposed to be exact would instead depend on whether it had been traced.
+
+    Constructing the multiplier from the IEEE-754 exponent field removes the
+    question. Writing `exponent + bias` into that field is the definition of
+    `2**exponent`, so the multiplier is exact by construction and the product is
+    a single correctly-rounded multiplication by a power of two.
+
+    An `exponent` that would leave the normal range produces a multiplier that is
+    zero, infinite, or otherwise not `2**exponent`. Nothing is clamped or
+    guessed here — callers that need certainty compare against the unscaled
+    operand and refuse the case, which is the only honest answer once the
+    scaling itself has lost information.
+    """
+    info = jnp.finfo(value.dtype)
+    bias = info.maxexp - 1
+    field = (exponent.astype(f"int{info.bits}") + bias) << info.nmant
+    multiplier = jax.lax.bitcast_convert_type(field, value.dtype)
+    return value * multiplier
 
 
 def normalizing_exponent(*values: FloatND) -> IntND:
