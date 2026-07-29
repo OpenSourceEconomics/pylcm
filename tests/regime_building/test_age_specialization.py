@@ -200,6 +200,38 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
         _validate_logical_consistency(regime)
 
 
+def test_regime_transition_reading_age_specialized_constraint_is_rejected(
+    binary_category_class,
+):
+    """A plain regime transition cannot read an `AgeSpecializedFunction` in
+    `constraints`.
+
+    `constraints` is an equally supported home for `AgeSpecializedFunction` as
+    `functions` (the sibling error message for a bare-marker transition explicitly
+    names both), so the ancestor walk that detects a transition reading a
+    specialized value must scan `constraints` too, not just `functions`.
+    """
+
+    def next_regime(policy_threshold):
+        return policy_threshold
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        transition=MarkovTransition(next_regime),
+        functions={"utility": lambda a, b: None},  # noqa: ARG005
+        constraints={
+            "policy_threshold": AgeSpecializedFunction(
+                build=lambda age: lambda b: age,  # noqa: ARG005
+                signature=lambda age: ("threshold", age),
+            ),
+        },
+    )
+
+    with pytest.raises(RegimeInitializationError):
+        _validate_logical_consistency(regime)
+
+
 def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
     binary_category_class,
 ):
