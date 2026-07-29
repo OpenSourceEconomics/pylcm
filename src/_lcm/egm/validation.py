@@ -638,7 +638,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
         solver.post_decision_function,
     }
     for role, label, func in _savings_stage_candidates(
-        user_regime=user_regime, solver=solver
+        user_regime=user_regime, continuous_state=solver.continuous_state
     ):
         if role == "euler_law":
             # The Euler state's own law has its dedicated structural check
@@ -663,12 +663,17 @@ def _fail_if_savings_stage_function_depends_on_decision(
 def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
-    solver: DCEGM,
+    continuous_state: StateName,
 ) -> list[tuple[str, str, UserFunction]]:
     """Enumerate every savings-stage function variant of a regime.
 
     Coarse, `MarkovTransition`-wrapped, `Phased`, and granular per-target
     forms all unpack to plain callables via `_transition_variants`.
+
+    Args:
+        user_regime: The regime whose transitions are enumerated.
+        continuous_state: The Euler state, named explicitly so a nested solver
+            can pass its inner margin.
 
     Returns:
         List of `(role, label, func)` triples, with role one of
@@ -676,13 +681,13 @@ def _savings_stage_candidates(
 
     """
     candidates: list[tuple[str, str, UserFunction]] = []
-    euler_value = user_regime.state_transitions.get(solver.continuous_state)
+    euler_value = user_regime.state_transitions.get(continuous_state)
     if euler_value is not None:
         for label, transition_func in _transition_variants(value=euler_value):
             candidates.append(
                 (
                     "euler_law",
-                    f"transition of the Euler state '{solver.continuous_state}'{label}",
+                    f"transition of the Euler state '{continuous_state}'{label}",
                     transition_func,
                 )
             )
@@ -698,7 +703,7 @@ def _savings_stage_candidates(
                 )
             )
     for state_name, value in user_regime.state_transitions.items():
-        if state_name == solver.continuous_state or value is None:
+        if state_name == continuous_state or value is None:
             continue
         for label, transition_func in _transition_variants(value=value):
             candidates.append(
@@ -733,7 +738,7 @@ def _savings_stage_euler_state_readers(
     return [
         (role, label, func)
         for role, label, func in _savings_stage_candidates(
-            user_regime=user_regime, solver=solver
+            user_regime=user_regime, continuous_state=solver.continuous_state
         )
         if solver.continuous_state
         in _dag_ancestors(functions=opaque_functions, target_func=func)

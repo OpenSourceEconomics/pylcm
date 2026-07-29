@@ -105,6 +105,23 @@ def keyword_map(call: ast.Call) -> dict[str, ast.AST]:
     return {kw.arg: kw.value for kw in call.keywords if kw.arg is not None}
 
 
+def _resolver_name(node: ast.AST) -> str | None:
+    """Name of the `resolve_*` call inside `node`, or `None` if it resolves nothing.
+
+    The argument is usually wrapped (`cast("...", resolve_x(pool, period))`), so walk
+    rather than matching the top node. Returns the name so the invariant can require
+    the SAME resolver elsewhere without hard-coding which one is current.
+    """
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id.startswith("resolve_")
+        ):
+            return child.func.id
+    return None
+
+
 def assignment_value(node: ast.AST, target_name: str) -> ast.AST:
     for child in ast.walk(node):
         if isinstance(child, ast.Assign) and any(
@@ -230,10 +247,28 @@ def assert_every_dispatch_threads_every_role(
     skw = keyword_map(singleton_calls[0])
     assert ckw.keys() >= PHASE_ARGS
     assert skw.keys() >= PHASE_ARGS
-    # The continuation pool is age-specialized in BOTH dispatches.
-    for keywords in (ckw, skw):
-        assert "resolve_specialized_nodes(continuation_functions, age)" in ast.unparse(
-            keywords["continuation_functions"]
+    # The continuation pool is node-resolved in BOTH dispatches, by the SAME resolver
+    # the dispatch already uses for its ordinary `functions` pool.
+    #
+    # This used to pin the literal `resolve_specialized_nodes(continuation_functions,
+    # age)`. That went stale the moment the age-normalization refactor renamed the
+    # resolver to `resolve_periodized_nodes(..., representative_period)` — and a
+    # stale literal fails on a correct tree, which is the fastest way to get an
+    # invariant deleted rather than heeded. Deriving the expected resolver from the
+    # singleton's own `functions` argument keeps the teeth (an UNRESOLVED pool, or one
+    # resolved by a different rule than the flow pool, still fails) without pinning a
+    # name that is not part of the invariant.
+    resolver = _resolver_name(skw["functions"])
+    assert resolver is not None, (
+        "the singleton dispatch no longer resolves `functions`: "
+        + ast.unparse(skw["functions"])
+    )
+    for label, keywords in (("collective", ckw), ("singleton", skw)):
+        rendered = ast.unparse(keywords["continuation_functions"])
+        assert f"{resolver}(continuation_functions" in rendered, (
+            f"the {label} dispatch does not resolve `continuation_functions` with "
+            f"`{resolver}` — the continuation sub-DAG would see an unresolved marker: "
+            f"{rendered}"
         )
 
     # Both the solution and the simulation terminal path thread the guard vocabulary.

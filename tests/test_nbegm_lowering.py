@@ -13,18 +13,23 @@ from lcm.exceptions import NBEGMCaseError
 
 
 @case_boundary(
-    boundary("assets", "medicaid_asset_limit", equality="otherwise", kind="jump")
+    boundary(
+        variable="assets",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
 )
 def medicaid_eligible(assets, medicaid_asset_limit):
     return assets < medicaid_asset_limit
 
 
-@piece("oop", when=medicaid_eligible)
+@piece(output="oop", when=medicaid_eligible)
 def oop_medicaid(medical_expense):
     return 0.1 * medical_expense
 
 
-@piece("oop", otherwise=medicaid_eligible)
+@piece(output="oop", otherwise=medicaid_eligible)
 def oop_private(medical_expense):
     return 0.9 * medical_expense
 
@@ -74,11 +79,11 @@ def test_collect_rejects_a_boundary_with_no_declared_surface():
     def empty_predicate(assets):
         return assets < 0.0
 
-    @piece("oop", when=empty_predicate)
+    @piece(output="oop", when=empty_predicate)
     def oop_a(medical_expense):
         return medical_expense
 
-    @piece("oop", otherwise=empty_predicate)
+    @piece(output="oop", otherwise=empty_predicate)
     def oop_b(medical_expense):
         return medical_expense
 
@@ -97,11 +102,11 @@ def test_collect_rejects_a_piece_referencing_an_undeclared_boundary():
     def not_a_boundary(assets):
         return assets < 0.0
 
-    @piece("oop", when=not_a_boundary)
+    @piece(output="oop", when=not_a_boundary)
     def oop_a(medical_expense):
         return medical_expense
 
-    @piece("oop", otherwise=not_a_boundary)
+    @piece(output="oop", otherwise=not_a_boundary)
     def oop_b(medical_expense):
         return medical_expense
 

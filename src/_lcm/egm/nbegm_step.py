@@ -44,6 +44,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.crra import crra_utility
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
@@ -54,25 +55,6 @@ from _lcm.egm.nbegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
-
-# Below this marginal value of liquid the continuation is treated as flat, so the
-# Euler inversion is degenerate (consumption diverges) and the candidate is dropped.
-_DEGENERATE_MARGINAL_TOL = 1e-10
-
-
-def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
-    """First unused segment id after `segment`, safe for all-NaN segments.
-
-    A flat (zero-marginal) continuation — e.g. the last alive period of a
-    model whose terminal target has no bequest motive — drops *every*
-    interior Euler candidate, leaving the interior segment ids all-NaN; a
-    bare `nanmax` would then poison the corner chains' ids (and with them
-    the whole envelope). Fall back to `0` so the live corners still get
-    finite segment ids.
-    """
-    segment_max = jnp.nanmax(segment)
-    return jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + offset
-
 
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
@@ -128,10 +110,17 @@ def nbegm_multi_interval_step(
     optimum. The coh inversion is degenerate there, so a flat interval's interior
     candidates are pulled onto its crossing breakpoint (where they link to the
     rising interior just above) and a flat corner segment carries the constant value
-    across the interval below. A savings-node corner chain per post-decision node
-    competes over the whole grid (the `s = 0` chain is the hard borrowing corner),
-    and the interior path, flat corners, and node chains merge by the branch-aware
-    upper envelope.
+    across the interval below. The `s = 0` corner — consume the whole cash-on-hand,
+    the hard borrowing corner — competes over the whole grid, and the interior path,
+    the flat corners, and that corner merge by the branch-aware upper envelope.
+
+    The candidate set is the Euler path plus those corners; it carries neither the
+    dense per-savings-node corner family nor the `s = savings_grid[-1]` corner that
+    `nbegm_multi_interval_step_savings` builds. A continuation kink strictly between
+    two Euler roots has no Euler root of its own, and the finite-grid optimum at
+    high cash-on-hand can be to save the grid maximum, so a regime with either shape
+    belongs on the savings-space step; here the value would sit below the dense
+    optimum in exactly those two regions.
 
     Args:
         next_value: Next period's value on `liquid_grid`.
@@ -174,7 +163,7 @@ def nbegm_multi_interval_step(
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = slope_endog * consumption ** (-crra)
 
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
@@ -215,7 +204,7 @@ def nbegm_multi_interval_step(
     # gives zero marginal value of liquid), the Euler inversion sends consumption to
     # infinity, so those interior candidates are spurious. Drop the ones not already
     # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
-    degenerate = marginal_next <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
     liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
@@ -233,12 +222,18 @@ def nbegm_multi_interval_step(
     # land next-period liquid at `income`. A candidate over the whole grid, since the
     # constraint binds wherever the no-save corner beats the Euler path.
     value_at_income = jnp.interp(jnp.asarray(income), liquid_grid, next_value)
-    endog_parts.append(liquid_grid)
-    value_parts.append(
-        _crra_utility(coh_grid, crra) + discount_factor * value_at_income
+    s0 = _no_save_corner(
+        endog_grid=liquid_grid,
+        coh=coh_grid,
+        crra=crra,
+        discount_factor=discount_factor,
+        continuation=value_at_income,
+        coh_slope=coh_slopes[interval_of_grid],
     )
-    policy_parts.append(coh_grid)
-    marginal_parts.append(coh_slopes[interval_of_grid] * coh_grid ** (-crra))
+    endog_parts.append(s0[0])
+    value_parts.append(s0[1])
+    policy_parts.append(s0[2])
+    marginal_parts.append(s0[3])
     segment_parts.append(jnp.full_like(liquid_grid, next_segment))
 
     for offset, (edges, values, policies, marginals) in enumerate(flat_corners):
@@ -475,7 +470,7 @@ def nbegm_multi_interval_step_savings(
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
     # inversion diverges; drop those interior candidates.
-    degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = _next_segment_id(interior_segment)
@@ -592,6 +587,11 @@ def _interval_corner_candidates(
         -jnp.inf,
     )
     best_floor = jnp.argmax(floor_node_value)
+    # `argmax` returns node 0 when every node is infeasible, so the `-jnp.inf`
+    # sentinel would be published on a finite abscissa across the whole
+    # interval and the envelope's own interpolation would turn it into NaN.
+    # A floor no savings node can afford has no corner at all.
+    floor_affordable = jnp.any(floor_feasible)
     # A no-save corner consumes the whole cash-on-hand. `corner_coh_grid` is the true
     # per-grid-point cash-on-hand, so consumption is feasible (positive) at every grid
     # point where the budget is defined; the positivity guard drops any point where an
@@ -608,7 +608,7 @@ def _interval_corner_candidates(
         ),
         policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
         marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption_safe),
-        valid=in_interval & (flat | (corner_coh_grid > 0.0)),
+        valid=in_interval & jnp.where(flat, floor_affordable, corner_coh_grid > 0.0),
     )
 
     # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
@@ -736,7 +736,9 @@ def nbegm_per_interval_continuation_step_savings(
             jax.vmap(utility_of_action)(consumption) + discount_factor * interval_value
         )
         value_at_no_save = interval_value[0]
-        degenerate = interval_marginal <= _DEGENERATE_MARGINAL_TOL
+        degenerate = _degenerate_inversion(
+            marginal=interval_marginal, consumption=consumption
+        )
 
         coh_case_grid = coh_slope * liquid_grid + coh_intercept
         coh_scale = jnp.maximum(1.0, jnp.max(jnp.abs(coh_case_grid)))
@@ -768,7 +770,6 @@ def nbegm_per_interval_continuation_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        # A flat interval kills every interior candidate; see `_next_segment_id`.
         next_segment = _next_segment_id(segment)
 
         # Corners consume the true cash-on-hand at each grid point when supplied, so a
@@ -817,7 +818,6 @@ def nbegm_per_interval_continuation_step_savings(
     pad = n_padded - n_intervals
 
     interval_indices = jnp.arange(n_padded, dtype=jnp.int32)
-    edge = jnp.array([jnp.inf], dtype=breakpoints.dtype)
     padded_cont_value = jnp.concatenate(
         [cont_value, jnp.zeros((pad, cont_value.shape[1]), dtype=cont_value.dtype)]
     )
@@ -872,6 +872,12 @@ def nbegm_per_interval_continuation_step_savings(
         ),
     )
 
+    node_segment_base, cliff_segment_base = _point_candidate_segment_bases(
+        interval_block_end=n_padded * interval_stride,
+        n_liquid=liquid_grid.shape[0],
+        n_nodes=savings_grid.shape[-1],
+    )
+
     node_endog, node_value, node_policy, node_marginal, node_segment = (
         _savings_node_point_candidates(
             liquid_grid=liquid_grid,
@@ -884,7 +890,7 @@ def nbegm_per_interval_continuation_step_savings(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             coh_grid=coh_grid,
-            segment_base=float(n_padded * interval_stride),
+            segment_base=float(node_segment_base),
         )
     )
 
@@ -903,7 +909,7 @@ def nbegm_per_interval_continuation_step_savings(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             coh_grid=coh_grid,
-            segment_base=float((n_padded + 1) * interval_stride),
+            segment_base=float(cliff_segment_base),
         )
     else:
         cliff_parts = (jnp.empty(0),) * 5
@@ -925,6 +931,30 @@ def nbegm_per_interval_continuation_step_savings(
         segment_block_size=envelope_segment_block_size,
     )
     return value, marginal, policy
+
+
+def _point_candidate_segment_bases(
+    *, interval_block_end: int, n_liquid: int, n_nodes: int
+) -> tuple[int, int]:
+    """Return the segment-id bases of the savings-node and save-to-cliff blocks.
+
+    Every candidate block owns a half-open id range starting where the previous
+    block's range ends, so two blocks can never share an id and be fused into
+    one envelope segment. The savings-node family spans one id per `(liquid
+    point, node)` pair, which outgrows any fixed per-interval stride once the
+    grids are large — basing the next block on that actual count is what keeps
+    the ranges disjoint at production grid sizes.
+
+    Args:
+        interval_block_end: One past the last id the per-interval blocks own.
+        n_liquid: Number of liquid grid points.
+        n_nodes: Number of post-decision savings nodes per liquid point.
+
+    Returns:
+        Tuple of the savings-node base and the save-to-cliff base.
+
+    """
+    return interval_block_end, interval_block_end + n_liquid * n_nodes
 
 
 def _savings_node_point_candidates(
@@ -1082,7 +1112,7 @@ def nbegm_unified_step_savings(
         jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
     )
     value_at_no_save = cont_value[0]
-    degenerate = cont_marginal <= _DEGENERATE_MARGINAL_TOL
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
 
     endog_parts: list[Float1D] = []
@@ -1216,7 +1246,7 @@ def _floor_optimum(
     fractions = jnp.linspace(1e-4, 1.0, n_dense)
     consumption = fractions * floor_coh
     next_liquid = gross_return * (floor_coh - consumption) + income
-    value = _crra_utility(consumption, crra) + discount_factor * jnp.interp(
+    value = crra_utility(consumption, crra) + discount_factor * jnp.interp(
         next_liquid, liquid_grid, next_value
     )
     best = jnp.argmax(value)
@@ -1383,8 +1413,9 @@ def nbegm_unified_step(  # noqa: PLR0915
         next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
-    interp_value = _crra_utility(consumption, crra) + discount_factor * value_next
+    interp_value = crra_utility(consumption, crra) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
     )
@@ -1412,7 +1443,7 @@ def nbegm_unified_step(  # noqa: PLR0915
         marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
         lower = -jnp.inf if start == 0 else breakpoints[start - 1]
         upper = jnp.inf if end == last_interval else breakpoints[end]
-        in_case = (liquid_endog >= lower) & (liquid_endog < upper)
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
         interior = mask_dead_candidates(
             endog_grid=liquid_endog,
             value=interp_value,
@@ -1429,15 +1460,15 @@ def nbegm_unified_step(  # noqa: PLR0915
         segment_parts.append(segment + float(case) * case_stride)
 
         # Hard borrowing corner over this case's liquid range.
-        s0_consumption = coh_case_grid
-        s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
-        s0 = mask_dead_candidates(
+        in_case_range = (liquid_grid >= lower) & (liquid_grid < upper)
+        s0 = _no_save_corner(
             endog_grid=liquid_grid,
-            value=_crra_utility(s0_consumption, crra)
-            + discount_factor * value_at_income,
-            policy=s0_consumption,
-            marginal=coh_slopes[case_grid_interval] * s0_consumption ** (-crra),
-            valid=s0_valid,
+            coh=coh_case_grid,
+            crra=crra,
+            discount_factor=discount_factor,
+            continuation=value_at_income,
+            coh_slope=coh_slopes[case_grid_interval],
+            valid=in_case_range,
         )
         endog_parts.append(s0[0])
         value_parts.append(s0[1])
@@ -1467,7 +1498,7 @@ def nbegm_unified_step(  # noqa: PLR0915
                 asset_limit=cliff,
                 prev_limit=prev_limit,
                 coh_slope=coh_slopes[case_grid_interval],
-                valid=s0_valid,
+                valid=in_case_range,
             )
             endog_parts.append(kink[0])
             value_parts.append(kink[1])
@@ -1528,7 +1559,7 @@ def _boundary_targeting_coh(
     )
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
-        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
     )
     # The targeted saving is fixed to the cliff, so consumption moves with the
     # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
@@ -1674,8 +1705,12 @@ def _recurring_jump_case(
         next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
-    liquid_endog = consumption + savings_grid - subsidy
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = _next_segment_id(interior_segment)
@@ -1712,14 +1747,20 @@ def _recurring_jump_case(
     value_at_income = _jump_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
     )
-    s0_consumption = liquid_grid + subsidy
-    endog_parts.append(liquid_grid)
-    value_parts.append(
-        _crra_utility(s0_consumption, crra) + discount_factor * value_at_income
+    s0 = _no_save_corner(
+        endog_grid=liquid_grid,
+        coh=liquid_grid + subsidy,
+        crra=crra,
+        discount_factor=discount_factor,
+        continuation=value_at_income,
     )
-    policy_parts.append(s0_consumption)
-    marginal_parts.append(s0_consumption ** (-crra))
-    segment_parts.append(jnp.full_like(liquid_grid, next_segment + float(n_cliffs)))
+    endog_parts.append(s0[0])
+    value_parts.append(s0[1])
+    policy_parts.append(s0[2])
+    marginal_parts.append(s0[3])
+    segment_parts.append(
+        jnp.where(jnp.isnan(s0[0]), jnp.nan, next_segment + float(n_cliffs))
+    )
 
     return (
         jnp.concatenate(value_parts),
@@ -1931,8 +1972,12 @@ def _case_step(
     )
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
-    liquid_endog = consumption + savings_grid - subsidy
-    value_endog = _crra_utility(consumption, crra) + discount_factor * value_next
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
+    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
     marginal_endog = consumption ** (-crra)
     # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
     # so the interior path may carry several monotone segments.
@@ -1963,15 +2008,19 @@ def _case_step(
     value_at_income = _kink_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, asset_limit, equality_owner
     )
-    s0_consumption = liquid_grid + subsidy
-    s0_value = _crra_utility(s0_consumption, crra) + discount_factor * value_at_income
-    s0_marginal = s0_consumption ** (-crra)
-    s0_segment = jnp.full_like(
-        liquid_grid, _next_segment_id(interior_segment, offset=2.0)
+    s0_grid, s0_value, s0_consumption, s0_marginal = _no_save_corner(
+        endog_grid=liquid_grid,
+        coh=liquid_grid + subsidy,
+        crra=crra,
+        discount_factor=discount_factor,
+        continuation=value_at_income,
+    )
+    s0_segment = jnp.where(
+        jnp.isnan(s0_grid), jnp.nan, _next_segment_id(interior_segment, offset=2.0)
     )
 
     value, consumption_on_grid, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate([liquid_endog, kink_grid, liquid_grid]),
+        endog_grid=jnp.concatenate([liquid_endog, kink_grid, s0_grid]),
         policy=jnp.concatenate([consumption, kink_consumption, s0_consumption]),
         value=jnp.concatenate([value_endog, kink_value, s0_value]),
         marginal=jnp.concatenate([marginal_endog, kink_marginal, s0_marginal]),
@@ -2019,7 +2068,7 @@ def _boundary_targeting_branch(
     )
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
-        _crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
     )
     kink_marginal = kink_consumption ** (-crra)
     kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
@@ -2056,12 +2105,28 @@ def _kink_aware_interp(
 
     A query strictly below `limit` then interpolates within the `when` branch, a
     query strictly above within the `otherwise` branch, and neither bridges the
-    discontinuity.
+    discontinuity. A grid node landing exactly on `limit` carries the owning
+    side's value, so each one-sided stencil claims it only for that side; both
+    sides share the stencil rule of the N-cliff reader.
     """
     n = grid.shape[0]
-    last_below = jnp.clip(jnp.sum(grid < limit) - 1, 1, n - 3).astype(jnp.int32)
-    left_at_limit = _extrapolate(grid, values, last_below - 1, last_below, limit)
-    right_at_limit = _extrapolate(grid, values, last_below + 1, last_below + 2, limit)
+    owner_is_when = equality_owner == "when"
+    left_at_limit = _bounded_limit_below(
+        grid,
+        values,
+        limit=limit,
+        prev_limit=-jnp.inf,
+        n=n,
+        owns_limit_node=owner_is_when,
+    )
+    right_at_limit = _bounded_limit_above(
+        grid,
+        values,
+        limit=limit,
+        next_limit=jnp.inf,
+        n=n,
+        owns_limit_node=not owner_is_when,
+    )
 
     limit_at = jnp.asarray(limit, dtype=grid.dtype)
     below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
@@ -2097,17 +2162,26 @@ def _bounded_limit_below(
     limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
     n: int,
+    owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from below, using only nodes strictly
     inside `(prev_limit, limit)` so the stencil never crosses the previous cliff.
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the last node strictly below `limit`, so the result is
+    always a value from below the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
     """
-    hi = jnp.sum(grid < limit) - 1
+    last_below = jnp.sum(grid <= limit if owns_limit_node else grid < limit) - 1
     floor = jnp.sum(grid <= prev_limit)
-    lo = jnp.clip(jnp.maximum(hi - 1, floor), 0, n - 1).astype(jnp.int32)
-    hi = jnp.clip(jnp.maximum(hi, floor), 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
+    lo = jnp.minimum(lo, hi)
     return jnp.where(lo == hi, values[hi], _extrapolate(grid, values, lo, hi, limit))
 
 
@@ -2118,23 +2192,118 @@ def _bounded_limit_above(
     limit: ScalarFloat | float,
     next_limit: ScalarFloat | float,
     n: int,
+    owns_limit_node: bool = False,
 ) -> ScalarFloat:
     """One-sided limit approaching `limit` from above, using only nodes strictly
     inside `(limit, next_limit)` so the stencil never crosses the next cliff.
 
     Falls back to the nearest in-interval node's value when fewer than two such
     nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the first node strictly above `limit`, so the result is
+    always a value from above the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
     """
-    lo = jnp.sum(grid <= limit)
+    first_above = jnp.sum(grid < limit if owns_limit_node else grid <= limit)
     ceil = jnp.sum(grid < next_limit) - 1
-    hi = jnp.clip(jnp.minimum(lo + 1, ceil), 0, n - 1).astype(jnp.int32)
-    lo = jnp.clip(jnp.minimum(lo, ceil), 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)
+    hi = jnp.maximum(hi, lo)
     return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
 
 
-def _crra_utility(consumption: Float1D, crra: ScalarFloat | float) -> Float1D:
-    return jnp.where(
-        crra == 1.0,
-        jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
+def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
+    """Flag savings nodes whose Euler inversion carries no candidate.
+
+    A flat continuation has no marginal value of liquid, so the inversion sends
+    consumption to infinity and the recovered point is spurious. The test is on
+    what the inversion produced, not on the marginal's magnitude: marginal
+    utility carries the units of `c**(-crra)`, so a dollar-denominated model at
+    a moderate risk aversion has genuinely tiny marginals everywhere while each
+    inversion stays perfectly well conditioned. A fixed absolute floor would
+    discard that model's whole Euler branch and leave a corner-only policy the
+    solve still reports as successful.
+
+    Args:
+        marginal: Expected marginal continuation at each savings node.
+        consumption: The consumption the Euler inversion recovered there.
+
+    Returns:
+        Per-node flag, `True` where the node contributes no usable candidate.
+
+    """
+    return (marginal <= 0.0) | ~jnp.isfinite(consumption)
+
+
+def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
+    """Return the first free segment id above a candidate block's ids.
+
+    A block whose candidates are all dead carries an all-NaN id column, and
+    `jnp.nanmax` of it is NaN. Handing that on as the next block's base id makes
+    every later block's ids NaN too, and the envelope links only equal *finite*
+    ids — so one dead block silently kills every corner behind it. An all-dead
+    block occupies no id, so the count simply restarts at zero.
+
+    Args:
+        segment: The block's per-candidate segment ids, NaN where dead.
+        offset: How far above the block's highest id to start.
+
+    Returns:
+        The next block's base segment id, always finite.
+
+    """
+    segment_max = jnp.nanmax(segment)
+    return jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + offset
+
+
+def _no_save_corner(
+    *,
+    endog_grid: Float1D,
+    coh: Float1D,
+    crra: ScalarFloat | float,
+    discount_factor: ScalarFloat | float,
+    continuation: FloatND,
+    coh_slope: Float1D | ScalarFloat | float = 1.0,
+    valid: BoolND | bool = True,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Build the no-save (`s = 0`) corner, dead where the budget is non-positive.
+
+    Consuming the whole cash-on-hand is an action only where cash-on-hand is
+    positive, and CRRA utility does not report the difference on its own:
+
+    - `coh < 0` with an even-integer `crra` returns a *positive* number, larger
+      than `u(c)` at every feasible `c`, so the corner wins the envelope
+      wherever it brackets and publishes a negative consumption policy;
+    - `coh == 0` returns `-inf` with an `+inf` marginal, and the envelope's own
+      interpolation turns the pair into NaN across the bracketed cell.
+
+    Both channels are therefore evaluated on a safe consumption and every
+    channel of an infeasible point is NaN-dead, which is how the envelope reads
+    "no candidate here".
+
+    Args:
+        endog_grid: Liquid points the corner is defined on.
+        coh: Cash-on-hand at each of those points.
+        crra: Coefficient of relative risk aversion.
+        discount_factor: Discount factor.
+        continuation: Next period's value at the corner's post-decision node.
+        coh_slope: `d coh / d liquid` at each point, for the marginal channel.
+        valid: Further per-point validity (e.g. an interval or case mask).
+
+    Returns:
+        Tuple of the corner's endogenous grid, value, policy, and marginal
+        channels, each NaN where the corner has no feasible action.
+
+    """
+    feasible = coh > 0.0
+    safe = jnp.where(feasible, coh, 1.0)
+    return mask_dead_candidates(
+        endog_grid=endog_grid,
+        value=crra_utility(safe, crra) + discount_factor * continuation,
+        policy=coh,
+        marginal=coh_slope * safe ** (-crra),
+        valid=feasible & valid,
     )

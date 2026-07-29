@@ -34,9 +34,9 @@ def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
 
 
 @lcm.piecewise_affine(
-    "subsidy",
+    output="subsidy",
     variable="gross_income",
-    breakpoints=(lcm.affine_breakpoint("fpl_cliff", kind="jump"),),
+    breakpoints=(lcm.affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
 )
 def subsidy(
     gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float

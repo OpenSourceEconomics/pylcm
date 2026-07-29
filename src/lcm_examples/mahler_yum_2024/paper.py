@@ -152,9 +152,11 @@ def raw_cash_on_hand(
 
 
 @piecewise_affine(
-    "cash_on_hand",
+    output="cash_on_hand",
     variable="raw_cash_on_hand",
-    breakpoints=(affine_breakpoint("min_consumption", kind="continuous_kink"),),
+    breakpoints=(
+        affine_breakpoint(threshold="min_consumption", kind="continuous_kink"),
+    ),
 )
 def cash_on_hand(
     raw_cash_on_hand: FloatND,

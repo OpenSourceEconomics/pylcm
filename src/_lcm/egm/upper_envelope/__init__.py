@@ -23,11 +23,9 @@ All backends share one signature: they consume the candidate
 `(endog_grid, policy, value)` rows plus the candidate supgradient
 `marginal_utility` ($\\mu = \\partial v / \\partial R$, exact by the envelope
 theorem) and return a NaN-padded weakly-ascending refined `(grid, policy,
-value)` triple, the kept-point count, and a read-support verdict (only MSS
-computes it; the other backends report `False` unconditionally, the
-fail-closed value for a channel the policy-read gate never consumes from
-them). FUES, LTM, and MSS ignore the supgradient (they recover slopes from
-the segments); RFC uses it to build each point's tangent.
+value)` triple plus the kept-point count. FUES, LTM, and MSS ignore the
+supgradient (they recover slopes from the segments); RFC uses it to build each
+point's tangent.
 """
 
 from collections.abc import Callable
@@ -44,15 +42,11 @@ from _lcm.egm.upper_envelope.fues import (
     refine_envelope as refine_envelope_fues,
 )
 from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_envelope_ltm
-from _lcm.egm.upper_envelope.mss import (
-    refine_envelope as refine_envelope_mss,
-)
-from _lcm.egm.upper_envelope.mss import (
-    refine_envelope_with_support as refine_envelope_with_support_mss,
-)
+from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
+from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from lcm.solvers import DCEGM
-from lcm.typing import Float1D, ScalarBool, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 
 @runtime_checkable
@@ -67,8 +61,8 @@ class UpperEnvelopeBackend(Protocol):
         value: Float1D,
         marginal_utility: Float1D,
         savings: Float1D,
-    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
-        """Return refined rows, the kept-point count, and read support.
+    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+        """Return refined (grid, policy, value) rows and the kept-point count.
 
         The supgradient `marginal_utility` carries $\\mu = \\partial v /
         \\partial R$ per candidate — the exact value-row slope by the envelope
@@ -77,12 +71,7 @@ class UpperEnvelopeBackend(Protocol):
         constrained ones); FUES uses it to judge savings monotonicity exactly,
         the other backends ignore it. The refined rows are NaN-padded to a
         static length; a kept-point count exceeding that length signals overflow
-        (the rows then hold a truncated prefix of the envelope). The final flag
-        certifies the row for the off-grid simulation read: `True` only when the
-        row's linear span coincides with the live-covered domain (no compacted
-        coverage gap). MSS computes it; the other backends return `False`
-        unconditionally — the replay gate admits only MSS, so the flag is
-        consumed nowhere else and `False` is the fail-closed value.
+        (the rows then hold a truncated prefix of the envelope).
         """
         ...
 
@@ -109,31 +98,29 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             value: Float1D,
             marginal_utility: Float1D,
             savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
+        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run the FUES scan with the solver's thresholds.
 
             FUES recovers segment slopes from its own forward scan, so the
             candidate supgradient is not consumed; the exogenous source savings
-            resolve the savings-monotonicity test exactly. FUES rows are never
-            certified for the off-grid read (segment identity is heuristic), so
-            read support is unconditionally `False`.
+            resolve the savings-monotonicity test exactly.
             """
             del marginal_utility
-            return (
-                *refine_envelope_fues(
-                    endog_grid=endog_grid,
-                    policy=policy,
-                    value=value,
-                    n_refined=n_refined,
-                    jump_thresh=solver.fues_jump_thresh,
-                    n_points_to_scan=solver.fues_n_points_to_scan,
-                    savings=savings,
-                    scan_unroll=solver.fues_scan_unroll,
-                ),
-                jnp.asarray(False),  # noqa: FBT003
+            return refine_envelope_fues(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                n_refined=n_refined,
+                jump_thresh=solver.fues_jump_thresh,
+                n_points_to_scan=solver.fues_n_points_to_scan,
+                savings=savings,
+                scan_unroll=solver.fues_scan_unroll,
             )
 
         return fues_backend
+
+    if solver.upper_envelope == "exact":
+        return _build_exact_backend(solver=solver, n_refined=n_refined)
 
     if solver.upper_envelope == "rfc":
 
@@ -144,25 +131,21 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             value: Float1D,
             marginal_utility: Float1D,
             savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
+        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run the rooftop cut with the solver's thresholds.
 
             The exogenous source savings are a FUES-only refinement; RFC judges
-            monotonicity from its own geometry. RFC rows leave switches between
-            retained nodes, so read support is unconditionally `False`.
+            monotonicity from its own geometry.
             """
             del savings
-            return (
-                *refine_envelope_rfc(
-                    endog_grid=endog_grid,
-                    policy=policy,
-                    value=value,
-                    marginal_utility=marginal_utility,
-                    n_refined=n_refined,
-                    search_radius=solver.rfc_search_radius,
-                    jump_thresh=solver.rfc_jump_thresh,
-                ),
-                jnp.asarray(False),  # noqa: FBT003
+            return refine_envelope_rfc(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                marginal_utility=marginal_utility,
+                n_refined=n_refined,
+                search_radius=solver.rfc_search_radius,
+                jump_thresh=solver.rfc_jump_thresh,
             )
 
         return rfc_backend
@@ -176,23 +159,18 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             value: Float1D,
             marginal_utility: Float1D,
             savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
+        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
             """Run the brute local-upper-bound scan.
 
             LTM recovers segment slopes from the candidate chain, so neither the
             candidate supgradient nor the exogenous source savings are consumed.
-            LTM rows leave switches between retained nodes, so read support is
-            unconditionally `False`.
             """
             del marginal_utility, savings
-            return (
-                *refine_envelope_ltm(
-                    endog_grid=endog_grid,
-                    policy=policy,
-                    value=value,
-                    n_refined=n_refined,
-                ),
-                jnp.asarray(False),  # noqa: FBT003
+            return refine_envelope_ltm(
+                endog_grid=endog_grid,
+                policy=policy,
+                value=value,
+                n_refined=n_refined,
             )
 
         return ltm_backend
@@ -206,17 +184,14 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             value: Float1D,
             marginal_utility: Float1D,
             savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt, ScalarBool]:
-            """Run the MSS crossing-complete refinement with read support.
+        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+            """Run HARK's EGM upper-envelope sweep with crossing insertion.
 
             MSS recovers segment slopes from the candidate chain, so neither the
             candidate supgradient nor the exogenous source savings are consumed.
-            The read-support flag is the refinement's coverage verdict: `False`
-            when a compacted interior gap makes the row's linear span fabricate
-            values.
             """
             del marginal_utility, savings
-            return refine_envelope_with_support_mss(
+            return refine_envelope_mss(
                 endog_grid=endog_grid,
                 policy=policy,
                 value=value,
@@ -412,8 +387,78 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return mss_bracket_finder
 
+    if solver.upper_envelope == "exact":
+        return _build_exact_bracket_finder(solver=solver, n_refined=n_refined)
+
     msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
     raise ValueError(msg)
+
+
+def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend:
+    """Build the exact segment-envelope backend."""
+
+    def exact_backend(
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+        """Build the exact segment envelope of the candidate cloud.
+
+        The construction reads its topology off the candidate order and its
+        geometry off the value links, so neither the candidate supgradient nor
+        the exogenous source savings are consumed.
+        """
+        del marginal_utility, savings
+        return refine_envelope_exact(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            n_refined=n_refined,
+            max_runs=solver.envelope_max_runs,
+        )
+
+    return exact_backend
+
+
+def _build_exact_bracket_finder(
+    *, solver: DCEGM, n_refined: int
+) -> Callable[..., QueryBracket]:
+    """Build the single-query bracket finder backed by the exact envelope."""
+
+    def exact_bracket_finder(
+        *,
+        endog_grid: Float1D,
+        policy: Float1D,
+        value: Float1D,
+        marginal_utility: Float1D,
+        savings: Float1D,
+        x_query: ScalarFloat,
+    ) -> QueryBracket:
+        """Locate the query bracket from the exact segment envelope.
+
+        Builds the same full NaN-padded row the full-envelope path publishes and
+        slices the bracketing pair, so the two paths cannot diverge.
+        """
+        del marginal_utility, savings
+        refined_grid, refined_policy, refined_value, n_kept = refine_envelope_exact(
+            endog_grid=endog_grid,
+            policy=policy,
+            value=value,
+            n_refined=n_refined,
+            max_runs=solver.envelope_max_runs,
+        )
+        return _bracket_from_refined_row(
+            refined_grid=refined_grid,
+            refined_policy=refined_policy,
+            refined_value=refined_value,
+            n_kept=n_kept,
+            x_query=x_query,
+        )
+
+    return exact_bracket_finder
 
 
 def _bracket_from_refined_row(

@@ -56,7 +56,7 @@ def _solve_chain():
     """
     model = get_model(n_periods=3)
     params = get_params(n_periods=3, pension_bequest_weight=0.5)
-    brute = model.solve(params=params, log_level="off")
+    brute = model.solve(params=params, log_level="debug")
     v_dead = jnp.asarray(brute[2]["dead"])
     v1 = _g2egm_step(v_dead)
     v0 = _g2egm_step(v1)

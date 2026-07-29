@@ -39,7 +39,7 @@ def _solve_to_boundary():
     Returns the EGM boundary working value and the brute `brute[2]["working"]`.
     """
     brute = get_model(n_periods=5, n_consumption=200).solve(
-        params=get_params(), log_level="off"
+        params=get_params(), log_level="debug"
     )
     v_dead = jnp.asarray(brute[4]["dead"])
     retired = egm_one_asset_step(

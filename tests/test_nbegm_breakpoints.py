@@ -23,17 +23,20 @@ def _medicaid_pool():
 
     @lcm.case_boundary(
         lcm.boundary(
-            "assets", "medicaid_asset_limit", equality="otherwise", kind="jump"
+            variable="assets",
+            threshold="medicaid_asset_limit",
+            equality="otherwise",
+            kind="jump",
         )
     )
     def medicaid_eligible(assets, medicaid_asset_limit):
         return assets < medicaid_asset_limit
 
-    @lcm.piece("subsidy", when=medicaid_eligible)
+    @lcm.piece(output="subsidy", when=medicaid_eligible)
     def subsidy_medicaid(subsidy_amount):
         return subsidy_amount
 
-    @lcm.piece("subsidy", otherwise=medicaid_eligible)
+    @lcm.piece(output="subsidy", otherwise=medicaid_eligible)
     def subsidy_none(subsidy_amount):
         return 0.0 * subsidy_amount
 

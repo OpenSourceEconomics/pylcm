@@ -302,7 +302,7 @@ def get_Q_and_F(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
@@ -648,7 +648,7 @@ def get_Q_and_F_terminal(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,  # noqa: ARG001
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
@@ -732,7 +732,7 @@ def get_Q_and_F_terminal_collective(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,  # noqa: ARG001
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-stakeholder utilities and the shared feasibility mask.
@@ -1282,7 +1282,7 @@ def get_Q_and_F_collective(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Per-stakeholder state-action values and the shared feasibility mask.

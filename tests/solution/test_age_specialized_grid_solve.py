@@ -16,8 +16,8 @@ Contracts tested here:
 - the shape-invariance contract is enforced: same class, `batch_size`, points mode and
   resolved node shape/dtype at every active age — validated on the grid's actual
   `to_jax()` array, since `n_points` is not part of the `Grid` base contract;
-- grid identity keys on resolved nodes, so equal-shape/different-geometry grids never
-  share current-state axes or continuation kernels.
+- program sharing across periods is keyed on the explicit `AgeSpecializedGrid.signature`
+  contract, so periods with different continuation grids never false-share a kernel.
 """
 
 import dataclasses
@@ -25,14 +25,11 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-import ml_dtypes
 import numpy as np
 import pytest
 
-from _lcm.grids import PiecewiseGridSegment, PiecewiseLinSpacedGrid
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
-from _lcm.regime_building.processing import _grid_identity
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
@@ -108,10 +105,10 @@ def _model(wealth_grid):
 def test_age_invariant_grid_reproduces_plain_solve():
     """An age-invariant `AgeSpecializedGrid` equals the plain fixed-grid solve."""
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
-    v_plain = _model(grid).solve(params=_PARAMS, log_level="off")
+    v_plain = _model(grid).solve(params=_PARAMS, log_level="debug")
     v_asg = _model(
         AgeSpecializedGrid(build=lambda _age: grid, signature=lambda _age: 0)
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v_plain[period]:
             continue
@@ -146,7 +143,7 @@ def test_moving_floor_no_nan_poisoning():
     (`-inf` may still appear at negative-wealth nodes where no positive consumption is
     affordable — that is legitimate infeasibility, not poisoning.)
     """
-    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="off")
+    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v[period]:
             continue
@@ -157,7 +154,7 @@ def test_moving_floor_no_nan_poisoning():
 
 def test_moving_floor_value_monotone_in_wealth():
     """V is nondecreasing in wealth at every working age (economic sanity)."""
-    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="off")
+    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v[period]:
             continue
@@ -173,12 +170,12 @@ def test_moving_floor_value_monotone_in_wealth():
 def test_moving_floor_simulates_positive_consumption():
     """Forward simulation runs and gives finite, positive consumption for alive rows."""
     model = _model(_moving_floor_grid())
-    v = model.solve(params=_PARAMS, log_level="off")
+    v = model.solve(params=_PARAMS, log_level="debug")
     n = 200
     result = model.simulate(
         params=_PARAMS,
         period_to_regime_to_V_arr=v,
-        log_level="off",
+        log_level="debug",
         seed=1,
         initial_conditions={
             "wealth": jnp.linspace(1.0, 10.0, n),
@@ -200,171 +197,17 @@ def test_non_shape_invariant_grid_is_rejected():
         signature=int,
     )
     with pytest.raises(RegimeInitializationError, match="shape-invariant"):
-        _model(bad).solve(params=_PARAMS, log_level="off")
+        _model(bad).solve(params=_PARAMS, log_level="debug")
 
 
-def test_grid_identity_distinguishes_piecewise_geometry():
-    """Two piecewise grids with equal total `n_points` but different breakpoints must
-    have distinct grid identities (audit F1).
-
-    The old `_grid_identity` fell back to `(class, n_points)` for any grid without
-    `start/stop` or a `points` attribute — which is *every* piecewise grid — so two
-    different geometries collided. That identity drives both the per-period
-    current-state axes and the continuation-cache grouping, so a collision silently
-    reused the wrong
-    axes/kernels with no shape error. The fix keys on the resolved `to_jax()` nodes.
-    """
-    left = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0, 1)", n_points=3),
-            PiecewiseGridSegment(interval="[1, 5]", n_points=4),
-        )
-    )
-    right = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0, 4)", n_points=3),
-            PiecewiseGridSegment(interval="[4, 5]", n_points=4),
-        )
-    )
-    assert int(left.n_points) == int(right.n_points)
-    assert not np.array_equal(np.asarray(left.to_jax()), np.asarray(right.to_jax()))
-    assert _grid_identity(left) != _grid_identity(right)
-
-
-def test_grid_identity_uses_nodes_for_custom_grid_exposing_start_stop():
-    """A custom grid is keyed on its resolved nodes even when it exposes
-    `start`/`stop`/`n_points` (re-review F1).
-
-    The first fix keyed on the *presence* of those attributes, so a custom grid whose
-    geometry also depends on another field (here a spacing exponent) kept one identity
-    across ages while its nodes moved — silently reusing the wrong current-state axes
-    and continuation kernels, with no shape error to catch it.
-    """
-
-    @dataclass(frozen=True)
-    class _PowerSpacedGrid(ContinuousGrid):
-        """A custom grid whose nodes depend on `power` as well as on start/stop."""
-
-        start: float = 0.0
-        stop: float = 1.0
-        n_points: int = 5
-        power: float = 1.0
-
-        def to_jax(self):
-            unit = jnp.linspace(0.0, 1.0, self.n_points) ** self.power
-            return self.start + (self.stop - self.start) * unit
-
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
-            raise NotImplementedError
-
-    linear = _PowerSpacedGrid(power=1.0)
-    quadratic = _PowerSpacedGrid(power=2.0)
-    assert not np.array_equal(
-        np.asarray(linear.to_jax()), np.asarray(quadratic.to_jax())
-    )
-    assert _grid_identity(linear) != _grid_identity(quadratic)
-
-
-def test_runtime_irregular_subclass_gets_structural_identity():
-    """A *subclass* of `IrregSpacedGrid` with runtime-supplied points must key on its
-    shape, not be sent to the node fingerprint (round-3 re-review F1).
-
-    `V._get_coordinate_finder` dispatches the runtime-points path on `isinstance`, so
-    such a subclass is a supported runtime grid there. Keying identity on the exact type
-    alone sent it to the node branch, where its inherited `to_jax()` must raise — the
-    two dispatches disagreed about the same object.
-    """
-
-    class _MyRuntimeGrid(IrregSpacedGrid):
-        pass
-
-    grid = _MyRuntimeGrid(n_points=3)  # points supplied at runtime
-    assert grid.pass_points_at_runtime
-    identity = _grid_identity(grid)  # must not raise
-    assert identity == (_MyRuntimeGrid, 3)
-    # A different concrete class with the same shape must not collide.
-    assert identity != _grid_identity(IrregSpacedGrid(n_points=3))
-
-
-def test_grid_identity_distinguishes_concrete_subclass_by_nodes():
-    """A concrete subclass overriding `to_jax` is still keyed on its real nodes."""
-
-    class _ShiftedIrreg(IrregSpacedGrid):
-        def to_jax(self):
-            return super().to_jax() + 1.0
-
-    base = IrregSpacedGrid(points=[0.0, 1.0, 2.0])
-    shifted = _ShiftedIrreg(points=[0.0, 1.0, 2.0])
-    assert _grid_identity(base) != _grid_identity(shifted)
-
-
-def test_grid_identity_distinguishes_signed_zero_endpoints():
-    """A uniform grid is keyed on its nodes, not on its (start, stop) description.
-
-    Round-4 re-review F1: the cheap `(class, float(start), float(stop), n_points)` key
-    collapsed `-0.0` and `+0.0`, which `jnp.linspace` preserves as different endpoint
-    bits. The two grids then shared one identity and the solver silently reused the
-    representative axis.
-    """
-    negative_zero = LinSpacedGrid(start=-1.0, stop=-0.0, n_points=3)
-    positive_zero = LinSpacedGrid(start=-1.0, stop=0.0, n_points=3)
-
-    # The nodes really do differ — the collapse was in the key, not in the grid.
-    assert np.asarray(negative_zero.to_jax()).tobytes() != (
-        np.asarray(positive_zero.to_jax()).tobytes()
-    )
-    assert _grid_identity(negative_zero) != _grid_identity(positive_zero)
-
-
-def test_grid_identity_distinguishes_extended_dtypes_with_equal_bytes():
-    """`dtype.str` is not injective over JAX's extended floating types.
-
-    Round-4 re-review F1: `float8_e4m3fnuz` and `float8_e5m2fnuz` both report `'<V1'`,
-    so two same-shape arrays with identical raw bytes decoded to *different numbers*
-    while their fingerprints compared equal. The exact `np.dtype` object separates them.
-    """
-
-    @dataclass(frozen=True)
-    class _Float8Grid(ContinuousGrid):
-        dtype: object = ml_dtypes.float8_e4m3fnuz
-
-        def to_jax(self):
-            raw = np.asarray([0x30, 0x38, 0x40], dtype=np.uint8)
-            return jnp.asarray(raw.view(np.dtype(self.dtype)))
-
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
-            raise NotImplementedError
-
-    left = _Float8Grid(dtype=ml_dtypes.float8_e4m3fnuz)
-    right = _Float8Grid(dtype=ml_dtypes.float8_e5m2fnuz)
-
-    left_nodes, right_nodes = np.asarray(left.to_jax()), np.asarray(right.to_jax())
-    # Same class, same shape, same bytes, same dtype.str — different numbers.
-    assert left_nodes.dtype.str == right_nodes.dtype.str == "<V1"
-    assert left_nodes.tobytes() == right_nodes.tobytes()
-    assert not np.array_equal(
-        left_nodes.astype(np.float32), right_nodes.astype(np.float32)
-    )
-
-    assert _grid_identity(left) != _grid_identity(right)
-
-    grid = AgeSpecializedGrid(
-        build=lambda age: _Float8Grid(
-            dtype=ml_dtypes.float8_e4m3fnuz if age == 20 else ml_dtypes.float8_e5m2fnuz
-        ),
-        signature=lambda age: age,
-    )
-    with pytest.raises(RegimeInitializationError, match=r"dtype"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
-
-
-def test_grid_identity_distinguishes_weak_type():
+def test_weak_type_change_across_ages_is_rejected():
     """JAX `weak_type` steers promotion but is erased by `np.asarray`.
 
     Round-5 hardening note: two axes can agree on dtype, shape and raw bytes yet
     promote differently in the shared trace, changing the argmax. Varying it across
-    ages violates the only-node-values-may-vary contract, so this is defence in depth:
-    it must surface as a construction-time error, not a silent mis-share.
+    ages violates the only-node-values-may-vary contract, so the shape-invariance
+    validation covers `weak_type` too and surfaces the change as a construction-time
+    error, not a silent mis-share.
     """
 
     @dataclass(frozen=True)
@@ -386,20 +229,18 @@ def test_grid_identity_distinguishes_weak_type():
     weak, strong = _WeakTypeGrid(weak=True), _WeakTypeGrid(weak=False)
     weak_nodes, strong_nodes = weak.to_jax(), strong.to_jax()
 
-    # Identical in everything the host-side fingerprint can see.
+    # Identical in everything the host-side node array can see; only weak_type differs.
     assert weak_nodes.weak_type
     assert not strong_nodes.weak_type
     assert weak_nodes.dtype == strong_nodes.dtype
     assert np.asarray(weak_nodes).tobytes() == np.asarray(strong_nodes).tobytes()
-
-    assert _grid_identity(weak) != _grid_identity(strong)
 
     grid = AgeSpecializedGrid(
         build=lambda age: _WeakTypeGrid(weak=age == 20),
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match=r"weak_type"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_every_grid_trait_is_described():
@@ -453,7 +294,7 @@ def test_validation_rejects_actual_node_count_change_without_n_points():
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match=r"n_points|node shape"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_validation_rejects_node_dtype_change():
@@ -479,7 +320,7 @@ def test_validation_rejects_node_dtype_change():
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match="dtype"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
@@ -497,7 +338,7 @@ def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
 
     grid = AgeSpecializedGrid(build=lambda _age: _LyingGrid(), signature=lambda _age: 0)
     with pytest.raises(RegimeInitializationError, match="declares n_points"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_grid_mode_switch_across_ages_is_rejected():
@@ -515,8 +356,8 @@ def test_grid_mode_switch_across_ages_is_rejected():
         return IrregSpacedGrid(n_points=3)  # points supplied at runtime
 
     grid = AgeSpecializedGrid(build=build, signature=lambda age: age == 20)
-    with pytest.raises(RegimeInitializationError, match="points mode"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+    with pytest.raises(RegimeInitializationError, match="supplied at runtime"):
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_age_specialized_grid_on_never_active_regime_is_rejected():
@@ -530,7 +371,7 @@ def test_age_specialized_grid_on_never_active_regime_is_rejected():
         build=lambda _age: LinSpacedGrid(start=0.5, stop=25.0, n_points=15),
         signature=lambda _age: 0,
     )
-    with pytest.raises(RegimeInitializationError, match="active at no age"):
+    with pytest.raises(RegimeInitializationError, match="active at no model age"):
         Model(
             regimes={
                 "alive": _alive_regime(grid, active=lambda _age: False),
@@ -560,5 +401,5 @@ def test_builder_undefined_outside_active_ages_still_solves():
         return LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
 
     grid = AgeSpecializedGrid(build=build, signature=lambda _age: 0)
-    v = _model(grid).solve(params=_PARAMS, log_level="off")
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
     assert any("alive" in v[period] for period in range(_N))

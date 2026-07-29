@@ -49,6 +49,10 @@ from lcm.typing import (
     StateName,
 )
 
+# A non-concave candidate chain folds into at least two resource-increasing runs,
+# so a smaller fold capacity could never publish one.
+_MIN_ENVELOPE_MAX_RUNS: int = 2
+
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
@@ -63,38 +67,15 @@ class DCEGM(Solver):
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
-    Forward simulation reads the continuous action *off-grid* where the
-    regime qualifies: the solve publishes the refined consumption function
-    (`EGMSimPolicy`) and `simulate` interpolates the subject's row at its
-    resources, following the standard EGM convention, then accepts the read
-    only when it lies inside the row's live support and satisfies the
-    intrinsic budget (`continuous_action <= resources - savings_grid lower
-    bound`), positivity, and finiteness — any other read keeps that
-    subject's grid value. Regimes where replaying the solve-phase policy is
-    invalid keep the gridded continuous action entirely:
-    - a nested (`NEGM`) solver — the published policy is keeper-conditional
-      while the value maximizes over adjusters;
-    - a non-crossing-inserting `upper_envelope` backend (`rfc`, `ltm`) —
-      their rows leave envelope switches between retained nodes, so linear
-      policy interpolation would mix two branch policies;
-    - asset-row mode (a savings-stage function reads the Euler state) — the
-      per-node solve publishes one point per exogenous asset node, not a
-      crossing-complete row, so interpolating across nodes would mix branches;
-    - a continuous stochastic-process state — the process is a node-valued row
-      axis whose simulation transition draws an off-node continuous value that
-      nearest-node row selection cannot resolve;
-    - a passive continuous state — each row is the envelope policy conditional
-      on one passive node, so blending across a passive-dimension branch switch
-      would read neither branch;
-    - any `Phased` declaration (a phase-variant utility, budget, transition,
-      or state domain changes the simulate-phase decision problem);
-    - discrete actions (the branch is chosen from grid-restricted values and
-      need not remain optimal after continuous refinement);
-    - EV1 taste shocks (the realized draws perturb the decision, and the
-      simulated choice frequencies follow the grid-restricted
-      choice-specific values).
-    The intrinsic budget constraint is also applied as a feasibility mask in
-    the grid-argmax path.
+    Forward simulation works but is *grid-restricted*: `simulate` recomputes
+    the argmax over the regime's gridded continuous action against the
+    stored value function, rather than interpolating the exact EGM policy.
+    Simulated continuous actions therefore live on the action grid, and with
+    taste shocks the simulated choice frequencies follow the grid-restricted
+    choice-specific values, not exactly the solve's choice probabilities.
+    The budget constraint the solve enforces intrinsically
+    (`continuous_action <= resources - savings_grid lower bound`) is applied
+    as a feasibility mask during simulation.
 
     """
 
@@ -140,9 +121,27 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["fues", "rfc", "ltm", "mss"] = "mss"
+    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
+    `"exact"` is pylcm's own construction and the default. The other four are
+    faithful ports of the method columns of Dobrescu & Shanker 2026, kept for
+    method comparison and speed; each carries the accepted limitation of its
+    lineage, so prefer the default unless you are reproducing a method.
+
+    - `"exact"`: the exact segment envelope. Splits the candidate chain into
+      x-monotone runs and partitions resources at the live abscissae. Every run
+      covering a cell covers all of it, so the envelope there is the maximum of
+      full lines — convex, with owners in increasing slope order — and its owner
+      sequence is resolved per cell. A branch owning only a subinterval survives,
+      and a crossing landing exactly on a node separates the two policies. All
+      structural decisions use a certified sign of the value difference, exact
+      for the represented inputs and invariant to a common value level, and every
+      live branch is certified against the owners rather than only the runner-up;
+      an undecidable comparison, a branch escaping certification, or a chain
+      folding into more than `envelope_max_runs` runs poisons the row rather than
+      publishing a guess. Costs several times the fast scans (see
+      `envelope_max_runs`).
     - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
       exact segment-crossing points. Fastest, but shares the fast-scan lineage's
       accepted limitation at *exact* endogenous-grid coincidence across branches
@@ -159,11 +158,39 @@ class DCEGM(Solver):
     - `"mss"`: HARK's EGM upper envelope — a left-to-right sweep that keeps the
       max-value branch at every abscissa *and* inserts the exact
       segment-crossing point, so it tracks the FUES envelope tightly (the `MSS`
-      method of Dobrescu & Shanker 2026). A segment-envelope method: it resolves
-      exact coincident-node interval ownership by construction, so it is the
-      correct choice for models with exact cross-branch endogenous-grid
-      coincidence (where `"fues"`, `"rfc"`, and `"ltm"` share a fast-scan
-      limitation).
+      method of Dobrescu & Shanker 2026). It resolves exact coincident-node
+      interval ownership that the fast scans miss, but samples winners only at
+      candidate abscissae: a branch owning just an interior subinterval is
+      dropped, a crossing landing exactly on a node is not emitted, and its
+      tie band scales with the value level rather than the compared margin.
+      Use `"exact"` unless you are reproducing the published method.
+    """
+
+    envelope_max_runs: int = 24
+    """Fold capacity of the `"exact"` upper envelope.
+
+    The candidate chain is split into maximal resource-increasing runs; this
+    bounds how many such runs a cell may fold into. It is a validated capacity,
+    not an assumed bound — one discrete action can fold arbitrarily often, so a
+    chain exceeding it poisons the row and surfaces through the solve loop's NaN
+    diagnostics instead of silently dropping a branch.
+
+    Three costs scale differently in this value, and the difference matters when
+    tuning it:
+
+    - **memory** is linear. No workspace is shaped by the capacity: ownership is
+      resolved per cell into a row-sized buffer, so the published row bounds the
+      footprint whatever the capacity is.
+    - **certified comparisons** are linear. Clearing a branch that owns nothing
+      takes one exact comparison, at the breakpoint where the envelope's slope
+      brackets the branch's own — not one against every rival.
+    - **ordinary arithmetic** is quadratic: the owner walk can open one piece per
+      run, and each step reads every run covering the cell.
+
+    `24` covers the fold counts pylcm's own NEGM and DC-EGM models realize, with
+    headroom; lower it for a model known to stay concave to buy back some speed.
+    The quadratic term is the one that pays for it, and it is also what dominates
+    XLA compile time for the solve kernel on GPU.
     """
 
     fues_jump_thresh: float = 2.0
@@ -183,8 +210,9 @@ class DCEGM(Solver):
     fues_scan_unroll: int = 1
     """Loop-unroll factor for the FUES candidate `lax.scan`.
 
-    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in both the
-    full-envelope and streaming-bracket scans. The scan is sequential and
+    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in the full-envelope
+    scan of `refine_envelope`. The bracket path slices that same full row, so
+    there is no separate streaming scan to unroll. The scan is sequential and
     latency-bound on accelerators; unrolling `k` iterations into one loop body
     trades compile time and code size for fewer loop-carry round trips, which can
     cut the per-row exec wall on GPU. `1` (no unroll) is the default; the refined
@@ -198,8 +226,18 @@ class DCEGM(Solver):
     rfc_search_radius: int = 10
     """Number of neighbors on each side the rooftop-cut dominance test inspects."""
 
-    refined_grid_factor: float = 1.2
-    """Headroom factor sizing the refined (NaN-padded) envelope arrays."""
+    refined_grid_factor: float = 2.0
+    """Headroom factor sizing the refined (NaN-padded) envelope arrays.
+
+    The refined row holds one slot per envelope point, and every kink costs two
+    (the outgoing owner's reading, then the incoming one). How often a row kinks
+    is a property of the candidate cloud rather than of the grid, so this is
+    headroom, not a bound: a row needing more slots than it has reports overflow
+    and is NaN-poisoned rather than silently truncated. The default is sized for
+    the `"exact"` upper envelope, which emits every ownership change — including
+    the interior-only and node-aligned ones the fast scans miss — and therefore
+    kinks more often than they do.
+    """
 
     n_constrained_points: int = 20
     """Number of closed-form points on the credit-constrained segment."""
@@ -224,6 +262,7 @@ class DCEGM(Solver):
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
         _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
         _fail_if_fues_scan_unroll_too_few(self.fues_scan_unroll)
+        _fail_if_envelope_max_runs_too_few(self.envelope_max_runs)
         _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
         _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
@@ -243,6 +282,7 @@ class DCEGM(Solver):
         Numerical-builder imports are function-local so the public `lcm.solvers`
         façade stays a thin re-export that pulls in no engine modules.
         """
+
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
@@ -520,6 +560,17 @@ def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
             f"DCEGM.fues_scan_unroll must be at least 1, got "
             f"{fues_scan_unroll}. It is the `lax.scan` unroll factor for the "
             "FUES candidate scan; 1 means no unrolling."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
+    if envelope_max_runs < _MIN_ENVELOPE_MAX_RUNS:
+        msg = (
+            f"DCEGM.envelope_max_runs must be at least {_MIN_ENVELOPE_MAX_RUNS}, "
+            f"got {envelope_max_runs}. It is the fold capacity of the exact "
+            "upper envelope; a non-concave candidate chain folds into at "
+            "least two resource-increasing runs."
         )
         raise RegimeInitializationError(msg)
 

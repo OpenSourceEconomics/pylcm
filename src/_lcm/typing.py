@@ -233,7 +233,7 @@ class QAndFFunction(Protocol):
 
     def __call__(
         self,
-        next_regime_to_V_arr: FloatND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, BoolND]: ...
 

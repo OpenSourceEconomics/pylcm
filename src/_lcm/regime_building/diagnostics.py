@@ -19,9 +19,11 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
-from _lcm.regime_building.age_specialization import (
-    resolve_specialized_nodes,
-    tree_signature,
+from _lcm.regime_building.age_normalization import (
+    AgeGridSchedule,
+    continuation_grid_signature_from_schedule,
+    periodized_tree_signature,
+    resolve_periodized_nodes,
 )
 from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
 from _lcm.regime_building.V import VInterpolationInfo
@@ -37,12 +39,12 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
-from lcm.ages import AgeGrid
 from lcm.typing import BoolND, FloatND, IntND
 
 
 def _build_compute_intermediates_per_period(
     *,
+    active_periods: tuple[int, ...],
     flat_param_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: EconFunctionsMapping,
@@ -53,14 +55,13 @@ def _build_compute_intermediates_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
-    ages: AgeGrid,
     enable_jit: bool,
+    certainty_equivalent: CertaintyEquivalent | None = None,
+    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
+    grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
-    continuation_grid_signature: Callable[..., Hashable] | None = None,
-    certainty_equivalent: CertaintyEquivalent | None = None,
-    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -87,7 +88,6 @@ def _build_compute_intermediates_per_period(
         state_action_space: State-action space used for productmap sizing.
         grids: Immutable mapping of state/action names to grid specs; used
             for per-state batch sizes.
-        ages: Age grid for the model.
         enable_jit: Whether to JIT-compile the fused closure.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
@@ -107,7 +107,7 @@ def _build_compute_intermediates_per_period(
     def continuation_info(
         period: int,
     ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-        """Target-regime interpolation info for period `t`'s continuation V_{t+1}.
+        """All-regime interpolation info for period `t`'s continuation V_{t+1}.
 
         Mirrors `_build_Q_and_F_per_period.continuation_info` so a NaN diagnostic
         recomputes intermediates on the *same* period-specific target grid the primary
@@ -115,28 +115,34 @@ def _build_compute_intermediates_per_period(
         """
         if period_to_regime_v_interp is None:
             return regime_to_v_interpolation_info
-        return period_to_regime_v_interp.get(period + 1, regime_to_v_interpolation_info)
+        per_period = period_to_regime_v_interp.get(
+            period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
+        )
+        return MappingProxyType(
+            {
+                regime_name: per_period.get(regime_name, info)
+                for regime_name, info in regime_to_v_interpolation_info.items()
+            }
+        )
 
-    # Group by (target configuration, per-age policy signature, continuation-grid
-    # signature), mirroring `_build_Q_and_F_per_period`: with no
-    # `AgeSpecializedFunction` node and no age-varying grid the signature is constant
-    # and the grouping collapses to the target configuration.
+    # Group by (target configuration, per-period policy signature, continuation-grid
+    # signature), mirroring `_build_Q_and_F_per_period`: with no age-specialized node
+    # the signature is constant and the grouping collapses to the target configuration.
     configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
-    for period in range(ages.n_periods):
+    for period in active_periods:
         complete = get_period_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
         )
-        age = ages.period_to_age(period)
-        cont_sig = (
-            continuation_grid_signature(continuation_info(period), complete)
-            if continuation_grid_signature is not None
-            else ()
+        cont_sig = continuation_grid_signature_from_schedule(
+            grid_schedule=grid_schedule,
+            target_period=period + 1,
+            target_regimes=complete,
         )
         signature = (
-            tree_signature(functions, age),
-            tree_signature(constraints, age),
+            periodized_tree_signature(functions, period),
+            periodized_tree_signature(constraints, period),
             cont_sig,
         )
         configs.setdefault((complete, signature), []).append(period)
@@ -148,21 +154,22 @@ def _build_compute_intermediates_per_period(
     built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
     for group_key, periods in configs.items():
         period_targets = group_key[0]
-        age = ages.period_to_age(periods[0])
+        representative_period = periods[0]
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
             functions=cast(
-                "EconFunctionsMapping", resolve_specialized_nodes(functions, age)
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(functions, representative_period),
             ),
             constraints=cast(
                 "ConstraintFunctionsMapping",
-                resolve_specialized_nodes(constraints, age),
+                resolve_periodized_nodes(constraints, representative_period),
             ),
             period_targets=period_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=continuation_info(periods[0]),
+            regime_to_v_interpolation_info=continuation_info(representative_period),
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
         )
