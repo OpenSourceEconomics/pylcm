@@ -13,45 +13,52 @@ envelope:
   subsegments, each carrying its own `segment_id`. The envelope links only
   same-id consecutive candidates, so it never bridges a fold or a masked gap.
 
-Feasibility itself is decided by `positive_to_working_precision` rather than a bare
-`> 0`, so a residual that is positive only by rounding never becomes a live
-candidate.
+Feasibility itself is decided by `affords_an_action`, pointwise and exactly, so no
+attainable action is ever masked away and no point's candidate depends on another
+point's budget.
 """
 
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND
 
 
-def positive_to_working_precision(
-    value: FloatND, *, scale: FloatND | ScalarFloat | float
-) -> BoolND:
-    """Whether `value` clears the rounding error of a difference taken at `scale`.
+def affords_an_action(budget: FloatND) -> BoolND:
+    """Whether `budget` affords an action, decided exactly and pointwise.
 
-    Whether an action is feasible is decided on a residual budget — `coh - savings`,
-    or cash-on-hand itself — formed by subtracting terms of comparable magnitude.
-    Its cancellation error is `eps * scale`, so a residual smaller than that is zero
-    to working precision. Admitting one as a live action publishes a value no action
-    can attain: `u` evaluated there saturates and the marginal utility inverted there
-    carries no significant digits.
+    A residual budget — cash-on-hand, or cash-on-hand minus a savings node — affords
+    consuming it whenever it is positive, and its sign is exactly decidable. IEEE
+    subtraction is correctly rounded, so for the floats actually held, `a - b`
+    evaluates positive exactly when `a > b`: cancellation costs the difference its
+    significant digits, never its sign. The comparison is therefore a certificate,
+    not an estimate, and needs no tolerance.
 
-    A bare `> 0` instead makes feasibility depend on which side of zero the rounding
-    happened to land. An ordinary `jnp.linspace(-1.0, 5.0, 13)` is meant to place a
-    node at exactly zero and does not — it lands at `+6e-8` in 32-bit and `-1e-16` in
-    64-bit — so the same user grid admits the point at one precision and drops it at
-    the other.
+    Two properties follow, and both are contracts:
+
+    - **Every exactly represented positive budget is feasible.** A grid may place a
+      node anywhere, and a node whose budget is one ULP affords an action just as a
+      node whose budget is a thousand does. Deleting it would remove an attainable —
+      possibly optimal — candidate from the envelope.
+    - **The decision is pointwise.** It reads one point's own budget, so extending a
+      grid with a far-away node cannot change it. The signature admits no array-wide
+      magnitude for exactly that reason: any threshold scaled to a whole grid makes a
+      local action's existence depend on unrelated states.
+
+    What this does *not* certify is a budget the author meant to be zero and a grid
+    could not represent — `jnp.linspace(-1.0, 5.0, 13)` places its third node at
+    `+6e-8` in 32-bit and `-1e-16` in 64-bit. That is a question about the grid, not
+    about the sign of the number on it, and it belongs upstream where the intent is
+    still known. Downstream, the tiny positive budget is answered honestly: an action
+    exists, and it is a very bad one.
 
     Args:
-        value: Residual budget whose positivity decides feasibility.
-        scale: Magnitude of the largest term the residual was formed from.
+        budget: Residual budget whose positivity decides feasibility.
 
     Returns:
-        Boolean mask, `True` where `value` is positive by more than the rounding
-        error at `scale`.
+        Boolean mask, `True` where an action exists.
 
     """
-    eps = jnp.finfo(jnp.result_type(1.0)).eps
-    return value > eps * jnp.max(jnp.abs(jnp.asarray(scale)))
+    return budget > 0.0
 
 
 def mask_dead_candidates(

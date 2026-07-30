@@ -47,6 +47,27 @@ def _value_tie_band(reference: FloatND) -> FloatND:
     return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
 
 
+def _along_link(*, left: FloatND, right: FloatND, relative: FloatND) -> FloatND:
+    """Read a channel along a link, exactly reproducing either endpoint.
+
+    The endpoints of one link can sit orders of magnitude apart: a node whose
+    budget is near zero carries a CRRA utility that dwarfs every other value on
+    the grid, and it links to its ordinary neighbour. The displacement form
+    `left + relative * (right - left)` rounds `right - left` to the *larger*
+    endpoint's spacing, so at the ends of the link it reproduces that end only to
+    the coarser resolution — a query landing on a node inherits its neighbour's
+    magnitude as its own precision, and can lose its value outright.
+
+    A query at a link's end is not an interpolation: the answer is that endpoint.
+    Returning it directly is exact whatever the other end holds, and leaves the
+    interior arithmetic untouched — which matters because the dense and blocked
+    evaluations must agree bit for bit, and an algebraically equivalent rewrite of
+    the interior does not survive the two lowerings' differing FMA contraction.
+    """
+    interior = left + relative * (right - left)
+    return jnp.where(relative == 0.0, left, jnp.where(relative == 1.0, right, interior))
+
+
 class _SegmentLinks(NamedTuple):
     """Per-link endpoints of the candidate correspondence (length `n - 1`).
 
@@ -155,12 +176,14 @@ def envelope_at_query(
     width = (right_grid - left_grid)[None, :]
     safe_width = jnp.where(width == 0.0, 1.0, width)
     relative = jnp.where(width == 0.0, 0.0, (flat - left_grid[None, :]) / safe_width)
-    value_interp = left_value[None, :] + relative * (right_value - left_value)[None, :]
-    policy_interp = (
-        left_policy[None, :] + relative * (right_policy - left_policy)[None, :]
+    value_interp = _along_link(
+        left=left_value[None, :], right=right_value[None, :], relative=relative
     )
-    marginal_interp = (
-        left_marginal[None, :] + relative * (right_marginal - left_marginal)[None, :]
+    policy_interp = _along_link(
+        left=left_policy[None, :], right=right_policy[None, :], relative=relative
+    )
+    marginal_interp = _along_link(
+        left=left_marginal[None, :], right=right_marginal[None, :], relative=relative
     )
 
     masked_value = jnp.where(brackets, value_interp, -jnp.inf)
@@ -244,12 +267,14 @@ def _block_query_terms(
     width = (right_grid - left_grid)[None, :]
     safe_width = jnp.where(width == 0.0, 1.0, width)
     relative = jnp.where(width == 0.0, 0.0, (q - left_grid[None, :]) / safe_width)
-    value_interp = left_value[None, :] + relative * (right_value - left_value)[None, :]
-    policy_interp = (
-        left_policy[None, :] + relative * (right_policy - left_policy)[None, :]
+    value_interp = _along_link(
+        left=left_value[None, :], right=right_value[None, :], relative=relative
     )
-    marginal_interp = (
-        left_marginal[None, :] + relative * (right_marginal - left_marginal)[None, :]
+    policy_interp = _along_link(
+        left=left_policy[None, :], right=right_policy[None, :], relative=relative
+    )
+    marginal_interp = _along_link(
+        left=left_marginal[None, :], right=right_marginal[None, :], relative=relative
     )
     slope = (right_value - left_value)[None, :] / safe_width
     return brackets, value_interp, policy_interp, marginal_interp, slope, upper

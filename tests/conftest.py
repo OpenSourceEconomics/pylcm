@@ -79,10 +79,19 @@ def assert_agrees_to_ulp(
     """
     got_arr = np.asarray(got)
     expected_arr = np.asarray(expected)
+    # Compare the non-finite entries as the exact values they are. ULP distance is
+    # meaningless for them — `np.spacing(inf)` is NaN, so every comparison against
+    # it is false and any mismatch would pass silently.
+    finite = np.isfinite(expected_arr)
     np.testing.assert_array_equal(
-        np.isnan(got_arr), np.isnan(expected_arr), err_msg=err_msg
+        np.where(finite, 0.0, got_arr),
+        np.where(finite, 0.0, expected_arr),
+        err_msg=f"non-finite entries differ. {err_msg}",
     )
-    gap = np.where(np.isnan(expected_arr), 0.0, np.abs(got_arr - expected_arr))
+    np.testing.assert_array_equal(
+        np.isfinite(got_arr), finite, err_msg=f"finiteness differs. {err_msg}"
+    )
+    gap = np.where(finite, np.abs(got_arr - expected_arr), 0.0)
     spacing = np.spacing(np.maximum(np.abs(got_arr), np.abs(expected_arr)))
     in_ulp = np.divide(
         gap, spacing, out=np.zeros(gap.shape, dtype=float), where=gap > 0.0
