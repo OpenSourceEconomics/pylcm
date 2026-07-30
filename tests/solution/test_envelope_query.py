@@ -1058,3 +1058,117 @@ def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block
         # The strictly steeper candidate wins, in both orders.
         assert seen["AB"][1] == 2.0, context
         assert seen["AB"][2] == 20.0, context
+
+
+def _wide_segment_case(dtype):
+    """A bracketing segment whose own endpoints span most of the exponent range.
+
+    `x0 = 1`, `q = nextafter(1)`, `x1 = 2**(maxexp-2)` with values `(0, x1)`, so
+    the exact interpolant at `q` is `(q-x0)/(x1-x0) * x1`, which is `eps` to
+    within a rounding -- far above the competitor placed two binades below it.
+    Every stored input is finite normal.
+    """
+    maxexp = int(np.finfo(dtype).maxexp)
+    nmant = int(np.finfo(dtype).nmant)
+    x0 = dtype(1.0)
+    q = np.nextafter(x0, dtype(np.inf))
+    x1 = dtype(np.ldexp(1.0, maxexp - 2))
+    competitor = dtype(np.ldexp(1.0, -(nmant + 2)))
+    exact = (
+        (Fraction(float(q)) - Fraction(float(x0)))
+        / (Fraction(float(x1)) - Fraction(float(x0)))
+    ) * Fraction(float(x1))
+    return x0, q, x1, competitor, exact
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
+    dtype, order, block_size
+):
+    """`q - x0` must survive a segment whose own endpoints span many binades.
+
+    Rounds 9 and 10 both scaled the OPERANDS before differencing them -- round 9
+    with one exponent for the whole array, round 10 with one per candidate. Both
+    lose the same way: scaling `q` and `x0` before subtracting can map two
+    distinct represented grid points onto the same float, after which `q - x0` is
+    zero and no downstream exactness can rebuild it. Here the candidate exponent
+    is set by its own far endpoint, so a candidate that is entirely relevant
+    destroys its own interpolation fraction and collapses to its left value,
+    handing value, policy and marginal to a strictly lower competitor
+    (round-10 audit F2).
+
+    The repair forms the differences first, on the raw operands where `_two_diff`
+    is exact, and carries each scale as an integer exponent applied once at the
+    end.
+    """
+    x0, q, x1, competitor, exact = _wide_segment_case(dtype)
+    info = np.finfo(dtype)
+    for name, val in (("x0", x0), ("q", q), ("x1", x1), ("competitor", competitor)):
+        assert np.isfinite(val), name
+        assert abs(val) >= info.tiny, f"{name} must be finite NORMAL"
+    assert exact > Fraction(float(competitor)), "the witness needs a strict ordering"
+    # The collision that used to cause the defect, asserted so the case cannot
+    # quietly stop exercising it.
+    wide_exp = int(np.frexp(x1)[1])
+    assert dtype(np.ldexp(np.float64(x0), -wide_exp)) == dtype(
+        np.ldexp(np.float64(q), -wide_exp)
+    )
+
+    wide = ([float(x0), float(x1)], [dtype(0.0), x1], 1.0, 20.0)
+    flat = ([float(x0), 2.0], [competitor, competitor], 0.0, 10.0)
+    rows = [wide, flat] if order == "AB" else [flat, wide]
+
+    grid, value, policy, marginal, segment_id = [], [], [], [], []
+    for sid, (g, v, p, m) in enumerate(rows):
+        grid += g
+        value += list(v)
+        policy += [p] * 2
+        marginal += [m] * 2
+        segment_id += [float(sid)] * 2
+
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(grid, dtype=dtype),
+        policy=jnp.asarray(policy, dtype=dtype),
+        value=jnp.asarray(value, dtype=dtype),
+        marginal=jnp.asarray(marginal, dtype=dtype),
+        segment_id=jnp.asarray(segment_id, dtype=dtype),
+        x_query=jnp.asarray([float(q)], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size}"
+    assert float(got_policy[0]) == 1.0, context
+    assert float(got_marginal[0]) == 20.0, context
+    # The published level is the correctly rounded exact interpolant.
+    assert float(got_value[0]) == float(dtype(float(exact))), context
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "OPEN (round-10 audit F2, not closed): `_exact_compare` still routes "
+        "through `_to_safe_columns`, which scales the raw columns BEFORE "
+        "differencing and so merges `q` with `x0` for a wide segment. The public "
+        "path no longer misorders this witness because the value screen resolves "
+        "it, but the certified comparator itself still reports a tie where the "
+        "exact ordering is strict. Closing it needs the exponent-preserving "
+        "comparator, not another change to where `ldexp` is applied -- when that "
+        "lands this test XPASSes and must be un-xfailed."
+    ),
+)
+def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
+    """The certified comparator must not need the screen's help to order these."""
+    x0, q, x1, competitor, exact = _wide_segment_case(dtype)
+    cols_wide = jnp.asarray(
+        [[x0, x1, dtype(0.0), x1, 1.0, 20.0, 1.0, 20.0]], dtype=dtype
+    )
+    cols_flat = jnp.asarray(
+        [[x0, dtype(2.0), competitor, competitor, 0.0, 10.0, 0.0, 10.0]], dtype=dtype
+    )
+    sign = _exact_compare(
+        cols_a=cols_wide, cols_b=cols_flat, q=jnp.asarray([float(q)], dtype=dtype)
+    )
+    assert exact > Fraction(float(competitor))
+    assert float(sign[0]) == 1.0

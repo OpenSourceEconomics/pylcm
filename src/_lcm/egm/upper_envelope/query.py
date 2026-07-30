@@ -753,54 +753,71 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # TwoDiff makes t, w, d exact dd representations; division and product are
     # dd-accurate, so (hi, lo) carries the interpolant to O(eps^2) relative.
     #
-    # The arithmetic runs in a PER-CANDIDATE binade. Dekker's TwoProd splits an
-    # operand by multiplying it by `2**s + 1`, so it needs `|a| < 2**(emax - s)`
-    # — `2**115` in float32, `2**996` in float64 — and past that the interior
-    # pair goes non-finite and the query fails loud with NaN (round-8 audit F2).
+    # SCALE AFTER DIFFERENCING, AND CARRY THE EXPONENT AS AN INTEGER.
     #
-    # Round 9 bought that headroom with ONE exponent for the whole array, which
-    # was the wrong scope: the exponent could be set by a candidate that does
-    # not even bracket the query, and it merged adjacent local floats into one
-    # subnormal before the certified comparator ran (round-9 audit F2). Here the
-    # scale is derived from a single candidate's OWN endpoints and applied only
-    # to that candidate's arithmetic, so no candidate can perturb another and no
-    # represented distinction between candidates is touched.
+    # Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`, so it
+    # needs `|a| < 2**(emax - s)` — `2**115` in float32, `2**996` in float64 —
+    # and past that the interior pair goes non-finite (round-8 audit F2). Rounds
+    # 9 and 10 bought that headroom by scaling the OPERANDS first: round 9 with
+    # one exponent for the whole array, round 10 with one per candidate. Both are
+    # lossy for the same reason — scaling `q` and `x0` before subtracting them
+    # can map two distinct represented grid points onto the SAME float, and then
+    # `t = q - x0` is zero and no downstream exactness can recover it. Round 10's
+    # own witness: `x0 = 1`, `q = nextafter(1)`, `x1 = 2**126`, where the
+    # candidate exponent 127 makes both `x0` and `q` the same subnormal and a
+    # strictly lower constant competitor takes the value, policy and marginal
+    # (round-10 audit F2).
     #
-    # Two independent scales, each a power of two and therefore exact:
-    #   * `grid_exp` cancels completely — `t/w` is a ratio of two grid-scaled
-    #     quantities, so `rh, rl` are identical to what unscaled operands give,
-    #     which is also why policy/marginal interpolation below needs no undo;
-    #   * `value_exp` is degree-one homogeneous, so the value pair and the
-    #     certified radius are scaled back by `+value_exp` immediately.
-    # `q` rides the grid scale so `t` stays the same quantity.
+    # So the differences are formed FIRST, on the raw stored operands, where
+    # `_two_diff` is exact and subtraction of finite floats cannot overflow.
+    # Only then is each difference scaled by its OWN binade, and the scale is
+    # kept as an integer exponent rather than being applied to the operands:
+    #
+    #     r = t/w = (t * 2**-et) / (w * 2**-ew) * 2**(et - ew)
+    #     p = r*d = [(t*2**-et)/(w*2**-ew) * (d*2**-ed)] * 2**(et - ew + ed)
+    #
+    # Every significand handed to Dekker is O(1), so splitting cannot overflow at
+    # any model scale, and the exponent is applied ONCE, exactly, at the end.
+    #
+    # No value scale is needed at all. A bracketing candidate has `q` in
+    # `[x0, x1]`, hence `|t| <= |w|` and `r` in `[0, 1]`, so `|p| <= |d|` and
+    # `v = v0 + p` is bounded by the endpoint values themselves. The unbounded
+    # intermediates only ever came from mixing units — a value times a grid
+    # difference — which this form never constructs.
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
-    grid_exp = _binade_exponent(
-        jnp.maximum(jnp.maximum(jnp.abs(left_grid), jnp.abs(right_grid)), jnp.abs(q))
-    )
-    value_exp = _binade_exponent(jnp.maximum(jnp.abs(left_value), jnp.abs(right_value)))
-    s_q = jnp.ldexp(q, -grid_exp)
-    s_left_grid = jnp.ldexp(left_grid, -grid_exp)
-    s_right_grid = jnp.ldexp(right_grid, -grid_exp)
-    s_left_value = jnp.ldexp(left_value, -value_exp)
-    s_right_value = jnp.ldexp(right_value, -value_exp)
-
-    th, tl = _two_diff(s_q, s_left_grid)
-    wh, wl = _two_diff(s_right_grid, s_left_grid)
+    th, tl = _two_diff(q, left_grid)
+    wh, wl = _two_diff(right_grid, left_grid)
     wh = jnp.where(zero_width, jnp.ones_like(wh), wh)
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
-    dh, dl = _two_diff(s_right_value, s_left_value)
-    rh, rl = _dd_div(th, tl, wh, wl, split)
-    ph, pl = _dd_mul(rh, rl, dh, dl, split)
-    vh, vl = _dd_add_fp(ph, pl, s_left_value)
-    vh, vl = jnp.ldexp(vh, value_exp), jnp.ldexp(vl, value_exp)
+    dh, dl = _two_diff(right_value, left_value)
+
+    t_exp = _binade_exponent(jnp.abs(th))
+    w_exp = _binade_exponent(jnp.abs(wh))
+    d_exp = _binade_exponent(jnp.abs(dh))
+
+    rh, rl = _dd_div(
+        jnp.ldexp(th, -t_exp),
+        jnp.ldexp(tl, -t_exp),
+        jnp.ldexp(wh, -w_exp),
+        jnp.ldexp(wl, -w_exp),
+        split,
+    )
+    ph, pl = _dd_mul(rh, rl, jnp.ldexp(dh, -d_exp), jnp.ldexp(dl, -d_exp), split)
+    product_exp = t_exp - w_exp + d_exp
+    ph, pl = jnp.ldexp(ph, product_exp), jnp.ldexp(pl, product_exp)
+    vh, vl = _dd_add_fp(ph, pl, left_value)
 
     eps = jnp.finfo(block.dtype).eps
-    interior_radius = jnp.ldexp(
-        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(s_left_value) + jnp.abs(ph)),
-        value_exp,
+    interior_radius = (
+        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(left_value) + jnp.abs(ph))
     )
+
+    # `rh` is the ratio's SIGNIFICAND; the carried and interpolated quantities
+    # need the ratio itself. `r` is in `[0, 1]` for a bracketing candidate, so
+    # this shift cannot overflow.
+    fraction = jnp.ldexp(rh, t_exp - w_exp)
 
     zero = jnp.zeros_like(vh)
     return _CandidateTerms(
@@ -811,12 +828,12 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         policy=jnp.where(
             node,
             jnp.where(use_right, right_policy, left_policy),
-            left_policy + rh * (right_policy - left_policy),
+            left_policy + fraction * (right_policy - left_policy),
         ),
         marginal=jnp.where(
             node,
             jnp.where(use_right, right_marginal, left_marginal),
-            left_marginal + rh * (right_marginal - left_marginal),
+            left_marginal + fraction * (right_marginal - left_marginal),
         ),
         # In ORIGINAL units, not the per-candidate binade: this is a screen key
         # compared ACROSS candidates, so every candidate must express it in the
