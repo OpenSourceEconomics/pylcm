@@ -12,6 +12,8 @@ many cells are resolved together, and because cells are independent it changes
 the working set without changing anything published.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -39,27 +41,41 @@ def _folded_row(n_links: int, n_per_link: int, seed: int = 0):
     )
 
 
-def _shape_counts(jaxpr_text: str, n_cells: int, max_runs: int) -> dict[str, int]:
-    """Count arrays whose shape is the full cell-by-capacity product."""
+def _capacity_by_row_arrays(
+    jaxpr_text: str, row_extents: set[int], max_runs: int
+) -> dict[str, int]:
+    """Count arrays carrying a capacity axis together with a whole-row axis.
+
+    Any shape holding `max_runs` alongside the candidate or cell count is the
+    class-level product, whichever way round its axes happen to sit and however
+    many outer axes production's `vmap`s have added.
+    """
     counts: dict[str, int] = {}
-    for dtype in ("f32", "f64", "i32", "bool"):
-        for shape in (f"[{n_cells},{max_runs}]", f"[{max_runs},{n_cells}]"):
-            token = f"{dtype}{shape}"
-            found = jaxpr_text.count(token)
-            if found:
-                counts[token] = found
+    for token in set(re.findall(r"(?:f32|f64|i32|bool)\[[\d,]+\]", jaxpr_text)):
+        axes = [int(extent) for extent in re.findall(r"\d+", token)]
+        if max_runs in axes and row_extents.intersection(axes):
+            counts[token] = jaxpr_text.count(token)
     return counts
 
 
+@pytest.mark.parametrize("n_rows", [None, 1, 3])
 @pytest.mark.parametrize("cell_batch_size", [None, 3])
-def test_no_full_cell_by_capacity_array_is_materialized(cell_batch_size):
-    """Nothing of size `n_cells * max_runs` survives into the compiled program."""
-    max_runs = 4
-    grid, policy, value = _folded_row(n_links=max_runs, n_per_link=2)
-    n_cells = int(len(np.unique(np.asarray(grid))) - 1)
+def test_no_capacity_by_row_array_is_materialized(cell_batch_size, n_rows):
+    """No array pairs the run capacity with a whole-row axis, at any row count.
 
-    jaxpr = jax.make_jaxpr(
-        lambda g, p, v: refine_envelope_exact(
+    The workspace has to be bounded by the chunk, so a shape must not grow with
+    the row's length. Production maps rows over the refinement, and an array
+    that already pairs capacity with the row survives that map multiplied by the
+    row count — so the single-row and mapped programs are both checked.
+    """
+    max_runs = 4
+    grid, policy, value = _folded_row(n_links=max_runs, n_per_link=3)
+    n_candidates = len(grid)
+    n_cells = int(len(np.unique(np.asarray(grid))) - 1)
+    assert max_runs not in {n_candidates, n_cells}, "the axes must stay tellable apart"
+
+    def refine(g, p, v):
+        return refine_envelope_exact(
             endog_grid=g,
             policy=p,
             value=v,
@@ -67,9 +83,21 @@ def test_no_full_cell_by_capacity_array_is_materialized(cell_batch_size):
             max_runs=max_runs,
             cell_batch_size=cell_batch_size,
         )
-    )(grid, policy, value)
 
-    offenders = _shape_counts(str(jaxpr), n_cells, max_runs)
+    if n_rows is None:
+        jaxpr = jax.make_jaxpr(refine)(grid, policy, value)
+    else:
+
+        def stack(row):
+            return jnp.stack([row] * n_rows)
+
+        jaxpr = jax.make_jaxpr(jax.vmap(refine))(
+            stack(grid), stack(policy), stack(value)
+        )
+
+    offenders = _capacity_by_row_arrays(
+        str(jaxpr), row_extents={n_candidates, n_cells}, max_runs=max_runs
+    )
     assert offenders == {}, offenders
 
 

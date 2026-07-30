@@ -137,13 +137,23 @@ def refine_envelope_exact(
 
 
 class _RunNodes:
-    """Each run's own nodes, sorted once and independent of the node cells."""
+    """Every run's nodes in one ascending sequence, with each run's extent in it.
 
-    def __init__(self, *, order: IntND, node_x: FloatND, n_nodes: Int1D) -> None:
+    Runs partition the candidates, so ordering by run and then by abscissa lays
+    each run's own nodes out contiguously in a single candidate-length sequence.
+    Holding the runs this way keeps the topology linear in the candidates rather
+    than the product of the candidates and the run capacity.
+    """
+
+    def __init__(
+        self, *, order: Int1D, node_x: Float1D, start: Int1D, n_nodes: Int1D
+    ) -> None:
         self.order = order
-        """Candidate indices in ascending abscissa order, `(max_runs, n_candidates)`."""
+        """Candidate indices ordered by run, then abscissa, `(n_candidates,)`."""
         self.node_x = node_x
-        """The sorted abscissae themselves, `(max_runs, n_candidates)`."""
+        """The abscissae in that same order, `(n_candidates,)`."""
+        self.start = start
+        """Where each run's block begins in that order, `(max_runs,)`."""
         self.n_nodes = n_nodes
         """How many candidates each run owns, `(max_runs,)`."""
 
@@ -197,42 +207,61 @@ def _node_cells(
 
 
 def _run_node_order(*, endog_grid: Float1D, run_id: Int1D, max_runs: int) -> _RunNodes:
-    """Sort each run's own nodes once, independently of the node cells.
+    """Order the candidates by run, then by abscissa, and record each run's block.
 
-    Locating the link a run contributes to a cell is a search in that run's
-    sorted nodes. The sort does not depend on the cell, so it is done once per
-    run here rather than per cell: repeating it inside the cell scan would cost
-    a sort per cell, and the result carries no cell axis to hold.
+    Locating the link a run contributes to a cell is a search in that run's own
+    nodes. The order does not depend on the cell, so it is established once here
+    rather than per cell. Ordering all runs together rather than each run over
+    the whole candidate array is what keeps this linear in the candidates: a
+    per-run order would carry a run axis alongside the candidate axis, and the
+    row maps production adds would then multiply that product by the row count.
     """
-
-    def order_one(run: ScalarInt) -> tuple[Int1D, Float1D, ScalarInt]:
-        in_run = run_id == run
-        key = jnp.where(in_run, endog_grid, jnp.inf)
-        order = jnp.argsort(key).astype(jnp.int32)
-        return order, key[order], jnp.sum(in_run, dtype=jnp.int32)
-
-    order, node_x, n_nodes = jax.vmap(order_one)(jnp.arange(max_runs, dtype=jnp.int32))
-    return _RunNodes(order=order, node_x=node_x, n_nodes=n_nodes)
+    dead = ~jnp.isfinite(endog_grid)
+    # Candidates belonging to no run get a block of their own past the last run,
+    # so they are outside every run's extent and can never be located.
+    block = jnp.where(dead, max_runs, jnp.clip(run_id, 0, max_runs))
+    order = jnp.lexsort(
+        (jnp.where(dead, jnp.inf, endog_grid), block.astype(jnp.float32))
+    ).astype(jnp.int32)
+    n_nodes = jax.ops.segment_sum(
+        jnp.ones_like(block, dtype=jnp.int32), block, num_segments=max_runs + 1
+    )[:max_runs]
+    start = jnp.concatenate(
+        [jnp.zeros(1, dtype=jnp.int32), jnp.cumsum(n_nodes)[:-1].astype(jnp.int32)]
+    )
+    return _RunNodes(
+        order=order, node_x=endog_grid[order], start=start, n_nodes=n_nodes
+    )
 
 
 def _active_links_at_cell(
     *, runs: _RunNodes, cell_left: FloatND, cell_live: BoolND, n_candidates: int
 ) -> tuple[BoolND, IntND, IntND]:
     """Return, for one node cell, the link each run contributes to it."""
+    # A bisection over a run's block, carried as scalars. Searching the block in
+    # place keeps the cell body free of any candidate-length array, so what a
+    # cell holds is one entry per run and nothing that grows with the row.
+    n_steps = max(int(n_candidates).bit_length(), 1)
 
-    def locate(
-        order: Int1D, node_x: Float1D, n_nodes: ScalarInt
-    ) -> tuple[BoolND, IntND, IntND]:
-        # The cell's left boundary is itself a node abscissa, so a right-side
-        # search lands one past the node opening the covering link.
-        position = (
-            jnp.searchsorted(node_x, cell_left, side="right").astype(jnp.int32) - 1
-        )
+    def locate(start: ScalarInt, n_nodes: ScalarInt) -> tuple[BoolND, IntND, IntND]:
+        low = jnp.zeros_like(n_nodes)
+        high = n_nodes
+        for _ in range(n_steps):
+            searching = low < high
+            middle = (low + high) // 2
+            at_middle = runs.node_x[jnp.clip(start + middle, 0, n_candidates - 1)]
+            below = at_middle <= cell_left
+            low = jnp.where(searching & below, middle + 1, low)
+            high = jnp.where(searching & ~below, middle, high)
+        # The cell's left boundary is itself a node abscissa, so counting the
+        # nodes at or below it lands one past the node opening the covering link.
+        position = low - 1
         live = cell_live & (position >= 0) & (position <= n_nodes - 2)
-        safe = jnp.clip(position, 0, n_candidates - 2)
-        return live, order[safe].astype(jnp.int32), order[safe + 1].astype(jnp.int32)
+        safe = start + jnp.clip(position, 0, jnp.maximum(n_nodes - 2, 0))
+        safe = jnp.clip(safe, 0, n_candidates - 2)
+        return live, runs.order[safe], runs.order[safe + 1]
 
-    return jax.vmap(locate)(runs.order, runs.node_x, runs.n_nodes)
+    return jax.vmap(locate)(runs.start, runs.n_nodes)
 
 
 def _sub_cells_per_node_cell(
