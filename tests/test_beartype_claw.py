@@ -164,7 +164,11 @@ def _fori_loop_body_index_annotations() -> list[tuple[str, str, str]]:
     for package in (_lcm, lcm):
         root = Path(package.__file__).parent
         for path in sorted(root.rglob("*.py")):
-            tree = ast.parse(path.read_text())
+            # Explicit encoding: the default is the locale's, which is cp1252 on
+            # the Windows runner, and the sources this scans contain UTF-8
+            # em-dashes. Without it the test fails with a `UnicodeDecodeError`
+            # that has nothing to do with what it is checking.
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             bodies = {
                 node.name: node
                 for node in ast.walk(tree)
