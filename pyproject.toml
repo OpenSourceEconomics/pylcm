@@ -100,10 +100,10 @@ tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Pinned to the aca-model version this solver-seam work is developed against
-# (feat/dcegm-solver: main's audit fixes + the DC-EGM solver + smooth-share
-# eligibility); flip back to branch = "main" once both sides have merged.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "54fb8df1f83865eee421a4b656676ce4e6787928" }
+# Pinned to an aca-model main that carries both the keyword-only case-piece
+# call sites this branch's API requires and the DC-EGM solver path; flip back
+# to `branch = "main"` once this branch merges.
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "1409be36072ac49efc5b5e56cab0ac611d2dd1dc" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -111,10 +111,14 @@ cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
 jax = { version = ">=0.11", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
-platforms = [ "linux-64-cuda13" ]
+platforms = [ "linux-64-cuda13", "linux-aarch64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = { version = ">=0.11", extras = [ "cuda13" ] }
+[tool.pixi.feature.cuda13.target.linux-aarch64.dependencies]
+cuda-nvcc = "~=13.0"
+[tool.pixi.feature.cuda13.target.linux-aarch64.pypi-dependencies]
 jax = { version = ">=0.11", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
@@ -165,10 +169,12 @@ asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 channels = [ "conda-forge" ]
 platforms = [
   "linux-64",
+  "linux-aarch64",
   "osx-arm64",
   "win-64",
   { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
   { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
 ]
 
 [tool.ruff]

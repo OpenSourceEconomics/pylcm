@@ -44,14 +44,18 @@ def test_non_crossing_envelope_backends_do_not_qualify(backend: str):
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_the_mss_backend_qualifies_for_the_policy_read():
-    """MSS rows qualify: the sweep inserts the exact segment crossing.
+def test_the_mss_backend_does_not_qualify_for_the_policy_read():
+    """MSS rows keep the grid path: the refinement can omit an owner.
 
-    Duplicated crossing abscissae carry both branch policies, so linear
-    interpolation between retained nodes never mixes branches.
+    Crossings are inserted only between adjacent query winners, so a branch
+    owning ground strictly inside one candidate interval leaves no record, and a
+    switch landing exactly on a candidate abscissa is suppressed by the
+    strict-interior test. Reading such a row off-grid publishes an action the
+    envelope never implied, and one the canonical-Q safeguard cannot recover
+    because an omitted owner is neither the emitted candidate nor on the grid.
     """
     model = _retirement_model_with_backend("mss")
-    assert model._regimes["retirement"].simulation.egm_policy_read is not None
+    assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
 @pytest.mark.parametrize("n_points_to_scan", [None, 8])
@@ -75,11 +79,11 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_bounded_scan_setting_does_not_disqualify_the_mss_backend():
-    """MSS qualifies regardless of `fues_n_points_to_scan`: the knob is FUES-only.
+def test_bounded_scan_setting_leaves_the_mss_backend_disqualified():
+    """`fues_n_points_to_scan` is FUES-only and cannot qualify MSS either way.
 
-    MSS inserts the exact segment crossing by construction, so a scan-window
-    setting left on the solver never touches its published row.
+    The knob never touches an MSS row, so it neither opens nor closes the gate;
+    MSS stays on the grid path because its refinement is not crossing-complete.
     """
     solver = dataclasses.replace(
         DCEGM_SOLVER, upper_envelope="mss", fues_n_points_to_scan=8
@@ -87,7 +91,7 @@ def test_bounded_scan_setting_does_not_disqualify_the_mss_backend():
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
-    assert model._regimes["retirement"].simulation.egm_policy_read is not None
+    assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
 def test_process_state_regime_does_not_qualify_for_the_policy_read():

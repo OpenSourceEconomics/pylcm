@@ -90,13 +90,15 @@ class _AgeSpecialized:
     map), so a stateful factory could be validated as one grid and installed as
     another. Repeated calls for one age must return behaviourally identical objects.
 
-    **What `signature(age)` means differs by marker**, so read the concrete class:
-    - `AgeSpecializedFunction` — `signature` **is** the dedup key and a *correctness
-      precondition*: equal signature must imply an identical resolved closure. A
-      function's closure cannot be inspected, so pylcm has to take the author's word.
-    - `AgeSpecializedGrid` — `signature` is **not** the dedup key and **not**
-      load-bearing. Grids dedup on their *resolved nodes*: a grid can be asked what it
-      actually is, so nothing hand-written is trusted for correctness.
+    **`signature(age)` is the dedup key for both markers**, but they differ in how
+    an equal signature is trusted:
+    - `AgeSpecializedFunction` — a function's closure cannot be inspected, so an
+      equal signature must imply an identical resolved closure on the author's word;
+      pylcm has no way to check it.
+    - `AgeSpecializedGrid` — a grid can be asked what it actually is, so an equal
+      signature is checked against the resolved nodes at build time: if two periods
+      share a signature but their grids genuinely differ, construction raises
+      instead of silently sharing the wrong grid.
 
     The two concrete markers are `AgeSpecializedFunction` (a function whose closure
     varies with age) and `AgeSpecializedGrid` (a continuous-state grid whose
@@ -109,9 +111,10 @@ class _AgeSpecialized:
     deterministic and side-effect-free; it is called more than once per age."""
 
     signature: Callable[[float], Hashable]
-    """Hashable identity of the age's object. The dedup key (and a correctness
-    precondition) for `AgeSpecializedFunction`; not load-bearing for
-    `AgeSpecializedGrid`, which dedups on resolved nodes. See the class docstrings."""
+    """Hashable identity of the age's object. The dedup key for both markers — a
+    correctness precondition, trusted on the author's word, for
+    `AgeSpecializedFunction`; cross-checked against the resolved nodes at build
+    time for `AgeSpecializedGrid`. See the class docstrings."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
         msg = (
@@ -193,10 +196,12 @@ class AgeSpecializedGrid(_AgeSpecialized):
     states in this version). A builder may be undefined (raise) outside its regime's
     active ages; it is never called there.
 
-    Unlike `AgeSpecializedFunction.signature`, this `signature` is **not** the dedup
-    key for grids, and it is not a correctness precondition: grids are deduplicated on
-    their resolved nodes, which cannot disagree with the grid the way a hand-written
-    signature can. It is retained for API symmetry.
+    `signature` is the dedup key, same as `AgeSpecializedFunction`: ages with equal
+    signatures share one compiled program. Unlike a function's closure, a grid can
+    be asked what it actually is, so an equal signature is not blindly trusted —
+    the resolved nodes of every period in a shared group are cross-checked at
+    build time, and a genuine mismatch raises `RegimeInitializationError` instead
+    of silently sharing the wrong grid.
 
     **Grid bounds are interpolation *support*, not hard feasibility limits.** The
     continuation value `V_{t+1}` is interpolated on period `t+1`'s grid; pylcm's
@@ -218,5 +223,5 @@ class AgeSpecializedGrid(_AgeSpecialized):
     """Factory returning the concrete continuous grid for a given age."""
 
     signature: Callable[[float], Hashable]
-    """Returns a hashable identity of the age's grid. Retained for symmetry with
-    `AgeSpecializedFunction`; grid dedup keys on the resolved nodes, not on this."""
+    """Returns a hashable identity of the age's grid; the dedup key, cross-checked
+    against the resolved nodes at build time."""

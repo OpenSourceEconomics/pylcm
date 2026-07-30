@@ -4,11 +4,11 @@ title: Age-specialized functions and grids
 
 # Age-specialized functions and grids
 
-Some model functions do not just *read* the agent's age — their whole definition changes
-with it. The canonical case is a tax-transfer system pinned to a policy date: as a
-cohort ages through calendar time, the law that applies to it changes, so the function
-computing net income at age 58 is a *different closure* from the one at age 63, not the
-same closure with a different `age` argument.
+Some model functions do not just take the agent's age as an argument — their whole body
+changes with it. The canonical case is a tax-transfer system that changes as a cohort
+ages through calendar time. With each age, the laws that apply to the cohort change, so
+the function computing net income at age 58 is a *different closure* from the one at age
+63, not the same closure with a different `age` argument.
 
 `AgeSpecializedFunction` marks such a function. At model build, pylcm resolves the
 marker **per period**: each period's age gets its own concrete function, compiled into
@@ -68,8 +68,8 @@ policy-date signature compiles one program per distinct policy year, not per per
 
 - **the regime `transition`**, bare or wrapped in `MarkovTransition` — periodizing the
   regime-transition probability path is not supported;
-- **a regime transition that _reads_ an `AgeSpecializedFunction` function**, directly or
-  through plain helper functions — regime-transition probabilities are built once, so a
+- **a regime transition that _reads_ an `AgeSpecializedFunction`**, directly or through
+  plain helper functions — regime-transition probabilities are built once, so a
   policy-specialized value flowing into them would reuse one age's closure everywhere;
 - **`MarkovTransition(AgeSpecializedFunction(...))`** — policy-specialized stochastic
   transitions are not supported;
@@ -148,7 +148,9 @@ states = {
 pylcm builds the concrete grid for every active age during model creation. The grid
 class, number of points, node-array shape, and dtype must stay fixed; only bounds or
 node values may change. Equal `signature(age)` values must identify identical grids,
-because those periods may share a compiled program.
+because those periods may share a compiled program; pylcm cross-checks a shared group's
+resolved nodes at build time and raises if an equal signature turns out to hide
+genuinely different grids.
 
 `AgeSpecializedGrid` is currently supported for continuous **states**, not actions,
 discrete states, or stochastic-process grids. A grid whose points depend on model

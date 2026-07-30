@@ -151,9 +151,6 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
             )
 
 
-# --------------------------------------------------------------------------- #
-# R12 F2: a stochastic weight law consuming a deterministic chained next-state #
-# --------------------------------------------------------------------------- #
 @categorical(ordered=True)
 class _Good:
     bad: ScalarInt
@@ -225,19 +222,22 @@ def _f2_build_model() -> Model:
 
 
 def test_stochastic_weight_reading_deterministic_next_state_solves() -> None:
-    """R12 F2: a Markov weight law reading a deterministic chained next-state solves.
+    """A Markov weight law reading a deterministic chained next-state solves.
 
     `good`'s transition probabilities depend on `next_capital`, produced by the
-    deterministic `capital` transition in the same target DAG. The stochastic-weight
-    evaluator is compiled from the continuation function pool alone, so it dropped the
-    deterministic `next_capital` producer and the Q build failed with a missing input.
-    The weight DAG must include the deterministic transition producers.
+    deterministic `capital` transition in the same target DAG; the stochastic-weight
+    evaluator's function pool must include the deterministic transition producers,
+    not just `functions`, for such a read to resolve.
     """
     model = _f2_build_model()
     V = model.solve(params={"discount_factor": 0.95}, log_level="debug")
 
     v_live = V[0]["live"]
-    assert jnp.all(jnp.isfinite(v_live))
-    # The stochastic `good` transition genuinely contributes value: investing to reach
-    # high capital yields P(good)=1, so some cell has strictly positive continuation.
-    assert float(jnp.max(v_live)) > 0.0
+    # Analytical value: from period 0, investing (or already being at high capital)
+    # deterministically makes next period's `good` state "good", so
+    # V[0]["live"](good, capital) = good + 0.95 * 1 for every capital -- period 1's
+    # value is `good` alone (utility ignores `move`/`capital`, and the terminal
+    # regime's utility is a constant zero), and reaching "good" with certainty next
+    # period is always at least as good as not investing.
+    expected_v_live = jnp.array([[0.95, 0.95], [1.95, 1.95]])
+    np.testing.assert_allclose(v_live, expected_v_live, atol=1e-6)

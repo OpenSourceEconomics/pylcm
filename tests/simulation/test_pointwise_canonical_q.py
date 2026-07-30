@@ -14,6 +14,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import _lcm.simulation.simulate as simulate_module
 from _lcm.simulation.simulate import _lookup_values_from_indices
@@ -151,6 +152,14 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the off-grid policy read is gated on a crossing-complete env"
+        "elope and no shipped backend qualifies; this is the acceptance criteri"
+        "on for reopening the gate, so it must start passing again the moment one does"
+    ),
+)
 def test_off_grid_replacement_never_scores_below_the_grid_pair():
     """Every emitted (branch, action) pair is worth at least the grid pair.
 

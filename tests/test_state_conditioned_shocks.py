@@ -20,6 +20,13 @@ from _lcm.processes.state_conditioned import (
 )
 from lcm import DiscreteGrid, NormalIIDProcess, TauchenAR1Process, categorical
 from lcm.typing import ScalarInt
+from tests.conftest import X64_ENABLED
+
+# The `*_reduces_to_pylcm*` tests compare our row against pylcm's OWN CDF-binned
+# row, so any gap is floating-point noise in shared arithmetic, not a modelling
+# difference. Under `--precision 32` that gap is a few float32 ULPs on O(1)
+# probabilities (measured max |diff| ~3e-7, eps = 1.2e-7), which 1e-10 cannot express.
+_ROW_ATOL = 1e-10 if X64_ENABLED else 1e-6
 
 
 @categorical(ordered=True)
@@ -37,7 +44,7 @@ def test_tauchen_row_reduces_to_pylcm_at_nodes():
     P = p.get_transition_probs()
     for i in range(7):
         row = tauchen_row(nodes, rho=0.9, sigma=0.2, from_value=float(nodes[i]))
-        np.testing.assert_allclose(np.asarray(row), np.asarray(P[i]), atol=1e-10)
+        np.testing.assert_allclose(np.asarray(row), np.asarray(P[i]), atol=_ROW_ATOL)
 
 
 def test_iid_row_reduces_to_pylcm():
@@ -46,7 +53,7 @@ def test_iid_row_reduces_to_pylcm():
     nodes = p.get_gridpoints()
     P = p.get_transition_probs()
     row = iid_normal_row(nodes, mu=0.0, sigma=0.2)
-    np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=_ROW_ATOL)
 
 
 @pytest.mark.parametrize("mu", [0.2, -0.5])
@@ -64,7 +71,7 @@ def test_tauchen_row_reduces_to_pylcm_at_nodes_with_nonzero_mu(mu):
     P = p.get_transition_probs()
     for i in range(7):
         row = tauchen_row(nodes, rho=0.9, sigma=0.2, from_value=float(nodes[i]), mu=mu)
-        np.testing.assert_allclose(np.asarray(row), np.asarray(P[i]), atol=1e-10)
+        np.testing.assert_allclose(np.asarray(row), np.asarray(P[i]), atol=_ROW_ATOL)
 
 
 @pytest.mark.parametrize("mu", [1.0, -0.3])
@@ -74,7 +81,7 @@ def test_iid_row_reduces_to_pylcm_with_nonzero_mu(mu):
     nodes = p.get_gridpoints()
     P = p.get_transition_probs()
     row = iid_normal_row(nodes, mu=mu, sigma=0.2)
-    np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(row), np.asarray(P[0]), atol=_ROW_ATOL)
 
 
 def test_dropping_mu_would_misplace_the_row():
@@ -152,8 +159,8 @@ def test_sigma_array_ordered_by_code_not_insertion():
     by = {"high": 1.0, "low": 0.2}  # deliberately reverse insertion order
     arr = np.asarray(sigma_array_by_code(grid, by))
     np.testing.assert_allclose(arr, [0.2, 1.0])  # [code0=low, code1=high]
-    assert float(gather_sigma(jnp.asarray(arr), 0)) == 0.2
-    assert float(gather_sigma(jnp.asarray(arr), 1)) == 1.0
+    assert float(gather_sigma(jnp.asarray(arr), 0)) == pytest.approx(0.2)
+    assert float(gather_sigma(jnp.asarray(arr), 1)) == pytest.approx(1.0)
 
 
 def test_sigma_array_missing_category_raises():
