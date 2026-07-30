@@ -802,46 +802,29 @@ def nbegm_per_interval_continuation_step_savings(
             *corners,
         )
 
-    # Solve the intervals in chunks of `_CHUNK_SIZE`: `lax.map` runs the chunks
-    # sequentially (so at most one chunk's intermediates materialize at once,
-    # bounding peak memory), while a `vmap` inside each chunk solves its intervals in
-    # parallel. The chunk body traces once, keeping the HLO small, and the sequential
-    # depth drops from `n_intervals` to `ceil(n_intervals / _CHUNK_SIZE)`.
+    # Solve the intervals with `lax.map` at a batch width of `_CHUNK_SIZE`: it
+    # vectorizes that many intervals into one `vmap` and runs the batches
+    # sequentially, so at most one batch's intermediates materialize at once —
+    # bounding peak memory — while the sequential depth is
+    # `ceil(n_intervals / _CHUNK_SIZE)` rather than `n_intervals`. The body traces
+    # once per batch shape, keeping the HLO small.
     #
-    # `n_intervals` need not divide `_CHUNK_SIZE`, so the inputs are padded up to a
-    # whole number of chunks. Each padding lane carries a global interval index of
-    # `n_intervals` or above (a unique segment offset) and `lower == upper == +inf`,
-    # so both its `in_case` and `s0_valid` masks are all-False and every one of its
-    # candidates is NaN-dead — the padding contributes nothing live to the envelope.
+    # `n_intervals` need not divide `_CHUNK_SIZE`; `lax.map` handles the remainder
+    # itself, so no interval input is padded and no lane is a placeholder. Each item
+    # carries its own global interval index, so an interval's segment block is
+    # `interval_index * interval_stride` whichever batch it lands in.
+    #
+    # `n_padded` shapes no array. It survives only to reserve segment-id space, so
+    # the point-candidate blocks below start above every interval block that a run
+    # at this chunk size could have used.
     n_chunks = -(-n_intervals // _CHUNK_SIZE)
     n_padded = n_chunks * _CHUNK_SIZE
-    pad = n_padded - n_intervals
 
-    interval_indices = jnp.arange(n_padded, dtype=jnp.int32)
-    padded_cont_value = jnp.concatenate(
-        [cont_value, jnp.zeros((pad, cont_value.shape[1]), dtype=cont_value.dtype)]
-    )
-    padded_cont_marginal = jnp.concatenate(
-        [
-            cont_marginal,
-            jnp.zeros((pad, cont_marginal.shape[1]), dtype=cont_marginal.dtype),
-        ]
-    )
-    padded_coh_slopes = jnp.concatenate(
-        [coh_slopes, jnp.ones((pad,), dtype=coh_slopes.dtype)]
-    )
-    padded_coh_intercepts = jnp.concatenate(
-        [coh_intercepts, jnp.zeros((pad,), dtype=coh_intercepts.dtype)]
-    )
-    padded_lowers = jnp.concatenate([lowers, jnp.broadcast_to(edge, (pad,))])
-    padded_uppers = jnp.concatenate([uppers, jnp.broadcast_to(edge, (pad,))])
+    interval_indices = jnp.arange(n_intervals, dtype=jnp.int32)
 
-    def solve_chunk(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
-        """Solve one chunk of intervals in parallel with `vmap`."""
-        return jax.vmap(solve_interval)(*packed)
-
-    def to_chunks(array: IntND | FloatND) -> IntND | FloatND:
-        return array.reshape((n_chunks, _CHUNK_SIZE, *array.shape[1:]))
+    def solve_packed(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
+        """Solve the one interval carried by a mapped item."""
+        return solve_interval(*packed)
 
     (
         int_endog,
@@ -860,16 +843,17 @@ def nbegm_per_interval_continuation_step_savings(
         smax_marginal,
         smax_segment,
     ) = jax.lax.map(
-        solve_chunk,
+        solve_packed,
         (
-            to_chunks(interval_indices),
-            to_chunks(padded_cont_value),
-            to_chunks(padded_cont_marginal),
-            to_chunks(padded_coh_slopes),
-            to_chunks(padded_coh_intercepts),
-            to_chunks(padded_lowers),
-            to_chunks(padded_uppers),
+            interval_indices,
+            cont_value,
+            cont_marginal,
+            coh_slopes,
+            coh_intercepts,
+            lowers,
+            uppers,
         ),
+        batch_size=_CHUNK_SIZE,
     )
 
     node_segment_base, cliff_segment_base = _point_candidate_segment_bases(

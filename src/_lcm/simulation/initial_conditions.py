@@ -13,6 +13,7 @@ from typing import NoReturn, cast
 import jax
 import numpy as np
 import pandas as pd
+from dags import get_ancestors
 from jax import numpy as jnp
 
 from _lcm.dtypes import (
@@ -782,6 +783,60 @@ def _batched_feasibility_check(
     return jnp.concatenate(results)
 
 
+def _age_specialized_feasibility_message(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    subject_indices: list[int],
+    ages: AgeGrid,
+) -> str | None:
+    """Return an error message if a subject's feasibility check would silently
+    read a policy-specialized function resolved at the wrong age, else `None`.
+
+    The published `regime.simulation.constraints`/`functions` hold each
+    `AgeSpecializedFunction` resolved at the regime's representative (first
+    active) period only. A subject starting at any other period would have
+    their feasibility checked against that closure instead of their own.
+    """
+    specialized = regime.simulation.age_specialized_function_names
+    if not specialized:
+        return None
+    pool = {**dict(regime.simulation.functions), **dict(regime.simulation.constraints)}
+    consumed = (
+        set(
+            get_ancestors(
+                pool,
+                targets=list(regime.simulation.constraints),
+                include_targets=True,
+            )
+        )
+        & specialized
+    )
+    if not consumed:
+        return None
+
+    representative_period = regime.active_periods[0]
+    idx_arr = np.asarray(subject_indices)
+    subject_ages = np.asarray(initial_states["age"])[idx_arr]
+    subject_periods = np.array([ages.age_to_period(age.item()) for age in subject_ages])
+    off_representative = subject_periods != representative_period
+    if not np.any(off_representative):
+        return None
+
+    offending_indices = idx_arr[off_representative].tolist()
+    return (
+        f"Regime {regime_name!r}: subjects at indices {offending_indices} start "
+        f"away from the representative period {representative_period} used to "
+        f"resolve the policy-specialized (`AgeSpecializedFunction`) function(s) "
+        f"{sorted(consumed)} for feasibility checking. Published simulation "
+        f"functions hold one representative-age closure, so checking feasibility "
+        f"for these subjects would silently apply the wrong age's policy. Move "
+        f"the age-specialized logic out of the constraint (for example, compute "
+        f"it as a plain state fed by a transition) instead."
+    )
+
+
 def _check_regime_feasibility(  # noqa: C901
     *,
     regime: Regime,
@@ -805,6 +860,16 @@ def _check_regime_feasibility(  # noqa: C901
         An error message string if any subjects are infeasible, or None.
 
     """
+    age_specialized_message = _age_specialized_feasibility_message(
+        regime=regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        subject_indices=subject_indices,
+        ages=ages,
+    )
+    if age_specialized_message is not None:
+        return age_specialized_message
+
     feasibility_func = _get_feasibility(
         functions=regime.simulation.functions,
         constraints=regime.simulation.constraints,
