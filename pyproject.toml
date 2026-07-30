@@ -29,10 +29,9 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  "beartype>=0.21",
+  "beartype>=0.22",
   "cloudpickle>=3.1.2",
-  # Require the beartype fix, replace once release is there
-  # "dags>=0.6.0",
+  "dags>=0.6",
   "h5py>=3.12",
   "jax>=0.11",
   "jaxtyping>=0.3.10",
@@ -158,8 +157,6 @@ scipy-stubs = "*"
 jax = ">=0.11"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
-# Remove and comment in `dags >= 0.6.0` above once released.
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 [tool.pixi.tasks]
 asv-compare = "asv compare"
 asv-preview = "asv preview"
