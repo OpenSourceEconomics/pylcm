@@ -69,11 +69,7 @@ repos:
           - pyi
           - python
   - repo: https://github.com/astral-sh/ty-pre-commit
-    # Held behind the latest release on purpose: v0.0.61 and v0.0.65 each report
-    # 15 further diagnostics in code this pin accepts, mostly `dataclasses.fields`
-    # on a generic and a `__signature__` access on a wrapper. Bumping means
-    # resolving those first, which is its own change.
-    rev: v0.0.56
+    rev: v0.0.65
     hooks:
       - id: ty
         # `--no-project` keeps uv from creating a `.venv`/`uv.lock` in this
