@@ -120,6 +120,11 @@ def get_irreg_coordinate(
     the grid points, then linearly interpolates (or extrapolates) to get a
     fractional coordinate.
 
+    `_lcm.egm.interp.locate_on_grid` brackets a query on a sorted grid the same
+    way and differs deliberately at the edges: it edge-clamps so a read never
+    extrapolates, whereas this one extrapolates along the nearest segment's slope.
+    A bug found in one bracket lookup is worth checking against the other.
+
     Args:
         value: The value to find the coordinate for.
         points: The grid points as a JAX array in ascending order.

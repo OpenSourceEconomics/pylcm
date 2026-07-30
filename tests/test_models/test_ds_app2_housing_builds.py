@@ -1,6 +1,6 @@
-"""Construction spec for the DS-2026 Application 2 housing NEGM model.
+"""Construction spec for the DS-2024 Application 2 housing NEGM model.
 
-The Dobrescu-Shanker (2026) §2.2 housing model maps onto pylcm's nested-EGM
+The Dobrescu-Shanker (2024) §2.2 housing model maps onto pylcm's nested-EGM
 solver: a liquid consumption-savings margin the Euler equation inverts on
 (the inner DC-EGM), plus an illiquid housing margin with a proportional
 transaction cost the inner Euler cannot invert (the outer durable search). The
@@ -182,6 +182,7 @@ def test_round_trip_cost_creates_an_inaction_wedge():
     assert float(nudge) > 0.9 * tau * housing
 
 
+@pytest.mark.slow
 @pytest.mark.skip(reason="gpu-01 only: 2-D+AR1 NEGM solve OOMs locally")
 def test_housing_model_solves_on_gpu():
     """The DS App.2 housing model solves to a finite value function.

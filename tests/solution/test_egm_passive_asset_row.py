@@ -306,7 +306,7 @@ def _euler_axis(value_array: np.ndarray) -> int:
     return next(axis for axis, size in enumerate(value_array.shape) if size == n_wealth)
 
 
-# --- Regime-transition prob through a param-dependent Euler-state chain ------
+# Regime-transition prob through a param-dependent Euler-state chain
 #
 # The means-tested survival probability reads the Euler state `wealth` through
 # a DAG-computed intermediate that itself reads a model param (a capital-income

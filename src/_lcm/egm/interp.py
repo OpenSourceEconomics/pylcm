@@ -10,6 +10,15 @@ so reads near a jump are one-sided by construction.
 `locate_on_grid` produces edge-clamped bracket indices and weights on
 ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
 read.
+
+The `bracket_width == 0.0` tests throughout are exact on purpose, against the
+project's usual rule for comparing floats. A duplicated abscissa is a *bit-exact*
+duplicate — the refinement writes the same float twice — so the test is asking
+which of two `jnp.where` branches to select, not whether two independently
+computed quantities are close. `jnp.where` evaluates both branches, so the
+divisor is replaced by one before the division; a tolerance there would send
+genuinely narrow brackets down the degenerate branch and lose the interpolant
+they carry.
 """
 
 from typing import Literal
@@ -1099,6 +1108,11 @@ def locate_on_grid(
     `(1 - weight) * f[lower] + weight * f[upper]` never extrapolates. A query
     exactly on a node yields a weight of exactly `0.0` or `1.0`, so on-node
     reads reproduce the node values without interpolation error.
+
+    `_lcm.grids.coordinates.get_irreg_coordinate` brackets a query on a sorted
+    grid the same way and differs deliberately at the edges: it extrapolates along
+    the nearest segment's slope, whereas this one clamps. A bug found in one
+    bracket lookup is worth checking against the other.
 
     Args:
         x_query: The query point.

@@ -1,12 +1,11 @@
-"""Regression locks for the external FUES correctness audit (findings F1 to F4).
+"""Envelope invariants the FUES scan has to keep.
 
-Each test asserts the corrected behavior directly: the duplicate-abscissae
-collapse (audit F1), the `segment_id` switch hook (audit F2), and the
-interleaved-segments case (audit F4) — where the default scan is exhaustive, so
-however many off-segment candidates interleave between two points of one
-segment, the scan still reaches the segment's continuation and rejects the
-dominated interlopers. A narrower explicit `n_points_to_scan` is an opt-in speed
-knob that gives up that guarantee.
+Each test asserts one of them directly: a duplicated abscissa collapses to its
+maximum-value point, an explicit `segment_id` label forces a branch switch a
+flat-policy notch would miss, and the default (exhaustive) scan rejects
+dominated interlopers however many of them interleave between two points of one
+segment. A narrower explicit `n_points_to_scan` is an opt-in speed knob that
+gives up that last guarantee, and one test pins where it stops holding.
 
 Ground truth is the interpolated envelope *function*: the refined rows exist to
 be read by `interp_on_padded_grid` downstream, so correctness is judged there,
@@ -51,12 +50,7 @@ def _read_policy(grid, policy, query):
     return float(interp_on_padded_grid(x_query=jnp.asarray(query), xp=grid, fp=policy))
 
 
-# ---------------------------------------------------------------------------
-# F3 — a strictly dominated point at a shared abscissa must not survive
-# ---------------------------------------------------------------------------
-
-
-def test_f3_dominated_duplicate_point_is_not_retained():
+def test_dominated_duplicate_point_is_not_retained():
     """At a duplicated abscissa, no kept point carries a strictly lower value.
 
     A genuine envelope kink duplicates an abscissa with *equal* value and two
@@ -80,7 +74,7 @@ def test_f3_dominated_duplicate_point_is_not_retained():
             )
 
 
-def test_f3_interior_duplicate_collapses_to_max_value():
+def test_interior_duplicate_collapses_to_max_value():
     """An interior duplicate abscissa keeps only its maximal-value candidate.
 
     The reviewer's counterexample: two candidates at `R=1` with values `0` and
@@ -110,7 +104,7 @@ def test_f3_interior_duplicate_collapses_to_max_value():
     )
 
 
-def test_f3_interpolated_function_is_correct_despite_retained_duplicate():
+def test_interpolated_function_is_correct_despite_retained_duplicate():
     """The interpolated value/policy is exact even with the duplicate retained.
 
     `interp_on_padded_grid` skips the lower-index duplicate (`side="right"`), so
@@ -133,11 +127,6 @@ def test_f3_interpolated_function_is_correct_despite_retained_duplicate():
     np.testing.assert_allclose(np.asarray(got_policy), 1.0, atol=_ATOL)
 
 
-# ---------------------------------------------------------------------------
-# F4 — the bounded scan must not accept a run of suboptimal points
-# ---------------------------------------------------------------------------
-
-
 def _interleaved_segments():
     """Upper line A(x)=x with two anchors, plus 11 points 0.5 below it.
 
@@ -153,7 +142,7 @@ def _interleaved_segments():
     return endog_grid, policy, value
 
 
-def test_f4_interleaved_segments_give_analytic_envelope_at_default_scan():
+def test_interleaved_segments_give_analytic_envelope_at_default_scan():
     """The refined envelope equals the upper line A(x)=x at the default scan.
 
     The default scan is exhaustive, so it reaches segment A's continuation at
@@ -169,7 +158,7 @@ def test_f4_interleaved_segments_give_analytic_envelope_at_default_scan():
     np.testing.assert_allclose(np.asarray(got), np.asarray(x_query), atol=1e-6)
 
 
-def test_f4_bounded_scan_underscans_when_window_too_small():
+def test_bounded_scan_underscans_when_window_too_small():
     """An explicit finite scan narrower than the interleave accepts the interlopers.
 
     The exhaustive default is the correctness guarantee; the finite window is an
@@ -231,7 +220,7 @@ def test_segment_id_label_forces_a_switch_a_flat_policy_notch_misses():
     )
 
 
-def test_f5_exact_grid_aligned_branch_crossing_gives_v_shaped_envelope():
+def test_exact_grid_aligned_branch_crossing_gives_v_shaped_envelope():
     """A branch crossing exactly on a grid node yields the true V-shaped envelope.
 
     Branch A is `V_A(R) = R` (policy 0) and branch B is `V_B(R) = 1 - R`
@@ -259,7 +248,7 @@ def test_f5_exact_grid_aligned_branch_crossing_gives_v_shaped_envelope():
     np.testing.assert_allclose(np.asarray(got), expected, atol=1e-6)
 
 
-def test_f4_failure_resolves_when_scan_window_covers_all_candidates():
+def test_underscanning_resolves_when_the_window_covers_all_candidates():
     """Widening the scan past the interleave count recovers the exact envelope.
 
     Locks the boundary of F4: the defect is the bounded window, not the

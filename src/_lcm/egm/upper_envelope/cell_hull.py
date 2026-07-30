@@ -394,6 +394,12 @@ def _place_handovers(
         dd_mul(dd_from_difference(a_v1, a_v0), width_b),
         dd_negate(dd_mul(dd_from_difference(b_v1, b_v0), width_a)),
     )
+    # A rate of exactly zero is two links `f` cannot separate: either they are
+    # genuinely parallel, in which case no crossing exists to publish, or their
+    # true difference in slope is finer than the pair itself can carry, in which
+    # case its bound `rate[2]` is all that is left of it. Both are refusals, so
+    # the substituted denominator below only keeps the arithmetic finite — the
+    # quotient it produces is never a located root, and `unresolved` says so.
     degenerate = (rate[0] + rate[1]) == 0.0
     safe_rate = (
         jnp.where(degenerate, jnp.ones_like(rate[0]), rate[0]),
@@ -446,7 +452,7 @@ def _place_handovers(
     )
     placed = jax.lax.cummax(jnp.where(opens_group, placed, -jnp.inf))
     finite = jnp.isfinite(at_edge[0] + at_edge[1]) & jnp.isfinite(rate[0] + rate[1])
-    unresolved = jnp.any(hands_over & (~finite | ~resolved))
+    unresolved = jnp.any(hands_over & (~finite | degenerate | ~resolved))
     return jnp.concatenate([bounds[:1], placed, bounds[-1:]]), unresolved
 
 
@@ -500,6 +506,9 @@ def _approximate_crossing(
         numerator,
         dd_negate((margin_right[0], margin_right[1], jnp.zeros_like(margin_right[0]))),
     )
+    # A span the pair cannot separate costs an arbitrary *rank*, which the walk is
+    # allowed to be wrong about — a stranded link is caught by the all-live check.
+    # `_place_handovers` refuses the same case, because there a root is published.
     degenerate = (span[0] + span[1]) == 0.0
     safe_span = (
         jnp.where(degenerate, jnp.ones_like(span[0]), span[0]),

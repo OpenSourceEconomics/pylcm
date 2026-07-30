@@ -7,6 +7,34 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixes
+
+- The marginal a brute (`GridSearch`) child publishes to an endogenous-grid
+  parent is one-sided next to a feasibility boundary. A central difference
+  straddling an infeasible state said nothing, so the first feasible state above
+  a borrowing constraint carried a zero marginal and biased the parent's Euler
+  inversion toward over-consumption there.
+
+- A constraint reading an auto-named `next_<state>` (the NEGM budget cut on the
+  next durable stock) no longer breaks `simulate()`. The initial-conditions
+  feasibility check, its per-constraint diagnostic, and the additional-target
+  pool now resolve that name the way the within-period decision does.
+
+- `upper_envelope="mss"`: a value decrease no larger than rounding noise is no
+  longer read as a branch boundary. Along a near-linear tail the sign of the
+  difference between consecutive candidate values is set by rounding, and
+  splitting there silently dropped the top of the published row. A candidate
+  whose value is not finite now costs only its own nodes instead of poisoning
+  every node it covers with NaN.
+
+- `upper_envelope="exact"`: a handover between two links the pair's arithmetic
+  cannot separate is refused rather than placed at a fabricated abscissa.
+
+### Platform support
+
+- There is no `metal` / `tests-metal` pixi environment: macOS runs on CPU, and
+  Apple-Silicon GPU acceleration is not installable from this project.
+
 ### Phase grammar, cross-regime transitions, and model-level regime slots
 
 - `Phased(solve=..., simulate=...)` gives any regime-slot value a per-phase

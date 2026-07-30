@@ -1,4 +1,4 @@
-"""EGM-FUES for the DS-2026 App.2 housing model matches VFI.
+"""EGM-FUES for the DS-2024 App.2 housing model matches VFI.
 
 Application 2's Table 3 compares two solution methods for the continuous-housing
 model: EGM-FUES and NEGM. This test validates the **EGM-FUES** column, which

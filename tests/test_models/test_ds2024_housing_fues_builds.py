@@ -16,6 +16,8 @@ import pytest
 from _lcm.typing import PeriodToRegimeToVArr
 from tests.test_models.ds2024_housing_fues import build_model, build_params
 
+pytestmark = pytest.mark.slow
+
 N_GRID = 10
 N_HOUSING = 5
 N_CONSUMPTION = 300

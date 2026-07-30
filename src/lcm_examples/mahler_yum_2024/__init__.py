@@ -694,7 +694,12 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-EFFORT_FIELD_NAMES = np.array([f.name for f in dataclasses.fields(Effort)])
+def _category_names(category_class: type) -> list[str]:
+    """Return the category names of a `@categorical` class, in declaration order."""
+    return [f.name for f in dataclasses.fields(category_class)]  # ty: ignore[invalid-argument-type]
+
+
+EFFORT_FIELD_NAMES = np.array(_category_names(Effort))
 
 
 def _build_type_distribution() -> pd.DataFrame:
@@ -707,10 +712,10 @@ def _build_type_distribution() -> pd.DataFrame:
     raw = np.loadtxt(_DATA_DIR / "init_distr_2b2t2h.txt", skiprows=1)
     index = pd.MultiIndex.from_product(
         [
-            [f.name for f in dataclasses.fields(Education)],
-            [f.name for f in dataclasses.fields(DiscountType)],
-            [f.name for f in dataclasses.fields(ProductivityType)],
-            [f.name for f in dataclasses.fields(HealthType)],
+            _category_names(Education),
+            _category_names(DiscountType),
+            _category_names(ProductivityType),
+            _category_names(HealthType),
         ],
         names=["education", "discount_type", "productivity", "health_type"],
     )

@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.cell_hull import hull_owners
+from _lcm.egm.upper_envelope.cell_hull import _place_handovers, hull_owners
 from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from tests.conftest import X64_ENABLED
@@ -315,3 +315,28 @@ def test_published_handovers_match_the_exact_crossing_state() -> None:
         if _exact_handover(cells, int(case)) not in (None, cells["bounds"][case, 1])
     ]
     assert mismatched == []
+
+
+def test_a_handover_between_equally_sloped_links_is_reported_unresolved():
+    """Two links of exactly equal slope have no crossing, so none is published.
+
+    The pair's cross-multiplied difference is a constant, so nothing locates a
+    handover between them. Placing one anyway would publish a switch at an
+    abscissa no arithmetic chose, so the cell is refused instead.
+    """
+    # Two unit-width links of slope 1 over the same support, one five above the
+    # other: the cross-multiplied rate `(a_v1 - a_v0) * w_b - (b_v1 - b_v0) * w_a`
+    # is exactly zero while their difference is a nonzero constant.
+    endog_grid = jnp.asarray([0.0, 1.0, 0.0, 1.0])
+    value = jnp.asarray([0.0, 1.0, 5.0, 6.0])
+    _bounds, unresolved = _place_handovers(
+        bounds=jnp.asarray([0.0, 0.5, 1.0]),
+        owners=jnp.asarray([0, 1], dtype=jnp.int32),
+        low=jnp.asarray([0, 2], dtype=jnp.int32),
+        high=jnp.asarray([1, 3], dtype=jnp.int32),
+        endog_grid=endog_grid,
+        value=value,
+        left=jnp.asarray(0.0),
+        right=jnp.asarray(1.0),
+    )
+    assert bool(unresolved) is True

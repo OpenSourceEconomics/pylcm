@@ -32,6 +32,8 @@ from _lcm.egm.upper_envelope import get_upper_envelope, mss
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
+from tests.solution._envelope_rows import drop_nan as _drop_nan
+from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
 
 def _mss_solver():
@@ -48,16 +50,6 @@ def _mss_solver():
 # Tolerance for kernel-computed quantities (segment interpolation): float32
 # carries a few ulp through the bracketing and crossing arithmetic.
 _COMPUTED_ATOL = 1e-8 if X64_ENABLED else 1e-5
-
-
-def _drop_nan(arr: jnp.ndarray) -> np.ndarray:
-    out = np.asarray(arr)
-    return out[~np.isnan(out)]
-
-
-def _envelope_interp(grid, value, x_query):
-    keep = ~np.isnan(np.asarray(grid))
-    return np.interp(x_query, np.asarray(grid)[keep], np.asarray(value)[keep])
 
 
 def _crossing_segments_candidates():
@@ -285,3 +277,55 @@ def test_dead_candidates_are_excluded_from_the_envelope():
         [0.0, 0.7, 1.1, 1.4],
         atol=_COMPUTED_ATOL,
     )
+
+
+def test_a_rounding_sized_value_decrease_does_not_drop_an_envelope_point():
+    """A value drop no larger than rounding noise leaves the chain intact.
+
+    Along a near-linear tail the sign of the difference between two consecutive
+    candidate values is set by rounding, not by economics, so treating any
+    decrease as a branch boundary withdraws the top of the row — and with it every
+    off-grid read above the second-to-last node.
+    """
+    grid = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
+    policy = jnp.asarray([0.5, 1.0, 1.5, 2.0, 2.5])
+    monotone = np.array([-1000.0, -999.5, -999.2, -999.1, -999.05])
+    perturbed = np.concatenate([monotone[:4], [np.nextafter(monotone[3], -np.inf)]])
+
+    _, _, _, n_kept = mss.refine_envelope(
+        endog_grid=grid, policy=policy, value=jnp.asarray(perturbed), n_refined=16
+    )
+    assert int(n_kept) == len(monotone)
+
+
+def test_a_genuine_value_decrease_still_splits_the_chain():
+    """A drop far past the noise floor is a branch boundary and still splits."""
+    grid = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
+    policy = jnp.asarray([0.5, 1.0, 1.5, 2.0, 2.5])
+    value = jnp.asarray([-1000.0, -999.5, -999.2, -999.1, -1050.0])
+
+    refined_grid, _, _, n_kept = mss.refine_envelope(
+        endog_grid=grid, policy=policy, value=value, n_refined=16
+    )
+    # The dominated last candidate is not part of the envelope, so the row stops
+    # at the fourth node rather than descending to it.
+    assert int(n_kept) == 4
+    np.testing.assert_allclose(_drop_nan(refined_grid), [1.0, 2.0, 3.0, 4.0])
+
+
+def test_a_non_finite_candidate_value_costs_only_its_own_node():
+    """A candidate whose value is not finite drops out; the rest of the row stands.
+
+    Refinement takes dead candidates NaN-filled, so a `-inf` value is off-contract.
+    It must still cost only the nodes it covers rather than publishing NaN as live
+    envelope data, which no counter or diagnostic downstream would catch.
+    """
+    refined_grid, _, refined_value, n_kept = mss.refine_envelope(
+        endog_grid=jnp.asarray([1.0, 2.0, 3.0]),
+        policy=jnp.asarray([1.0, 1.0, 1.0]),
+        value=jnp.asarray([-jnp.inf, 0.0, 1.0]),
+        n_refined=8,
+    )
+    assert int(n_kept) == 2
+    np.testing.assert_allclose(_drop_nan(refined_grid), [2.0, 3.0])
+    np.testing.assert_allclose(_drop_nan(refined_value), [0.0, 1.0])

@@ -6,7 +6,7 @@ The RFC column of the DS-2024 RFC-vs-NEGM housing comparison. In the source
 `_refineKeeper` for each `(z, h)`), and the housing margin is handled by nesting
 over the housing grid — it is *not* a two-dimensional inverse-Euler. So in pylcm
 the RFC column is the discrete-choice DC-EGM with the 1-D RFC upper-envelope
-backend, exactly as the DS-2026 App.2 EGM-FUES column
+backend, exactly as the DS-2024 App.2 EGM-FUES column
 (`ds_app2_housing_fues.py`): discretise the next-housing choice onto the housing
 grid, treat it as a discrete action, and the inner liquid DC-EGM plus the
 discrete-choice envelope (RFC/FUES/MSS/LTM) selects the optimal `H'`.

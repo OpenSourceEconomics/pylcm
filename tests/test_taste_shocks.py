@@ -119,6 +119,7 @@ def _reference_alive_V(*, scale: float, discount_factor: float) -> np.ndarray:
     return qc.max(axis=1) + scale * np.log(np.sum(np.exp(shifted / scale), axis=1))
 
 
+@pytest.mark.slow
 def test_brute_force_solve_matches_reference_logsum_value_function():
     """Solved V in the decision period equals the numpy logsum reference exactly.
 
@@ -137,6 +138,7 @@ def test_brute_force_solve_matches_reference_logsum_value_function():
     np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-8)
 
 
+@pytest.mark.slow
 def test_smoothed_value_weakly_exceeds_hard_max_value():
     """The EV1 expected maximum dominates the hard max pointwise.
 
@@ -196,6 +198,7 @@ def test_expected_max_with_taste_shock_noise_matches_logsum():
     np.testing.assert_allclose(simulated_expected_max, float(solved_value), atol=0.02)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("scale", [0.0, -0.1])
 def test_nonpositive_taste_shock_scale_raises(scale):
     """A taste-shock scale that is not strictly positive is rejected.

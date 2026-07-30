@@ -684,7 +684,9 @@ prose hides cases.
 ### JAX Integration
 
 - All numerical computations use JAX arrays
-- GPU support available via jax[cuda13] (Linux) or jax-metal (macOS)
+- GPU support available via jax[cuda12] / jax[cuda13] (Linux). macOS runs on CPU: there
+  is no `metal` pixi environment, so Apple-Silicon GPU acceleration is not installable
+  from this project
 - Functions are JIT-compiled during Model initialization for performance
 - `MappingProxyType` is registered as a JAX pytree for use in JIT-compiled functions
 
