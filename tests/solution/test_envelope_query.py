@@ -16,6 +16,7 @@ from _lcm.egm.upper_envelope.query import (
     _candidate_terms,
     _exact_compare,
     _exact_slope_compare,
+    _exactly_maximal,
     envelope_at_query,
 )
 from tests.solution._envelope_oracle import exact_envelope
@@ -1126,6 +1127,212 @@ def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
     assert float(got_value[0]) == 1.0, context
     assert float(got_policy[0]) == 1.0, context
     assert float(got_marginal[0]) == 1.0, context
+
+
+def _smallest_value_scale_case(dtype):
+    """Two branches whose VALUES sit at the bottom of the range, on a unit grid.
+
+    The grid axis is deliberately ordinary -- `[0, 1]` -- so nothing here can be
+    blamed on grid arithmetic. Branch A rises by exactly one ULP across the
+    segment, from `tiny` to `nextafter(tiny)`; branch B is constant at `tiny`.
+    Every stored number is a finite NORMAL float.
+
+    The mechanism: one ULP at `tiny` is the SMALLEST SUBNORMAL, so an interior
+    fraction of it is below everything representable, and `r*d` flushes to zero
+    unless the value operands are lifted first. A publishes `tiny`, ties B, and
+    the strictly lower branch can take the policy and the marginal.
+
+    Returns `(left_value, right_value)` for A; B is constant at `left_value`.
+    """
+    tiny = np.finfo(dtype).tiny
+    lower = dtype(tiny)
+    upper = np.nextafter(lower, dtype(np.inf), dtype=dtype)
+    assert lower < upper, "the two endpoint values must be distinct floats"
+    for name, value in (("lower", lower), ("upper", upper)):
+        assert abs(value) >= tiny, f"{name} must be finite NORMAL"
+    # The reachability condition. Asserting it here is what stops the case from
+    # quietly degrading into an ordinary interpolation if `tiny` ever changes
+    # meaning: the whole point is that the gap is NOT normal.
+    gap = float(upper) - float(lower)
+    assert 0 < gap < float(tiny), "the one-ULP value gap must be subnormal"
+    return lower, upper
+
+
+def _rounded_between(exact, lower, upper, dtype):
+    """Round `exact` (a `Fraction` in `[lower, upper]`) to nearest, ties to even.
+
+    `lower` and `upper` are consecutive floats, so they are the only candidates
+    and the rule reduces to comparing the two exact distances.
+    """
+    below = exact - Fraction(float(lower))
+    above = Fraction(float(upper)) - exact
+    assert below >= 0, "the exact value must not sit below the lower neighbour"
+    assert above >= 0, "the exact value must not sit above the upper neighbour"
+    if below != above:
+        return dtype(lower) if below < above else dtype(upper)
+    # Halfway: ties-to-even on the significand. `lower` is `tiny`, whose
+    # significand is zero, hence even.
+    return dtype(lower)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+@pytest.mark.parametrize("fraction", [0.25, 0.5, 0.625, 0.75])
+def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
+    dtype, order, block_size, fraction
+):
+    """The value axis needs the lift too, and for the OPPOSITE reason to the grid.
+
+    The grid lift exists because differencing can lose a difference; the value
+    lift exists because the increment `r*d` can be smaller than anything the
+    format represents at that scale. Rounds 8 to 11 all reasoned that the value
+    axis needed no scale because its intermediates stay BOUNDED, which is true
+    and beside the point (round-11 audit F2, MT8: 234 of 234 generated cells).
+
+    `fraction` sweeps both rounding directions on purpose. Above one half the
+    correctly rounded value is A's upper endpoint, so the defect showed up in
+    the LEVEL as well as the policy; at or below one half the correctly rounded
+    value is A's lower endpoint, which B also publishes, so the level agrees
+    either way and only the exact ordering separates them -- that cell tests the
+    structural-exactness rule rather than the lift.
+    """
+    lower, upper = _smallest_value_scale_case(dtype)
+    q = dtype(fraction)
+    exact_a = Fraction(float(lower)) + Fraction(fraction) * (
+        Fraction(float(upper)) - Fraction(float(lower))
+    )
+    assert exact_a > Fraction(float(lower)), "A must be STRICTLY above B at the query"
+    expected_value = _rounded_between(exact_a, lower, upper, dtype)
+
+    rising = ([0.0, 1.0], [lower, upper], (1.0, 1.0), (20.0, 20.0))
+    flat = ([0.0, 1.0], [lower, lower], (0.0, 0.0), (10.0, 10.0))
+    rows = [rising, flat] if order == "AB" else [flat, rising]
+
+    grid, value, policy, marginal, segment_id = [], [], [], [], []
+    for sid, (g, v, p, m) in enumerate(rows):
+        grid += g
+        value += list(v)
+        policy += list(p)
+        marginal += list(m)
+        segment_id += [float(sid)] * 2
+
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(grid, dtype=dtype),
+        policy=jnp.asarray(policy, dtype=dtype),
+        value=jnp.asarray(value, dtype=dtype),
+        marginal=jnp.asarray(marginal, dtype=dtype),
+        segment_id=jnp.asarray(segment_id, dtype=dtype),
+        x_query=jnp.asarray([float(q)], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size} r={fraction}"
+    assert dtype(got_value[0]) == expected_value, context
+    # The strictly higher branch owns the query, so its policy and marginal are
+    # what must be published -- the channel the defect actually corrupted.
+    assert float(got_policy[0]) == 1.0, context
+    assert float(got_marginal[0]) == 20.0, context
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("block_size", [0, 2])
+def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_size):
+    """Scaling every value by an exact power of two is an ordering isomorphism.
+
+    Multiplying all four stored values by `2**k` leaves the exact comparison
+    between the branches unchanged, so the published policy and marginal must be
+    unchanged and the published value must scale by exactly the same factor.
+    That is a property of the model, not of the arithmetic, which is what makes
+    it the right acceptance statement for this class: no scale is privileged.
+
+    The unscaled leg runs at `1`, the rescaled leg at `tiny`. Both legs are
+    asserted, so the test fails whether the defect is at the bottom of the range
+    or -- were a future repair to trade one end for the other, which is how this
+    class has moved twice -- at the top.
+    """
+    tiny = np.finfo(dtype).tiny
+    results = {}
+    for name, base in (("unit", dtype(1.0)), ("tiny", dtype(tiny))):
+        lower = base
+        upper = np.nextafter(lower, dtype(np.inf), dtype=dtype)
+        got = envelope_at_query(
+            endog_grid=jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=dtype),
+            policy=jnp.asarray([1.0, 1.0, 0.0, 0.0], dtype=dtype),
+            value=jnp.asarray([lower, upper, lower, lower], dtype=dtype),
+            marginal=jnp.asarray([20.0, 20.0, 10.0, 10.0], dtype=dtype),
+            segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+            x_query=jnp.asarray([0.75], dtype=dtype),
+            segment_block_size=block_size,
+        )
+        results[name] = tuple(float(channel[0]) for channel in got)
+
+    unit_value, unit_policy, unit_marginal = results["unit"]
+    tiny_value, tiny_policy, tiny_marginal = results["tiny"]
+    context = f"{np.dtype(dtype)} block={block_size} {results}"
+    assert unit_policy == tiny_policy == 1.0, context
+    assert unit_marginal == tiny_marginal == 20.0, context
+    # The value is compared as a RATIO so the assertion is about invariance
+    # rather than about either leg's absolute level, which the case above pins.
+    assert tiny_value / float(tiny) == unit_value, context
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
+    """The selection's central invariant, checked where it previously broke.
+
+    `_exactly_maximal` may skip `_exact_compare` only for candidates certified
+    tied. If it ever certifies a tie between two candidates that `_exact_compare`
+    strictly orders, the exact comparator has been bypassed on precisely the
+    input it exists for, and the answer is whatever the approximate layer said.
+
+    Round 11 read `radius == 0` as that certificate. A radius is a float: at the
+    bottom of the range `eps**2 * |v|` underflows, and two candidates that were
+    not tied at all presented as certifiably tied while `_exact_compare` returned
+    the correct strict sign `+1` (round-11 audit F2/RT11). The certificate is now
+    structural -- a node event, which publishes stored data and performs no
+    arithmetic -- so no numerical accident can manufacture it.
+
+    This is the INVERSE of the reviewer's localization artifact, which asserts the
+    defect reproduces. Adopting that script as a regression would pin the broken
+    state; what belongs in the suite is the invariant it violates.
+    """
+    lower, upper = _smallest_value_scale_case(dtype)
+    q = dtype(0.75)
+    # `[left_grid, right_grid, left_value, right_value, l/r policy, l/r marginal]`
+    flat = [0.0, 1.0, lower, lower, 0.0, 0.0, 10.0, 10.0]
+    rising = [0.0, 1.0, lower, upper, 1.0, 1.0, 20.0, 20.0]
+    block = jnp.asarray([flat, rising], dtype=dtype)
+
+    terms = _candidate_terms(
+        block=block,
+        live=jnp.asarray([True, True]),
+        flat=jnp.asarray([q], dtype=dtype),
+    )
+    tied = _exactly_maximal(
+        terms=terms, gather=lambda index: block[index], q=jnp.asarray([q], dtype=dtype)
+    )
+    sign = float(
+        _exact_compare(cols_a=block[1], cols_b=block[0], q=jnp.asarray(q, dtype=dtype))
+    )
+
+    context = f"{np.dtype(dtype)} tied={np.asarray(tied)} sign={sign}"
+    # Self-check: the invariant is only meaningful if the exact comparator does
+    # separate these two. A vacuous pass here would hide the whole defect.
+    assert sign == 1.0, f"exact comparator must strictly order this pair: {context}"
+    assert not bool(np.asarray(tied)[0, 0]), (
+        f"the strictly LOWER candidate was certified tied with the winner: {context}"
+    )
+    assert bool(np.asarray(tied)[0, 1]), (
+        f"the strict winner must be selected: {context}"
+    )
+    # Pin WHICH repair is load bearing here. The interior lane's radius still
+    # underflows to zero at this scale -- that is a fact about the format, not a
+    # defect -- so the assertions above hold only because the certificate stopped
+    # being numerical. If an interpolated lane ever reports itself structurally
+    # exact, the shortcut is back, whatever the radius happens to be.
+    assert not bool(np.asarray(terms.exact)[0, 1]), (
+        f"an interpolated interior lane must NOT be structurally exact: {context}"
+    )
 
 
 def _wide_segment_case(dtype):

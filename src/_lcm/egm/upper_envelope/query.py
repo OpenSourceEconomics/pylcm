@@ -682,8 +682,9 @@ def _exactly_maximal(
     2. **Exact resolution.** Whatever the screen could not separate is resolved
        by `_exact_compare`, which is exact and therefore recognises a true tie
        as a true tie. Candidates that are *certifiably* tied already — node
-       events, whose radius is zero and whose stored `(hi, lo)` pairs are
-       bitwise equal — skip it, since exactness has nothing to add there.
+       events, which publish stored data and so are exact BY CONSTRUCTION, with
+       bitwise-equal `(hi, lo)` pairs — skip it, since exactness has nothing to
+       add there. That certificate is structural on purpose: see `certified_tie`.
 
     Consequently the loop body runs zero times on the overwhelmingly common
     query: at a node every survivor is a certified exact tie, and in the
@@ -714,9 +715,27 @@ def _exactly_maximal(
     contends = terms.brackets & (
         ((gap_hi + gap_lo) >= -reach) | (terms.value_hi == lead_hi)
     )
-    # Node events carry a zero radius and a stored value, so bitwise-equal
-    # `(hi, lo)` pairs there ARE exactly equal values; nothing to resolve.
-    certified_tie = dd_tied & (terms.radius == 0) & (lead_radius == 0)
+    # Skipping the exact comparison needs a STRUCTURAL certificate of exactness,
+    # never a numerical one. `terms.exact` is set by how the value was produced —
+    # a node event publishes stored data and performs no arithmetic — so a
+    # bitwise-equal `(hi, lo)` pair between two such candidates IS an exact tie.
+    #
+    # The previous rule read `radius == 0` as that certificate, and a radius is a
+    # float like any other: near the bottom of the range `eps**2 * |v|` underflows
+    # to zero for interior lanes whose value pair also collapsed, so two candidates
+    # that are NOT tied presented as certifiably tied and `_exact_compare` — which
+    # returns the correct strict sign on exactly that input — was never consulted
+    # (round-11 audit F2/RT11). "The radius came out zero" is a statement about
+    # the arithmetic's dynamic range, not about the candidate's value.
+    #
+    # The consequence is the invariant the whole selection now rests on: the
+    # approximate layer may RESOLVE an ordering, never CERTIFY an equality. It
+    # resolves soundly because `value_hi` is correctly rounded and rounding to
+    # nearest is monotone, so `value_hi_a > value_hi_b` implies the exact values
+    # are strictly ordered the same way. Everything it cannot separate — every
+    # tie, however certain it looks — is decided by `_exact_compare`.
+    lead_exact = jnp.take_along_axis(terms.exact, lead[:, None], axis=1)
+    certified_tie = dd_tied & terms.exact & lead_exact
 
     def unresolved(state: _ResolveState) -> BoolND:
         return jnp.any(state.remaining)
@@ -779,7 +798,9 @@ class _CandidateTerms(NamedTuple):
     `value_hi/value_lo` is the certified double-double candidate value (stored
     floats with `value_lo == 0` at node events, compensated interpolation in the
     interior) and `radius` its certified residual rounding radius (zero at node
-    events, O(eps^2) interior). `policy`/`marginal` are the candidate's outputs
+    events, O(eps^2) interior). `exact` records STRUCTURALLY — by how the value
+    was produced, not by inspecting it — whether the pair is the exact candidate
+    value; see `_exactly_maximal`. `policy`/`marginal` are the candidate's outputs
     at the query, `slope` its value-slope, and `right_available` whether it
     extends strictly right of the query — the right-continuous tie-break keys.
     """
@@ -788,6 +809,7 @@ class _CandidateTerms(NamedTuple):
     value_hi: FloatND
     value_lo: FloatND
     radius: FloatND
+    exact: BoolND
     policy: FloatND
     marginal: FloatND
     slope: FloatND
@@ -860,11 +882,17 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # Every significand handed to Dekker is O(1), so splitting cannot overflow at
     # any model scale, and the exponent is applied ONCE, exactly, at the end.
     #
-    # No value scale is needed at all. A bracketing candidate has `q` in
-    # `[x0, x1]`, hence `|t| <= |w|` and `r` in `[0, 1]`, so `|p| <= |d|` and
-    # `v = v0 + p` is bounded by the endpoint values themselves. The unbounded
-    # intermediates only ever came from mixing units — a value times a grid
-    # difference — which this form never constructs.
+    # No value scale is needed to keep the intermediates BOUNDED. A bracketing
+    # candidate has `q` in `[x0, x1]`, hence `|t| <= |w|` and `r` in `[0, 1]`, so
+    # `|p| <= |d|` and `v = v0 + p` is bounded by the endpoint values themselves.
+    # The unbounded intermediates only ever came from mixing units — a value
+    # times a grid difference — which this form never constructs.
+    #
+    # Boundedness is not the whole requirement, though, and reading it as if it
+    # were is what left the value axis unscaled through round 11 (round-11 audit
+    # F2). The value axis needs a scale for the OPPOSITE reason to the grid axis:
+    # not because its intermediates can grow, but because they can vanish. See
+    # the value lift below.
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
@@ -894,7 +922,46 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     wh, wl = _two_diff(jnp.ldexp(right_grid, -lift), jnp.ldexp(left_grid, -lift))
     wh = jnp.where(zero_width, jnp.ones_like(wh), wh)
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
-    dh, dl = _two_diff(right_value, left_value)
+
+    # The value axis takes the SAME lift, for the same reason and with one extra
+    # requirement. Near the bottom of the range the endpoint gap `d = v1 - v0` of
+    # two adjacent normals is the smallest subnormal, and `r*d` for an interior
+    # `r` is below it: `p` flushes to zero, `v = v0 + p` publishes `v0`, and the
+    # candidate is indistinguishable from a constant competitor sitting at `v0`.
+    # With `v0 = tiny` and `v1 = nextafter(tiny)` at `q = 3/4` the published
+    # value was `tiny` where the correctly rounded value is `nextafter(tiny)`,
+    # and a strictly lower branch took the policy and the marginal (round-11
+    # audit F2, MT8: 234 of 234 generated cells, both dtypes, both branch orders,
+    # dense and blocked alike).
+    #
+    # Unlike the grid lift this one must also survive PUBLICATION, because
+    # `value_hi` is compared across candidates that each choose their own lift.
+    # So the interior evaluation runs entirely in the lifted frame and is scaled
+    # back exactly once, at the end: both endpoint values are pre-multiplied by
+    # `2**-vs`, the whole interpolation is carried out in that frame, and only
+    # the result is multiplied back by `2**vs`.
+    #
+    # The lift is keyed on the LARGEST endpoint, and `|v|` is bounded by the
+    # endpoint values, so `ldexp(vh, value_lift)` lands back inside the binade
+    # its operands came from: the result is normal whenever the endpoints are,
+    # and scaling a normal by a power of two is exact. The published value is
+    # therefore the lifted computation's correctly rounded value, rounded ONCE.
+    #
+    # `value_lo` and the radius are scaled back by the same shift and may flush
+    # to zero there. That costs resolution, never correctness: a flushed residual
+    # says the remainder sits below the representable grid, and under the
+    # structural-exactness rule in `_exactly_maximal` a `(hi, lo)` tie is never a
+    # certificate — it routes to `_exact_compare` — while a strict difference in
+    # a correctly rounded `value_hi` certifies a strict difference in the exact
+    # values, because rounding to nearest is monotone.
+    value_lift = jnp.minimum(
+        _group_scale_exponent(
+            left_value, right_value, target=_mid_range_target(block.dtype)
+        ),
+        0,
+    )
+    lifted_left_value = jnp.ldexp(left_value, -value_lift)
+    dh, dl = _two_diff(jnp.ldexp(right_value, -value_lift), lifted_left_value)
 
     t_exp = _binade_exponent(jnp.abs(th))
     w_exp = _binade_exponent(jnp.abs(wh))
@@ -910,12 +977,19 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     ph, pl = _dd_mul(rh, rl, jnp.ldexp(dh, -d_exp), jnp.ldexp(dl, -d_exp), split)
     product_exp = t_exp - w_exp + d_exp
     ph, pl = jnp.ldexp(ph, product_exp), jnp.ldexp(pl, product_exp)
-    vh, vl = _dd_add_fp(ph, pl, left_value)
+    vh, vl = _dd_add_fp(ph, pl, lifted_left_value)
 
     eps = jnp.finfo(block.dtype).eps
     interior_radius = (
-        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(left_value) + jnp.abs(ph))
+        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(lifted_left_value) + jnp.abs(ph))
     )
+
+    # Out of the lifted value frame, exactly once. Every candidate publishes in
+    # ORIGINAL units, so `value_hi`, `value_lo` and `radius` stay comparable
+    # across candidates that lifted by different amounts.
+    vh = jnp.ldexp(vh, value_lift)
+    vl = jnp.ldexp(vl, value_lift)
+    interior_radius = jnp.ldexp(interior_radius, value_lift)
 
     # `rh` is the ratio's SIGNIFICAND; the carried and interpolated quantities
     # need the ratio itself. `r` is in `[0, 1]` for a bracketing candidate, so
@@ -928,6 +1002,9 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         value_hi=jnp.where(node, jnp.where(use_right, right_value, left_value), vh),
         value_lo=jnp.where(node, zero, vl),
         radius=jnp.where(node, zero, interior_radius),
+        # A node event's value IS stored data: no arithmetic was performed, so
+        # the pair is exact by construction. Nothing else here is.
+        exact=node,
         policy=jnp.where(
             node,
             jnp.where(use_right, right_policy, left_policy),
@@ -1218,6 +1295,13 @@ class _BlockedCarry(NamedTuple):
     hi: FloatND
     lo: FloatND
     radius: FloatND
+    # Whether the carried winner's value pair is exact by construction, carried
+    # for the same reason the radius is: `_combine_blocked` runs the shared
+    # selection rule, and that rule may only skip the exact comparison on a
+    # structural certificate. A winner interpolated in a block's interior is not
+    # exact, and the fold must not treat it as such just because two blocks
+    # produced the same rounded pair.
+    exact: BoolND
     right_extending: BoolND
     slope: FloatND
     value: FloatND
@@ -1243,6 +1327,7 @@ def _combine_blocked(
         value_hi=jnp.stack([carry.hi, block.hi], axis=1),
         value_lo=jnp.stack([carry.lo, block.lo], axis=1),
         radius=jnp.stack([carry.radius, block.radius], axis=1),
+        exact=jnp.stack([carry.exact, block.exact], axis=1),
         policy=jnp.stack([carry.policy, block.policy], axis=1),
         marginal=jnp.stack([carry.marginal, block.marginal], axis=1),
         slope=jnp.stack([carry.slope, block.slope], axis=1),
@@ -1275,6 +1360,7 @@ def _combine_blocked(
         hi=jnp.where(take, block.hi, carry.hi),
         lo=jnp.where(take, block.lo, carry.lo),
         radius=jnp.where(take, block.radius, carry.radius),
+        exact=jnp.where(take, block.exact, carry.exact),
         right_extending=jnp.where(take, block.right_extending, carry.right_extending),
         slope=jnp.where(take, block.slope, carry.slope),
         value=jnp.where(take, block.value, carry.value),
@@ -1342,6 +1428,7 @@ def _envelope_at_query_blocked(
             hi=jnp.take_along_axis(t.value_hi, column, axis=1)[:, 0],
             lo=jnp.take_along_axis(t.value_lo, column, axis=1)[:, 0],
             radius=jnp.take_along_axis(t.radius, column, axis=1)[:, 0],
+            exact=jnp.take_along_axis(t.exact, column, axis=1)[:, 0],
             right_extending=block_ra,
             slope=jnp.take_along_axis(t.slope, column, axis=1)[:, 0],
             value=jnp.take_along_axis(t.value_hi, column, axis=1)[:, 0],
@@ -1360,6 +1447,10 @@ def _envelope_at_query_blocked(
             hi=jnp.full((n_query,), -jnp.inf, dtype=dtype),
             lo=jnp.full((n_query,), -jnp.inf, dtype=dtype),
             radius=jnp.zeros((n_query,), dtype=dtype),
+            # The seed carries no winner (`has_winner` is False), so it never
+            # reaches a comparison; claiming exactness for it would be a lie the
+            # fold could only ever act on by mistake.
+            exact=jnp.zeros((n_query,), dtype=bool),
             right_extending=jnp.zeros((n_query,), dtype=bool),
             slope=jnp.full((n_query,), -jnp.inf, dtype=dtype),
             value=jnp.full((n_query,), jnp.nan, dtype=dtype),
