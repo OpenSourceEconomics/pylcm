@@ -1060,6 +1060,74 @@ def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block
         assert seen["AB"][2] == 20.0, context
 
 
+def _smallest_scale_case(dtype):
+    """A bracketing segment whose own WIDTH sits at the bottom of the range.
+
+    `x0 = tiny`, `q = 1.5*tiny`, `x1 = 2*tiny` -- three distinct finite NORMAL
+    floats whose differences are SUBNORMAL. That is the point of the case: XLA
+    flushes subnormals to zero, so `q - x0` computed on the raw operands comes
+    back exactly `0.0` and the interpolant collapses onto its left value.
+    """
+    tiny = np.finfo(dtype).tiny
+    x0, q, x1 = dtype(tiny), dtype(1.5 * tiny), dtype(2.0 * tiny)
+    assert x0 < q < x1, "the query must be strictly interior"
+    for name, value in (("x0", x0), ("q", q), ("x1", x1)):
+        assert abs(value) >= tiny, f"{name} must be finite NORMAL"
+    # The reachability condition, asserted so the case cannot quietly stop
+    # exercising the mechanism it exists for.
+    assert 0 < abs(float(q) - float(x0)) < float(tiny), "the difference is subnormal"
+    return x0, q, x1
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("order", ["AB", "BA"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
+    dtype, order, block_size
+):
+    """A subnormal `q - x0` must not be flushed away before it is used.
+
+    The mirror image of the wide-segment case, and a defect this repair
+    introduced: "the difference of two finite floats cannot overflow" is true,
+    but it can UNDERFLOW. At the bottom of the range the difference of two
+    distinct normals is subnormal, XLA flushes it to zero, and the interpolant
+    collapses onto its left value exactly as it did when the operands were
+    pre-scaled DOWN (round-9 audit MT6, 48/144 mismatches).
+
+    The two cases together pin the asymmetry the repair rests on: operands may be
+    lifted UP before differencing, because a power of two is exact and injective,
+    but never lowered, because lowering can merge two distinct floats.
+    """
+    x0, q, x1 = _smallest_scale_case(dtype)
+    # Values, policies and marginals chosen so the exact answer at the midpoint
+    # is 1.0 on all three channels, and a far competitor is strictly lower.
+    local = ([float(x0), float(x1)], [dtype(0.0), dtype(2.0)], (0.0, 2.0), (1.0, 1.0))
+    far = ([1.0, 1.5], [dtype(-100.0), dtype(-100.0)], (9.0, 9.0), (9.0, 9.0))
+    rows = [local, far] if order == "AB" else [far, local]
+
+    grid, value, policy, marginal, segment_id = [], [], [], [], []
+    for sid, (g, v, p, m) in enumerate(rows):
+        grid += g
+        value += list(v)
+        policy += list(p)
+        marginal += list(m)
+        segment_id += [float(sid)] * 2
+
+    got_value, got_policy, got_marginal = envelope_at_query(
+        endog_grid=jnp.asarray(grid, dtype=dtype),
+        policy=jnp.asarray(policy, dtype=dtype),
+        value=jnp.asarray(value, dtype=dtype),
+        marginal=jnp.asarray(marginal, dtype=dtype),
+        segment_id=jnp.asarray(segment_id, dtype=dtype),
+        x_query=jnp.asarray([float(q)], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    context = f"{np.dtype(dtype)} order={order} block={block_size}"
+    assert float(got_value[0]) == 1.0, context
+    assert float(got_policy[0]) == 1.0, context
+    assert float(got_marginal[0]) == 1.0, context
+
+
 def _wide_segment_case(dtype):
     """A bracketing segment whose own endpoints span most of the exponent range.
 

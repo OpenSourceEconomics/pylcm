@@ -868,8 +868,30 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
-    th, tl = _two_diff(q, left_grid)
-    wh, wl = _two_diff(right_grid, left_grid)
+    # ... with ONE exception, which is where scaling operands is not merely safe
+    # but necessary. "Subtraction of finite floats cannot overflow" is true, but
+    # it can UNDERFLOW: near the bottom of the range the difference of two
+    # distinct normals is SUBNORMAL, and XLA flushes subnormals to zero. For a
+    # segment at the smallest normal scale, `q - x0` came back exactly `0.0` on
+    # raw operands and the interpolant collapsed onto its left value — the
+    # round-10 defect reappearing at the opposite end of the range (round-9
+    # audit MT6, 48/144 mismatches, introduced by this round's own repair).
+    #
+    # The asymmetry that resolves it: scaling operands DOWN can merge two
+    # distinct floats, which is what rounds 9 and 10 got wrong; scaling them UP
+    # cannot, because multiplying by a power of two is exact and injective while
+    # nothing overflows. So LIFT — never lower — the grid operands into mid-range
+    # before differencing, with ONE common shift for `q` and both nodes so every
+    # difference and every equality between them is preserved exactly. The lift
+    # cancels out of `r = t/w` and so never reaches the published fraction.
+    largest_operand = jnp.maximum(
+        jnp.abs(q), jnp.maximum(jnp.abs(left_grid), jnp.abs(right_grid))
+    )
+    lift = jnp.minimum(
+        _scale_exponent(largest_operand, _mid_range_target(block.dtype)), 0
+    )
+    th, tl = _two_diff(jnp.ldexp(q, -lift), jnp.ldexp(left_grid, -lift))
+    wh, wl = _two_diff(jnp.ldexp(right_grid, -lift), jnp.ldexp(left_grid, -lift))
     wh = jnp.where(zero_width, jnp.ones_like(wh), wh)
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
     dh, dl = _two_diff(right_value, left_value)
