@@ -13,10 +13,16 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
+from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_along_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
+
+# Blocking the ride-cell mesh leaves every operation and its operand order
+# untouched, so the two solves differ only by the vectorized kernel XLA emits for
+# each block width — a gap of a few ULP, not of an economic magnitude.
+_BLOCKING_ULP = 16
 
 
 def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
@@ -80,9 +86,9 @@ def test_value_is_invariant_to_envelope_cell_blocking():
 
     `cell_block_size` streams both ride-along cores (continuation fan-out and
     envelope solve) over blocks of ride cells instead of vmapping the whole
-    flattened mesh at once; padding cells are discarded after the scan, so the
-    value function is identical for any block size, including one that does not
-    divide the cell count.
+    flattened mesh at once; padding cells are discarded after the scan, so every
+    block size solves the same problem — including one that does not divide the
+    cell count.
     """
     reference = _solve("nbegm")
     for block_size in (1, 3):
@@ -98,11 +104,10 @@ def test_value_is_invariant_to_envelope_cell_blocking():
         for period in reference:
             if "alive" not in reference[period]:
                 continue
-            np.testing.assert_allclose(
-                np.asarray(blocked[period]["alive"]),
-                np.asarray(reference[period]["alive"]),
-                atol=1e-10,
-                rtol=1e-10,
+            assert_agrees_to_ulp(
+                blocked[period]["alive"],
+                reference[period]["alive"],
+                n_ulp=_BLOCKING_ULP,
                 err_msg=f"period={period} block_size={block_size}",
             )
 

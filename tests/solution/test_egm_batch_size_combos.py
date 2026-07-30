@@ -35,13 +35,12 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import assert_agrees_to_ulp
 
-# Splaying a combo axis only reschedules the `lax.map`; in float64 the solved V is
-# reproduced essentially exactly, in float32 the gather/reduce order shifts within
-# single-precision rounding.
-_INVARIANCE_RTOL = 1e-12 if X64_ENABLED else 1e-4
-_INVARIANCE_ATOL = 1e-12 if X64_ENABLED else 1e-4
+# Splaying a combo axis only reschedules the `lax.map`, leaving every operation and
+# its operand order untouched; the two solves differ only by the vectorized kernel
+# XLA emits for each block width — a gap of a few ULP, not of an economic magnitude.
+_INVARIANCE_ULP = 16
 
 N_PERIODS = 4
 N_WEALTH = 40
@@ -198,11 +197,10 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
-            np.testing.assert_allclose(
+            assert_agrees_to_ulp(
                 got_V,
                 ref_V,
-                rtol=_INVARIANCE_RTOL,
-                atol=_INVARIANCE_ATOL,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 
@@ -291,10 +289,9 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
-            np.testing.assert_allclose(
+            assert_agrees_to_ulp(
                 got_V,
                 ref_V,
-                rtol=_INVARIANCE_RTOL,
-                atol=_INVARIANCE_ATOL,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}",
             )

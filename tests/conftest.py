@@ -3,8 +3,10 @@ from dataclasses import make_dataclass
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import config as jax_config
+from numpy.typing import ArrayLike
 
 from lcm.typing import ScalarInt
 
@@ -52,6 +54,48 @@ def pytest_configure(config):
     # the format rather than the code. Asking for the declared precision costs
     # some throughput on that hardware and nothing anywhere else.
     jax_config.update("jax_default_matmul_precision", "highest")
+
+
+def assert_agrees_to_ulp(
+    got: ArrayLike, expected: ArrayLike, *, n_ulp: int, err_msg: str = ""
+) -> None:
+    """Assert two arrays name the same real number to within `n_ulp` of the format.
+
+    The instrument for a knob that partitions a computation without changing it —
+    a batch size, a block size. Such a knob changes the vmap width each block is
+    compiled for, and XLA emits a differently vectorized kernel per width, so the
+    two results can land on representable neighbours. Bounding the gap in units of
+    the working format's spacing states exactly that, and states it once for both
+    precisions: a partition-dependent *reduction*, the defect this guards against,
+    moves a value by orders of magnitude more than a few ULP.
+
+    Args:
+        got: Result under the partitioned computation.
+        expected: Result under the unpartitioned one.
+        n_ulp: Largest tolerated gap, in units of the spacing at the compared
+            magnitude.
+        err_msg: Context appended to the failure message.
+
+    """
+    got_arr = np.asarray(got)
+    expected_arr = np.asarray(expected)
+    np.testing.assert_array_equal(
+        np.isnan(got_arr), np.isnan(expected_arr), err_msg=err_msg
+    )
+    gap = np.where(np.isnan(expected_arr), 0.0, np.abs(got_arr - expected_arr))
+    spacing = np.spacing(np.maximum(np.abs(got_arr), np.abs(expected_arr)))
+    in_ulp = np.divide(
+        gap, spacing, out=np.zeros(gap.shape, dtype=float), where=gap > 0.0
+    )
+    worst = float(in_ulp.max(initial=0.0))
+    if worst > n_ulp:
+        where = np.unravel_index(int(np.argmax(in_ulp)), in_ulp.shape)
+        msg = (
+            f"Values differ by up to {worst:.1f} ULP, above the {n_ulp} allowed; "
+            f"worst at {where}: {got_arr[where]!r} vs {expected_arr[where]!r}. "
+            f"{err_msg}"
+        )
+        raise AssertionError(msg)
 
 
 def pytest_collection_modifyitems(items):
