@@ -36,7 +36,14 @@ SAVINGS_GRID = jnp.linspace(0.0, 5.0, 21)
 NEXT_VALUE = -1.0 / (LIQUID_GRID + 2.0)
 NEXT_MARGINAL = 1.0 / (LIQUID_GRID + 2.0) ** 2
 
-INFEASIBLE = np.asarray(LIQUID_GRID) <= 0.0
+# A budget positive by less than its own rounding error is zero to working
+# precision, and carries no feasible action. `jnp.linspace(-1.0, 5.0, 13)` is meant
+# to place a node at exactly zero and does not — `+6e-8` in 32-bit, `-1e-16` in
+# 64-bit — so a bare `<= 0.0` would put that node on opposite sides of the boundary
+# at the two precisions. Stated here in the test's own terms rather than imported,
+# so it stays an independent statement of the solver's feasible domain.
+_ROUNDING = float(np.finfo(np.asarray(LIQUID_GRID).dtype).eps) * 5.0
+INFEASIBLE = np.asarray(LIQUID_GRID) <= _ROUNDING
 
 
 def _next_value_of_liquid(liquid: jnp.ndarray) -> jnp.ndarray:
@@ -173,3 +180,43 @@ def _infeasible_interval_corner_value(*, flat: bool) -> np.ndarray:
         next_segment=jnp.asarray(0.0),
     )
     return np.asarray(channels[1])
+
+
+def _grid_with_a_rounding_positive_node() -> jnp.ndarray:
+    """A liquid grid whose third node is positive only by rounding error.
+
+    An ordinary `jnp.linspace(-1.0, 5.0, 13)` is meant to place a node at exactly
+    zero and does not: at 32-bit precision it lands at +6e-8, at 64-bit at -1e-16.
+    This builds that node explicitly, at half the rounding error of the grid's own
+    scale, so the case is exercised at whatever precision the suite runs under.
+    """
+    scale = 5.0
+    rounding = float(jnp.finfo(jnp.result_type(1.0)).eps) * scale
+    return jnp.array(
+        [-1.0, -0.5, 0.5 * rounding, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, scale]
+    )
+
+
+def test_case_step_kills_a_corner_whose_budget_is_positive_only_by_rounding():
+    """A budget indistinguishable from zero at working precision has no action.
+
+    Consuming the whole budget is an action only where the budget is positive, and
+    a budget that is positive by less than its own rounding error is not positive in
+    any usable sense: inverting marginal utility there is meaningless. Such a point
+    is dead exactly like one whose budget is negative outright.
+    """
+    grid = _grid_with_a_rounding_positive_node()
+    value, _marginal, _policy = _case_step(
+        next_value=-1.0 / (grid + 2.0),
+        next_marginal=1.0 / (grid + 2.0) ** 2,
+        liquid_grid=grid,
+        savings_grid=SAVINGS_GRID,
+        discount_factor=DISCOUNT_FACTOR,
+        crra=CRRA,
+        return_liquid=RETURN_LIQUID,
+        income=INCOME,
+        subsidy=0.0,
+        asset_limit=99.0,
+        equality_owner="otherwise",
+    )
+    assert np.isnan(np.asarray(value)[2])
