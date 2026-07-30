@@ -808,7 +808,11 @@ class _TerminalCarryPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=result.V_arr, continuation=carry)
+        return KernelResult(
+            V_arr=result.V_arr,
+            continuation=carry,
+            simulation_policy=result.simulation_policy,
+        )
 
 
 def _build_egm_child_carry_producer(
