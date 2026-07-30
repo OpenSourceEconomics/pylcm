@@ -1145,21 +1145,16 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OPEN (round-10 audit F2, not closed): `_exact_compare` still routes "
-        "through `_to_safe_columns`, which scales the raw columns BEFORE "
-        "differencing and so merges `q` with `x0` for a wide segment. The public "
-        "path no longer misorders this witness because the value screen resolves "
-        "it, but the certified comparator itself still reports a tie where the "
-        "exact ordering is strict. Closing it needs the exponent-preserving "
-        "comparator, not another change to where `ldexp` is applied -- when that "
-        "lands this test XPASSes and must be un-xfailed."
-    ),
-)
 def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
-    """The certified comparator must not need the screen's help to order these."""
+    """The certified comparator must not need the screen's help to order these.
+
+    Probes `_exact_compare` DIRECTLY, because the public path passes this witness
+    for the wrong reason: the value screen resolves the gap before the comparator
+    is consulted, so a comparator that reports a tie where the exact ordering is
+    strict stays invisible there. Two rounds of the round-10 F2 repair passed the
+    public test with this one still returning `0` (it was pinned `xfail(strict)`
+    in between). A screen that rescues a broken comparator hides it.
+    """
     x0, q, x1, competitor, exact = _wide_segment_case(dtype)
     cols_wide = jnp.asarray(
         [[x0, x1, dtype(0.0), x1, 1.0, 20.0, 1.0, 20.0]], dtype=dtype

@@ -307,50 +307,49 @@ def _binade_exponent(magnitude: FloatND) -> jax.Array:
     return jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
-def _to_safe_columns(
-    *, cols_a: FloatND, cols_b: FloatND, q: FloatND
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Rescale both candidates' raw columns so the exact products cannot overflow.
+def _mid_range_target(dtype: jnp.dtype) -> int:
+    """Binade to normalize a product's operands into: half the exponent range.
 
-    `_to_safe_binade` normalizes a ratio's components, but `_exact_ratio` has
-    already FORMED those components by then: its numerator is a sum of
-    `value * (grid - q)` products. At a large enough model scale that
-    multiplication overflows to infinity while every stored input is still
-    finite normal — measured at float32 scale `2**60`, where the interpolant's
-    products exceed the float32 range and the exact predicate returns NaN
-    instead of a sign. Normalizing after the fact is too late, so the columns
-    are moved into a safe binade first.
+    Normalizing the largest operand to `[0.5, 1)` — the obvious choice, and what
+    rounds 8 to 10 used — stops products overflowing but spends the entire lower
+    half of the exponent range on nothing. Every operand more than `emax` binades
+    below the largest is then pushed into the subnormals, where it loses bits, or
+    vanishes outright. A segment whose own grid span covers the dynamic range has
+    exactly that shape: normalizing `(x1 - x0)` to below one sends `(q - x0)` to
+    zero, and the interpolant collapses onto its left value.
 
-    Two independent scales are used, and which axis gets which matters:
-
-    - the grid columns and the query share ONE scale, because `q` is compared
-      against the grid for node detection and a common power of two preserves
-      those equalities exactly;
-    - the value columns share ANOTHER scale, common to BOTH candidates.
-
-    A per-candidate grid scale would also be sound — the interpolant is
-    invariant to it — but the value scale must be shared: `V_a - V_b` only
-    keeps its sign if both values are measured in the same units. Scaling the
-    values by a common positive power of two multiplies that difference by a
-    positive constant, which cannot change its sign.
+    Landing the largest operand mid-range instead leaves both halves of headroom:
+    a product of two such operands still cannot overflow (`2**(2*target)` plus
+    room for the sum of the terms stays inside the range), while an operand up to
+    `target + emax` binades below the largest stays finite NORMAL — 189 binades
+    of slack in float32, 1533 in float64, against zero before.
     """
-    grid = jnp.concatenate([cols_a[..., :2], cols_b[..., :2], q[..., None]], axis=-1)
-    value = jnp.concatenate([cols_a[..., 2:4], cols_b[..., 2:4]], axis=-1)
-    grid_exp = _binade_exponent(jnp.max(jnp.abs(grid), axis=-1))[..., None]
-    value_exp = _binade_exponent(jnp.max(jnp.abs(value), axis=-1))[..., None]
-    exponent = jnp.concatenate(
-        [
-            jnp.broadcast_to(grid_exp, (*cols_a.shape[:-1], 2)),
-            jnp.broadcast_to(value_exp, (*cols_a.shape[:-1], 2)),
-            jnp.zeros((*cols_a.shape[:-1], cols_a.shape[-1] - 4), dtype=grid_exp.dtype),
-        ],
-        axis=-1,
-    )
-    return (
-        jnp.ldexp(cols_a, -exponent),
-        jnp.ldexp(cols_b, -exponent),
-        jnp.ldexp(q, -grid_exp[..., 0]),
-    )
+    # Two operands multiply and up to sixteen such products are summed, so leave
+    # four binades of headroom above `2 * target`.
+    return (int(jnp.finfo(dtype).maxexp) - 4) // 2
+
+
+def _scale_exponent(magnitude: FloatND, target: int) -> jax.Array:
+    """Shift placing `magnitude` in binade `target`; `0` where there is none.
+
+    Zero and non-finite magnitudes are passed through unscaled: a NaN must stay
+    NaN so it surfaces rather than being silently ordered.
+    """
+    _, exponent = jnp.frexp(magnitude)
+    usable = (magnitude > 0) & jnp.isfinite(magnitude)
+    return jnp.where(usable, exponent - target, jnp.zeros_like(exponent))
+
+
+def _group_scale_exponent(*magnitudes: FloatND, target: int) -> jax.Array:
+    """One shift for a group of quantities that must remain COMPARABLE.
+
+    Taken from the largest magnitude in the group. A single shared power of two
+    is the only scaling allowed on quantities whose ORDER is read across group
+    members: it multiplies each of them, and hence every difference between them,
+    by the same positive constant, so no ordering can change.
+    """
+    stacked = jnp.stack([jnp.abs(magnitude) for magnitude in magnitudes], axis=-1)
+    return _scale_exponent(jnp.max(stacked, axis=-1), target)
 
 
 def _exact_cross_sign(*, a: _ExactRatio, b: _ExactRatio, dtype: jnp.dtype) -> FloatND:
@@ -386,7 +385,9 @@ def _exact_cross_sign(*, a: _ExactRatio, b: _ExactRatio, dtype: jnp.dtype) -> Fl
     return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
 
 
-def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
+def _exact_ratio(
+    *, cols: FloatND, q: FloatND, value_exponent: jax.Array
+) -> _ExactRatio:
     """Exact rational value of one candidate per query, from its raw columns.
 
     `V = (v0*(x1 - q) + v1*(q - x0)) / (x1 - x0)` is the same interpolant
@@ -394,6 +395,24 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     pair instead of being rounded, so the pair `(numerator, denominator)`
     represents `V` with no error at all. A node event publishes a STORED float,
     so its exact value is that float over one.
+
+    Returned in units of `2**value_exponent`, which the caller supplies because
+    it must be SHARED with the competitor: `V_a - V_b` only keeps its sign while
+    both are measured in the same units.
+
+    **The differences are formed FIRST, on the RAW columns.** `_two_diff` is
+    exact and the subtraction of two finite floats cannot overflow, so nothing
+    is lost and nothing needs rescuing. Scaling the columns first — which is
+    what the old `_to_safe_columns` did, with one grid exponent covering `q` and
+    both candidates' nodes — can map `q` and a node onto the SAME float, after
+    which `q - x0` is zero, the interpolant collapses onto its left value, and
+    no amount of downstream exactness recovers the difference (round-10 audit
+    F2, the same class as the value path's round-11 repair: scale the
+    DIFFERENCES, never the operands).
+
+    The grid scale is then PER CANDIDATE and cancels exactly — it multiplies
+    this candidate's numerator and denominator by one power of two, leaving the
+    rational identically unchanged — so it needs no coordination at all.
     """
     split = _dekker_split_factor(cols.dtype)
     left_grid, right_grid = cols[..., 0], cols[..., 1]
@@ -402,11 +421,21 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     ah, al = _two_diff(right_grid, q)
     bh, bl = _two_diff(q, left_grid)
     dh, dl = _two_diff(right_grid, left_grid)
+
+    grid_exponent = _group_scale_exponent(
+        ah, bh, dh, target=_mid_range_target(cols.dtype)
+    )
+    ah, al, bh, bl, dh, dl = (
+        jnp.ldexp(term, -grid_exponent) for term in (ah, al, bh, bl, dh, dl)
+    )
+    scaled_left_value = jnp.ldexp(left_value, -value_exponent)
+    scaled_right_value = jnp.ldexp(right_value, -value_exponent)
+
     products = (
-        _two_prod(left_value, ah, split),
-        _two_prod(left_value, al, split),
-        _two_prod(right_value, bh, split),
-        _two_prod(right_value, bl, split),
+        _two_prod(scaled_left_value, ah, split),
+        _two_prod(scaled_left_value, al, split),
+        _two_prod(scaled_right_value, bh, split),
+        _two_prod(scaled_right_value, bl, split),
     )
     numerator = jnp.stack([term for pair in products for term in pair], axis=-1)
     denominator = jnp.stack([dh, dl], axis=-1)
@@ -424,7 +453,13 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
         left_value=left_value,
         right_value=right_value,
     )
-    node_value = jnp.where(use_right, right_value, left_value)
+    # Node detection reads the RAW grid and query — an equality that a shared
+    # power of two would have preserved anyway, but which is now never disturbed.
+    # The published value goes into the same `2**value_exponent` units as the
+    # interpolated branch so the two are directly comparable.
+    node_value = jnp.ldexp(
+        jnp.where(use_right, right_value, left_value), -value_exponent
+    )
     zeros = jnp.zeros_like(node_value)
     is_node = node[..., None]
     return _ExactRatio(
@@ -497,35 +532,61 @@ def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
     double-double values cannot, because algebraically different segment
     parameterizations of the SAME exact value need not produce the same low
     word (round-6 audit F2).
+
+    Only the VALUE scale is shared, and it is the only thing this function has
+    to decide: each candidate normalizes its own grid differences, which cancel
+    within its own ratio. The grid columns are handed over RAW so that every
+    difference is formed before anything is rescaled (round-10 audit F2).
     """
-    safe_a, safe_b, safe_q = _to_safe_columns(cols_a=cols_a, cols_b=cols_b, q=q)
+    value_exponent = _group_scale_exponent(
+        cols_a[..., 2],
+        cols_a[..., 3],
+        cols_b[..., 2],
+        cols_b[..., 3],
+        target=_mid_range_target(cols_a.dtype),
+    )
     return _exact_cross_sign(
-        a=_exact_ratio(cols=safe_a, q=safe_q),
-        b=_exact_ratio(cols=safe_b, q=safe_q),
+        a=_exact_ratio(cols=cols_a, q=q, value_exponent=value_exponent),
+        b=_exact_ratio(cols=cols_b, q=q, value_exponent=value_exponent),
         dtype=cols_a.dtype,
     )
 
 
-def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
+def _exact_slope_ratio(
+    *, cols: FloatND, value_exponent: jax.Array, grid_exponent: jax.Array
+) -> _ExactRatio:
     """A candidate's value slope as an exact rational `(v1-v0)/(x1-x0)`.
 
     Both differences are error-free pairs, so the ratio carries no rounding at
     all. The denominator is canonically positive so a cross-multiplied
     comparison reads its sign off the numerator difference.
+
+    Returned in units of `2**(grid_exponent - value_exponent)`. Unlike the value
+    ratio, a slope's numerator and denominator scales do NOT cancel within one
+    candidate — they change the ratio — so BOTH are supplied by the caller and
+    shared across the candidates being compared. The shared factor is a positive
+    power of two, so it cannot change which slope is larger.
+
+    As in `_exact_ratio`, both differences are formed on the RAW columns before
+    any scaling: a scale applied to the operands can merge two distinct floats
+    and silently zero the difference (round-10 audit F2).
     """
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
     nh, nl = _two_diff(right_value, left_value)
     dh, dl = _two_diff(right_grid, left_grid)
-    numerator = jnp.stack([nh, nl], axis=-1)
-    denominator = jnp.stack([dh, dl], axis=-1)
     # A zero-width segment has no grid span; the established convention
-    # publishes its raw value jump as the slope, i.e. a unit denominator.
-    zero_width = (right_grid == left_grid)[..., None]
-    denominator = jnp.where(
-        zero_width,
-        jnp.stack([jnp.ones_like(dh), jnp.zeros_like(dl)], axis=-1),
-        denominator,
+    # publishes its raw value jump as the slope, i.e. a unit RAW denominator —
+    # substituted before scaling so it lands in the same units as every other
+    # candidate's width.
+    zero_width = right_grid == left_grid
+    dh = jnp.where(zero_width, jnp.ones_like(dh), dh)
+    dl = jnp.where(zero_width, jnp.zeros_like(dl), dl)
+    numerator = jnp.stack(
+        [jnp.ldexp(nh, -value_exponent), jnp.ldexp(nl, -value_exponent)], axis=-1
+    )
+    denominator = jnp.stack(
+        [jnp.ldexp(dh, -grid_exponent), jnp.ldexp(dl, -grid_exponent)], axis=-1
     )
     flip = (denominator[..., 0] < 0)[..., None]
     return _ExactRatio(
@@ -553,15 +614,35 @@ def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
     underflow a strict sign to zero or overflow it to NaN. `_exact_cross_sign`
     normalizes each ratio into a safe binade first, which is a no-op on the
     rational being compared (round-8 audit F2).
+
+    Both scales are shared across the two candidates and both are taken from the
+    DIFFERENCES, not the columns — a slope's numerator and denominator scales do
+    not cancel within a candidate, so neither may be chosen locally.
     """
-    # The slope needs no query, but it goes through the same column
-    # normalization so that value and slope selection see one set of units.
-    safe_a, safe_b, _ = _to_safe_columns(
-        cols_a=cols_a, cols_b=cols_b, q=jnp.zeros_like(cols_a[..., 0])
+
+    def effective_width(cols: FloatND) -> FloatND:
+        # The zero-width convention's unit RAW denominator has to sit inside the
+        # group that picks the shared scale, or that scale could push it into the
+        # subnormal range and cost the convention its exactness.
+        width = cols[..., 1] - cols[..., 0]
+        return jnp.where(width == 0, jnp.ones_like(width), width)
+
+    target = _mid_range_target(cols_a.dtype)
+    value_exponent = _group_scale_exponent(
+        cols_a[..., 3] - cols_a[..., 2],
+        cols_b[..., 3] - cols_b[..., 2],
+        target=target,
+    )
+    grid_exponent = _group_scale_exponent(
+        effective_width(cols_a), effective_width(cols_b), target=target
     )
     return _exact_cross_sign(
-        a=_exact_slope_ratio(cols=safe_a),
-        b=_exact_slope_ratio(cols=safe_b),
+        a=_exact_slope_ratio(
+            cols=cols_a, value_exponent=value_exponent, grid_exponent=grid_exponent
+        ),
+        b=_exact_slope_ratio(
+            cols=cols_b, value_exponent=value_exponent, grid_exponent=grid_exponent
+        ),
         dtype=cols_a.dtype,
     )
 

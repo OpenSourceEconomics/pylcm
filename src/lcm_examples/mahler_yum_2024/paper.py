@@ -103,6 +103,46 @@ from lcm_examples.mahler_yum_2024 import (
     work_disutility,
 )
 
+# Streaming knobs for the paper-mode configuration.
+#
+# `NBEGM`'s three streaming knobs all default to `0`, meaning every ride cell,
+# discrete branch and liquid interval has its buffers in flight simultaneously.
+# For a toy model that is free; for this one it is not. The alive regime has 2720
+# ride cells (every non-liquid state: health x productivity_shock x lagged_effort
+# x education x productivity x health_type x discount_type), each carrying an
+# augmented liquid row per outer-mesh node, and the paper-mode gates consequently
+# ask for one enormous allocation. No 80 GB A100 can serve it.
+#
+# Measured on `hmg-office`, one solve per PROCESS -- a long-lived JAX process
+# keeps each solve's executables and buffers alive, so a sweep inside one process
+# would measure accumulated leakage rather than the setting:
+#
+# - all three knobs at `0`: aborts requesting 260_448_759_408 bytes (242.6 GiB);
+# - `cell_block_size=256` with `branch_batch_size=1`: ~10.4 GiB resident, ran
+#   15 minutes without blowing up.
+#
+# An earlier measurement at `8828b33` put the unbounded request at 318 GiB; the
+# round-11 rewrite of the exact comparator brought it down to 242.6 GiB, which is
+# still far past any available machine -- so these knobs remain necessary rather
+# than merely prudent.
+#
+# Blocking is the mechanism the solver already provides for exactly this, and it
+# is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,
+# `test_nbegm_branch_batch_size.py` and `test_nbegm_interval_batch.py` pin the
+# solved value against the unstreamed reference to `atol=rtol=1e-10` -- agreement
+# at that tolerance, not bit-for-bit, because blocking changes the XLA reduction
+# order.
+_PAPER_CELL_BLOCK_SIZE = 256
+
+# `labor_supply` has three values and appears as an axis of the very array that
+# overflowed, so streaming it is the cheapest remaining factor. The branch body
+# still compiles once -- the axis is scanned, never Python-unrolled.
+_PAPER_BRANCH_BATCH_SIZE = 1
+
+# `interval_batch_size` is left at `0`: the per-interval continuation buffers are
+# not the binding term here, and streaming a dimension that is not the problem
+# only costs time.
+
 N_HABIT_GRID = 17
 N_EFFORT_GRID = 17
 N_CONSUMPTION_GRID = 50
@@ -213,14 +253,28 @@ def build_dead_regime() -> Regime:
     )
 
 
-def build_paper_solver(*, outer_search: AdaptiveOuterMesh | None = None) -> NNBEGM:
-    """The paper-mode NNBEGM solver (plan section 12.1's target interface)."""
+def build_paper_solver(
+    *,
+    outer_search: AdaptiveOuterMesh | None = None,
+    cell_block_size: int = _PAPER_CELL_BLOCK_SIZE,
+    branch_batch_size: int = _PAPER_BRANCH_BATCH_SIZE,
+    interval_batch_size: int = 0,
+) -> NNBEGM:
+    """The paper-mode NNBEGM solver (plan section 12.1's target interface).
+
+    The three streaming knobs are set rather than left at their `0` default;
+    see `_PAPER_CELL_BLOCK_SIZE` for why. Pass `0` explicitly to restore the
+    unstreamed behaviour (every cell and branch buffer in flight at once).
+    """
     return NNBEGM(
         inner=NBEGM(
             continuous_state="wealth",
             post_decision_function="saving",
             budget_target="cash_on_hand",
             savings_grid=IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            cell_block_size=cell_block_size,
+            branch_batch_size=branch_batch_size,
+            interval_batch_size=interval_batch_size,
         ),
         outer_action="effort",
         outer_post_decision="next_lagged_effort",
