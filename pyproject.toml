@@ -44,10 +44,13 @@ dependencies = [
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.authors]]
 name = "Maximilian Jahn"
+
 [[project.authors]]
 name = "Janos Gabler"
+
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -56,6 +59,7 @@ file = "LICENSE"
 [[project.maintainers]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+
 [[project.maintainers]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
@@ -186,16 +190,19 @@ unsafe-fixes = false
 select = [ "ALL" ]
 extend-ignore = [
   "COM812",  # Conflicts with ruff-format
+  "CPY001",  # Missing copyright notice at top of file
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
   "EM102",   # Exception must not use an f-string literal
   "FIX002",  # Line contains TODO
   "ISC001",  # Conflicts with ruff-format
+  "ISC004",  # Explicit string concatenation across lines
   "N802",    # Function name should be lowercase
   "N803",    # Argument name should be lowercase
   "N806",    # Variable in function should be lowercase
   "N815",    # Variable in class scope should not be mixedCase
   "PLR0913", # Too many arguments in function definition
+  "PLR0917", # Too many positional arguments
   "TC001",   # Move application import into a type-checking block
   "TC002",   # Move third-party import into a type-checking block
   "TC003",   # Move standard library import into a type-checking block
@@ -300,7 +307,6 @@ known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 column_width = 88
 max_supported_python = "3.14"
 table_format = "long"
-collapse_tables = [ "tool.hatch", "tool.pytest", "tool.pytask", "tool.ty" ]
 expand_tables = [
   "tool.pixi.dependencies",
   "tool.pixi.environments",
@@ -311,6 +317,7 @@ expand_tables = [
   "tool.pixi.tasks",
   "tool.pixi.workspace",
 ]
+collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
 src.exclude = [ "docs/**/*.ipynb" ]

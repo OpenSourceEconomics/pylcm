@@ -43,8 +43,8 @@ def collect_state_transitions(
         UserFunction
         | Callable
         | Phased
-        | None
-        | Mapping[RegimeName, UserFunction | Callable | Phased],
+        | Mapping[RegimeName, UserFunction | Callable | Phased]
+        | None,
     ],
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
