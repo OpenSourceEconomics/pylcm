@@ -14,6 +14,8 @@ import pytest
 
 from tests.test_models import negm_kinked_toy, negm_serviceflow_toy
 
+pytestmark = pytest.mark.slow
+
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
 # Three subjects seeded at the same liquid/illiquid states, simulated forward

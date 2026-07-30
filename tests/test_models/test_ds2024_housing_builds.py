@@ -24,6 +24,8 @@ import pytest
 from tests.solution._ds2024_housing_vfi_oracle import solve_ds2024_housing_vfi
 from tests.test_models.ds2024_housing import build_model, build_params
 
+pytestmark = pytest.mark.slow
+
 N_GRID = 10
 N_CONSUMPTION = 200
 N_PERIODS = 4

@@ -26,6 +26,7 @@ from tests.conftest import X64_ENABLED
 # 64-bit replication; under 32-bit the simulation drifts past every band,
 # so the moments lose signal. Skip the whole module at 32-bit precision.
 pytestmark = [
+    pytest.mark.slow,
     pytest.mark.gpu,
     pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(
