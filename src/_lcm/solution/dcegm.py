@@ -125,7 +125,7 @@ class DCEGM(Solver):
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     `"exact"` is pylcm's own construction and the default. The other four are
-    faithful ports of the method columns of Dobrescu & Shanker 2026, kept for
+    faithful ports of the method columns of Dobrescu & Shanker 2024, kept for
     method comparison and speed; each carries the accepted limitation of its
     lineage, so prefer the default unless you are reproducing a method.
 
@@ -153,12 +153,12 @@ class DCEGM(Solver):
       Hermite carry read) and generalizes to multidimensional grids.
     - `"ltm"`: the local-upper-bound brute method — an `O(K^2)` dense segment
       scan that evaluates the envelope at every candidate abscissa (the
-      quadratic baseline of Dobrescu & Shanker 2026; a kink lands between
+      quadratic baseline of Dobrescu & Shanker 2024; a kink lands between
       output nodes, recovered by the downstream read).
     - `"mss"`: HARK's EGM upper envelope — a left-to-right sweep that keeps the
       max-value branch at every abscissa *and* inserts the exact
       segment-crossing point, so it tracks the FUES envelope tightly (the `MSS`
-      method of Dobrescu & Shanker 2026). It resolves exact coincident-node
+      method of Dobrescu & Shanker 2024). It resolves exact coincident-node
       interval ownership that the fast scans miss, but samples winners only at
       candidate abscissae: a branch owning just an interior subinterval is
       dropped, a crossing landing exactly on a node is not emitted, and its

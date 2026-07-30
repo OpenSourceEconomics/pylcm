@@ -1,6 +1,6 @@
-"""Dobrescu-Shanker (2026) Application 3 discrete-housing model (no-tax variant).
+"""Dobrescu-Shanker (2024) Application 3 discrete-housing model (no-tax variant).
 
-The DS-2026 Section 2.3 model (an extended Fella 2014) is a finite-horizon
+The DS-2024 Section 2.3 model (an extended Fella 2014) is a finite-horizon
 consumption-savings problem with a *discrete* housing stock, an own-vs-rent
 choice, a proportional housing-adjustment cost, and a Markov wage. This module
 builds the **no-tax** variant (Tables 4 and 7), which is fully specified in the
