@@ -260,23 +260,63 @@ def get_brute_child_carry_producer(
             passive_state_names=passive_state_names,
             euler_state_name=state_name,
         )
-        # The marginal value of resources is the value array's slope along the
-        # Euler grid; infeasible (`-inf`) rows carry zero marginal so the parent's
-        # probability-weighted expectation stays finite.
-        finite_value = jnp.where(jnp.isneginf(value), jnp.nan, value)
-        marginal = jnp.asarray(jnp.gradient(finite_value, euler_grid, axis=-1))
+        marginal = _marginal_along_euler_grid(value=value, euler_grid=euler_grid)
         leading_shape = value.shape[:-1]
         endog_grid = jnp.broadcast_to(euler_grid, (*leading_shape, euler_grid.shape[0]))
         return EGMCarry(
             endog_grid=endog_grid,
             value=value,
-            marginal_utility=jnp.where(jnp.isfinite(marginal), marginal, 0.0).astype(
-                dtype
-            ),
+            marginal_utility=marginal.astype(dtype),
             taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
         )
 
     return produce_brute_child_carry
+
+
+def _marginal_along_euler_grid(*, value: FloatND, euler_grid: FloatND) -> FloatND:
+    """Differentiate a value array along its Euler grid, one-sided at boundaries.
+
+    The marginal value of resources is the value array's slope along the Euler
+    grid. Infeasible states carry `-inf`, and a central difference straddling one
+    of them says nothing, so each state is differentiated over the neighbours it
+    actually has:
+
+    - both neighbours feasible ⇒ the interior second-order stencil, which is what
+      `jnp.gradient` computes and is exact for a linear value on any spacing;
+    - one neighbour feasible ⇒ the one-sided difference toward it, so the state
+      just above a feasibility boundary keeps the derivative it genuinely has;
+    - neither ⇒ zero, an isolated feasible state having no slope to report;
+    - the state itself infeasible ⇒ zero, so the parent's probability-weighted
+      expectation stays finite.
+
+    Returns:
+        Array of the same shape as `value` holding the marginal along its last
+        axis.
+    """
+    feasible = jnp.isfinite(value)
+    # Differences are taken on a finite stand-in: an infeasible entry never
+    # contributes to a selected branch, and substituting zero keeps every
+    # unselected branch free of the `nan`/`inf` that would otherwise reach a
+    # derivative through this function.
+    safe_value = jnp.where(feasible, value, 0.0)
+
+    forward_slope = jnp.diff(safe_value, axis=-1) / jnp.diff(euler_grid)
+    zero_pad = jnp.zeros((*value.shape[:-1], 1), dtype=forward_slope.dtype)
+    slope_toward_right = jnp.concatenate([forward_slope, zero_pad], axis=-1)
+    slope_toward_left = jnp.concatenate([zero_pad, forward_slope], axis=-1)
+
+    false_pad = jnp.zeros((*value.shape[:-1], 1), dtype=bool)
+    has_right = jnp.concatenate([feasible[..., 1:], false_pad], axis=-1)
+    has_left = jnp.concatenate([false_pad, feasible[..., :-1]], axis=-1)
+
+    interior = jnp.gradient(safe_value, euler_grid, axis=-1)
+    one_sided = jnp.where(
+        has_right,
+        slope_toward_right,
+        jnp.where(has_left, slope_toward_left, 0.0),
+    )
+    marginal = jnp.where(has_left & has_right, jnp.asarray(interior), one_sided)
+    return jnp.where(feasible, marginal, 0.0)
 
 
 def _reorder_terminal_value(
