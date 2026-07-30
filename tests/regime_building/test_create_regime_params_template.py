@@ -1,3 +1,5 @@
+import inspect
+
 from _lcm.grids import DiscreteGrid
 from _lcm.params.regime_template import (
     create_regime_params_template,
@@ -28,6 +30,68 @@ def test_create_params_without_processes(binary_category_class):
             "next_regime": {},
         }
     )
+
+
+def test_create_regime_params_template_has_no_representative_age_argument():
+    """Age specialization is resolved upstream, so the template is age-unaware.
+
+    `normalize_age_specialization` replaces every `AgeSpecializedFunction` by its
+    first-active concrete function before this runs, so the template reads concrete
+    signatures directly and needs no `representative_age` argument.
+    """
+    params = inspect.signature(create_regime_params_template).parameters
+    assert "representative_age" not in params
+
+
+def test_create_params_reads_concrete_function_params(binary_category_class):
+    """A concrete (normalized) function contributes its params under its name.
+
+    After normalization the regime carries the concrete first-active function in
+    place of any marker, so a real estimated parameter surfaces under its name with
+    no marker handling in the template.
+    """
+
+    def net_income(a, b, tax_rate):  # noqa: ARG001
+        return tax_rate
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": net_income,
+        },
+    )
+    got = create_regime_params_template(regime)
+    assert got["net_income"] == {"tax_rate": "no_annotation_found"}
+
+
+def test_create_params_unions_phased_variant_params(binary_category_class):
+    """`Phased` entries contribute the union of both variants' parameters."""
+
+    def solve_income(a, b, solve_rate):  # noqa: ARG001
+        return solve_rate
+
+    def simulate_income(a, b, simulate_rate):  # noqa: ARG001
+        return simulate_rate
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": Phased(solve=solve_income, simulate=simulate_income),
+        },
+    )
+    got = create_regime_params_template(regime)
+    assert got["net_income"] == {
+        "solve_rate": "no_annotation_found",
+        "simulate_rate": "no_annotation_found",
+    }
 
 
 def test_create_params_with_custom_H_no_extra_params():
@@ -119,7 +183,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     regime = MockRegime(
         actions={"a": None},
         states={"b": None},
-        functions={  # ty: ignore[invalid-argument-type]
+        functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "H": Phased(solve=exponential_h, simulate=beta_delta_h),
         },

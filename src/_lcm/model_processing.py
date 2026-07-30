@@ -24,6 +24,8 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.regime_building.age_normalization import _regime_has_markers
+from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
@@ -164,6 +166,7 @@ def validate_model_inputs(
     regime_id_class: type,
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -172,6 +175,9 @@ def validate_model_inputs(
     function with their declared types. This function focuses on value and
     cross-field rules.
 
+    `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
+    each regime's representative age, so a state read only by a policy-specialized
+    function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
@@ -216,7 +222,7 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables
+            user_regimes, broadcast_variables=broadcast_variables, ages=ages
         )
     )
 
@@ -252,6 +258,7 @@ def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -282,6 +289,35 @@ def _validate_all_variables_used(
         if broadcast_variables is not None:
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        if ages is not None:
+            active_periods = ages.get_periods_where(user_regime.active)
+            if not active_periods and _regime_has_markers(user_regime):
+                # This regime is about to fail with the precise
+                # "active at no model age" `RegimeInitializationError` once
+                # `normalize_age_specialization` runs. Leaving its markers
+                # unresolved here would make `get_ancestors` see only
+                # `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`
+                # signature, misreporting a variable used only through a marker
+                # as unused and raising that instead — so skip this regime's
+                # variable-usage check and let the real cause surface.
+                continue
+            if active_periods:
+                # Resolve any `AgeSpecializedFunction` marker to its concrete
+                # function at a representative active age so `get_ancestors` sees
+                # the real argument dependencies. The dependency structure is
+                # age-invariant, so any active age serves; a stateful factory
+                # could in principle be validated as one object and installed as
+                # another (see the `_AgeSpecialized` docstring), so this relies on
+                # `build` being pure — its result is not cached or reused
+                # elsewhere.
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                user_functions = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in user_functions.items()
+                    },
+                )
 
         targets = [
             "utility",
@@ -434,7 +470,12 @@ def _partial_fixed_params_into_regimes(
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(simulation.next_state, **regime_fixed),
+            next_state=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.next_state.items()
+                }
+            ),
             compute_regime_transition_probs=(
                 functools.partial(
                     simulation.compute_regime_transition_probs,

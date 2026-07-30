@@ -16,6 +16,7 @@ philosophy. The remaining pages cover individual topics in depth.
 - [Regimes](regimes.ipynb)
 - [Grids](grids.md)
 - [Transitions](transitions.ipynb)
+- [Age-specialized functions and grids](age_specialized.md)
 - [Continuous stochastic processes](continuous_stochastic_processes.md)
 - [Parameters](parameters.md)
 - [Working with DataFrames and Series](pandas_interop.md)

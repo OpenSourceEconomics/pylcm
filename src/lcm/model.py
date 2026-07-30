@@ -246,6 +246,7 @@ class Model:
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
+            ages=ages,
         )
         self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
@@ -257,6 +258,7 @@ class Model:
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
+            ages=self.ages,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(

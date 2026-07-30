@@ -27,6 +27,13 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
     are function arguments that are not states, actions, regime functions,
     `next_<state>` outputs, or special variables (`period`, `age`, `E_next_V`).
 
+    Age specialization is already resolved by `normalize_age_specialization`
+    before this runs: the regime passed here carries concrete first-active-age
+    functions in place of any `AgeSpecializedFunction` marker, so the template is
+    read directly off those concrete signatures (the call signature is
+    age-invariant by contract, so the first-active resolution is every age's
+    template) and this module is unaware of age markers.
+
     For `Phased` entries, the template contains the **union** of both
     variants' parameters so the user can provide a single flat params dict
     that satisfies both phases.
@@ -217,7 +224,8 @@ def _collect_all_functions_for_template(
 
     Unlike `user_regime.get_all_functions(phase=...)` which resolves `Phased`
     entries to a single variant, this returns them as-is so the caller can
-    union both variants' parameters.
+    union both variants' parameters. Age markers are already resolved to concrete
+    functions upstream, so no marker handling is needed here.
     """
     # The template reads the finalized regime, where `None` masks are
     # already resolved; the filters narrow the type.

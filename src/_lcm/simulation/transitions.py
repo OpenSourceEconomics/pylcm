@@ -125,7 +125,7 @@ def calculate_next_states(
 
     # Compute next states using regime's transition functions
     # ---------------------------------------------------------------------------------
-    next_state_vmapped = regime.simulation.next_state
+    next_state_vmapped = regime.simulation.next_state[period]
 
     # Carried states are true values that the decision's state-action space
     # deliberately excludes. Feed them to the realized transition so it reads
