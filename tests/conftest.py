@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from dataclasses import make_dataclass
 
+import jax
 import jax.numpy as jnp
 import pytest
 from jax import config as jax_config
@@ -23,6 +24,14 @@ def pytest_addoption(parser):
         default="64",
         choices=["32", "64"],
         help="Floating point precision for JAX (32 or 64 bit, default: 64)",
+    )
+    parser.addoption(
+        "--release-compiled-programs",
+        action="store_true",
+        help=(
+            "Drop JAX's in-memory compiled-program cache whenever the test "
+            "module changes, bounding a worker's resident memory."
+        ),
     )
 
 
@@ -75,6 +84,25 @@ def pytest_collection_modifyitems(items):
             token in name for token in _SLOW_MODULE_TOKENS
         ):
             item.add_marker(slow)
+
+
+def pytest_runtest_teardown(item, nextitem):
+    """Release compiled programs at module boundaries, when asked to.
+
+    A worker's resident memory grows with every distinct program it has
+    compiled, because JAX holds each one live in an in-memory cache. Across a
+    module-spanning session that growth has no bound, which is what exhausts a
+    small runner. Dropping the cache when the module changes bounds it to one
+    module's programs. The persistent on-disk cache absorbs most of the cost:
+    a program compiled again is a lookup rather than a fresh compile.
+    """
+    if not item.config.getoption("--release-compiled-programs"):
+        return
+    current = getattr(item, "module", None)
+    upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
+    if upcoming is not None and upcoming is current:
+        return
+    jax.clear_caches()
 
 
 @pytest.fixture(scope="session")
