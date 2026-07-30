@@ -418,6 +418,7 @@ def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBacke
             value=value,
             n_refined=n_refined,
             max_runs=solver.envelope_max_runs,
+            cell_batch_size=solver.envelope_cell_batch_size,
         )
 
     return exact_backend
@@ -449,6 +450,7 @@ def _build_exact_bracket_finder(
             value=value,
             n_refined=n_refined,
             max_runs=solver.envelope_max_runs,
+            cell_batch_size=solver.envelope_cell_batch_size,
         )
         return _bracket_from_refined_row(
             refined_grid=refined_grid,

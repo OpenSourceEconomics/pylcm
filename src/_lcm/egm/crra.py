@@ -8,20 +8,6 @@ from lcm.typing import FloatND, ScalarFloat
 def crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
     """Return CRRA felicity, with the log limit at `crra == 1`.
 
-    The power branch is evaluated at a *safe* exponent so that neither
-    argument's derivative is poisoned at the log limit. `jnp.where` evaluates
-    both branches, so the raw power form contributes `c ** 0 / 0 == inf` at
-    `crra == 1` and the `0 * inf` that flows back through the select turns
-    `jax.grad` into NaN in both `consumption` and `crra`. Substituting the
-    exponent `1.0` on the log branch keeps the untaken expression finite; its
-    derivative with respect to `crra` is zero there, which is the convention
-    this function publishes at the (non-differentiable) limit.
-
-    The branch predicate is exact equality rather than a tolerance band on
-    purpose: the two expressions differ by the additive constant
-    `1 / (1 - crra)`, which diverges as `crra` approaches one, so widening the
-    switch would introduce a jump of size `1 / tol` instead of removing one.
-
     Args:
         consumption: Consumption level(s); any shape.
         crra: Coefficient of relative risk aversion.
@@ -30,6 +16,18 @@ def crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
         CRRA utility with the shape of `consumption`.
 
     """
+    # `jnp.where` evaluates both branches, so the unselected one must stay
+    # finite: at `crra == 1` the power branch is `c**0 / 0`, and while that
+    # infinity is discarded from the primal it reaches the derivative as
+    # `0 * inf`, giving a NaN marginal utility for a perfectly ordinary model.
+    # Substituting an exponent of one there costs nothing — the branch is not
+    # selected — and leaves `c / 1` behind instead.
+    #
+    # The predicate is exact equality on purpose. This felicity omits the `-1`
+    # that would make the power branch tend to `log` as `crra → 1`, so the two
+    # branches genuinely differ by `1 / (1 - crra)` nearby. Widening the test to
+    # a tolerance band would not remove a discontinuity but introduce one, of
+    # size `1 / tol`.
     is_log = crra == 1.0
     safe_exponent = jnp.where(is_log, 1.0, 1.0 - crra)
     return jnp.where(

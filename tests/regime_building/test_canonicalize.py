@@ -280,7 +280,14 @@ def test_two_step_seam_matches_wrapper() -> None:
         for phase in ("solution", "simulation"):
             wrapped_slice = getattr(wrapper[regime_name], phase)
             two_step_slice = getattr(two_step[regime_name], phase)
+            assert dict(wrapped_slice.functions) == dict(two_step_slice.functions)
+            assert dict(wrapped_slice.constraints) == dict(two_step_slice.constraints)
+            assert dict(wrapped_slice.grid_states) == dict(two_step_slice.grid_states)
             assert dict(wrapped_slice.state_transitions) == dict(
                 two_step_slice.state_transitions
             )
             assert wrapped_slice.regime_transition == two_step_slice.regime_transition
+            assert (
+                wrapped_slice.stochastic_regime_transition
+                == two_step_slice.stochastic_regime_transition
+            )

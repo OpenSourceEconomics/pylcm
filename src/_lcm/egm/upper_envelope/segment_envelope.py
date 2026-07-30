@@ -56,6 +56,14 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, Scala
 # capacity, never an assumed bound: exceeding it poisons the row.
 DEFAULT_MAX_RUNS: int = 24
 
+# How many node cells to resolve in parallel. Cells are independent, so this
+# changes only the working set, never a published value. `None` scans them one
+# at a time: the smallest working set, and on the models pylcm measures also the
+# fastest, since one cell already carries enough work to occupy the device and a
+# wider step only adds intermediates. Raise it for a model whose cells are small
+# enough to leave a device idle — after measuring, not on principle.
+DEFAULT_CELL_BATCH_SIZE: int | None = None
+
 
 def refine_envelope_exact(
     *,
@@ -65,6 +73,7 @@ def refine_envelope_exact(
     n_refined: int,
     segment_id: Float1D | None = None,
     max_runs: int = DEFAULT_MAX_RUNS,
+    cell_batch_size: int | None = DEFAULT_CELL_BATCH_SIZE,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its exact upper envelope.
 
@@ -77,6 +86,10 @@ def refine_envelope_exact(
         segment_id: Optional per-candidate branch label. Runs are always split
             where resources stop increasing; a label change splits them further.
         max_runs: Static capacity for the number of x-monotone runs.
+        cell_batch_size: How many node cells to resolve in parallel; `None`
+            resolves them one at a time, which is the smallest working set
+            available. Cells are independent, so this partitions the work
+            without changing any published value.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each of
@@ -106,6 +119,7 @@ def refine_envelope_exact(
         endog_grid=endog_grid,
         value=value,
         max_runs=max_runs,
+        cell_batch_size=cell_batch_size,
     )
 
     out_grid, out_policy, out_value, n_kept = _emit_envelope(
@@ -221,11 +235,18 @@ def _sub_cells_per_node_cell(
     endog_grid: Float1D,
     value: Float1D,
     max_runs: int,
+    cell_batch_size: int | None,
 ) -> _SubCells:
     """Resolve the envelope's owners across every node cell.
 
     Ownership is decided on value alone; the policy is read afterwards from the
     owning link, so it never influences which branch wins.
+
+    Cells are independent, so `cell_batch_size` partitions them without changing
+    anything published. What it does change is the working set: the intermediate
+    in flight per row is `cell_batch_size * max_runs`, and rows are themselves
+    mapped over, so the peak carries the product of all three. `None` scans the
+    cells one at a time and so holds a single cell's worth — the floor.
     """
 
     def split(
@@ -257,9 +278,18 @@ def _sub_cells_per_node_cell(
             unresolved,
         )
 
-    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
-        split, in_axes=(0, 0, 1, 1, 1)
-    )(cell_left, cell_right, active.live, active.left_index, active.right_index)
+    # `lax.map` maps over a leading axis, so the per-run arrays are transposed to
+    # put cells first; `vmap` read them along axis 1 instead.
+    per_cell = (
+        cell_left,
+        cell_right,
+        active.live.T,
+        active.left_index.T,
+        active.right_index.T,
+    )
+    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.lax.map(
+        lambda cell: split(*cell), per_cell, batch_size=cell_batch_size
+    )
 
     return _SubCells(
         left=sub_left.reshape(-1),

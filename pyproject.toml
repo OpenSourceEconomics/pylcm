@@ -100,10 +100,10 @@ tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Pinned to the aca-model version this solver-seam work is developed against
-# (feat/dcegm-solver: main's audit fixes + the DC-EGM solver + smooth-share
-# eligibility); flip back to branch = "main" once both sides have merged.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "54fb8df1f83865eee421a4b656676ce4e6787928" }
+# Pinned to an aca-model main that carries both the keyword-only case-piece
+# call sites this branch's API requires and the DC-EGM solver path; flip back
+# to `branch = "main"` once this branch merges.
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "1409be36072ac49efc5b5e56cab0ac611d2dd1dc" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]

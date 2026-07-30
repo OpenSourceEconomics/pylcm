@@ -63,7 +63,10 @@ from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
     PeriodizedUserFunction,
+    assert_continuation_grids_agree,
     continuation_grid_signature_from_schedule,
+    expand_groups_to_periods,
+    group_periods_by_key,
     normalize_age_specialization,
     periodized_tree_signature,
     resolve_periodized_nodes,
@@ -2292,7 +2295,7 @@ def _build_simulation_phase(  # noqa: PLR0915
     # `_process_regime_core` excludes constraint names from `functions`, but the
     # additional-target pool re-merges constraints (`_build_functions_pool`) and
     # advertises them as targets; without the constraint namespace here a
-    # periodized constraint would escape the guard (round-11 F3). Both mappings are
+    # periodized constraint would escape the guard. Both mappings are
     # core-processed and still carry `PeriodizedEconFunction` markers.
     age_specialized_function_names = frozenset(
         name
@@ -2342,24 +2345,27 @@ def _build_simulation_phase(  # noqa: PLR0915
     )
 
 
+# Upper envelopes whose published row carries every switch a read crosses.
+# Empty: no shipped backend provides the guarantee, so the branch-faithful policy
+# read is off and simulation keeps its grid-argmax. An envelope earns a place here
+# by passing the crossing- and support-completeness suites, not by intending to.
+_CROSSING_COMPLETE_ENVELOPES: frozenset[str] = frozenset()
+
+
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
     """Whether the solver's upper envelope certifies every segment crossing.
 
-    A branch-faithful policy read interpolates a row whose envelope switches sit
-    at duplicated abscissae carrying both branch records:
-    - `"mss"` ⇒ yes: the refinement enumerates every envelope switch — interior
-      crossings via iterated earliest-overtake between adjacent candidate
-      abscissae (where the bracketing segments are full lines), switches and
-      value jumps landing exactly on a candidate abscissa via two-sided node
-      records — and an interval whose switch sequence exceeds the enumeration
-      budget overflows loudly through `n_kept` — as does a live candidate
-      point whose value no interval read can represent — so a published row
-      is never a silently truncated envelope. The guarantee covers the
-      live-covered domain; a row whose segment chain splits (NaN-dead
-      candidates or a finite value decrease between consecutive candidates)
-      is NaN-poisoned in the published policy via the kernel's read-support
-      verdict, so the reader falls back to grid-argmax instead of bridging
-      the gap linearly.
+    No shipped backend qualifies, so the read is off everywhere and simulation
+    keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
+    envelope switches sit at duplicated abscissae carrying both branch records:
+    - `"mss"` ⇒ no: the refinement inserts crossings only between adjacent query
+      winners, so a branch that owns ground strictly inside one candidate
+      interval leaves no record in the row, and a switch landing exactly on a
+      candidate abscissa is suppressed by the strict-interior test. Opening the
+      read on such a row does not merely blur a switch — it publishes a
+      different action, and one the canonical-Q safeguard cannot recover,
+      because that safeguard rescores the emitted candidate against the finite
+      action grid and an omitted owner is in neither set.
     - `"exact"` ⇒ no, and this is the default, so the branch-faithful read is
       off unless a regime asks for `"mss"`. The exclusion is narrower than the
       ones below: ownership is resolved per node cell and certified, a boundary
@@ -2380,7 +2386,7 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       therefore not certified crossing-complete for the read.
     - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
     """
-    return solver.upper_envelope == "mss"
+    return solver.upper_envelope in _CROSSING_COMPLETE_ENVELOPES
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:
@@ -4310,8 +4316,7 @@ def _build_Q_and_F_per_period(
             }
         )
 
-    configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
-    for period in active_periods:
+    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = get_period_targets(
             period=period,
             transitions=transitions,
@@ -4340,15 +4345,25 @@ def _build_Q_and_F_per_period(
             continuation_sig,
             continuation_functions_sig,
         )
-        configs.setdefault((complete, signature), []).append(period)
+        return (complete, signature)
+
+    configs = group_periods_by_key(active_periods, group_key)
 
     # Build one Q_and_F per distinct group, resolving periodized functions and
     # constraints at the group's representative period. Equal signature ⇒ identical
     # closures, so any period in the group is a valid representative.
     built: dict[tuple[tuple[RegimeName, ...], Hashable], QAndFFunction] = {}
-    for group_key, periods in configs.items():
-        period_targets = group_key[0]
+    for key, periods in configs.items():
+        period_targets = key[0]
         representative_period = periods[0]
+        # Upstream added this check; it is a general invariant about the group's
+        # continuation grids, so it belongs BEFORE the collective/singleton split
+        # rather than only on the singleton twin.
+        assert_continuation_grids_agree(
+            grid_schedule=grid_schedule,
+            target_regimes=period_targets,
+            periods=tuple(periods),
+        )
         if stakeholders is not None:
             # COLLECTIVE-REGIMES (E1): separate builder so the singleton path
             # is byte-identical. No certainty equivalent — rejected at regime
@@ -4356,7 +4371,7 @@ def _build_Q_and_F_per_period(
             # resolved at the group's age exactly as the singleton branch — a
             # passthrough for a collective regime with no age-specialized nodes
             # (EKL), so the tested collective behaviour is unchanged.
-            built[group_key] = get_Q_and_F_collective(
+            built[key] = get_Q_and_F_collective(
                 flat_param_names=flat_param_names,
                 functions=cast(
                     "EconFunctionsMapping",
@@ -4397,7 +4412,7 @@ def _build_Q_and_F_per_period(
                 next_state_names=next_state_names,
             )
             continue
-        built[group_key] = get_Q_and_F(
+        built[key] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
@@ -4433,13 +4448,7 @@ def _build_Q_and_F_per_period(
             next_state_names=next_state_names,
         )
 
-    # Map each period to its group's function
-    result: dict[int, QAndFFunction] = {}
-    for group_key, periods in configs.items():
-        for period in periods:
-            result[period] = built[group_key]
-
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _build_argmax_and_max_Q_over_a_per_period(
@@ -4551,11 +4560,9 @@ def _build_next_state_vmapped(
     same closures share one compiled function; with no age-specialized node every
     period shares a single function, exactly as an age-invariant model.
     """
-    configs: dict[Hashable, list[int]] = {}
-    for period in active_periods:
-        configs.setdefault(periodized_tree_signature(functions, period), []).append(
-            period
-        )
+    configs = group_periods_by_key(
+        active_periods, lambda period: periodized_tree_signature(functions, period)
+    )
 
     built: dict[Hashable, NextStateSimulationFunction] = {}
     for signature, periods in configs.items():
@@ -4581,11 +4588,7 @@ def _build_next_state_vmapped(
             jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
         )
 
-    result: dict[int, NextStateSimulationFunction] = {}
-    for signature, periods in configs.items():
-        for period in periods:
-            result[period] = built[signature]
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _fail_if_action_has_batch_size(

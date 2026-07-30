@@ -154,7 +154,7 @@ def get_next_stochastic_weights_function(
     # (`get_next_state_function_for_solution`) already relies on. Those producers live
     # in `transitions`, not `functions`, so include the deterministic transitions in
     # the weight DAG; otherwise the read is left as an unsupplied argument and the Q
-    # build fails with a missing input (round-12 F2).
+    # build fails with a missing input.
     # Stochastic stubs are excluded on purpose: they are the realised draws, not
     # closed-form producers, and a weight depending on another stochastic next-state
     # would need a conditional joint kernel the product-of-marginals form cannot

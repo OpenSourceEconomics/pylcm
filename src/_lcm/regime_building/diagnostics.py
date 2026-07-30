@@ -22,6 +22,8 @@ from _lcm.grids import Grid
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     continuation_grid_signature_from_schedule,
+    expand_groups_to_periods,
+    group_periods_by_key,
     periodized_tree_signature,
     resolve_periodized_nodes,
 )
@@ -111,7 +113,7 @@ def _build_compute_intermediates_per_period(
 
         Mirrors `_build_Q_and_F_per_period.continuation_info` so a NaN diagnostic
         recomputes intermediates on the *same* period-specific target grid the primary
-        solve used, not the representative grid (audit F4).
+        solve used, not the representative grid.
         """
         if period_to_regime_v_interp is None:
             return regime_to_v_interpolation_info
@@ -128,8 +130,7 @@ def _build_compute_intermediates_per_period(
     # Group by (target configuration, per-period policy signature, continuation-grid
     # signature), mirroring `_build_Q_and_F_per_period`: with no age-specialized node
     # the signature is constant and the grouping collapses to the target configuration.
-    configs: dict[tuple[tuple[RegimeName, ...], Hashable], list[int]] = {}
-    for period in active_periods:
+    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = get_period_targets(
             period=period,
             transitions=transitions,
@@ -145,15 +146,17 @@ def _build_compute_intermediates_per_period(
             periodized_tree_signature(constraints, period),
             cont_sig,
         )
-        configs.setdefault((complete, signature), []).append(period)
+        return (complete, signature)
+
+    configs = group_periods_by_key(active_periods, group_key)
 
     variable_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
     built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
-    for group_key, periods in configs.items():
-        period_targets = group_key[0]
+    for key, periods in configs.items():
+        period_targets = key[0]
         representative_period = periods[0]
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
@@ -180,14 +183,9 @@ def _build_compute_intermediates_per_period(
             state_batch_sizes=state_batch_sizes,
         )
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
-        built[group_key] = jax.jit(fused) if enable_jit else fused
+        built[key] = jax.jit(fused) if enable_jit else fused
 
-    result: dict[int, Callable] = {}
-    for group_key, periods in configs.items():
-        for period in periods:
-            result[period] = built[group_key]
-
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _wrap_with_reduction(
