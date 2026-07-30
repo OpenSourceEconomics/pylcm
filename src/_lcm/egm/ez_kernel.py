@@ -18,6 +18,15 @@ carries no probability-derivative term.
 
 Reference: Alan Lujan, "The Endogenous Grid Method for Epstein-Zin Preferences,"
 arXiv:2601.04438 (2026), direct route (his Section 2.2).
+
+The `exponent == 0.0` and `one_minus_rho == 0.0` tests are exact on purpose,
+against the project's usual rule for comparing floats. Each selects the limiting
+closed form a *user-supplied parameter* asks for — the log / Cobb-Douglas limit —
+and the parameter arrives as the literal the user wrote, so the question is which
+of two `jnp.where` branches applies rather than whether two computed quantities
+are close. `jnp.where` evaluates both, so the unselected branch is what would
+otherwise produce the `log(0)` or `0 ** 0`; a tolerance would route a genuinely
+small-but-nonzero elasticity into the wrong formula.
 """
 
 import jax.numpy as jnp
