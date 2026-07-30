@@ -86,7 +86,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, LoopIndex
 
 # ----------------------------------------------------------------------------
 # Error-free transforms and double-double arithmetic.
@@ -457,7 +457,13 @@ def _exact_sign_of_sum(terms: FloatND) -> FloatND:
     n_term = terms.shape[-1]
     expansion = jnp.zeros_like(terms)
 
-    def absorb_term(k: jax.Array, expansion: FloatND) -> FloatND:
+    # `LoopIndex`, not an array-only hint: a `jax.Array` annotation here made every
+    # EAGER call raise a beartype violation, which is what broke all 24
+    # `test_jitted_solve_matches_the_eager_solve[*]` cases — that test is the only
+    # one building its reference under `disable_jit`, so it was the first caller to
+    # reach this kernel eagerly. See the alias in `lcm.typing` for why both forms
+    # must be admitted.
+    def absorb_term(k: LoopIndex, expansion: FloatND) -> FloatND:
         term = jax.lax.dynamic_index_in_dim(terms, k, axis=-1, keepdims=False)
 
         def grow(total: FloatND, component: FloatND) -> tuple[FloatND, FloatND]:

@@ -28,14 +28,8 @@ from math import sqrt
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Int, Scalar
 
-from lcm.typing import BoolND, FloatND
-
-# `jax.lax.fori_loop` materializes its counter at JAX's default int dtype
-# (weak int64 under x64), not pylcm's canonical int32 — so the loop-body index
-# needs a dtype-agnostic scalar-int hint rather than `ScalarInt`.
-type _LoopIndex = Int[Scalar, ""]
+from lcm.typing import BoolND, FloatND, LoopIndex
 
 _INV_PHI = (sqrt(5.0) - 1.0) / 2.0  # 1/phi ~ 0.618...
 _INV_PHI_SQ = (3.0 - sqrt(5.0)) / 2.0  # 1/phi^2 ~ 0.382...
@@ -136,7 +130,7 @@ def maximize_golden_section(
     carry0 = (safe_lower, safe_upper, x1, probe(x1), x2, probe(x2))
 
     def body(
-        _i: _LoopIndex,
+        _i: LoopIndex,
         carry: tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND],
     ) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]:
         a, b, xa, fa, xb, fb = carry
