@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import gc
 import inspect

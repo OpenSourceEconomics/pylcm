@@ -1633,6 +1633,26 @@ def _build_solution_phase(
         active_periods=regimes_to_active_periods[regime_name],
     )
 
+    # The published function set is consumed unresolved by feasibility checks and
+    # additional-target computation, so resolve any `PeriodizedEconFunction` to its
+    # representative-period concrete function here (the per-period Q_and_F build
+    # keeps resolving `core.functions` per period).
+    solution_active_periods = regimes_to_active_periods[regime_name]
+    published_solution_functions = (
+        cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(core.functions, solution_active_periods[0]),
+        )
+        if solution_active_periods
+        else core.functions
+    )
+
+    period_state_axes = _build_period_state_axes(
+        regime_name=regime_name,
+        grid_schedule=grid_schedule,
+        active_periods=regimes_to_active_periods[regime_name],
+    )
+
     return SolutionPhase(
         _variables=variables,
         grids=all_grids[regime_name],
