@@ -173,6 +173,8 @@ __all__ = [
     "NNBEGM",
     "AdaptiveOuterMesh",
     "AgeGrid",
+    "AgeSpecializedFunction",
+    "AgeSpecializedGrid",
     "BranchAggregateResult",
     "CertaintyEquivalent",
     "DeterministicOuterMaximum",
