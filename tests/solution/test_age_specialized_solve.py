@@ -21,7 +21,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidAdditionalTargetsError
+from lcm.exceptions import InvalidAdditionalTargetsError, InvalidInitialConditionsError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt, UserFunction
@@ -254,14 +254,14 @@ def _simulate_specialized_constraint_model():
 
 
 def test_additional_target_of_age_specialized_constraint_is_rejected():
-    """Round-11 F3: a specialized *constraint* requested as a target is rejected.
+    """A specialized *constraint* requested as a target is rejected.
 
     A constraint carries its own namespace: `_process_regime_core` excludes
-    constraint names from `functions`, so an `AgeSpecializedFunction` constraint
-    was omitted from `age_specialized_function_names` and escaped the guard, even
-    though the additional-target pool re-merges constraints and advertises them as
-    targets. Requesting the specialized constraint by name must raise, not reach
-    target construction as an unresolved representative-age marker.
+    constraint names from `functions`, so the guard that detects age-specialized
+    targets must scan `constraints` too, not just `functions` — even though the
+    additional-target pool re-merges constraints and advertises them as targets.
+    Requesting the specialized constraint by name must raise, not reach target
+    construction as an unresolved representative-age marker.
     """
     result = _simulate_specialized_constraint_model()
     with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
@@ -269,7 +269,7 @@ def test_additional_target_of_age_specialized_constraint_is_rejected():
 
 
 def test_additional_targets_all_rejects_age_specialized_constraint():
-    """Round-11 F3: `additional_targets='all'` rejects a specialized constraint.
+    """`additional_targets='all'` rejects a specialized constraint.
 
     `'all'` expands to every advertised target, which includes the specialized
     constraint; the guard must reject the batch rather than silently compute it at
@@ -278,3 +278,29 @@ def test_additional_targets_all_rejects_age_specialized_constraint():
     result = _simulate_specialized_constraint_model()
     with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
         result.to_dataframe(additional_targets="all")
+
+
+def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint():
+    """Feasibility validation rejects a specialized constraint for subjects starting
+    away from the regime's representative age.
+
+    `_check_regime_feasibility` builds its feasibility function from the published
+    `regime.simulation.constraints`, which hold an `AgeSpecializedFunction` resolved
+    at the regime's representative (first active) age only. Checking a subject who
+    starts at a later age against that closure would silently apply the wrong age's
+    policy, so it must raise instead.
+    """
+    model = _make_specialized_constraint_model(
+        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+    )
+    with pytest.raises(InvalidInitialConditionsError, match="policy-specialized"):
+        model.simulate(
+            params={"discount_factor": 0.95},
+            initial_conditions={
+                "age": jnp.array([25.0, 35.0, 45.0]),
+                "wealth": jnp.array([10.0, 50.0, 100.0]),
+                "regime_id": jnp.full(3, RegimeId.working_life),
+            },
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+        )

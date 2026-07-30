@@ -29,8 +29,10 @@ from _lcm.regime_building.phases import (
 )
 from _lcm.typing import RegimeName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
+from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
 
 _BROADCASTABLE_SLOTS = (
@@ -136,6 +138,7 @@ def prune_broadcast_variables(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
+    ages: AgeGrid | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -150,6 +153,10 @@ def prune_broadcast_variables(
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
         broadcast_variables: Per regime, the broadcast state/action names.
+        ages: The model's `AgeGrid`, used to resolve `AgeSpecializedFunction`
+            markers to a representative age before DAG-reachability walks so a
+            broadcast variable read only through a marker is not misread as
+            unused. `None` skips resolution (no marker can appear then).
 
     Returns:
         Tuple of the pruned regimes and, per regime, the pruned names.
@@ -180,6 +187,7 @@ def prune_broadcast_variables(
             kept=kept,
             phase_name=phase_name,
             all_regime_names=all_regime_names,
+            ages=ages,
         )
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
@@ -228,6 +236,7 @@ def _phase_fixed_point(
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     phase_name: str,
     all_regime_names: frozenset[RegimeName],
+    ages: AgeGrid | None,
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
@@ -264,6 +273,7 @@ def _phase_fixed_point(
                 user_regime=user_regime,
                 reachable_targets=reachable[regime_name],
                 kept=grown,
+                ages=ages,
             )
             needed |= _state_conditioned_names(
                 user_regime=user_regime,
@@ -337,6 +347,7 @@ def _needed_names(
     user_regime: UserRegime,
     reachable_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
+    ages: AgeGrid | None,
 ) -> set[str]:
     """Collect every name this phase slice's root computations read.
 
@@ -348,14 +359,22 @@ def _needed_names(
     - the regime transition (coarse inputs, or every granular cell)
     - the laws of motion toward reachable targets that keep the law's state
 
+    `functions`/`constraints` are resolved at a representative active age before
+    the DAG walk, so `get_ancestors` sees a marked node's real argument names
+    instead of `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
     """
-    pool: dict[str, UserFunction] = dict(phase_slice.functions)
+    functions = _resolved_at_representative_age(
+        phase_slice.functions, user_regime=user_regime, ages=ages
+    )
+    constraints = _resolved_at_representative_age(
+        phase_slice.constraints, user_regime=user_regime, ages=ages
+    )
+
+    pool: dict[str, UserFunction] = dict(functions)
     targets = [name for name in ("utility", "H") if name in pool]
     targets += [name for name in user_regime.derived_categoricals if name in pool]
 
-    roots = {
-        f"__constraint_{name}": func for name, func in phase_slice.constraints.items()
-    }
+    roots = {f"__constraint_{name}": func for name, func in constraints.items()}
     roots |= _regime_transition_roots(phase_slice)
     roots |= _law_roots(
         phase_slice=phase_slice, reachable_targets=reachable_targets, kept=kept

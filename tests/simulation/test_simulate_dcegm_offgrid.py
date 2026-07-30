@@ -17,6 +17,7 @@ import dataclasses
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Phased, fixed_transition
 from lcm.regime import Regime as UserRegime
@@ -57,6 +58,14 @@ def _closed_form_model() -> Model:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the off-grid policy read is gated on a crossing-complete env"
+        "elope and no shipped backend qualifies; this is the acceptance criteri"
+        "on for reopening the gate, so it must start passing again the moment one does"
+    ),
+)
 def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     """Simulated consumption equals `wealth / (1 + beta)` at off-grid wealth.
 
@@ -93,6 +102,14 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the off-grid policy read is gated on a crossing-complete env"
+        "elope and no shipped backend qualifies; this is the acceptance criteri"
+        "on for reopening the gate, so it must start passing again the moment one does"
+    ),
+)
 def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     """With a discrete work choice, simulated consumption can be read off-grid.
 

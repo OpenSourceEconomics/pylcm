@@ -73,18 +73,20 @@ Contract (validated at `Regime`/`Model` construction, over the owning regime's
 axis and the solve then feeds it each period's axis, so a differing shape *or dtype* is
 rejected by the compiled executable. Declared `n_points` is not sufficient to enforce
 this — and is not even guaranteed to exist: only `to_jax()` is on the `Grid` base
-contract, so `getattr(grid, "n_points", 0)` silently agreed at `0` for two custom grids
-of different actual length. Concrete grids are therefore validated on their **resolved
-`to_jax()` array** (the same source of truth `_grid_identity` keys on), and any declared
-`n_points` must agree with it. Runtime grids cannot resolve nodes at build time, so only
-their declared `n_points` is checked here.
+contract, so `getattr(grid, "n_points", 0)` would silently agree at `0` for two custom
+grids of different actual length. Concrete grids are therefore validated on their
+**resolved `to_jax()` array** (the same source of truth `_grid_traits` derives its
+shape/dtype/weak_type invariants from), and any declared `n_points` must agree with it.
+Runtime grids cannot resolve nodes at build time, so only their declared `n_points` is
+checked here.
 
-Unlike `AgeSpecializedFunction`, `signature(age)` is **not** the dedup key for grids
-and is not a correctness precondition. Grids dedup on their resolved nodes: a grid,
-unlike a closure, can be asked what it actually is, so there is no reason to make a
-hand-written signature load-bearing for correctness. (The two helpers that fingerprinted
-grids via `signature(age)` were unused and have been deleted rather than left to imply a
-rule the code does not follow.)
+Like `AgeSpecializedFunction`, `signature(age)` **is** the dedup key for grids: periods
+sharing a signature share one compiled program. Unlike a closure, a grid can be asked
+what it actually is, so an equal signature is not blindly trusted for correctness —
+`assert_continuation_grids_agree` cross-checks every group member's resolved nodes at
+build time and raises `RegimeInitializationError` on a genuine mismatch, so an
+under-specified or constant signature is caught loudly instead of silently sharing the
+wrong grid.
 
 **Identity is bit-preserving, and there is no shortcut for the built-ins.** A key
 derived from a grid's *description* rather than its nodes is one restatement away from
@@ -98,12 +100,12 @@ period axis and changed the argmax. So: every concrete grid — uniform built-in
 included — is keyed on its resolved `to_jax()` array, fingerprinted as the exact
 `np.dtype` **object**, shape, and raw bytes. Validation uses the same representation.
 
-**Runtime mode is a property of the mode, not of the exact class.** `_grid_identity`
+**Runtime mode is a property of the mode, not of the exact class.** `_grid_traits`
 tests `isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime` **first**,
 mirroring `V._get_coordinate_finder`'s dispatch — otherwise the two disagree about a
-runtime-points *subclass*, which the interpolator supports but identity construction
+runtime-points *subclass*, which the interpolator supports but trait resolution
 would send to `to_jax()`, where it must raise. Concrete grids (including subclasses)
-then fall through to the node fingerprint, so an overridden `to_jax()` stays
+then fall through to the resolved-node traits, so an overridden `to_jax()` stays
 geometry-sensitive.
 
 ### Grid bounds are interpolation *support*, not feasibility limits
@@ -117,7 +119,7 @@ inside the next period's grid** — either the bounds coincide with the true fea
 limits, or a constraint keeps next states in range. The borrowing-floor use satisfies
 this by construction (`a_{t+1} ≥ a̲(t)` and period `t+1`'s floor is `a̲(t)`). If bounds are
 *not* the feasibility limits, add a constraint or widen the grid, otherwise extrapolation
-against `-inf` edge cells can produce `NaN`. (Audit F3.)
+against `-inf` edge cells can produce `NaN`.
 
 ## Threading (reusing the per-period build loops)
 
@@ -194,14 +196,20 @@ No change to `coordinates.py` (the coordinate math already runs off
 **Complete.** The wiring below is implemented and covered by the tests above:
 
 1. `lcm/regime.py` accepts `AgeSpecializedGrid` in `states`.
-2. `model.py` calls `validate_age_specialized_grids(states, ages)` at construction.
+2. `Model.__init__` reaches grid-shape validation via
+   `build_regimes_and_template` → `process_regimes` → `normalize_age_specialization`
+   → `_resolve_grid_marker` (which calls `_grid_traits`).
 3. `processing.process_regimes` builds representative-resolved regimes for the
    invariant machinery, plus `period_to_regime_to_v_interp` for the continuation.
-4. `_build_Q_and_F_per_period` folds the target regimes' grid identity at period+1
-   into the group signature and passes the period-(t+1) `VInterpolationInfo`.
+4. `_build_Q_and_F_per_period` folds the target regimes' grid signature at period+1
+   into the group signature, cross-checks a shared group's resolved nodes via
+   `assert_continuation_grids_agree`, and passes the period-(t+1)
+   `VInterpolationInfo`.
 5. `backward_induction` resolves the per-period state axis and passes it as runtime
    values.
-6. `simulation` uses the period's grid for the argmax axis and index→value lookup.
+6. Age-varying continuous states carry no simulate-side index→value lookup of their
+   own: only **actions** go through `_lookup_values_from_indices`; a carried state's
+   own axis is resolved per period like any other age-specialized grid.
 
 **Key simplification confirmed:** the current-period state axis reaches the Q_and_F
 kernel as *runtime* values (shape-invariance ⇒ same trace), so only the *continuation*
@@ -209,7 +217,8 @@ kernel as *runtime* values (shape-invariance ⇒ same trace), so only the *conti
 the solve loop with no recompile, while period-(t+1)'s grid is baked into period-t's
 Q_and_F.
 
-**Dedup is by resolved nodes, not by `signature`.** See the API and contract sections
-above: `AgeSpecializedGrid.signature` is *not* the grid dedup key and not a correctness
-precondition. (The `grid_signature`/`state_grids_signature` helpers that once
-fingerprinted grids that way were unused and have been deleted.)
+**Dedup is by `signature`, cross-checked against resolved nodes.** See the API and
+contract sections above: `AgeSpecializedGrid.signature` is the grid dedup key, the
+same as `AgeSpecializedFunction`, but `assert_continuation_grids_agree` verifies a
+shared group's resolved nodes actually agree at build time rather than trusting the
+signature alone.

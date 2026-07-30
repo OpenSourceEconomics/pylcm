@@ -35,6 +35,15 @@ def pytest_configure(config):
 
     jax_config.update("jax_enable_x64", val=X64_ENABLED)
 
+    # `--precision` is meant to say what the suite runs at, and on a recent
+    # NVIDIA GPU the default answer is quietly less than it claims: a float32
+    # matmul is computed in TF32, whose significand is under half of float32's.
+    # Results the suite checks against analytical or brute-force references then
+    # miss by margins no correct implementation could close, so what fails is
+    # the format rather than the code. Asking for the declared precision costs
+    # some throughput on that hardware and nothing anywhere else.
+    jax_config.update("jax_default_matmul_precision", "highest")
+
 
 # DC-EGM-family module-name tokens outside `tests/solution/`. The whole
 # `tests/solution/` tree is the solve/oracle battery and is matched by directory.

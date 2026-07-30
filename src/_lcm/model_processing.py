@@ -326,12 +326,26 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         if ages is not None:
-            # Resolve any `AgeSpecializedFunction` marker to its concrete function at a
-            # representative active age so `get_ancestors` sees the real argument
-            # dependencies. The dependency structure is age-invariant, so any active
-            # age serves; the resolved build is memoized and reused by the engine.
             active_periods = ages.get_periods_where(user_regime.active)
+            if not active_periods and _regime_has_markers(user_regime):
+                # This regime is about to fail with the precise
+                # "active at no model age" `RegimeInitializationError` once
+                # `normalize_age_specialization` runs. Leaving its markers
+                # unresolved here would make `get_ancestors` see only
+                # `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`
+                # signature, misreporting a variable used only through a marker
+                # as unused and raising that instead — so skip this regime's
+                # variable-usage check and let the real cause surface.
+                continue
             if active_periods:
+                # Resolve any `AgeSpecializedFunction` marker to its concrete
+                # function at a representative active age so `get_ancestors` sees
+                # the real argument dependencies. The dependency structure is
+                # age-invariant, so any active age serves; a stateful factory
+                # could in principle be validated as one object and installed as
+                # another (see the `_AgeSpecialized` docstring), so this relies on
+                # `build` being pure — its result is not cached or reused
+                # elsewhere.
                 representative_age = float(ages.period_to_age(active_periods[0]))
                 user_functions = cast(
                     "dict[str, Callable[..., object]]",

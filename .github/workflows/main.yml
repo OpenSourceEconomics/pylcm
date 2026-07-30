@@ -29,11 +29,18 @@ jobs:
           - windows-latest
         python-version:
           - '3.14'
-        # The small macOS runner can't host four parallel JAX AOT compiles of the
-        # DC-EGM solve/oracle battery (it swap-thrashes for hours). Drop the `slow`
-        # set there; the platform-independent kernel stays covered on Linux + GPU.
+        # Neither the macOS nor the Windows runner can host four parallel JAX AOT
+        # compiles of the DC-EGM solve/oracle battery: macOS swap-thrashes for
+        # hours, Windows grows past the 16 GB runner and is killed mid-suite.
+        # Drop the `slow` set on both. What it covers is numerics, which are
+        # platform-independent and stay covered on Linux and the two GPU jobs;
+        # what these runners are here for is the platform surface — imports,
+        # paths, dtypes, the pandas/arrow round trip — all of which is in the
+        # remaining set.
         include:
           - os: macos-latest
+            pytest_extra: -m "not slow"
+          - os: windows-latest
             pytest_extra: -m "not slow"
     steps:
       - uses: actions/checkout@v7

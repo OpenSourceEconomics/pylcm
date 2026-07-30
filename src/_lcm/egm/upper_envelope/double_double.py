@@ -22,6 +22,7 @@ Everything is branch-free and elementwise, so it stays `jax.jit`- and
 `jax.vmap`-compatible with static shapes.
 """
 
+import jax
 import jax.numpy as jnp
 
 from lcm.typing import FloatND, IntND
@@ -45,6 +46,33 @@ def two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
     b_hi, b_lo = _split(b)
     error = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
     return p, error
+
+
+def scale_by_power_of_two(value: FloatND, exponent: IntND) -> FloatND:
+    """Return `value * 2**exponent`, exactly, wherever the result stays normal.
+
+    Scaling by a power of two moves no information, and every decision built on
+    the transforms here relies on that. `jnp.ldexp` does not deliver it
+    uniformly: on a CUDA backend it is exact once XLA has compiled it and wrong
+    for a substantial share of inputs when evaluated eagerly, so a primitive that
+    is supposed to be exact would instead depend on whether it had been traced.
+
+    Constructing the multiplier from the IEEE-754 exponent field removes the
+    question. Writing `exponent + bias` into that field is the definition of
+    `2**exponent`, so the multiplier is exact by construction and the product is
+    a single correctly-rounded multiplication by a power of two.
+
+    An `exponent` that would leave the normal range produces a multiplier that is
+    zero, infinite, or otherwise not `2**exponent`. Nothing is clamped or
+    guessed here — callers that need certainty compare against the unscaled
+    operand and refuse the case, which is the only honest answer once the
+    scaling itself has lost information.
+    """
+    info = jnp.finfo(value.dtype)
+    bias = info.maxexp - 1
+    field = (exponent.astype(f"int{info.bits}") + bias) << info.nmant
+    multiplier = jax.lax.bitcast_convert_type(field, value.dtype)
+    return value * multiplier
 
 
 def normalizing_exponent(*values: FloatND) -> IntND:
@@ -154,13 +182,50 @@ def dd_quotient(
     carries no certificate: one Newton correction on the remainder leaves a
     result good to roughly twice the working precision, which is enough to *find*
     a structure but never enough to *prove* one. Decisions that must hold exactly
-    go through `certified_sign` instead.
+    go through `certified_sign`, or through `dd_quotient_bounded` where the
+    quotient itself is the quantity being decided on.
     """
     denominator_high, _low, _dropped = denominator
     estimate = numerator[0] / denominator_high
     remainder = dd_add(numerator, dd_negate(dd_mul_float(denominator, estimate)))
     correction = (remainder[0] + remainder[1]) / denominator_high
     return two_sum(estimate, correction)
+
+
+def dd_quotient_bounded(
+    numerator: DoubleDouble, denominator: DoubleDouble
+) -> DoubleDouble:
+    """Return `numerator / denominator` with a bound on how far off it is.
+
+    The bound is what separates a quotient that merely *looks* exact from one
+    that is, so it is **measured rather than assumed**: the quotient is
+    multiplied back by the denominator and what fails to reproduce the numerator
+    is what is reported, referred back through the denominator. A division that
+    reproduces its numerator exactly is exact, and this says so with a bound of
+    zero.
+
+    That distinction is the whole point. A crossing that lands on a representable
+    abscissa — the ordinary case, since two lines routinely meet at a node — has
+    an exact quotient, and a consumer asking which side of it the truth falls on
+    can be told. A blanket second-order charge on every division would leave that
+    consumer with a positive bound around an exactly located answer, and it would
+    refuse precisely the cases that are easiest to be sure about.
+
+    Referring the left-over back through the denominator is itself rounded, and
+    a bound rounded down is not a bound, so the result is widened by a few
+    rounding steps. The widening is multiplicative, which leaves an exact zero
+    exactly zero: nothing needs covering where nothing was left over. It also
+    absorbs dividing by the denominator's leading word rather than its full
+    value, a relative slack of the same order.
+    """
+    high, low = dd_quotient(numerator, denominator)
+    left_over = dd_add(
+        numerator,
+        dd_negate(dd_mul(denominator, (high, low, jnp.zeros_like(high)))),
+    )
+    unreproduced = jnp.abs(left_over[0] + left_over[1]) + left_over[2]
+    referred = unreproduced / jnp.abs(denominator[0])
+    return high, low, referred * (1.0 + 4.0 * jnp.finfo(referred.dtype).eps)
 
 
 def _split(a: FloatND) -> tuple[FloatND, FloatND]:
