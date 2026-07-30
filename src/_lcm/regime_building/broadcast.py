@@ -22,6 +22,7 @@ from dags import get_ancestors
 
 from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
@@ -339,6 +340,33 @@ def _state_conditioned_names(
             ):
                 names.add(grid.state_conditioned.on)
     return names
+
+
+def _resolved_at_representative_age(
+    mapping: Mapping[str, UserFunction],
+    *,
+    user_regime: UserRegime,
+    ages: AgeGrid | None,
+) -> Mapping[str, UserFunction]:
+    """Resolve `AgeSpecializedFunction` markers in `mapping` at a representative age.
+
+    The dependency structure `get_ancestors` needs is age-invariant, so any active
+    age serves. Returns `mapping` unchanged when `ages` is `None` (no marker can
+    appear then) or the regime has no active period (it is about to fail with a
+    more specific error once age normalization runs).
+    """
+    if ages is None or not any(
+        isinstance(value, AgeSpecializedFunction) for value in mapping.values()
+    ):
+        return mapping
+    active_periods = ages.get_periods_where(user_regime.active)
+    if not active_periods:
+        return mapping
+    representative_age = float(ages.period_to_age(active_periods[0]))
+    return {
+        name: cast("UserFunction", resolve_node(value, representative_age))
+        for name, value in mapping.items()
+    }
 
 
 def _needed_names(
