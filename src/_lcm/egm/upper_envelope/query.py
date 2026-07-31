@@ -80,6 +80,7 @@ DIFFERENT branches. That selector is replaced by a certified comparison:
    decides only on EXACT slope equality.
 """
 
+import functools
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -401,6 +402,85 @@ def _framed_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Ar
         jnp.ldexp(mantissa_b, exponent_b - exponent),
     )
     return head, tail, exponent
+
+
+class _FramedAffine(NamedTuple):
+    """`left + r*(right - left)` as a double-double in an integer frame.
+
+    `hi`/`lo` are in ORIGINAL units. `framed_left` and `framed_product` are the
+    two addends inside the frame, kept so a caller can size a certified radius
+    against them without leaving the frame.
+    """
+
+    hi: FloatND
+    lo: FloatND
+    framed_left: FloatND
+    framed_product: FloatND
+    frame: jax.Array
+
+
+def _framed_affine(
+    *,
+    left: FloatND,
+    right: FloatND,
+    ratio_hi: FloatND,
+    ratio_lo: FloatND,
+    ratio_exp: jax.Array,
+    split: float,
+) -> _FramedAffine:
+    """Interpolate ONE affine channel exponent-preservingly, rounding once.
+
+    Round 14 gave the VALUE channel this treatment and left `policy` and
+    `marginal` on `left + fraction*(right - left)` in the working dtype, where
+    `fraction = ldexp(rh, t_exp - w_exp)`. Both halves of that expression lose
+    finite results (round-14 audit F2):
+
+    - `fraction` is materialized BEFORE it is multiplied, so it can flush to
+      zero even when `fraction * (right - left)` is a finite normal. With
+      `x0 = 1`, `q = nextafter(1)`, `x1 = 2**(maxexp-2)` and outputs
+      `[0, x1]` the exact result is `ulp(1)` and production published `0`.
+    - `right - left` is a raw subtraction, so opposite-signed top-binade
+      outputs overflow: `[H, -H]` at `q = 1/2` has exact result `0` and
+      production published `-inf`.
+
+    The ratio therefore never becomes a float. It stays a significand pair with
+    a separate integer exponent, the endpoint difference is framed, the product
+    is formed from significands alone, and the sum with `left` happens in a
+    frame that holds BOTH addends — the single rounding is at publication.
+
+    The winner's value, policy and marginal all go through this one function, so
+    a channel cannot be repaired while its siblings are forgotten. That is how
+    this defect survived round 14: the value was certified, and the outputs
+    gathered from the very same certified winner were not.
+    """
+    difference_hi, difference_lo, difference_frame = _framed_difference(right, left)
+    difference_exp = _binade_exponent(jnp.abs(difference_hi)) + difference_frame
+    difference_shift = difference_frame - difference_exp
+
+    product_hi, product_lo = _dd_mul(
+        ratio_hi,
+        ratio_lo,
+        jnp.ldexp(difference_hi, difference_shift),
+        jnp.ldexp(difference_lo, difference_shift),
+        split,
+    )
+    product_exp = ratio_exp + difference_exp
+
+    # A frame that holds both addends. Anchoring on the product alone overflows
+    # whenever `r*(right-left)` does, even where the sum does not.
+    _, left_exp = _dyadic_parts(left)
+    frame = jnp.maximum(product_exp, left_exp)
+    framed_product = jnp.ldexp(product_hi, product_exp - frame)
+    framed_product_lo = jnp.ldexp(product_lo, product_exp - frame)
+    framed_left = jnp.ldexp(left, -frame)
+    hi, lo = _dd_add_fp(framed_product, framed_product_lo, framed_left)
+    return _FramedAffine(
+        hi=jnp.ldexp(hi, frame),
+        lo=jnp.ldexp(lo, frame),
+        framed_left=framed_left,
+        framed_product=framed_product,
+        frame=frame,
+    )
 
 
 def _dyadic_product(a: _Dyadic, b: _Dyadic, split: float) -> _Dyadic:
@@ -1043,7 +1123,11 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # is not representable at all, though every endpoint and the interpolated
     # value are. In the framed form `d` is `(1.0, 0.0)` at exponent `maxexp`, and
     # nothing overflows.
-    dh, dl, d_frame = _framed_difference(right_value, left_value)
+    #
+    # Only the HEAD is needed here: the interpolated value itself is built by
+    # `_framed_affine`, which forms this difference again for the channel it is
+    # evaluating. What remains is the cross-candidate SLOPE screen key.
+    dh, _, d_frame = _framed_difference(right_value, left_value)
 
     # Renormalize each head into `[0.5, 1)` before Dekker sees it, and fold the
     # shift into the integer exponent. This is the round-8 requirement — the
@@ -1063,22 +1147,22 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         jnp.ldexp(wl, w_shift),
         split,
     )
-    ph, pl = _dd_mul(rh, rl, jnp.ldexp(dh, d_shift), jnp.ldexp(dl, d_shift), split)
-    product_exp = t_exp - w_exp + d_exp
-
-    # `v = v0 + r*d` in a frame that holds BOTH addends. Round 13 applied the
-    # product's exponent to `ph` and added the raw `v0`, which overflows whenever
-    # the product does even though the sum need not: at `v0 = -H`, `v1 = H`,
-    # `r = 3/4` the true value is `H/2` while `r*d` is `1.5 * H`. Anchoring on
-    # the larger of the two exponents keeps every addend in `(-2, 2)` and defers
-    # the single rounding to publication.
+    # EVERY published affine channel goes through the SAME evaluator. The ratio
+    # is handed over as a significand pair plus a separate integer exponent and
+    # is never materialized as a float.
     #
-    # For a BRACKETING candidate `|t| <= |w|`, so `r` is in `[0, 1]` and `|v|` is
-    # bounded by the endpoint values: `ldexp(vh, value_frame)` therefore lands
-    # back inside the binade the endpoints came from and is finite whenever they
-    # are. Scaling a normal by a power of two is exact, so `value_hi` is the
-    # framed computation's correctly rounded value, rounded ONCE, in ORIGINAL
-    # units — comparable across candidates that framed differently.
+    # Round 14 gave this treatment to the value alone and left `policy` and
+    # `marginal` on `left + fraction*(right - left)` in the working dtype, so a
+    # certified winner published uncertified outputs: a `fraction` that flushed
+    # to zero before multiplication, and a `right - left` that overflowed on
+    # opposite-signed top-binade endpoints (round-14 audit F2, RT16 24/24 and
+    # MT11 66/66). Repairing the channel a witness names and not its siblings is
+    # exactly how the previous nine rounds each ended.
+    #
+    # For a BRACKETING candidate `|t| <= |w|`, so `r` is in `[0, 1]` and each
+    # result is bounded by its own endpoints: scaling back out of the frame is
+    # exact and lands inside the binade the endpoints came from, so every
+    # channel is finite whenever its endpoints are, and rounded exactly ONCE.
     #
     # `value_lo` and the radius are scaled back by the same shift and may flush
     # to zero there. That costs resolution, never correctness: a flushed residual
@@ -1087,29 +1171,24 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # certificate — it routes to `_exact_compare` — while a strict difference in
     # a correctly rounded `value_hi` certifies a strict difference in the exact
     # values, because rounding to nearest is monotone.
-    _, left_value_exponent = _dyadic_parts(left_value)
-    value_frame = jnp.maximum(product_exp, left_value_exponent)
-    framed_ph = jnp.ldexp(ph, product_exp - value_frame)
-    framed_pl = jnp.ldexp(pl, product_exp - value_frame)
-    framed_left_value = jnp.ldexp(left_value, -value_frame)
-    vh, vl = _dd_add_fp(framed_ph, framed_pl, framed_left_value)
+    ratio_exp = t_exp - w_exp
+    affine = functools.partial(
+        _framed_affine, ratio_hi=rh, ratio_lo=rl, ratio_exp=ratio_exp, split=split
+    )
+    value_affine = affine(left=left_value, right=right_value)
+    policy_affine = affine(left=left_policy, right=right_policy)
+    marginal_affine = affine(left=left_marginal, right=right_marginal)
+
+    vh, vl = value_affine.hi, value_affine.lo
 
     eps = jnp.finfo(block.dtype).eps
-    interior_radius = (
+    interior_radius = jnp.ldexp(
         _INTERIOR_RADIUS_ULPS2
         * eps
         * eps
-        * (jnp.abs(framed_left_value) + jnp.abs(framed_ph))
+        * (jnp.abs(value_affine.framed_left) + jnp.abs(value_affine.framed_product)),
+        value_affine.frame,
     )
-
-    vh = jnp.ldexp(vh, value_frame)
-    vl = jnp.ldexp(vl, value_frame)
-    interior_radius = jnp.ldexp(interior_radius, value_frame)
-
-    # `rh` is the ratio's SIGNIFICAND; the carried and interpolated quantities
-    # need the ratio itself. `r` is in `[0, 1]` for a bracketing candidate, so
-    # this shift cannot overflow.
-    fraction = jnp.ldexp(rh, t_exp - w_exp)
 
     zero = jnp.zeros_like(vh)
     return _CandidateTerms(
@@ -1123,12 +1202,12 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         policy=jnp.where(
             node,
             jnp.where(use_right, right_policy, left_policy),
-            left_policy + fraction * (right_policy - left_policy),
+            policy_affine.hi,
         ),
         marginal=jnp.where(
             node,
             jnp.where(use_right, right_marginal, left_marginal),
-            left_marginal + fraction * (right_marginal - left_marginal),
+            marginal_affine.hi,
         ),
         # In ORIGINAL units, not the per-candidate binade: this is a screen key
         # compared ACROSS candidates, so every candidate must express it in the

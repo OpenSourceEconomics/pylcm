@@ -21,6 +21,7 @@ from _lcm.egm.upper_envelope.query import (
     _exact_ratio,
     _exact_slope_compare,
     _exactly_maximal,
+    _framed_affine,
     _framed_difference,
     _right_continuous_winner,
     envelope_at_query,
@@ -1834,3 +1835,96 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
         f"{axis} at fraction {fraction}, branch order {order}: "
         f"{published} != {expected}"
     )
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("family", ["tiny-fraction", "opposite-sign"])
+@pytest.mark.parametrize("block_size", [0, 2, 3])
+def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
+    """Policy and marginal must be as certified as the value they accompany.
+
+    Round 14 certified the VALUE channel and left `policy` and `marginal` on
+    `left + fraction * (right - left)` in the working dtype, so the winner was
+    selected exactly and then described by two lossy numbers (round-14 audit
+    F2). Both halves of that expression lose finite results:
+
+    - `fraction` is materialized before it is multiplied, so it can flush to
+      zero while `fraction * (right - left)` is a finite normal;
+    - `right - left` overflows on opposite-signed top-binade endpoints.
+
+    The value stays correct in both families, which is exactly why this went
+    unnoticed: the channel under test is not the channel that was wrong.
+    """
+    info = np.finfo(dtype)
+    if family == "tiny-fraction":
+        wide = dtype(np.ldexp(1.0, int(info.maxexp) - 2))
+        grid = [dtype(1.0), wide]
+        outputs = [dtype(0.0), wide]
+        query = np.nextafter(dtype(1.0), dtype(np.inf), dtype=dtype)
+    else:
+        top = dtype(np.ldexp(1.0, int(info.maxexp) - 1))
+        grid = [dtype(0.0), dtype(1.0)]
+        outputs = [top, -top]
+        query = dtype(0.5)
+
+    expected = float(
+        dtype(
+            float(
+                Fraction(float(outputs[0]))
+                + (Fraction(float(query)) - Fraction(float(grid[0])))
+                * (Fraction(float(outputs[1])) - Fraction(float(outputs[0])))
+                / (Fraction(float(grid[1])) - Fraction(float(grid[0])))
+            )
+        )
+    )
+
+    # The winning branch carries value 1 flat, so the envelope value is settled
+    # and only the associated channels are under test. A losing branch keeps the
+    # comparison honest.
+    got = envelope_at_query(
+        endog_grid=jnp.asarray(grid + grid, dtype=dtype),
+        value=jnp.asarray([1.0, 1.0, 0.0, 0.0], dtype=dtype),
+        policy=jnp.asarray([*outputs, 99.0, 99.0], dtype=dtype),
+        marginal=jnp.asarray([*outputs, 77.0, 77.0], dtype=dtype),
+        segment_id=jnp.asarray([0, 0, 1, 1], dtype=dtype),
+        x_query=jnp.asarray([query], dtype=dtype),
+        segment_block_size=block_size,
+    )
+    value, policy, marginal = (float(np.asarray(item)[0]) for item in got)
+
+    assert value == 1.0, f"the value channel regressed: {value}"
+    assert np.isfinite(policy), (
+        f"{family}: published policy {policy} for a finite exact {expected}"
+    )
+    assert np.isfinite(marginal), (
+        f"{family}: published marginal {marginal} for a finite exact {expected}"
+    )
+    assert (policy, marginal) == (expected, expected), (
+        f"{family} at block {block_size}: ({policy}, {marginal}) != {expected}"
+    )
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_the_affine_evaluator_never_materializes_the_ratio(dtype):
+    """`_framed_affine` must beat what a working-dtype `left + r*d` can do.
+
+    The point is not that the helper is accurate but that it is accurate where
+    the naive form is not representable at all, so this compares against the
+    naive expression rather than against a tolerance.
+    """
+    info = np.finfo(dtype)
+    top = dtype(np.ldexp(1.0, int(info.maxexp) - 1))
+    left, right = top, -top
+    # r = 1/2 as an exact significand pair with a zero exponent offset.
+    got = _framed_affine(
+        left=jnp.asarray(left, dtype=dtype),
+        right=jnp.asarray(right, dtype=dtype),
+        ratio_hi=jnp.asarray(dtype(0.5)),
+        ratio_lo=jnp.asarray(dtype(0.0)),
+        ratio_exp=jnp.asarray(0, dtype=jnp.int32),
+        split=_dekker_split_factor(np.dtype(dtype)),
+    )
+    with np.errstate(over="ignore"):
+        naive = left + dtype(0.5) * (right - left)
+    assert not np.isfinite(naive), "the naive form must be the thing that fails"
+    assert float(np.asarray(got.hi)) == 0.0, f"framed affine gave {got.hi}"
