@@ -317,6 +317,8 @@ class DCEGM(Solver):
             stochastic_transition_names=context.stochastic_transition_names,
             compute_regime_transition_probs=context.compute_regime_transition_probs,
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+            period_to_regime_v_interp=context.period_to_regime_v_interp,
+            period_to_regime_grid_signature=context.period_to_regime_grid_signature,
             regimes_to_active_periods=context.regimes_to_active_periods,
             flat_param_names=context.flat_param_names,
             regime_to_flat_param_names=context.regime_to_flat_param_names,

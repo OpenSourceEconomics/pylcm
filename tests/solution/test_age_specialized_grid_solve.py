@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
@@ -42,6 +43,7 @@ from lcm import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ScalarInt
+from tests.conftest import DECIMAL_PRECISION
 
 _N = 6  # ages 20..25; working ages 20..24, terminal at 25
 _AGES = AgeGrid(start=20, stop=20 + _N - 1, step="Y")
@@ -208,6 +210,81 @@ def test_moving_floor_simulates_positive_consumption():
     alive_consumption = consumption[np.isfinite(consumption)]
     assert alive_consumption.size > 0
     assert (alive_consumption > 0).all()
+
+
+def _moving_window_grid():
+    # A window that slides far enough that no two ages' grids overlap. Every node is
+    # a strictly positive wealth level affording some feasible consumption, so a solve
+    # that tabulates each period on its own grid is finite everywhere.
+    def low(age):
+        return 3.0 * (age - 20)
+
+    return AgeSpecializedGrid(
+        build=lambda age: LinSpacedGrid(
+            start=low(age) + 0.5, stop=low(age) + 5.5, n_points=12
+        ),
+        signature=low,
+    )
+
+
+@pytest.mark.parametrize("grid_factory", [_moving_window_grid, _moving_floor_grid])
+def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory):
+    """The last working age's V is the analytic terminal value at that age's wealth.
+
+    The regime transitions into a terminal regime with zero utility, so the last
+    working age has no continuation and its value function is exactly the utility of
+    the best affordable consumption, `log(max{c : c <= wealth})`, and `-inf` at wealth
+    levels affording none. The identity pins both the numbers and the wealth levels
+    they belong to: the grid this age carries, not the representative axis some other
+    age contributes.
+    """
+    grid = grid_factory()
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
+    last_working = _N - 2
+
+    # Straight from the user's own grid factory, so the expectation is independent of
+    # the per-period axis table the solver reads.
+    wealth = np.asarray(grid.build(_AGES.period_to_age(last_working)).to_jax())
+    consumption = np.asarray(_CGRID.to_jax())
+    expected = np.array(
+        [
+            np.log(consumption[consumption <= w].max())
+            if (consumption <= w).any()
+            else -np.inf
+            for w in wealth
+        ]
+    )
+    got = np.asarray(v[last_working]["alive"])
+
+    np.testing.assert_array_equal(np.isneginf(got), np.isneginf(expected))
+    finite = np.isfinite(expected)
+    aaae(got[finite], expected[finite], decimal=DECIMAL_PRECISION)
+
+
+def test_moving_floor_solves_on_each_periods_own_nodes():
+    """Period `t`'s value function is tabulated on period `t`'s grid, not the base one.
+
+    A solve on the representative-age axis still yields a finite, NaN-free,
+    wealth-monotone V — just the wrong one — so telling the two apart needs an oracle
+    independent of the solver. The model admits an exact one: `bc` requires
+    `consumption <= wealth` and the consumption grid starts at 0.05, so node `w` is
+    infeasible (`V = -inf`) iff `w < 0.05`, computable straight from the period's own
+    grid definition.
+    """
+    grid = _moving_floor_grid()
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
+    for period in range(_N):
+        if "alive" not in v[period]:
+            continue
+        nodes = np.asarray(grid.build(_AGES.period_to_age(period)).to_jax())
+        np.testing.assert_array_equal(
+            np.isneginf(np.asarray(v[period]["alive"])),
+            nodes < _CGRID.start,
+            err_msg=(
+                f"period {period}: V's feasibility pattern does not match this "
+                f"period's own grid nodes {nodes} — the solve used a different axis"
+            ),
+        )
 
 
 def test_non_shape_invariant_grid_is_rejected():

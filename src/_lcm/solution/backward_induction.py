@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import gc
 import logging
@@ -20,6 +21,7 @@ from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
     _fold_period_diagnostics,
     _init_diagnostic_accumulators,
+    _states_for_period,
 )
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -37,24 +39,6 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND
-
-
-def _states_for_period(
-    regime: Regime, state_action_space: StateActionSpace, period: int
-) -> Mapping[str, object]:
-    """Current-period state axes, overriding age-varying states with period-t nodes.
-
-    For a regime with `AgeSpecializedGrid` states, replace the representative base
-    axis with this period's grid nodes so period-t's value function is tabulated on
-    period-t's grid (consistent with the continuation interpolation, which reads
-    V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
-    kernel is not retraced. Age-invariant regimes return the base axis unchanged.
-    """
-    # getattr (not direct access) so a duck-typed mock regime without the field works.
-    axes = getattr(regime.solution, "period_state_axes", None)
-    if axes is not None and period in axes:
-        return {**state_action_space.states, **axes[period]}
-    return state_action_space.states
 
 
 def solve(
@@ -367,6 +351,20 @@ def _run_period_kernel(
 
     """
     period_kernel = regime.solution.period_kernels[period]
+
+    # With `AgeSpecializedGrid` states, tabulate period-t's value function on
+    # period-t's own grid nodes rather than the representative base axis. This is
+    # what keeps the tabulation on the same grid as the continuation, which reads
+    # V_{t+1} on period-(t+1)'s grid; the two halves disagreeing makes the solved
+    # value function wrong at every node, not merely imprecise. Same shape as the
+    # base, so the shared compiled core is not retraced.
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, period))
+        ),
+    )
+
     return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
