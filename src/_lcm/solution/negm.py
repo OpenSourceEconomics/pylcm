@@ -10,7 +10,7 @@ each by key.
 """
 
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
@@ -228,34 +228,69 @@ class NEGM(Solver):
         # `outer_no_adjustment_candidate`, `keep` is the identity (hold the stock);
         # a depreciating `keep(d) = d (1 - delta)` lands the kept stock off the
         # durable grid and the inner passive read blends it over the grid.
-        no_adjustment_func = (
-            context.functions[self.outer_no_adjustment_candidate]
-            if self.outer_no_adjustment_candidate is not None
-            else None
+        # Function-local so the public `lcm.solvers` façade stays a thin re-export
+        # that pulls in no engine modules.
+        from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            resolve_periodized_nodes,
         )
-        keeper_context = replace(
-            context,
-            transitions=_no_adjustment_outer_transition(
-                transitions=context.transitions,
-                outer_post_decision=self.outer_post_decision,
-                no_adjustment_func=no_adjustment_func,
-            ),
-            functions=_with_no_adjustment_outer_function(
-                functions=context.functions,
-                outer_post_decision=self.outer_post_decision,
-                no_adjustment_func=no_adjustment_func,
-            ),
-        )
-        keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
+
         outer_grid_values = self.outer_grid.to_jax()
         durable_state = self.outer_post_decision.removeprefix("next_")
-        coh_shift_func = _build_coh_shift_function(
-            functions=context.functions,
-            durable_state_name=durable_state,
-            outer_post_decision=self.outer_post_decision,
-            no_adjustment_func=no_adjustment_func,
-            outer_cost_name=self.outer_cost,
-        )
+        # Both outer helpers are read here, one layer above the inner builder that
+        # resolves periodized nodes — so they must be resolved first. An
+        # `AgeSpecializedFunction` is a different function at each age, and the
+        # no-adjustment candidate is *closed over* by the injected keeper function
+        # rather than left as a pool node, so nothing downstream can resolve it.
+        # Periods group by the user's declared signature over the whole function
+        # pool: an age-invariant regime yields exactly one group and one keeper
+        # build, which is today's behaviour.
+        all_periods = tuple(sorted(adjuster_kernels.period_kernels))
+        keeper_kernels_by_period: dict[int, PeriodKernel] = {}
+        coh_shift_by_period: dict[int, Callable[..., FloatND]] = {}
+        keeper_continuation_template: EGMCarry | None = None
+        for group_periods in _periodized_function_groups(
+            periods=all_periods, functions=context.functions
+        ):
+            representative_period = group_periods[0]
+            group_functions = cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(context.functions, representative_period),
+            )
+            no_adjustment_func = (
+                group_functions[self.outer_no_adjustment_candidate]
+                if self.outer_no_adjustment_candidate is not None
+                else None
+            )
+            keeper_context = replace(
+                context,
+                transitions=_no_adjustment_outer_transition(
+                    transitions=context.transitions,
+                    outer_post_decision=self.outer_post_decision,
+                    no_adjustment_func=no_adjustment_func,
+                ),
+                functions=_with_no_adjustment_outer_function(
+                    functions=group_functions,
+                    outer_post_decision=self.outer_post_decision,
+                    no_adjustment_func=no_adjustment_func,
+                ),
+            )
+            group_keeper_kernels = self.inner.build_period_kernels(
+                context=keeper_context
+            )
+            keeper_continuation_template = group_keeper_kernels.continuation_template
+            group_coh_shift_func = _build_coh_shift_function(
+                functions=group_functions,
+                durable_state_name=durable_state,
+                outer_post_decision=self.outer_post_decision,
+                no_adjustment_func=no_adjustment_func,
+                outer_cost_name=self.outer_cost,
+            )
+            for period in group_periods:
+                keeper_kernels_by_period[period] = group_keeper_kernels.period_kernels[
+                    period
+                ]
+                coh_shift_by_period[period] = group_coh_shift_func
+        assert keeper_continuation_template is not None  # noqa: S101
         # The durable nodes enter a numerical lift (the credited-cost shift of cash
         # on hand), so they must be the solved period's own. With an age-specialized
         # durable grid the representative age's nodes are the wrong ones everywhere
@@ -273,12 +308,12 @@ class NEGM(Solver):
         period_kernels = MappingProxyType(
             {
                 period: _NEGMPeriodKernel(
-                    keeper_kernel=keeper_kernels.period_kernels[period],
+                    keeper_kernel=keeper_kernels_by_period[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
-                    coh_shift_func=coh_shift_func,
+                    coh_shift_func=coh_shift_by_period[period],
                     durable_grid_values=_durable_values_at(period),
                     outer_batch_size=self.outer_batch_size,
                 )
@@ -288,10 +323,41 @@ class NEGM(Solver):
         return SolutionKernels(
             period_kernels=period_kernels,
             continuation_template=_stack_carry_template(
-                template=keeper_kernels.continuation_template,
+                template=keeper_continuation_template,
                 n_candidates=outer_grid_values.shape[0] + 1,
             ),
         )
+
+
+def _periodized_function_groups(
+    *, periods: tuple[int, ...], functions: EconFunctionsMapping
+) -> tuple[tuple[int, ...], ...]:
+    """Partition periods by the declared signature of the function pool.
+
+    Periods land in the same group exactly when the user's `signature(age)` agrees
+    for every `AgeSpecializedFunction` in the pool, so they resolve to the same
+    concrete functions and may share one keeper build. A pool with no age
+    specialization yields a single group holding every period.
+
+    Args:
+        periods: The periods to partition, in ascending order.
+        functions: The regime's processed functions, possibly holding periodized
+            nodes.
+
+    Returns:
+        Tuple of period groups, each a tuple of periods sharing one signature.
+
+    """
+    from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+        periodized_tree_signature,
+    )
+
+    groups: dict[Hashable, list[int]] = {}
+    for period in periods:
+        groups.setdefault(periodized_tree_signature(functions, period), []).append(
+            period
+        )
+    return tuple(tuple(group) for group in groups.values())
 
 
 @dataclass(frozen=True, kw_only=True)
