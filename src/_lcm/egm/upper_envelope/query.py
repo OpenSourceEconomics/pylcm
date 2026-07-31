@@ -294,38 +294,6 @@ def _dyadic_parts(x: FloatND) -> tuple[FloatND, jax.Array]:
     return mantissa, jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
-def _mid_range_target(dtype: jnp.dtype) -> int:
-    """Binade to lift a difference's operands into: half the exponent range.
-
-    Lifting the largest operand to `[0.5, 1)` — the obvious choice, and what
-    rounds 8 to 10 used — stops products overflowing but spends the entire lower
-    half of the exponent range on nothing. Every operand more than `emax` binades
-    below the largest is then pushed into the subnormals, where it loses bits, or
-    vanishes outright. A segment whose own grid span covers the dynamic range has
-    exactly that shape: normalizing `(x1 - x0)` to below one sends `(q - x0)` to
-    zero, and the interpolant collapses onto its left value.
-
-    Landing the largest operand mid-range instead leaves both halves of headroom:
-    a difference of two such operands still cannot overflow, while an operand up
-    to `target + emax` binades below the largest stays finite NORMAL — 189
-    binades of slack in float32, 1533 in float64, against zero before.
-    """
-    # Two operands multiply and up to sixteen such products are summed in the
-    # double-double screen, so leave four binades of headroom above `2 * target`.
-    return (int(jnp.finfo(dtype).maxexp) - 4) // 2
-
-
-def _scale_exponent(magnitude: FloatND, target: int) -> jax.Array:
-    """Shift placing `magnitude` in binade `target`; `0` where there is none.
-
-    Zero and non-finite magnitudes are passed through unscaled: a NaN must stay
-    NaN so it surfaces rather than being silently ordered.
-    """
-    _, exponent = jnp.frexp(magnitude)
-    usable = (magnitude > 0) & jnp.isfinite(magnitude)
-    return jnp.where(usable, exponent - target, jnp.zeros_like(exponent))
-
-
 def _binade_exponent(magnitude: FloatND) -> jax.Array:
     """Exponent `e` with `magnitude` in `[2**(e-1), 2**e)`; `0` where there is none.
 
@@ -341,18 +309,6 @@ def _binade_exponent(magnitude: FloatND) -> jax.Array:
     _, exponent = jnp.frexp(magnitude)
     usable = (magnitude > 0) & jnp.isfinite(magnitude)
     return jnp.where(usable, exponent, jnp.zeros_like(exponent))
-
-
-def _group_scale_exponent(*magnitudes: FloatND, target: int) -> jax.Array:
-    """One shift for a group of quantities that must remain COMPARABLE.
-
-    Taken from the largest magnitude in the group. A single shared power of two
-    is the only scaling allowed on quantities whose ORDER is read across group
-    members: it multiplies each of them, and hence every difference between them,
-    by the same positive constant, so no ordering can change.
-    """
-    stacked = jnp.stack([jnp.abs(magnitude) for magnitude in magnitudes], axis=-1)
-    return _scale_exponent(jnp.max(stacked, axis=-1), target)
 
 
 def _as_dyadic(x: FloatND) -> _Dyadic:
@@ -379,35 +335,72 @@ def _dyadic_negate(terms: _Dyadic, flip: BoolND) -> _Dyadic:
     )
 
 
-def _exact_difference(a: FloatND, b: FloatND, *, target: int) -> _Dyadic:
-    """`a - b` as two exact floats sharing one exponent.
+def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
+    """`a - b` as an UNEVALUATED two-term dyadic sum. No subtraction is performed.
 
-    `_two_diff` is exact for any two finite floats whose residual is
-    representable, and the residual stops being representable only at the very
-    bottom of the range, where XLA flushes subnormals to zero: for
-    `a = tiny, b = 1.5 * tiny` — three distinct finite normals — the exact
-    difference is the smallest subnormal and comes back as `0.0`.
+    Round 13 formed the difference with `_two_diff` on operands LIFTED into
+    mid-range, and justified it with the hinge claim that "subtraction of two
+    finite floats cannot overflow". That claim is false, and opposite-signed
+    top-binade operands are the counterexample: for `H = 2**127` in float32 or
+    `2**1023` in float64 — both finite normals — the lift is zero because the
+    operands already exceed the target, and `_two_diff(H, -H)` returns
+    `(inf, nan)`. A finite exact envelope was then published as three NaNs
+    (round-13 audit F2).
 
-    The operands are therefore LIFTED, never lowered, into `target` first.
-    Lifting is a power of two, hence exact and injective, and it cannot overflow
-    because the largest operand lands mid-range by construction; LOWERING is
-    what merges two distinct floats into one and destroys the difference. And
-    where the operands already reach `target` the lift is zero, so a huge `a`
-    against a tiny `b` keeps its residual `-b` at full precision — precisely the
-    case a common lowered frame would have thrown away.
+    Rounds 8 to 12 guarded the same operation against UNDERFLOW and round 13
+    against nothing else; each repair fixed the direction its witness pointed at
+    and left the mirror image open. The fix is to stop performing the operation.
 
-    The residual is therefore never below `2**(minexp - precision)` relative to
-    the returned exponent, which is what bounds the accumulator in
-    `_accumulator_layout`.
+    `a = m_a * 2**e_a` and `b = m_b * 2**e_b` exactly, from `frexp`, so
+    `a - b` is exactly the two-term sum `[(m_a, e_a), (-m_b, e_b)]`. Each
+    mantissa is already in `[0.5, 1)`, each exponent is an int32, and NOTHING is
+    added, subtracted, scaled or rounded to build it. There is no direction left
+    in which to be wrong: the construction is total over every pair of finite
+    floats, at every relative scale, and `_exact_sign_of_sum` consumes exactly
+    such term lists already.
+
+    The two terms are also strictly TIGHTER than the lifted pair they replace —
+    they live in the operands' own binades rather than a head one binade above
+    and a residual `precision` binades below — so the bound in
+    `_accumulator_layout` still holds with room to spare.
     """
-    _, exponent_a = _dyadic_parts(a)
-    _, exponent_b = _dyadic_parts(b)
-    lift = jnp.maximum(target - jnp.maximum(exponent_a, exponent_b), 0)
-    head, tail = _two_diff(jnp.ldexp(a, lift), jnp.ldexp(b, lift))
+    mantissa_a, exponent_a = _dyadic_parts(a)
+    mantissa_b, exponent_b = _dyadic_parts(b)
     return _Dyadic(
-        mantissa=jnp.stack([head, tail], axis=-1),
-        exponent=jnp.stack([-lift, -lift], axis=-1),
+        mantissa=jnp.stack([mantissa_a, -mantissa_b], axis=-1),
+        exponent=jnp.stack([exponent_a, exponent_b], axis=-1),
     )
+
+
+def _framed_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Array]:
+    """`(head, tail, exponent)` with `a - b == (head + tail) * 2**exponent`.
+
+    The double-double SCREEN's counterpart to `_exact_difference`, and the answer
+    to the same round-13 finding on the public path: `_candidate_terms` formed
+    its grid and value differences in the working dtype after a LIFT-ONLY shift,
+    so two opposite-signed top-binade operands overflowed there exactly as they
+    did in the exact kernel, and the published triple was `(NaN, NaN, NaN)`.
+
+    Both operands are first divided by `2**max(e_a, e_b)` — which is `ldexp` on
+    the `frexp` mantissa, hence exact — landing them in `(-1, 1]`. `_two_diff` on
+    such a pair has `|head| <= 2` and a residual at most `precision` binades
+    below, so it can neither overflow nor lose its tail, whatever the operands'
+    own magnitudes. The frame rides along as an INTEGER exponent.
+
+    Where the operands are more than `precision + |minexp|` binades apart the
+    smaller flushes to zero in the frame, and the head is then the larger operand
+    to within `2**-precision-|minexp|` relative — some 100 binades below the
+    certified radius, so the screen stays honest. That is the ONLY approximation
+    here, it is bounded, and the exact predicate does not use this function.
+    """
+    mantissa_a, exponent_a = _dyadic_parts(a)
+    mantissa_b, exponent_b = _dyadic_parts(b)
+    exponent = jnp.maximum(exponent_a, exponent_b)
+    head, tail = _two_diff(
+        jnp.ldexp(mantissa_a, exponent_a - exponent),
+        jnp.ldexp(mantissa_b, exponent_b - exponent),
+    )
+    return head, tail, exponent
 
 
 def _dyadic_product(a: _Dyadic, b: _Dyadic, split: float) -> _Dyadic:
@@ -475,9 +468,14 @@ def _accumulator_layout(dtype: jnp.dtype) -> _AccumulatorLayout:
     limb_bits = precision - (_EXACT_TERMS.bit_length() + 2)
     n_digit = -(-precision // limb_bits) + 1
 
-    # A lifted difference keeps its residual within `precision` binades of the
-    # smallest normal (`_exact_difference`); a product of two normalized
-    # mantissas puts its own residual at most `2 * precision` below its head.
+    # A difference contributes its two OPERANDS as terms (`_exact_difference`
+    # performs no subtraction), so each sits in the operand's own binade — inside
+    # `[min_exponent, max_exponent]`. The wider window kept here is the round-13
+    # bound for a rounded head-plus-residual pair; it strictly CONTAINS the
+    # current one, so it stays valid, and holding it fixed keeps the layout the
+    # one the round-13 review verified directly at 2,000/2,000 sign matches. A
+    # product of two normalized mantissas puts its own residual at most
+    # `2 * precision` below its head.
     difference_hi = max_exponent + 1
     difference_lo = min_exponent - precision - 1
     numerator_hi = max_exponent + difference_hi
@@ -624,13 +622,12 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     """
     dtype = cols.dtype
     split = _dekker_split_factor(dtype)
-    target = _mid_range_target(dtype)
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
 
-    left_weight = _exact_difference(right_grid, q, target=target)
-    right_weight = _exact_difference(q, left_grid, target=target)
-    width = _exact_difference(right_grid, left_grid, target=target)
+    left_weight = _exact_difference(right_grid, q)
+    right_weight = _exact_difference(q, left_grid)
+    width = _exact_difference(right_grid, left_grid)
 
     numerator = _dyadic_join(
         _dyadic_product(_as_dyadic(left_value), left_weight, split),
@@ -639,7 +636,13 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
 
     # Canonical orientation. Endpoints may be stored in either order within a
     # branch; negating both numerator and denominator leaves `V` unchanged.
-    flip = width.mantissa[..., 0] < 0
+    #
+    # Read off the STORED endpoints, not off a leading term. Under the round-13
+    # representation the width's first term was the rounded difference, whose
+    # sign was the width's sign; it is now the frexp mantissa of `right_grid`,
+    # whose sign is that endpoint's. A comparison of two finite floats is exact
+    # and needs no difference to be formed at all.
+    flip = right_grid < left_grid
     numerator = _dyadic_negate(numerator, flip)
     denominator = _dyadic_negate(width, flip)
 
@@ -706,12 +709,11 @@ def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
     exponents. Carrying the exponent per term removes that coupling: neither
     scale is chosen at all, so neither can be chosen wrongly.
     """
-    target = _mid_range_target(cols.dtype)
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
 
-    numerator = _exact_difference(right_value, left_value, target=target)
-    width = _exact_difference(right_grid, left_grid, target=target)
+    numerator = _exact_difference(right_value, left_value)
+    width = _exact_difference(right_grid, left_grid)
 
     # A zero-width segment has no grid span; the established convention publishes
     # its raw value jump as the slope, i.e. a unit denominator. Under exponent
@@ -725,7 +727,9 @@ def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
         exponent=jnp.where(zero_width, jnp.zeros_like(width.exponent), width.exponent),
     )
 
-    flip = width.mantissa[..., 0] < 0
+    # As in `_exact_ratio`: the orientation is a property of the STORED
+    # endpoints, read by an exact float comparison rather than off a term.
+    flip = right_grid < left_grid
     return _ExactRatio(
         numerator=_dyadic_negate(numerator, flip),
         denominator=_dyadic_negate(width, flip),
@@ -1002,56 +1006,79 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
-    # ... with ONE exception, which is where scaling operands is not merely safe
-    # but necessary. "Subtraction of finite floats cannot overflow" is true, but
-    # it can UNDERFLOW: near the bottom of the range the difference of two
-    # distinct normals is SUBNORMAL, and XLA flushes subnormals to zero. For a
-    # segment at the smallest normal scale, `q - x0` came back exactly `0.0` on
-    # raw operands and the interpolant collapsed onto its left value — the
-    # round-10 defect reappearing at the opposite end of the range (round-9
-    # audit MT6, 48/144 mismatches, introduced by this round's own repair).
+    # ... and the ONE thing a shift of the OPERANDS can never deliver is safety
+    # in both directions at once, which is the round-13 finding. A difference of
+    # finite floats can UNDERFLOW — near the bottom of the range the gap between
+    # two distinct normals is subnormal and XLA flushes it, so `q - x0` came back
+    # exactly `0.0` and the interpolant collapsed onto its left value (round-9
+    # audit MT6). Rounds 9 to 13 answered that by LIFTING, never lowering, and
+    # asserted that subtraction of finite floats cannot overflow. It can: for
+    # `H = 2**127` in float32 the operands already exceed any target, the lift is
+    # zero, and `H - (-H)` is `+inf`. A finite exact envelope was published as
+    # three NaNs (round-13 audit F2, MT10: 288 of 288 generated cells).
     #
-    # The asymmetry that resolves it: scaling operands DOWN can merge two
-    # distinct floats, which is what rounds 9 and 10 got wrong; scaling them UP
-    # cannot, because multiplying by a power of two is exact and injective while
-    # nothing overflows. So LIFT — never lower — the grid operands into mid-range
-    # before differencing, with ONE common shift for `q` and both nodes so every
-    # difference and every equality between them is preserved exactly. The lift
-    # cancels out of `r = t/w` and so never reaches the published fraction.
-    largest_operand = jnp.maximum(
-        jnp.abs(q), jnp.maximum(jnp.abs(left_grid), jnp.abs(right_grid))
-    )
-    lift = jnp.minimum(
-        _scale_exponent(largest_operand, _mid_range_target(block.dtype)), 0
-    )
-    th, tl = _two_diff(jnp.ldexp(q, -lift), jnp.ldexp(left_grid, -lift))
-    wh, wl = _two_diff(jnp.ldexp(right_grid, -lift), jnp.ldexp(left_grid, -lift))
+    # No choice of shift closes both ends, because the spread the operands can
+    # span is the whole format and no single frame holds it. So the difference is
+    # not formed in the working dtype at all: `_framed_difference` divides each
+    # PAIR by its own `2**max(e_a, e_b)` — exact, by `ldexp` on the `frexp`
+    # mantissa — and returns the pair's exponent alongside the double-double
+    # head and tail. Both operands are then in `(-1, 1]`, where `_two_diff`
+    # cannot overflow and cannot lose its residual, at any model scale.
+    #
+    # Each difference carries its OWN frame, so the grid axis needs no common
+    # shift for `q` and the two nodes: `r = t/w` recombines them through the
+    # integer exponents, where the round-10 hazard of merging two distinct grid
+    # points onto one float cannot arise because no operand is ever lowered
+    # relative to another it is compared against.
+    th, tl, t_frame = _framed_difference(q, left_grid)
+    wh, wl, w_frame = _framed_difference(right_grid, left_grid)
     wh = jnp.where(zero_width, jnp.ones_like(wh), wh)
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
+    w_frame = jnp.where(zero_width, jnp.zeros_like(w_frame), w_frame)
 
-    # The value axis takes the SAME lift, for the same reason and with one extra
-    # requirement. Near the bottom of the range the endpoint gap `d = v1 - v0` of
-    # two adjacent normals is the smallest subnormal, and `r*d` for an interior
-    # `r` is below it: `p` flushes to zero, `v = v0 + p` publishes `v0`, and the
-    # candidate is indistinguishable from a constant competitor sitting at `v0`.
-    # With `v0 = tiny` and `v1 = nextafter(tiny)` at `q = 3/4` the published
-    # value was `tiny` where the correctly rounded value is `nextafter(tiny)`,
-    # and a strictly lower branch took the policy and the marginal (round-11
-    # audit F2, MT8: 234 of 234 generated cells, both dtypes, both branch orders,
-    # dense and blocked alike).
+    # The value axis takes the same treatment, and for BOTH reasons. Downward:
+    # with `v0 = tiny` and `v1 = nextafter(tiny)` the endpoint gap `d` used to
+    # flush and a strictly lower branch took the policy and the marginal
+    # (round-11 audit F2, MT8). Upward: with `v0 = -H` and `v1 = H` the gap `2H`
+    # is not representable at all, though every endpoint and the interpolated
+    # value are. In the framed form `d` is `(1.0, 0.0)` at exponent `maxexp`, and
+    # nothing overflows.
+    dh, dl, d_frame = _framed_difference(right_value, left_value)
+
+    # Renormalize each head into `[0.5, 1)` before Dekker sees it, and fold the
+    # shift into the integer exponent. This is the round-8 requirement — the
+    # split constant `2**s + 1` needs `|a| < 2**(emax - s)` — now applied to a
+    # quantity that is already O(1), so it is conditioning rather than rescue.
+    t_exp = _binade_exponent(jnp.abs(th)) + t_frame
+    w_exp = _binade_exponent(jnp.abs(wh)) + w_frame
+    d_exp = _binade_exponent(jnp.abs(dh)) + d_frame
+    t_shift = t_frame - t_exp
+    w_shift = w_frame - w_exp
+    d_shift = d_frame - d_exp
+
+    rh, rl = _dd_div(
+        jnp.ldexp(th, t_shift),
+        jnp.ldexp(tl, t_shift),
+        jnp.ldexp(wh, w_shift),
+        jnp.ldexp(wl, w_shift),
+        split,
+    )
+    ph, pl = _dd_mul(rh, rl, jnp.ldexp(dh, d_shift), jnp.ldexp(dl, d_shift), split)
+    product_exp = t_exp - w_exp + d_exp
+
+    # `v = v0 + r*d` in a frame that holds BOTH addends. Round 13 applied the
+    # product's exponent to `ph` and added the raw `v0`, which overflows whenever
+    # the product does even though the sum need not: at `v0 = -H`, `v1 = H`,
+    # `r = 3/4` the true value is `H/2` while `r*d` is `1.5 * H`. Anchoring on
+    # the larger of the two exponents keeps every addend in `(-2, 2)` and defers
+    # the single rounding to publication.
     #
-    # Unlike the grid lift this one must also survive PUBLICATION, because
-    # `value_hi` is compared across candidates that each choose their own lift.
-    # So the interior evaluation runs entirely in the lifted frame and is scaled
-    # back exactly once, at the end: both endpoint values are pre-multiplied by
-    # `2**-vs`, the whole interpolation is carried out in that frame, and only
-    # the result is multiplied back by `2**vs`.
-    #
-    # The lift is keyed on the LARGEST endpoint, and `|v|` is bounded by the
-    # endpoint values, so `ldexp(vh, value_lift)` lands back inside the binade
-    # its operands came from: the result is normal whenever the endpoints are,
-    # and scaling a normal by a power of two is exact. The published value is
-    # therefore the lifted computation's correctly rounded value, rounded ONCE.
+    # For a BRACKETING candidate `|t| <= |w|`, so `r` is in `[0, 1]` and `|v|` is
+    # bounded by the endpoint values: `ldexp(vh, value_frame)` therefore lands
+    # back inside the binade the endpoints came from and is finite whenever they
+    # are. Scaling a normal by a power of two is exact, so `value_hi` is the
+    # framed computation's correctly rounded value, rounded ONCE, in ORIGINAL
+    # units — comparable across candidates that framed differently.
     #
     # `value_lo` and the radius are scaled back by the same shift and may flush
     # to zero there. That costs resolution, never correctness: a flushed residual
@@ -1060,42 +1087,24 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # certificate — it routes to `_exact_compare` — while a strict difference in
     # a correctly rounded `value_hi` certifies a strict difference in the exact
     # values, because rounding to nearest is monotone.
-    value_lift = jnp.minimum(
-        _group_scale_exponent(
-            left_value, right_value, target=_mid_range_target(block.dtype)
-        ),
-        0,
-    )
-    lifted_left_value = jnp.ldexp(left_value, -value_lift)
-    dh, dl = _two_diff(jnp.ldexp(right_value, -value_lift), lifted_left_value)
-
-    t_exp = _binade_exponent(jnp.abs(th))
-    w_exp = _binade_exponent(jnp.abs(wh))
-    d_exp = _binade_exponent(jnp.abs(dh))
-
-    rh, rl = _dd_div(
-        jnp.ldexp(th, -t_exp),
-        jnp.ldexp(tl, -t_exp),
-        jnp.ldexp(wh, -w_exp),
-        jnp.ldexp(wl, -w_exp),
-        split,
-    )
-    ph, pl = _dd_mul(rh, rl, jnp.ldexp(dh, -d_exp), jnp.ldexp(dl, -d_exp), split)
-    product_exp = t_exp - w_exp + d_exp
-    ph, pl = jnp.ldexp(ph, product_exp), jnp.ldexp(pl, product_exp)
-    vh, vl = _dd_add_fp(ph, pl, lifted_left_value)
+    _, left_value_exponent = _dyadic_parts(left_value)
+    value_frame = jnp.maximum(product_exp, left_value_exponent)
+    framed_ph = jnp.ldexp(ph, product_exp - value_frame)
+    framed_pl = jnp.ldexp(pl, product_exp - value_frame)
+    framed_left_value = jnp.ldexp(left_value, -value_frame)
+    vh, vl = _dd_add_fp(framed_ph, framed_pl, framed_left_value)
 
     eps = jnp.finfo(block.dtype).eps
     interior_radius = (
-        _INTERIOR_RADIUS_ULPS2 * eps * eps * (jnp.abs(lifted_left_value) + jnp.abs(ph))
+        _INTERIOR_RADIUS_ULPS2
+        * eps
+        * eps
+        * (jnp.abs(framed_left_value) + jnp.abs(framed_ph))
     )
 
-    # Out of the lifted value frame, exactly once. Every candidate publishes in
-    # ORIGINAL units, so `value_hi`, `value_lo` and `radius` stay comparable
-    # across candidates that lifted by different amounts.
-    vh = jnp.ldexp(vh, value_lift)
-    vl = jnp.ldexp(vl, value_lift)
-    interior_radius = jnp.ldexp(interior_radius, value_lift)
+    vh = jnp.ldexp(vh, value_frame)
+    vl = jnp.ldexp(vl, value_frame)
+    interior_radius = jnp.ldexp(interior_radius, value_frame)
 
     # `rh` is the ratio's SIGNIFICAND; the carried and interpolated quantities
     # need the ratio itself. `r` is in `[0, 1]` for a bracketing candidate, so
@@ -1123,10 +1132,18 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         ),
         # In ORIGINAL units, not the per-candidate binade: this is a screen key
         # compared ACROSS candidates, so every candidate must express it in the
-        # same units. It is one subtraction over another, with no Dekker split,
-        # so it carries no overflow risk of its own.
-        slope=(right_value - left_value)
-        / jnp.where(zero_width, jnp.ones_like(right_grid), right_grid - left_grid),
+        # same units.
+        #
+        # Built from the framed differences rather than from raw subtractions.
+        # "One subtraction over another carries no overflow risk of its own" was
+        # the same false hinge as in `_exact_difference`: with `v0 = -H`,
+        # `v1 = H` the numerator alone is `+inf`, and against an equally
+        # overflowing width it becomes NaN — a key the round-13 sentinel repair
+        # in `_right_continuous_winner` then has to demote, losing the ordering
+        # rather than getting it right. Here the mantissa ratio is O(1) and the
+        # magnitude rides in the integer exponent, so the key is finite whenever
+        # the mathematical slope is, and infinite only when it genuinely is.
+        slope=jnp.ldexp(jnp.ldexp(dh, d_shift) / jnp.ldexp(wh, w_shift), d_exp - w_exp),
         right_available=q < upper,
     )
 

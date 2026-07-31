@@ -17,9 +17,11 @@ from _lcm.egm.upper_envelope.query import (
     _dekker_split_factor,
     _dyadic_product,
     _exact_compare,
+    _exact_difference,
     _exact_ratio,
     _exact_slope_compare,
     _exactly_maximal,
+    _framed_difference,
     _right_continuous_winner,
     envelope_at_query,
 )
@@ -1693,3 +1695,142 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
         assert sign == want, f"{cols_a} vs {cols_b} at {q}: {sign} != {want}"
         checks += 1
     assert checks > 200, f"only {checks} usable draws — the sweep degenerated"
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
+    """`H - (-H)` must be represented, not computed.
+
+    Round 13 built differences with `_two_diff` on operands lifted into
+    mid-range, and justified it with the claim that subtraction of two finite
+    floats cannot overflow. Opposite-signed top-binade operands refute that:
+    for `H = 2**127` in float32 both operands are finite normals while their
+    difference `2H` is not representable at all (round-13 audit F2).
+
+    So the assertion is not that the difference is finite — it is that no float
+    is ever asked to hold it. Every mantissa stays inside its own binade and the
+    magnitude lives in the integer exponent.
+    """
+    top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
+    terms = _exact_difference(
+        jnp.asarray(top, dtype=dtype), jnp.asarray(-top, dtype=dtype)
+    )
+    mantissa = np.asarray(terms.mantissa)
+    exponent = np.asarray(terms.exponent)
+
+    assert np.all(np.isfinite(mantissa)), f"a mantissa left the format: {mantissa}"
+    assert np.all(np.abs(mantissa) < 1.0), f"a mantissa is not normalized: {mantissa}"
+    total = sum(
+        Fraction(float(m)) * Fraction(2) ** int(e)
+        for m, e in zip(mantissa.ravel(), exponent.ravel(), strict=True)
+    )
+    assert total == 2 * Fraction(float(top)), f"terms sum to {total}, not 2H"
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
+    """The screen's difference must not overflow where the exact one does not.
+
+    `_candidate_terms` formed its grid width, its endpoint gap and its slope key
+    as working-dtype subtractions after a lift-only shift, so the public path
+    carried the same defect as the exact kernel and published `(NaN, NaN, NaN)`.
+    """
+    top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
+    head, tail, exponent = _framed_difference(
+        jnp.asarray(top, dtype=dtype), jnp.asarray(-top, dtype=dtype)
+    )
+    assert np.isfinite(np.asarray(head)), f"framed head is {head}"
+    assert np.isfinite(np.asarray(tail)), f"framed tail is {tail}"
+    recovered = (
+        Fraction(float(np.asarray(head))) + Fraction(float(np.asarray(tail)))
+    ) * Fraction(2) ** int(np.asarray(exponent))
+    assert recovered == 2 * Fraction(float(top)), f"framed pair recovers {recovered}"
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("axis", ["grid-width", "endpoint-value"])
+@pytest.mark.parametrize("fraction", [0.25, 0.5, 0.75])
+@pytest.mark.parametrize("order", [0, 1])
+def test_a_top_binade_segment_still_publishes_its_envelope(
+    dtype, axis, fraction, order
+):
+    """A finite exact envelope must never be published as three NaNs.
+
+    Two overflow axes are covered: a segment whose abscissa SPAN is not
+    representable, and one whose endpoint VALUE gap is not. The expected triple
+    is derived here in exact rationals rather than written as a literal — on the
+    value axis the sloped branch legitimately WINS at some query positions, and
+    a hand-written expectation gets that wrong.
+
+    Note what the round-13 sweep did instead: it drew wide-range operands and
+    then skipped any draw with `not np.isfinite(x1 - x0)`, which discards
+    precisely the cells this test keeps. A filter written in the same arithmetic
+    as the defect cannot witness it.
+    """
+    top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
+    if axis == "grid-width":
+        x0, x1 = dtype(-top), dtype(top)
+        v0, v1 = dtype(0.5), dtype(-0.5)
+    else:
+        x0, x1 = dtype(0.0), dtype(1.0)
+        v0, v1 = dtype(top), dtype(-top)
+
+    # In exact rationals: the obvious `x0 + f * (x1 - x0)` overflows on exactly
+    # these inputs, so the harness would reproduce the defect it adjudicates.
+    query = dtype(
+        float(
+            Fraction(float(x0))
+            + Fraction(fraction) * (Fraction(float(x1)) - Fraction(float(x0)))
+        )
+    )
+    sloped = ([x0, x1], [v0, v1], [1.0, 1.0], [20.0, 20.0])
+    constant = ([x0, x1], [0.25, 0.25], [0.0, 0.0], [10.0, 10.0])
+    branches = [sloped, constant] if order == 0 else [constant, sloped]
+
+    grid, value, policy, marginal, segment = [], [], [], [], []
+    for index, (xs, vs, ps, ms) in enumerate(branches):
+        grid += xs
+        value += vs
+        policy += ps
+        marginal += ms
+        segment += [index, index]
+
+    got = envelope_at_query(
+        endog_grid=jnp.asarray(grid, dtype=dtype),
+        policy=jnp.asarray(policy, dtype=dtype),
+        value=jnp.asarray(value, dtype=dtype),
+        marginal=jnp.asarray(marginal, dtype=dtype),
+        segment_id=jnp.asarray(segment, dtype=dtype),
+        x_query=jnp.asarray([query], dtype=dtype),
+    )
+    # The exact envelope, in rationals: per branch the affine value at the
+    # query, then the maximum, breaking an exact tie toward the larger slope as
+    # the right-continuous rule does.
+    weight = Fraction(fraction)
+    best = None
+    for xs, vs, ps, ms in branches:
+        start, end = (Fraction(float(a)) for a in (vs[0], vs[1]))
+        exact_value = start + weight * (end - start)
+        span = Fraction(float(xs[1])) - Fraction(float(xs[0]))
+        slope = (end - start) / span
+        entry = (
+            (exact_value, slope),
+            (
+                exact_value,
+                Fraction(float(ps[0])) + weight * Fraction(float(ps[1]) - float(ps[0])),
+                Fraction(float(ms[0])) + weight * Fraction(float(ms[1]) - float(ms[0])),
+            ),
+        )
+        if best is None or entry[0] > best[0]:
+            best = entry
+    assert best is not None, "both branches bracket the query by construction"
+    expected = tuple(float(dtype(float(item))) for item in best[1])
+
+    published = tuple(float(np.asarray(item)[0]) for item in got)
+    assert all(np.isfinite(item) for item in published), (
+        f"{axis} at fraction {fraction}, branch order {order}: {published}"
+    )
+    assert published == expected, (
+        f"{axis} at fraction {fraction}, branch order {order}: "
+        f"{published} != {expected}"
+    )
