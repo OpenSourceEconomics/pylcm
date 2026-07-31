@@ -17,7 +17,7 @@ import functools
 import inspect
 import math
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -30,6 +30,10 @@ from dags import concatenate_functions
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
+from _lcm.egm.continuation_grids import (
+    continuation_grid_signature,
+    continuation_v_interpolation_info,
+)
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -71,6 +75,11 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
 )
+
+# Key under which ride-along periods share one compiled core: the continuation
+# targets either side of a `"|"` separator, followed by those targets'
+# age-specialized grid signatures at `period + 1`.
+type _RideAlongGroupKey = tuple[RegimeName | Hashable, ...]
 
 
 @beartype(conf=REGIME_CONF)
@@ -602,10 +611,10 @@ class NBEGM(Solver):
         # stochastic multi-target lifecycle transition. Enumerate the regime's
         # active periods directly rather than resolving a single target per period.
         active_periods = sorted(context.regimes_to_active_periods[context.regime_name])
-        continuation_cores: dict[tuple[RegimeName, ...], Callable] = {}
-        envelope_cores: dict[tuple[RegimeName, ...], Callable] = {}
-        statics_by_key: dict[tuple[RegimeName, ...], _NBEGMRideAlongStatics] = {}
-        cliff_candidates_by_key: dict[tuple[RegimeName, ...], bool] = {}
+        continuation_cores: dict[_RideAlongGroupKey, Callable] = {}
+        envelope_cores: dict[_RideAlongGroupKey, Callable] = {}
+        statics_by_key: dict[_RideAlongGroupKey, _NBEGMRideAlongStatics] = {}
+        cliff_candidates_by_key: dict[_RideAlongGroupKey, bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period in active_periods:
             plan = _build_nbegm_continuation_plan(
@@ -615,7 +624,22 @@ class NBEGM(Solver):
                 post_decision_name=self.post_decision_function,
                 stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
-            key = (*plan.carry_targets, "|", *plan.scalar_targets)
+            # One compiled core carries one set of continuation nodes, so periods
+            # whose targets sit on different age-specialized grids must not share
+            # it. The signature is empty for an age-invariant model, leaving the
+            # grouping exactly as the target split alone would make it.
+            key = (
+                *plan.carry_targets,
+                "|",
+                *plan.scalar_targets,
+                continuation_grid_signature(
+                    period=period,
+                    targets=plan.carry_targets + plan.scalar_targets,
+                    period_to_regime_grid_signature=(
+                        context.period_to_regime_grid_signature
+                    ),
+                ),
+            )
             if key not in continuation_cores:
                 _fail_if_liquid_reading_next_state_varies_within_interval(
                     continuation_plan=plan,
@@ -2688,12 +2712,20 @@ def _build_nbegm_continuation_plan(
             "case-piece solver is for non-terminal regimes only."
         )
         raise RegimeInitializationError(msg)
+    # A period-`t` kernel reads its targets' `V_{t+1}` over the ride-along co-states,
+    # so with an age-specialized co-state the nodes it interpolates on are period
+    # `t + 1`'s, not the representative age's.
+    v_interpolation_info = continuation_v_interpolation_info(
+        period=period,
+        regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+        period_to_regime_v_interp=context.period_to_regime_v_interp,
+    )
     carry_targets, scalar_targets = get_egm_continuation_targets(
         period=period,
         transitions=context.transitions,
         reachable_targets=reachable_targets,
         regimes_to_active_periods=context.regimes_to_active_periods,
-        regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+        regime_to_v_interpolation_info=v_interpolation_info,
     )
     # A nonlinear certainty equivalent switches the child stochastic-node
     # expectation to the Epstein-Zin power mean. Its risk-aversion coefficient is
@@ -2714,7 +2746,7 @@ def _build_nbegm_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         stochastic_node_batch_size=stochastic_node_batch_size,
-        regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
+        regime_to_v_interpolation_info=v_interpolation_info,
         risk_aversion_param_name=risk_aversion_param_name,
     )
 

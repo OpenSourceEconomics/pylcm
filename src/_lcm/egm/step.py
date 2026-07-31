@@ -149,6 +149,10 @@ from _lcm.egm.continuation import (
     build_continuation_plan,
     get_egm_continuation_targets,
 )
+from _lcm.egm.continuation_grids import (
+    continuation_grid_signature,
+    continuation_v_interpolation_info,
+)
 from _lcm.egm.kernel_scope import _find_unsupported_feature
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.regime_introspection import (
@@ -371,7 +375,7 @@ def build_egm_step_functions(
             transitions=transitions,
             reachable_targets=reachable_targets,
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_v_interpolation_info=_continuation_info(
+            regime_to_v_interpolation_info=continuation_v_interpolation_info(
                 period=period,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 period_to_regime_v_interp=period_to_regime_v_interp,
@@ -381,7 +385,7 @@ def build_egm_step_functions(
             (
                 carry,
                 scalar,
-                _continuation_grid_signature(
+                continuation_grid_signature(
                     period=period,
                     targets=carry + scalar,
                     period_to_regime_grid_signature=period_to_regime_grid_signature,
@@ -395,7 +399,7 @@ def build_egm_step_functions(
         carry_targets, scalar_targets, _ = group_key
         # Every period in the group shares a continuation-grid signature, so the
         # first one's interpolation info is the whole group's.
-        group_v_interp = _continuation_info(
+        group_v_interp = continuation_v_interpolation_info(
             period=group_periods[0],
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -460,52 +464,6 @@ def build_egm_step_functions(
 
 
 type _EGMGroupKey = tuple[tuple[RegimeName, ...], tuple[RegimeName, ...], Hashable]
-
-
-def _continuation_info(
-    *,
-    period: int,
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    period_to_regime_v_interp: (
-        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
-    ),
-) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-    """All-regime interpolation info for period `t`'s continuation `V_{t+1}`.
-
-    Mirrors the Q-and-F builder's helper of the same name: a period-`t` kernel
-    interpolates each target on the target's *own* period-`t+1` grid, so an
-    age-specialized target is never read at the representative age.
-    """
-    if period_to_regime_v_interp is None:
-        return regime_to_v_interpolation_info
-    per_period = period_to_regime_v_interp.get(
-        period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
-    )
-    return MappingProxyType(
-        {
-            target: per_period.get(target, info)
-            for target, info in regime_to_v_interpolation_info.items()
-        }
-    )
-
-
-def _continuation_grid_signature(
-    *,
-    period: int,
-    targets: tuple[RegimeName, ...],
-    period_to_regime_grid_signature: (
-        MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
-    ),
-) -> Hashable:
-    """The continuation targets' user-declared grid signatures at `period + 1`."""
-    if period_to_regime_grid_signature is None:
-        return ()
-    at_target_period = period_to_regime_grid_signature.get(period + 1, {})
-    return tuple(
-        (target, at_target_period[target])
-        for target in targets
-        if target in at_target_period
-    )
 
 
 def compute_egm_carry_length(*, solver: DCEGM) -> int:
