@@ -3,20 +3,36 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
+from lcm._compilation_cache import compilation_cache_name
+
 # Use on-demand GPU memory allocation instead of JAX's default of pre-allocating
 # 75% of GPU memory. This plays nicely with other GPU processes, makes nvidia-smi
 # reflect actual usage, and enables meaningful GPU memory benchmarks. Users can
 # override by setting XLA_PYTHON_CLIENT_PREALLOCATE=true before importing lcm.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
+
 # Enable persistent JIT compilation cache. Large models (many regimes/states) can
-# take minutes to compile; the cache makes subsequent runs near-instant. Users can
-# override by setting JAX_COMPILATION_CACHE_DIR before importing lcm. Skip the
+# take minutes to compile; the cache makes subsequent runs near-instant. Skip the
 # default when no home directory is available (some HPC containers) rather than
 # crashing at import time.
+#
+# The cache is split per project rather than pooled in one directory. Entries are
+# keyed by a hash of the computation, so splitting costs no reuse — what it
+# separates is concurrent *writers*, and concurrent writers are what leave
+# unreadable entries behind, reported later as a decompression warning after which
+# the cache's work is silently lost.
+#
+# Two overrides, outermost first:
+# - `JAX_COMPILATION_CACHE_DIR` names the directory outright and is used as given.
+# - `LCM_COMPILATION_CACHE_NAME` names only the leaf under the shared root, for
+#   repositories holding several independent models that run concurrently (one
+#   package per paper, say), where the enclosing project is too coarse a split.
 if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
     try:
-        _default_cache_dir = str(Path.home() / ".cache" / "jax")
+        _default_cache_dir = str(
+            Path.home() / ".cache" / "jax" / compilation_cache_name()
+        )
     except RuntimeError:
         _default_cache_dir = None
     if _default_cache_dir is not None:
