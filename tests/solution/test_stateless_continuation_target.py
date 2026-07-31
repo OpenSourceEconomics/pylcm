@@ -15,7 +15,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    TauchenAR1Process,
+    categorical,
+)
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -115,4 +122,70 @@ def test_the_stateless_bequest_moves_the_parent():
     """
     poor = np.asarray(_solve_with_bequest(0.0)[0]["alive"])
     rich = np.asarray(_solve_with_bequest(10.0)[0]["alive"])
+    assert not np.allclose(poor, rich)
+
+
+def _solve_with_process_only_target(level: float):
+    """Solve a model whose terminal regime's only state is a stochastic process.
+
+    A process carries its own intrinsic transition and must not appear in
+    `state_transitions`, so this regime — like the stateless one above — contributes
+    no state-law bundle, while its value is genuinely non-trivial.
+    """
+    alive = Regime(
+        transition=_next_regime,
+        active=lambda age: age < _LAST_AGE,
+        states={"wealth": _WEALTH_GRID},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        state_transitions={"wealth": _next_wealth},
+        functions={"utility": _utility},
+    )
+    retired = Regime(
+        transition=None,
+        states={"shock": TauchenAR1Process(n_points=3, gauss_hermite=False)},
+        functions={"utility": lambda shock: shock + level},
+    )
+    model = Model(
+        regimes={"alive": alive, "gone": retired},
+        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        regime_id_class=RegimeId,
+    )
+    params = {
+        "alive": {
+            "utility": {},
+            "H": {"discount_factor": _DISCOUNT},
+            "next_wealth": {},
+            "next_regime": {},
+        },
+        "gone": {
+            "utility": {},
+            "shock": {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+        },
+    }
+    return model.solve(params=params, log_level="debug")
+
+
+def test_a_process_only_regime_carries_its_own_value():
+    """The process-only regime's value varies with the shock, centred on the level."""
+    solution = _solve_with_process_only_target(10.0)
+    retired = np.asarray(solution[0]["gone"]).ravel()
+    # Tauchen nodes are symmetric about the mean, so the middle node is the level.
+    np.testing.assert_array_almost_equal(retired[1], 10.0, decimal=DECIMAL_PRECISION)
+    assert retired[0] < retired[1] < retired[2]
+
+
+@pytest.mark.xfail(
+    reason="a process-only target contributes no non-process state law, so it never "
+    "appears as a continuation target and its expectation is dropped",
+    strict=True,
+)
+def test_the_process_only_level_moves_the_parent():
+    """Shifting the process-only regime's level changes the parent's value.
+
+    A symmetric shock alone cannot show this: its expectation is zero either way, so
+    a dropped continuation is indistinguishable from a correct one. The level shift
+    makes `E[V]` unambiguously nonzero.
+    """
+    poor = np.asarray(_solve_with_process_only_target(0.0)[0]["alive"])
+    rich = np.asarray(_solve_with_process_only_target(10.0)[0]["alive"])
     assert not np.allclose(poor, rich)
