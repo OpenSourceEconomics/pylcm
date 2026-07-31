@@ -13,15 +13,24 @@ explicit: a segment is the link between two consecutive candidates carrying the
 same `segment_id`, so unrelated branches are never bridged — the contract the
 host oracle enforces.
 
+Which segment wins is a decision, not a reported quantity, so it is not settled
+by comparing rounded reads. Each segment's value at the query is read in the
+double-double arithmetic of `double_double`, which returns a measured bound on
+its own error, and the winner is taken between those intervals. A segment stays
+in contention only while its read could still be the highest; where several
+could, the documented right-continuous tie-break chooses among them
+deterministically, and value, policy, and marginal are all published from the
+one segment it names.
+
 By default the evaluation is a fixed-shape `(n_query, n_segment)`
 bracket-and-reduce: no sequential scan, no NaN-padded refined row,
 branch-parallel and reduction-heavy, which is the shape an accelerator runs
 fastest. This is the backend asset-row mode wants — one query per Euler node, no
 full envelope to refine. For a large `(n_query, n_segment)` that dense matrix is
 itself the memory wall; `segment_block_size` swaps it for a two-pass blocked
-scan over segment blocks (running max, then max-slope-among-near-max against the
-fixed envelope value), which peaks at `(n_query, block)` instead of
-`(n_query, n_segment)` and returns the identical result.
+scan over segment blocks (running certified lower bound, then the winner among
+the segments that could still reach it), which peaks at `(n_query, block)`
+instead of `(n_query, n_segment)` and returns the identical result.
 """
 
 from typing import NamedTuple
@@ -29,22 +38,15 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope.certified_sign import affine_numerator
+from _lcm.egm.upper_envelope.double_double import (
+    DoubleDouble,
+    dd_from_difference,
+    dd_quotient,
+    dd_quotient_bounded,
+    two_sum,
+)
 from lcm.typing import BoolND, Float1D, FloatND
-
-# Right-continuous tie tolerance (relative): among bracketing segments whose
-# interpolated value is within this fraction of the envelope maximum, the larger
-# value-slope wins (it is higher just to the right). Both the dense and blocked
-# paths use it, so they select the same policy/marginal at a tie. Applied
-# relative to the value scale (`* max(1, |envelope value|)`) so the tie band does
-# not collapse below cancellation noise at large lifetime-value magnitudes, which
-# would make the near-max set — and the published policy/marginal — depend on the
-# backend's `jnp.max` reduction order.
-_VALUE_TIE_ATOL = 1e-12
-
-
-def _value_tie_band(reference: FloatND) -> FloatND:
-    """Scale-aware absolute tie band around a reference envelope value."""
-    return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
 
 
 def _along_link(
@@ -54,38 +56,96 @@ def _along_link(
     query: FloatND,
     left_grid: FloatND,
     right_grid: FloatND,
-    safe_width: FloatND,
 ) -> FloatND:
-    """Read a channel along a link at `query`, faithfully at both ends and inside.
+    """Read a channel along a link at `query`.
 
-    The endpoints of one link can sit orders of magnitude apart: a node whose
-    budget is near zero carries a CRRA utility that dwarfs every other value on
-    the grid, and it links to its ordinary neighbour. Two consequences, and the
-    normalized coordinate `(query - left_grid) / width` handles neither.
+    Whether the query *is* an endpoint is decided against the stored abscissae. A
+    normalized coordinate cannot answer that: `(query - left_grid) / width` is a
+    rounded quotient that reaches exactly `1.0` for queries strictly inside the
+    link, and a read that trusted it would publish the wrong endpoint's value and
+    policy for a point that is not an endpoint at all.
 
-    Whether the query *is* an endpoint is decided against the stored abscissae,
-    never against that coordinate. The coordinate is a rounded quotient: for
-    `query = nextafter(right_grid, -inf)` it evaluates to exactly `1.0` at both
-    precisions, so treating it as provenance would publish the right endpoint's
-    value and policy for a point strictly inside the link — handing the query to
-    a branch that the affine correspondence puts far below its rival.
-
-    Strictly inside, the channel is evaluated from whichever endpoint the query
-    is nearer. Anchoring at the far endpoint requires the displacement across the
-    whole link to survive rounding at the near end's magnitude, and it does not;
-    anchoring at the near end keeps the small step small, so the read stays
-    faithful even where the two ends differ by many orders of magnitude.
+    Strictly inside, the channel is `v0*(x1 - x) + v1*(x - x0)` over the width,
+    evaluated in the double-double arithmetic of `double_double` — the same form
+    `certified_sign` compares two links by. Working at roughly twice the format's
+    precision is what a link whose endpoint values nearly cancel requires: there
+    the value at the query is smaller than either endpoint by many orders of
+    magnitude, so rounding the slope first spends the whole result's significance
+    on the cancellation, and what survives is not enough to report, let alone to
+    decide on.
     """
-    slope = (right - left) / safe_width
-    from_left = left + (query - left_grid) * slope
-    from_right = right + (query - right_grid) * slope
-    interior = jnp.where(
-        (query - left_grid) <= (right_grid - query), from_left, from_right
+    numerator, divisor, endpoint, at_endpoint = _link_terms(
+        left=left,
+        right=right,
+        query=query,
+        left_grid=left_grid,
+        right_grid=right_grid,
     )
-    return jnp.where(
-        query == left_grid,
-        left,
-        jnp.where(query == right_grid, right, interior),
+    high, low = dd_quotient(numerator, divisor)
+    return jnp.where(at_endpoint, endpoint, high + low)
+
+
+def _along_link_bounded(
+    *,
+    left: FloatND,
+    right: FloatND,
+    query: FloatND,
+    left_grid: FloatND,
+    right_grid: FloatND,
+) -> tuple[FloatND, FloatND]:
+    """Read a channel along a link at `query`, and bound how far off the read is.
+
+    The bound is what turns a read into something a decision can rest on, so it is
+    measured rather than assumed: `dd_quotient_bounded` multiplies the quotient
+    back through the denominator and reports what fails to reproduce the
+    numerator. It is exactly zero for a read that was exact — an endpoint, a
+    degenerate self-bracket, or an interior query whose affine value the format
+    happens to hold — so a caller can tell a value it may act on from one it may
+    only choose deterministically among.
+    """
+    numerator, divisor, endpoint, at_endpoint = _link_terms(
+        left=left,
+        right=right,
+        query=query,
+        left_grid=left_grid,
+        right_grid=right_grid,
+    )
+    high, low, unreproduced = dd_quotient_bounded(numerator, divisor)
+    # Collapsing the pair to one float is itself a rounding, and what it discards
+    # is available exactly, so it is added rather than charged as a blanket ULP.
+    # A flat charge would be the width of the very gaps this bound has to resolve,
+    # and would refuse exactly the reads that are easiest to be sure about.
+    interior, discarded = two_sum(high, low)
+    value = jnp.where(at_endpoint, endpoint, interior)
+    bound = jnp.where(at_endpoint, 0.0, unreproduced + jnp.abs(discarded))
+    return value, bound
+
+
+def _link_terms(
+    *,
+    left: FloatND,
+    right: FloatND,
+    query: FloatND,
+    left_grid: FloatND,
+    right_grid: FloatND,
+) -> tuple[DoubleDouble, DoubleDouble, FloatND, BoolND]:
+    """Split a link read into its exact endpoint case and its affine quotient."""
+    at_left = query == left_grid
+    at_right = query == right_grid
+    # A zero-width self-bracket carries no affine line. Its own abscissa is the
+    # only query it brackets, so the quotient is never read there and has only to
+    # stay finite; displacing the divisor keeps it so.
+    degenerate = right_grid == left_grid
+    divisor_grid = jnp.where(degenerate, left_grid + 1.0, right_grid)
+    numerator = affine_numerator(
+        x0=left_grid, x1=divisor_grid, v0=left, v1=right, x_query=query
+    )
+    endpoint = jnp.where(at_left | degenerate, left, right)
+    return (
+        numerator,
+        dd_from_difference(divisor_grid, left_grid),
+        endpoint,
+        at_left | at_right | degenerate,
     )
 
 
@@ -200,9 +260,8 @@ def envelope_at_query(
         "query": flat,
         "left_grid": left_grid[None, :],
         "right_grid": right_grid[None, :],
-        "safe_width": safe_width,
     }
-    value_interp = _along_link(
+    value_interp, value_bound = _along_link_bounded(
         left=left_value[None, :], right=right_value[None, :], **abscissae
     )
     policy_interp = _along_link(
@@ -212,40 +271,42 @@ def envelope_at_query(
         left=left_marginal[None, :], right=right_marginal[None, :], **abscissae
     )
 
-    masked_value = jnp.where(brackets, value_interp, -jnp.inf)
     any_bracket = jnp.any(brackets, axis=1)
-    max_value = jnp.max(masked_value, axis=1, keepdims=True)
-    # Break a value tie right-continuously, matching the kernel's `side="right"`
-    # read: among the bracketing segments attaining the maximum, prefer one that
-    # extends strictly to the right of the query (so "larger value-slope is higher
-    # just to the right" is meaningful), and among those the larger slope. Only at the
-    # global upper endpoint, where nothing continues right, fall back to the largest
+    # Ownership is settled between intervals, not between rounded values. A
+    # candidate stays in contention while its own read could still be the highest
+    # — its upper bound reaches the best lower bound any candidate certifies — so
+    # a link is never dropped for an error its own arithmetic already declared.
+    certain_lower = jnp.max(
+        jnp.where(brackets, value_interp - value_bound, -jnp.inf),
+        axis=1,
+        keepdims=True,
+    )
+    near_max = brackets & (value_interp + value_bound >= certain_lower)
+    # Among candidates no arithmetic separates, break the tie right-continuously,
+    # matching the kernel's `side="right"` read: prefer one that extends strictly
+    # to the right of the query (so "larger value-slope is higher just to the
+    # right" is meaningful), and among those the larger slope. Only at the global
+    # upper endpoint, where nothing continues right, fall back to the largest
     # near-max slope. `_right_continuous_rank` folds both keys into one comparable
     # scalar so this dense reduction and the blocked scan select the same winner.
     slope = (right_value - left_value)[None, :] / safe_width
-    near_max = brackets & (masked_value >= max_value - _value_tie_band(max_value))
     right_available = flat < upper
     best = jnp.argmax(
         _right_continuous_rank(
             near_max=near_max, right_available=right_available, slope=slope
         ),
         axis=1,
-    )
-    env_value = jnp.where(any_bracket, max_value[:, 0], jnp.nan)
-    env_policy = jnp.where(
-        any_bracket,
-        jnp.take_along_axis(policy_interp, best[:, None], axis=1)[:, 0],
-        jnp.nan,
-    )
-    env_marginal = jnp.where(
-        any_bracket,
-        jnp.take_along_axis(marginal_interp, best[:, None], axis=1)[:, 0],
-        jnp.nan,
-    )
+    )[:, None]
+
+    def _from_winner(channel: FloatND) -> FloatND:
+        """Publish one channel of the winning candidate, or NaN where none brackets."""
+        taken = jnp.take_along_axis(channel, best, axis=1)[:, 0]
+        return jnp.where(any_bracket, taken, jnp.nan)
+
     return (
-        env_value.reshape(query.shape),
-        env_policy.reshape(query.shape),
-        env_marginal.reshape(query.shape),
+        _from_winner(value_interp).reshape(query.shape),
+        _from_winner(policy_interp).reshape(query.shape),
+        _from_winner(marginal_interp).reshape(query.shape),
     )
 
 
@@ -267,18 +328,32 @@ def _right_continuous_rank(
     return jnp.where(near_max, rank, -jnp.inf)
 
 
-def _block_query_terms(
-    *, block: FloatND, live: BoolND, flat: Float1D
-) -> tuple[BoolND, FloatND, FloatND, FloatND, FloatND, FloatND]:
-    """Bracket-and-interpolate one segment block against every query.
+class _BlockTerms(NamedTuple):
+    """What one segment block contributes at every query, all `(n_query, block)`."""
+
+    brackets: BoolND
+    """Whether the link is live and brackets the query."""
+    value: FloatND
+    """Value read along the link at the query."""
+    value_bound: FloatND
+    """Bound on how far that read can be from the exact affine value."""
+    policy: FloatND
+    """Policy read along the link at the query."""
+    marginal: FloatND
+    """Marginal read along the link at the query."""
+    slope: FloatND
+    """Value-slope of the link, for the right-continuous tie-break."""
+    upper: FloatND
+    """Upper endpoint of the link, for the same tie-break."""
+
+
+def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _BlockTerms:
+    """Bracket-and-read one segment block against every query.
 
     `block` is one `(block_size, 8)` slice of the stacked link endpoint columns
-    and `live` its `(block_size,)` live-flag slice. Returns the
-    `(n_query, block_size)` bracket mask; the value, policy, marginal, and
-    value-slope interpolated at each query for each link in the block; and the
-    link's upper endpoint (for the right-continuous tie-break) — the same
-    quantities the dense path forms over all segments at once, but only for this
-    block, so the peak working set is `(n_query, block_size)`.
+    and `live` its `(block_size,)` live-flag slice — the same quantities the dense
+    path forms over all segments at once, but only for this block, so the peak
+    working set is `(n_query, block_size)`.
     """
     left_grid, right_grid = block[:, 0], block[:, 1]
     left_value, right_value = block[:, 2], block[:, 3]
@@ -296,9 +371,8 @@ def _block_query_terms(
         "query": q,
         "left_grid": left_grid[None, :],
         "right_grid": right_grid[None, :],
-        "safe_width": safe_width,
     }
-    value_interp = _along_link(
+    value_interp, value_bound = _along_link_bounded(
         left=left_value[None, :], right=right_value[None, :], **abscissae
     )
     policy_interp = _along_link(
@@ -308,7 +382,15 @@ def _block_query_terms(
         left=left_marginal[None, :], right=right_marginal[None, :], **abscissae
     )
     slope = (right_value - left_value)[None, :] / safe_width
-    return brackets, value_interp, policy_interp, marginal_interp, slope, upper
+    return _BlockTerms(
+        brackets=brackets,
+        value=value_interp,
+        value_bound=value_bound,
+        policy=policy_interp,
+        marginal=marginal_interp,
+        slope=slope,
+        upper=upper,
+    )
 
 
 def _envelope_at_query_blocked(
@@ -320,14 +402,15 @@ def _envelope_at_query_blocked(
     matches the dense path (up to floating-point reassociation between the two
     XLA lowerings):
 
-    - Pass 1 accumulates the running per-query max over segment blocks — the
-      envelope value, with a running `any_bracket` flag.
-    - Pass 2 re-scans the blocks and, among segments whose value is within
-      `_VALUE_TIE_ATOL` of that (now fixed) envelope value, keeps the winner of the
-      right-continuous rank (`_right_continuous_rank`: a right-extending near-max
-      segment over one ending at the query, then larger value-slope) — the dense
-      path's tie-break. The strict cross-block `>` keeps the earliest such winner,
-      matching the dense `argmax`.
+    - Pass 1 accumulates the running per-query maximum of the *certified lower
+      bound* over segment blocks — the highest value any candidate can be shown to
+      reach — with a running `any_bracket` flag.
+    - Pass 2 re-scans the blocks and, among segments whose read could still reach
+      that bound, keeps the winner of the right-continuous rank
+      (`_right_continuous_rank`: a right-extending near-max segment over one
+      ending at the query, then larger value-slope) — the dense path's tie-break.
+      The strict cross-block `>` keeps the earliest such winner, matching the
+      dense `argmax`, and value, policy, and marginal are all published from it.
 
     The links are padded to a multiple of `block_size` with dead segments (which
     never bracket) and reshaped to `(n_block, block_size)`; the scan peaks at
@@ -366,70 +449,68 @@ def _envelope_at_query_blocked(
     live_blocks = live.reshape(-1, block_size)
     dtype = links.left_grid.dtype
 
-    def max_step(
+    def lower_bound_step(
         carry: tuple[FloatND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
     ) -> tuple[tuple[FloatND, BoolND], None]:
-        running_max, any_bracket = carry
+        running_lower, any_bracket = carry
         block, block_live = block_and_live
-        brackets, value_interp, *_ = _block_query_terms(
-            block=block, live=block_live, flat=flat
+        terms = _block_query_terms(block=block, live=block_live, flat=flat)
+        block_lower = jnp.max(
+            jnp.where(terms.brackets, terms.value - terms.value_bound, -jnp.inf), axis=1
         )
-        block_max = jnp.max(jnp.where(brackets, value_interp, -jnp.inf), axis=1)
         return (
-            jnp.maximum(running_max, block_max),
-            any_bracket | jnp.any(brackets, axis=1),
+            jnp.maximum(running_lower, block_lower),
+            any_bracket | jnp.any(terms.brackets, axis=1),
         ), None
 
-    (running_max, any_bracket), _ = jax.lax.scan(
-        max_step,
+    (certain_lower, any_bracket), _ = jax.lax.scan(
+        lower_bound_step,
         (
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
             jnp.zeros((n_query,), dtype=bool),
         ),
         (blocks, live_blocks),
     )
-    env_value = jnp.where(any_bracket, running_max, jnp.nan)
 
-    def policy_step(
-        carry: tuple[FloatND, FloatND, FloatND],
+    def winner_step(
+        carry: tuple[FloatND, FloatND, FloatND, FloatND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND], None]:
-        best_rank, best_policy, best_marginal = carry
+    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND], None]:
+        best_rank, best_value, best_policy, best_marginal = carry
         block, block_live = block_and_live
-        brackets, value_interp, policy_interp, marginal_interp, slope, upper = (
-            _block_query_terms(block=block, live=block_live, flat=flat)
-        )
-        near_max = brackets & (
-            value_interp >= env_value[:, None] - _value_tie_band(env_value[:, None])
+        terms = _block_query_terms(block=block, live=block_live, flat=flat)
+        near_max = terms.brackets & (
+            terms.value + terms.value_bound >= certain_lower[:, None]
         )
         rank = _right_continuous_rank(
-            near_max=near_max, right_available=flat[:, None] < upper, slope=slope
+            near_max=near_max,
+            right_available=flat[:, None] < terms.upper,
+            slope=terms.slope,
         )
         winner = jnp.argmax(rank, axis=1)[:, None]
-        block_rank = jnp.take_along_axis(rank, winner, axis=1)[:, 0]
-        block_policy = jnp.take_along_axis(policy_interp, winner, axis=1)[:, 0]
-        block_marginal = jnp.take_along_axis(marginal_interp, winner, axis=1)[:, 0]
+
+        def _take(channel: FloatND) -> FloatND:
+            return jnp.take_along_axis(channel, winner, axis=1)[:, 0]
+
+        block_rank = _take(rank)
         take = block_rank > best_rank
         return (
             jnp.where(take, block_rank, best_rank),
-            jnp.where(take, block_policy, best_policy),
-            jnp.where(take, block_marginal, best_marginal),
+            jnp.where(take, _take(terms.value), best_value),
+            jnp.where(take, _take(terms.policy), best_policy),
+            jnp.where(take, _take(terms.marginal), best_marginal),
         ), None
 
-    (_, env_policy_flat, env_marginal_flat), _ = jax.lax.scan(
-        policy_step,
-        (
-            jnp.full((n_query,), -jnp.inf, dtype=dtype),
-            jnp.full((n_query,), jnp.nan, dtype=dtype),
-            jnp.full((n_query,), jnp.nan, dtype=dtype),
-        ),
+    empty = jnp.full((n_query,), jnp.nan, dtype=dtype)
+    (_, env_value, env_policy, env_marginal), _ = jax.lax.scan(
+        winner_step,
+        (jnp.full((n_query,), -jnp.inf, dtype=dtype), empty, empty, empty),
         (blocks, live_blocks),
     )
-    env_policy = jnp.where(any_bracket, env_policy_flat, jnp.nan)
-    env_marginal = jnp.where(any_bracket, env_marginal_flat, jnp.nan)
-    return (
-        env_value.reshape(query.shape),
-        env_policy.reshape(query.shape),
-        env_marginal.reshape(query.shape),
-    )
+
+    def _published(channel: FloatND) -> FloatND:
+        """Shape one channel like the query, NaN where nothing brackets it."""
+        return jnp.where(any_bracket, channel, jnp.nan).reshape(query.shape)
+
+    return _published(env_value), _published(env_policy), _published(env_marginal)

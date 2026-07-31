@@ -44,14 +44,14 @@ def _exact_affine(*, left_grid, right_grid, left_value, right_value, query) -> f
     return float(exact)
 
 
-def _read(*, grid, values, policies, query, block_size=0):
+def _read(*, grid, values, policies, query, block_size=0, segments=None):
     """Envelope value and policy at one query over the given candidate cloud."""
     value, policy, _marginal = envelope_at_query(
         endog_grid=jnp.asarray(grid),
         policy=jnp.asarray(policies),
         value=jnp.asarray(values),
         marginal=jnp.ones(len(grid)),
-        segment_id=jnp.zeros(len(grid)),
+        segment_id=jnp.zeros(len(grid)) if segments is None else jnp.asarray(segments),
         x_query=jnp.asarray([query]),
         segment_block_size=block_size,
     )
@@ -199,6 +199,64 @@ def test_every_read_along_a_link_agrees_with_exact_rational_arithmetic(
                 query=query,
             )
             assert abs(value - expected) <= 4.0 * _spacing_at(expected)
+
+
+def _cancelling_link():
+    """A link whose endpoint values dwarf the value it takes at the query.
+
+    Both endpoint values are near the top of the format and nearly cancel, so the
+    affine value at the query is smaller than either by many orders of magnitude.
+    The exact value is a short rational the format represents exactly, which makes
+    the read's own error, rather than the query's, the only thing under test.
+    """
+    dtype = _working_dtype()
+    if dtype == np.float32:
+        return [1.0, 4.0], [-(2.0**24), 2.0**25 - 32], 2.0, -32.0 / 3.0
+    return [1.0, 3.0], [-(2.0**53), 2.0**53 - 127], 2.0, -63.5
+
+
+@pytest.mark.parametrize("block_size", [0, 1])
+def test_a_link_read_survives_cancellation_between_its_endpoints(block_size):
+    """A link whose endpoints nearly cancel is still read at its affine value."""
+    grid, values, query, expected = _cancelling_link()
+    value, _policy = _read(
+        grid=grid,
+        values=values,
+        policies=[0.0, 1.0],
+        query=query,
+        block_size=block_size,
+    )
+    assert abs(value - expected) <= 4.0 * _spacing_at(expected)
+
+
+@pytest.mark.parametrize("block_size", [0, 1])
+def test_a_cancelling_link_above_a_rival_owns_the_query(block_size):
+    """Ownership follows the exact affine values, not their rounded reads.
+
+    The rival's value lies between the link's exact value and what a rounded read
+    of the link produces, so a read accurate only to its own magnitude hands the
+    query — and the published policy — to the candidate that is genuinely lower.
+    """
+    grid, values, query, exact = _cancelling_link()
+    rival_value = float(np.nextafter(np.float32(exact - 0.25), np.float32(-np.inf)))
+    assert rival_value < exact
+    value, policy = _read(
+        grid=[*grid, query],
+        values=[*values, rival_value],
+        policies=[0.0, 1.0, 0.5],
+        segments=[0.0, 0.0, 1.0],
+        query=query,
+        block_size=block_size,
+    )
+    expected_policy = _exact_affine(
+        left_grid=grid[0],
+        right_grid=grid[1],
+        left_value=0.0,
+        right_value=1.0,
+        query=query,
+    )
+    assert abs(value - exact) <= 4.0 * _spacing_at(exact)
+    assert abs(policy - expected_policy) <= 4.0 * _spacing_at(expected_policy)
 
 
 def test_a_rival_candidate_still_owns_a_query_the_link_falls_below():
