@@ -52,6 +52,7 @@ def test_retired_egm_matches_brute_on_the_liquid_interior():
         next_value=v_dead,
         next_marginal=_bequest_marginal(),
         liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         **_P,
     )
@@ -71,6 +72,7 @@ def test_retired_egm_value_is_increasing_in_liquid():
         next_value=v_dead,
         next_marginal=_bequest_marginal(),
         liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         **_P,
     )
