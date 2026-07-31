@@ -22,14 +22,19 @@ jobs:
     runs-on:
       - self-hosted
       - gpu-benchmark
-    env:
+    steps:
       # On the benchmark runner `/tmp` sits on a small root filesystem, while the
       # runner's own work volume has hundreds of GB free. The benchmarks write
       # hundreds of MB of debug-log snapshots per run, which filled the root
       # filesystem and failed three branches' jobs with ENOSPC. Keep temporary
       # files on the big volume.
-      TMPDIR: ${{ runner.temp }}
-    steps:
+      #
+      # This has to be a step rather than a job-level `env:`: the `runner`
+      # context is not available when job-level env is evaluated, and using it
+      # there makes GitHub reject the whole file at parse time. `RUNNER_TEMP` is
+      # a plain environment variable on the runner, so no expression is needed.
+      - name: Send temporary files to the runner's work volume
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Report free disk space
         run: df -h "$TMPDIR" /tmp / | cat
       - name: Wait for GPU to be free

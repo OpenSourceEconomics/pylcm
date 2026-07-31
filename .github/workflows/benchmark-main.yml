@@ -14,11 +14,14 @@ jobs:
     runs-on:
       - self-hosted
       - gpu-benchmark
-    env:
+    steps:
       # See benchmark-pr.yml: `/tmp` is on a small root filesystem on the
       # benchmark runner, so keep temporary files on the runner's work volume.
-      TMPDIR: ${{ runner.temp }}
-    steps:
+      # It has to be a step, not a job-level `env:` — the `runner` context is
+      # unavailable there and using it makes GitHub reject the file at parse
+      # time. `RUNNER_TEMP` is a plain environment variable on the runner.
+      - name: Send temporary files to the runner's work volume
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Report free disk space
         run: df -h "$TMPDIR" /tmp / | cat
       - name: Wait for GPU to be free
