@@ -14,13 +14,26 @@ same `segment_id`, so unrelated branches are never bridged — the contract the
 host oracle enforces.
 
 Which segment wins is a decision, not a reported quantity, so it is not settled
-by comparing rounded reads. Each segment's value at the query is read in the
-double-double arithmetic of `double_double`, which returns a measured bound on
-its own error, and the winner is taken between those intervals. A segment stays
-in contention only while its read could still be the highest; where several
-could, the documented right-continuous tie-break chooses among them
-deterministically, and value, policy, and marginal are all published from the
-one segment it names.
+between separate reads. However well each segment's own value is read, the error
+that read carries is proportional to its magnitude, and a decision needs a bound
+proportional to the *gap* — otherwise a common value level, which moves no
+crossing and reverses no ordering, decides the ownership.
+
+So ownership is settled on differences. One bracketing segment is taken as the
+pivot; every segment's margin over it is certified by `certified_sign`, which
+cross-multiplies before dividing so the common level cancels in arithmetic that
+loses nothing. Subtracting one and the same pivot from every candidate leaves the
+ordering alone, so the winner is the largest certified margin, and the bounds
+that decide it live at the scale of the gaps rather than of the values. A segment
+stays in contention only while its margin could still be the largest; where
+several could, the documented right-continuous tie-break chooses among them
+deterministically, and value, policy, and marginal are all published from the one
+segment it names.
+
+Where a margin cannot be certified at all — a product outside the range where the
+error-free transforms are exact — nothing follows about the geometry, and the two
+segments may be far apart. Such a query is published as NaN in all three channels
+rather than handed to the tie-break, identically in both backends below.
 
 By default the evaluation is a fixed-shape `(n_query, n_segment)`
 bracket-and-reduce: no sequential scan, no NaN-padded refined row,
@@ -38,15 +51,19 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.upper_envelope.certified_sign import affine_numerator
+from _lcm.egm.upper_envelope.certified_sign import (
+    QuotientMargin,
+    affine_numerator,
+    certified_quotient_margin,
+)
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
+    dd_add,
     dd_from_difference,
+    dd_mul,
     dd_quotient,
-    dd_quotient_bounded,
-    two_sum,
 )
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
 def _along_link(
@@ -85,40 +102,88 @@ def _along_link(
     return jnp.where(at_endpoint, endpoint, high + low)
 
 
-def _along_link_bounded(
+def _value_quotient(
     *,
     left: FloatND,
     right: FloatND,
     query: FloatND,
     left_grid: FloatND,
     right_grid: FloatND,
-) -> tuple[FloatND, FloatND]:
-    """Read a channel along a link at `query`, and bound how far off the read is.
+    level: FloatND,
+) -> tuple[DoubleDouble, DoubleDouble]:
+    """Return numerator and divisor whose quotient is the link's value above `level`.
 
-    The bound is what turns a read into something a decision can rest on, so it is
-    measured rather than assumed: `dd_quotient_bounded` multiplies the quotient
-    back through the denominator and reports what fails to reproduce the
-    numerator. It is exactly zero for a read that was exact — an endpoint, a
-    degenerate self-bracket, or an interior query whose affine value the format
-    happens to hold — so a caller can tell a value it may act on from one it may
-    only choose deterministically among.
+    Ownership is decided from this pair rather than from the quotient it stands
+    for, because division is the one operation here with no error-free transform:
+    dividing each candidate before comparing spends the certificate that comparing
+    first would have kept.
+
+    `level` is subtracted from each endpoint value before anything is multiplied,
+    and `two_sum` makes that subtraction exact, so no information is traded for it.
+    What it buys is the scale everything downstream runs at: the endpoint values of
+    an EGM candidate can sit on a common level many orders of magnitude above the
+    distances between candidates, and every product formed from them — along with
+    the tail each one discards — inherits that level. Removing it first leaves an
+    arithmetic whose magnitudes are those of the differences being decided, so one
+    common level shared by every candidate cannot reach the decision at all.
+    Passing the same `level` for every candidate at a query is what makes the
+    subtraction cancel out of their margins and so leave the ordering alone.
+
+    Where the query is one of the stored abscissae — or the link is a zero-width
+    self-bracket, whose own abscissa is the only query it brackets — the value is
+    that endpoint's exactly, and the pair says so with a unit divisor. Everywhere
+    else it is the affine form over the link's width.
     """
-    numerator, divisor, endpoint, at_endpoint = _link_terms(
-        left=left,
-        right=right,
-        query=query,
-        left_grid=left_grid,
-        right_grid=right_grid,
+    at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
+        query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
     )
-    high, low, unreproduced = dd_quotient_bounded(numerator, divisor)
-    # Collapsing the pair to one float is itself a rounding, and what it discards
-    # is available exactly, so it is added rather than charged as a blanket ULP.
-    # A flat charge would be the width of the very gaps this bound has to resolve,
-    # and would refuse exactly the reads that are easiest to be sure about.
-    interior, discarded = two_sum(high, low)
-    value = jnp.where(at_endpoint, endpoint, interior)
-    bound = jnp.where(at_endpoint, 0.0, unreproduced + jnp.abs(discarded))
-    return value, bound
+    numerator = dd_add(
+        dd_mul(
+            dd_from_difference(divisor_grid, query), dd_from_difference(left, level)
+        ),
+        dd_mul(dd_from_difference(query, left_grid), dd_from_difference(right, level)),
+    )
+    divisor = dd_from_difference(divisor_grid, left_grid)
+    zero = jnp.zeros_like(endpoint)
+    unit = (jnp.ones_like(endpoint), zero, zero)
+    return (
+        _select_double_double(
+            at_endpoint, dd_from_difference(endpoint, level), numerator
+        ),
+        _select_double_double(at_endpoint, unit, divisor),
+    )
+
+
+def _select_double_double(
+    condition: BoolND, when: DoubleDouble, otherwise: DoubleDouble
+) -> DoubleDouble:
+    """Choose elementwise between two double-doubles, word by word."""
+    return (
+        jnp.where(condition, when[0], otherwise[0]),
+        jnp.where(condition, when[1], otherwise[1]),
+        jnp.where(condition, when[2], otherwise[2]),
+    )
+
+
+def _take_column(value: DoubleDouble, index: IntND) -> DoubleDouble:
+    """Gather one segment's double-double per query row, word by word."""
+    return (
+        jnp.take_along_axis(value[0], index, axis=1),
+        jnp.take_along_axis(value[1], index, axis=1),
+        jnp.take_along_axis(value[2], index, axis=1),
+    )
+
+
+def _pivot_index(*, brackets: BoolND, value: FloatND) -> IntND:
+    """Pick the candidate every other one's margin is measured against.
+
+    Any bracketing candidate serves: subtracting one common value from all of them
+    leaves the ordering, and so the winner, alone. The choice only decides how
+    small the margins come out, and the plain read's maximum is the cheapest good
+    guess at the segment they will all be closest to.
+    """
+    index = jnp.argmax(jnp.where(brackets, value, -jnp.inf), axis=1)
+    return index[:, None].astype(jnp.int32)
 
 
 def _link_geometry(
@@ -289,7 +354,7 @@ def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
         "left_grid": left_grid[None, :],
         "right_grid": right_grid[None, :],
     }
-    value_interp, value_bound = _along_link_bounded(
+    value_interp = _along_link(
         left=left_value[None, :], right=right_value[None, :], **abscissae
     )
     policy_interp = _along_link(
@@ -302,16 +367,32 @@ def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     )
 
     any_bracket = jnp.any(brackets, axis=1)
-    # Ownership is settled between intervals, not between rounded values. A
-    # candidate stays in contention while its own read could still be the highest
-    # — its upper bound reaches the best lower bound any candidate certifies — so
-    # a link is never dropped for an error its own arithmetic already declared.
+    # Ownership is settled on margins over one common pivot, so the bounds that
+    # decide it are proportional to the gaps between candidates rather than to the
+    # level they sit on. A candidate stays in contention while its own margin could
+    # still be the largest — its upper bound reaches the best lower bound any
+    # candidate certifies — so a link is never dropped for an error its own
+    # arithmetic already declared.
+    pivot = _pivot_index(brackets=brackets, value=value_interp)
+    numerator, divisor = _value_quotient(
+        left=left_value[None, :],
+        right=right_value[None, :],
+        level=jnp.take_along_axis(value_interp, pivot, axis=1),
+        **abscissae,
+    )
+    margin = certified_quotient_margin(
+        left_numerator=numerator,
+        left_divisor=divisor,
+        right_numerator=_take_column(numerator, pivot),
+        right_divisor=_take_column(divisor, pivot),
+    )
     certain_lower = jnp.max(
-        jnp.where(brackets, value_interp - value_bound, -jnp.inf),
+        jnp.where(brackets, margin.value - margin.bound, -jnp.inf),
         axis=1,
         keepdims=True,
     )
-    near_max = brackets & (value_interp + value_bound >= certain_lower)
+    near_max = brackets & (margin.value + margin.bound >= certain_lower)
+    decided = any_bracket & ~jnp.any(brackets & ~margin.trustworthy, axis=1)
     # Among candidates no arithmetic separates, break the tie right-continuously,
     # matching the kernel's `side="right"` read: prefer one that extends strictly
     # to the right of the query (so "larger value-slope is higher just to the
@@ -329,9 +410,9 @@ def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     )[:, None]
 
     def _from_winner(channel: FloatND) -> FloatND:
-        """Publish one channel of the winning candidate, or NaN where none brackets."""
+        """Publish one channel of the winner, or NaN where no winner was decided."""
         taken = jnp.take_along_axis(channel, best, axis=1)[:, 0]
-        return jnp.where(any_bracket, taken, jnp.nan).reshape(query.shape)
+        return jnp.where(decided, taken, jnp.nan).reshape(query.shape)
 
     return _EnvelopeReduction(
         published=(
@@ -367,8 +448,6 @@ class _BlockTerms(NamedTuple):
     """Whether the link is live and brackets the query."""
     value: FloatND
     """Value read along the link at the query."""
-    value_bound: FloatND
-    """Bound on how far that read can be from the exact affine value."""
     policy: FloatND
     """Policy read along the link at the query."""
     marginal: FloatND
@@ -404,7 +483,7 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
         "left_grid": left_grid[None, :],
         "right_grid": right_grid[None, :],
     }
-    value_interp, value_bound = _along_link_bounded(
+    value_interp = _along_link(
         left=left_value[None, :], right=right_value[None, :], **abscissae
     )
     policy_interp = _along_link(
@@ -417,11 +496,87 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
     return _BlockTerms(
         brackets=brackets,
         value=value_interp,
-        value_bound=value_bound,
         policy=policy_interp,
         marginal=marginal_interp,
         slope=slope,
         upper=upper,
+    )
+
+
+def _blocked_pivot(
+    *, blocks: FloatND, live_blocks: BoolND, flat: Float1D, dtype: jnp.dtype
+) -> tuple[DoubleDouble, DoubleDouble, FloatND]:
+    """Find the link each query's margins are taken over, one block at a time.
+
+    Returns the pivot's numerator and divisor along with the value level every
+    candidate is shifted by, which is the pivot's own plain read.
+    """
+    n_query = flat.shape[0]
+
+    def pivot_step(
+        carry: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
+        block_and_live: tuple[FloatND, BoolND],
+    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND, FloatND], None]:
+        best_value, left_grid, right_grid, left_value, right_value = carry
+        block, block_live = block_and_live
+        terms = _block_query_terms(block=block, live=block_live, flat=flat)
+        candidate = jnp.where(terms.brackets, terms.value, -jnp.inf)
+        index = jnp.argmax(candidate, axis=1)[:, None]
+
+        def _take(column: FloatND) -> FloatND:
+            """The winning link's entry in one endpoint column, per query."""
+            spread = jnp.broadcast_to(column[None, :], candidate.shape)
+            return jnp.take_along_axis(spread, index, axis=1)[:, 0]
+
+        block_value = jnp.take_along_axis(candidate, index, axis=1)[:, 0]
+        take = block_value > best_value
+        return (
+            jnp.where(take, block_value, best_value),
+            jnp.where(take, _take(block[:, 0]), left_grid),
+            jnp.where(take, _take(block[:, 1]), right_grid),
+            jnp.where(take, _take(block[:, 2]), left_value),
+            jnp.where(take, _take(block[:, 3]), right_value),
+        ), None
+
+    # A query nothing brackets keeps this placeholder link. Its margins mean
+    # nothing, and nothing reads them: such a query publishes NaN on `any_bracket`
+    # regardless, so the placeholder only has to keep the arithmetic finite.
+    zeros = jnp.zeros((n_query,), dtype=dtype)
+    carry, _ = jax.lax.scan(
+        pivot_step,
+        (
+            jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            zeros,
+            jnp.ones((n_query,), dtype=dtype),
+            zeros,
+            zeros,
+        ),
+        (blocks, live_blocks),
+    )
+    best_value, left_grid, right_grid, left_value, right_value = carry
+    level = jnp.where(jnp.isfinite(best_value), best_value, 0.0)[:, None]
+    numerator, divisor = _value_quotient(
+        left=left_value[:, None],
+        right=right_value[:, None],
+        query=flat[:, None],
+        left_grid=left_grid[:, None],
+        right_grid=right_grid[:, None],
+        level=level,
+    )
+    return numerator, divisor, level
+
+
+def _block_quotients(
+    *, block: FloatND, flat: Float1D, level: FloatND
+) -> tuple[DoubleDouble, DoubleDouble]:
+    """Numerators and divisors of one block's values above the query's `level`."""
+    return _value_quotient(
+        left=block[:, 2][None, :],
+        right=block[:, 3][None, :],
+        query=flat[:, None],
+        left_grid=block[:, 0][None, :],
+        right_grid=block[:, 1][None, :],
+        level=level,
     )
 
 
@@ -434,16 +589,20 @@ def _envelope_blocked(
     matches the dense path (up to floating-point reassociation between the two
     XLA lowerings):
 
-    - Pass 1 accumulates, over segment blocks, the running per-query maximum of the
-      read's point value and of its certified lower bound — the highest value any
-      candidate can be *shown* to reach — with a running `any_bracket` flag.
-    - Pass 2 re-scans the blocks and, among segments whose read could still reach
+    - Pass 1 accumulates the running per-query maximum of the plain read and the
+      endpoints of the link that attained it: the pivot every margin is taken
+      over. Any bracketing link would serve, so only its own block-order matters,
+      and that is fixed.
+    - Pass 2 re-scans the blocks and accumulates the running maximum of the
+      certified lower bound on the margin over that pivot — the largest margin any
+      candidate can be *shown* to reach — together with a running `any_bracket`
+      flag and a running flag for whether every bracketing margin was certifiable.
+    - Pass 3 re-scans once more and, among segments whose margin could still reach
       that bound, keeps the winner of the right-continuous rank
       (`_right_continuous_rank`: a right-extending near-max segment over one
       ending at the query, then larger value-slope) — the dense path's tie-break.
       The strict cross-block `>` keeps the earliest such winner, matching the
       dense `argmax`, and value, policy, and marginal are all published from it.
-      It also reports whether any query's owner rested on the read's slack.
 
     The links are padded to a multiple of `block_size` with dead segments (which
     never bracket) and reshaped to `(n_block, block_size)`; the scan peaks at
@@ -482,26 +641,43 @@ def _envelope_blocked(
     live_blocks = live.reshape(-1, block_size)
     dtype = links.left_grid.dtype
 
+    pivot_numerator, pivot_divisor, level = _blocked_pivot(
+        blocks=blocks, live_blocks=live_blocks, flat=flat, dtype=dtype
+    )
+
+    def _block_margin(block: FloatND) -> QuotientMargin:
+        """Certify every link in the block against the query's pivot."""
+        numerator, divisor = _block_quotients(block=block, flat=flat, level=level)
+        return certified_quotient_margin(
+            left_numerator=numerator,
+            left_divisor=divisor,
+            right_numerator=pivot_numerator,
+            right_divisor=pivot_divisor,
+        )
+
     def bounds_step(
-        carry: tuple[FloatND, BoolND],
+        carry: tuple[FloatND, BoolND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, BoolND], None]:
-        running_lower, any_bracket = carry
+    ) -> tuple[tuple[FloatND, BoolND, BoolND], None]:
+        running_lower, any_bracket, certifiable = carry
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
+        margin = _block_margin(block)
         block_lower = jnp.max(
-            jnp.where(terms.brackets, terms.value - terms.value_bound, -jnp.inf), axis=1
+            jnp.where(terms.brackets, margin.value - margin.bound, -jnp.inf), axis=1
         )
         return (
             jnp.maximum(running_lower, block_lower),
             any_bracket | jnp.any(terms.brackets, axis=1),
+            certifiable & ~jnp.any(terms.brackets & ~margin.trustworthy, axis=1),
         ), None
 
-    (certain_lower, any_bracket), _ = jax.lax.scan(
+    (certain_lower, any_bracket, certifiable), _ = jax.lax.scan(
         bounds_step,
         (
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
             jnp.zeros((n_query,), dtype=bool),
+            jnp.ones((n_query,), dtype=bool),
         ),
         (blocks, live_blocks),
     )
@@ -513,7 +689,8 @@ def _envelope_blocked(
         best_rank, best_value, best_policy, best_marginal = carry
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        reaches = terms.value + terms.value_bound >= certain_lower[:, None]
+        margin = _block_margin(block)
+        reaches = margin.value + margin.bound >= certain_lower[:, None]
         near_max = terms.brackets & reaches
         rank = _right_continuous_rank(
             near_max=near_max,
@@ -541,9 +718,11 @@ def _envelope_blocked(
         (blocks, live_blocks),
     )
 
+    decided = any_bracket & certifiable
+
     def _published(channel: FloatND) -> FloatND:
-        """Shape one channel like the query, NaN where nothing brackets it."""
-        return jnp.where(any_bracket, channel, jnp.nan).reshape(query.shape)
+        """Shape one channel like the query, NaN where no winner was decided."""
+        return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
 
     return _EnvelopeReduction(
         published=(

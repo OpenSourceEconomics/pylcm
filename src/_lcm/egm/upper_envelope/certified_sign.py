@@ -58,6 +58,7 @@ few hundred flops. The evaluation is branch-free and elementwise, so it stays
 
 import operator
 from functools import reduce
+from typing import NamedTuple
 
 import jax.numpy as jnp
 
@@ -68,8 +69,10 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_mul,
     dd_mul_float,
     dd_negate,
+    dd_quotient_bounded,
     normalizing_exponent,
     scale_by_power_of_two,
+    two_sum,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -182,6 +185,84 @@ def certified_margin_sign(
     ) & _product_in_transform_domain(numerator_b[0], width_a[0])
 
     return _certified_sign_of(determinant, finite=finite & in_domain & scaling_exact)
+
+
+class QuotientMargin(NamedTuple):
+    """How far one quotient lies above another, and whether that is knowable."""
+
+    value: FloatND
+    """`left_numerator/left_divisor - right_numerator/right_divisor`."""
+    bound: FloatND
+    """The true margin lies within `bound` of `value`."""
+    trustworthy: BoolND
+    """Whether the evaluation stayed where the transforms — and so `bound` — hold."""
+
+
+def certified_quotient_margin(
+    *,
+    left_numerator: DoubleDouble,
+    left_divisor: DoubleDouble,
+    right_numerator: DoubleDouble,
+    right_divisor: DoubleDouble,
+) -> QuotientMargin:
+    """Return how far the left quotient lies above the right one, with a bound.
+
+    Reading each quotient and subtracting the two results bounds their difference
+    at the *values'* magnitude, which is the wrong scale to decide between them: on
+    a large common value level two such bounds swamp a gap that is orders of
+    magnitude above zero, and an ordering the format holds exactly is reported as
+    a tie. That is not a defect of either read — each is as good as its own
+    magnitude allows — but of asking a question about a difference by way of two
+    separate answers.
+
+    Cross-multiplying first asks it directly. `N_l w_r - N_r w_l` is formed in the
+    double-double arithmetic of `double_double`, whose transforms are exact, so the
+    common level cancels in arithmetic that loses nothing. What reaches the bound is
+    only the tail the two multiplications discard — second order in the format's
+    precision, against a first-order rounding of the level — so the margin stays
+    decidable on a level many orders of magnitude above the gap, and a common
+    additive shift of both value lines does not change the outcome until it exhausts
+    that second-order headroom.
+
+    Args:
+        left_numerator: Numerator of the left quotient.
+        left_divisor: Divisor of the left quotient; must be non-zero.
+        right_numerator: Numerator of the right quotient.
+        right_divisor: Divisor of the right quotient; must be non-zero.
+
+    Returns:
+        The margin, a bound on it, and whether the bound may be relied on. Where it
+        may not, nothing follows about the geometry — the true margin may be large —
+        so a caller must fail loud rather than treat it as a tie.
+
+    """
+    determinant = dd_add(
+        dd_mul(left_numerator, right_divisor),
+        dd_negate(dd_mul(right_numerator, left_divisor)),
+    )
+    divisor_product = dd_mul(left_divisor, right_divisor)
+    high, low, referred = dd_quotient_bounded(determinant, divisor_product)
+    # Collapsing the pair to one float is a rounding whose discarded part is
+    # available exactly, so it is measured rather than charged as a blanket ULP —
+    # a flat charge would be the width of the very gaps this margin has to resolve.
+    value, discarded = two_sum(high, low)
+
+    # Dekker's transform is exact only while its products stay normal. Outside that
+    # range the determinant is not evidence of anything, least of all of a tie.
+    in_domain = (
+        _product_in_transform_domain(left_numerator[0], right_divisor[0])
+        & _product_in_transform_domain(right_numerator[0], left_divisor[0])
+        & _product_in_transform_domain(left_divisor[0], right_divisor[0])
+    )
+    bound = referred + jnp.abs(discarded)
+    return QuotientMargin(
+        value=value,
+        bound=bound,
+        trustworthy=in_domain
+        & jnp.isfinite(value)
+        & jnp.isfinite(bound)
+        & (divisor_product[0] != 0.0),
+    )
 
 
 def affine_numerator(
