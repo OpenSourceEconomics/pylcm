@@ -172,6 +172,41 @@ def test_moving_floor_no_nan_poisoning():
         assert np.isfinite(arr).any(), f"period {period} has no finite V at all"
 
 
+def test_moving_floor_solves_on_each_periods_own_nodes():
+    """Period `t`'s value function is tabulated on period `t`'s grid, not the base one.
+
+    The rest of this file cannot see which nodes the solve actually used: a solve on the
+    wrong (representative-age) axis still yields a finite, NaN-free, wealth-monotone V —
+    just the wrong one. So it needs an oracle *independent of the solver*, and the model
+    admits an exact one: `bc` requires `consumption <= wealth` and the consumption grid
+    starts at 0.05, so node `w` is infeasible (`V = -inf`) iff `w < 0.05`. That
+    predicate is computable straight from the period's own grid definition.
+
+    This is a regression guard. Cascade merge 80f5e79 dropped the solve hot loop's call
+    to `_states_for_period`, so every period tabulated on the base axis while
+    `period_state_axes` was still built and stored — nothing looked broken, and all 15
+    other tests here passed. The visible symptom was spurious `-inf` at exactly the ages
+    where the age-specific grid diverges from the base (worker ages 57-59 in
+    blundellFemaleLaborSupply2016); here it is one extra `-inf` cell per period.
+    """
+    grid = _moving_floor_grid()
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
+    for period in range(_N):
+        if "alive" not in v[period]:
+            continue
+        nodes = np.asarray(grid.build(_AGES.period_to_age(period)).to_jax())
+        expected_infeasible = nodes < _CGRID.start
+        got_infeasible = np.isneginf(np.asarray(v[period]["alive"]))
+        np.testing.assert_array_equal(
+            got_infeasible,
+            expected_infeasible,
+            err_msg=(
+                f"period {period}: V's feasibility pattern does not match this "
+                f"period's own grid nodes {nodes} — the solve used a different axis"
+            ),
+        )
+
+
 def test_moving_floor_value_monotone_in_wealth():
     """V is nondecreasing in wealth at every working age (economic sanity)."""
     v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")

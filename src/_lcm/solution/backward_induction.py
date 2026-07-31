@@ -27,6 +27,7 @@ from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
     _fold_period_diagnostics,
     _init_diagnostic_accumulators,
+    _states_for_period,
 )
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -419,6 +420,29 @@ def _run_period_kernel(
 
     """
     period_kernel = regime.solution.period_kernels[period]
+
+    # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
+    # nodes, not on the representative base axis. Same shape as the base, so the
+    # shared compiled core is not retraced.
+    #
+    # This consumer was DROPPED by cascade merge 80f5e79 ("Cascade
+    # feat/age-specialized into feat/dcegm"). The age-specialized side called
+    # `_states_for_period` in exactly two places -- the solve hot loop and the
+    # failure-path reconstruction -- and the merge kept only the second, which moved
+    # into `diagnostics.py`. `_build_period_state_axes` kept computing the axes and
+    # `SolutionPhase.period_state_axes` kept carrying them, so nothing looked broken:
+    # the data was still built and stored, just never read by the solver. Every
+    # period then solved on the base axis, which is wrong exactly where the
+    # age-specific grid diverges from it -- the last pre-retirement ages -- and
+    # showed up as `-inf` in the worker value function at ages 57-59 in
+    # blundellFemaleLaborSupply2016.
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, period))
+        ),
+    )
+
     same_period_kwargs: dict[str, object] = {}
     if regime.same_period_ref_regimes:
         same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
