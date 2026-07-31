@@ -49,7 +49,9 @@ ASV wiring notes:
   (cache omitted).
 """
 
+import atexit
 import gc
+import pathlib
 import shutil
 import tempfile
 import time
@@ -59,6 +61,40 @@ import cloudpickle
 from . import _gpu_mem
 
 _N_SUBJECTS = 1000
+
+_LOG_DIR_PREFIX = "aca-bench-debug-log-"
+
+# Longer than any single benchmark holds its log directory (the GPU-memory
+# classes cap out at `timeout = 3600`), so the sweep below can never remove a
+# directory belonging to a live run.
+_STALE_LOG_DIR_AGE_SECONDS = 24 * 3600
+
+
+def _sweep_stale_log_dirs() -> None:
+    """Remove debug-log directories orphaned by a process that died before cleanup.
+
+    `atexit` covers a normal exit, but not `SIGKILL` -- an OOM kill, an ASV
+    timeout, or a cancelled CI job. Without this backstop those directories
+    accumulate at ~455 MB each until something else fills the disk, which is
+    how the benchmark runner ran out of space (186 directories, 63 GB, the
+    oldest 30 days old).
+    """
+    root = pathlib.Path(tempfile.gettempdir())
+    cutoff = time.time() - _STALE_LOG_DIR_AGE_SECONDS
+    for path in root.glob(f"{_LOG_DIR_PREFIX}*"):
+        try:
+            if path.is_dir() and path.stat().st_mtime < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def _make_log_dir() -> str:
+    """Create a debug-log directory that cleans itself up when the process exits."""
+    _sweep_stale_log_dirs()
+    path = tempfile.mkdtemp(prefix=_LOG_DIR_PREFIX)
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
 
 
 def _build() -> tuple[object, object, object]:
@@ -175,14 +211,15 @@ class AcaBaselineDebugLog(AcaBaseline):
     log_level = "debug"
 
     def setup(self, cache: bytes) -> None:
-        self.log_path = tempfile.mkdtemp(prefix="aca-bench-debug-log-")
+        self.log_path = _make_log_dir()
         super().setup(cache)
 
     def setup_for_gpu_measurement(self) -> None:
         # Mirror `setup`'s log_path setup so the measurement subprocess
-        # exercises snapshot writing too. The tmpdir leaks when the
-        # subprocess exits — acceptable since /tmp is OS-cleaned.
-        self.log_path = tempfile.mkdtemp(prefix="aca-bench-debug-log-")
+        # exercises snapshot writing too. `teardown` never runs here --
+        # `measure_gpu_peak` spawns this as a bare subprocess, which just exits --
+        # so cleanup rides on `atexit` inside `_make_log_dir` instead.
+        self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
 
     def teardown(self, cache: bytes | None = None) -> None:

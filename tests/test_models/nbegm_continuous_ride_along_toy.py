@@ -15,6 +15,7 @@ continuation. The brute variant (`GridSearch`) productmaps over
 import jax.numpy as jnp
 
 import lcm
+from _lcm.grids.base import Grid
 from lcm import LinSpacedGrid, Model
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
@@ -66,6 +67,7 @@ def build_model(
     wage_max: float = 6.0,
     n_savings: int = 200,
     savings_max: float = 28.0,
+    wage_grid: Grid | None = None,
 ) -> Model:
     """Create the (alive, dead) toy whose subsidy cliff lives on derived income.
 
@@ -81,12 +83,15 @@ def build_model(
         wage_max: Upper bound of the wage grid.
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
+        wage_grid: Grid for the `wage` co-state, overriding the default
+            `LinSpacedGrid` built from `n_wage` and `wage_max`.
 
     Returns:
         The assembled `Model`.
 
     """
-    wage_grid = LinSpacedGrid(start=0.5, stop=wage_max, n_points=n_wage)
+    if wage_grid is None:
+        wage_grid = LinSpacedGrid(start=0.5, stop=wage_max, n_points=n_wage)
 
     alive_functions = {
         "utility": utility,

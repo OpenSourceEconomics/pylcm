@@ -216,8 +216,8 @@ def outer_envelope_at_query(
     )
     winner, left_owned = right_germ_winner(
         value=values.T,
-        right_germ=tuple(component.T for component in right_germ),
-        left_germ=tuple(component.T for component in left_germ),
+        right_germ=_transposed_germ(right_germ),
+        left_germ=_transposed_germ(left_germ),
     )
     # The payload follows the ownership side: the winner's ordinary
     # (right-continuous) marginal on right-decided cells, its left record on
@@ -301,3 +301,11 @@ def right_germ_winner(
     # int32 winner indices: the candidate axis has at most a few hundred
     # entries, so the x64-default int64 only doubles the gather-index buffers.
     return jnp.argmax(survivors, axis=-1, keepdims=True).astype(jnp.int32), left_owned
+
+
+def _transposed_germ(
+    germ: tuple[BoolND, FloatND, FloatND, FloatND],
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Transpose every component of a value germ."""
+    alive, first, second, third = germ
+    return (alive.T, first.T, second.T, third.T)

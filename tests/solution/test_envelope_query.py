@@ -606,9 +606,7 @@ def _slope_collision_pairs(dtype, *, seed, target=1.0 / 3.0, draws=40_000, want=
     seen, pairs = {}, []
     keys = np.asarray(rise / run, dtype=dtype)
     for node, height, key in zip(x1, rise, keys, strict=True):
-        exact = Fraction.from_float(float(height)) / (
-            Fraction.from_float(float(node)) - Fraction(1)
-        )
+        exact = Fraction(float(height)) / (Fraction(float(node)) - Fraction(1))
         previous = seen.setdefault(float(key), (exact, float(node), float(height)))
         if previous[0] == exact:
             continue

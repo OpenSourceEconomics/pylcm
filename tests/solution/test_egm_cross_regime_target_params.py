@@ -122,7 +122,7 @@ def _old_active(age: int) -> bool:
     return 50 <= age < last_age
 
 
-# --- Source-regime savings-stage reads (drive the asset-row solve) ----------
+# Source-regime savings-stage reads (drive the asset-row solve)
 
 
 def survival_of_wealth(wealth: ContinuousState) -> FloatND:
@@ -140,7 +140,7 @@ def young_death_prob(wealth: ContinuousState) -> FloatND:
     return 1.0 - survival_of_wealth(wealth)
 
 
-# --- Target-regime (old) resources: reads the model-level pension factor ----
+# Target-regime (old) resources: reads the model-level pension factor
 
 
 def accrued_pension() -> FloatND:
@@ -162,7 +162,7 @@ def budget_constraint_old(
     return consumption <= wealth + pension_value
 
 
-# --- Source-regime (young) resources: plain wealth --------------------------
+# Source-regime (young) resources: plain wealth
 
 
 def resources_young(wealth: ContinuousState) -> FloatND:

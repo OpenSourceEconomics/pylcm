@@ -1,4 +1,4 @@
-"""DC-EGM for the DS-2026 App.3 discrete-housing model matches VFI.
+"""DC-EGM for the DS-2024 App.3 discrete-housing model matches VFI.
 
 Application 3 reaches its terminal `dead` regime by a choice-driven discrete
 transition: `next_housing = housing_choice`, so the held housing next period is

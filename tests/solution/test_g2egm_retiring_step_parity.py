@@ -46,6 +46,7 @@ def _solve_to_boundary():
         next_value=v_dead,
         next_marginal=_LIQUID_GRID ** (-_CRRA),
         liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         discount_factor=_DISCOUNT,
         crra=_CRRA,

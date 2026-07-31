@@ -1,6 +1,6 @@
-"""Construction spec for the DS-2026 App.2 housing EGM-FUES discrete-grid model.
+"""Construction spec for the DS-2024 App.2 housing EGM-FUES discrete-grid model.
 
-The EGM-FUES column of DS-2026 Table 3 solves the continuous-housing model by
+The EGM-FUES column of DS-2024 Table 3 solves the continuous-housing model by
 1-D FUES nested over the housing grid (its Box 2). pylcm builds this as a
 discrete-choice DC-EGM: the next-housing choice is discretised onto the housing
 grid and solved as a discrete action, with the inner liquid-asset DC-EGM and the

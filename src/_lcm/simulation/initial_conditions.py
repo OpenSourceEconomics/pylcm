@@ -23,7 +23,10 @@ from _lcm.dtypes import (
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime
 from _lcm.grids import DiscreteGrid
-from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.regime_building.Q_and_F import (
+    _get_deterministic_transitions,
+    _get_feasibility,
+)
 from _lcm.typing import (
     ActionName,
     FlatParams,
@@ -34,6 +37,8 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StateName,
     StatesPerRegime,
+    TransitionFunction,
+    TransitionFunctionName,
 )
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
@@ -837,6 +842,27 @@ def _age_specialized_feasibility_message(
     )
 
 
+def _simulation_deterministic_transitions(
+    regime: Regime,
+) -> Mapping[TransitionFunctionName, TransitionFunction]:
+    """Get the regime's simulation-phase deterministic `next_<state>` producers.
+
+    A constraint may read an auto-named `next_<state>` (the NEGM budget cut on the
+    next durable stock). The within-period decision resolves that name from the
+    chosen action, so anything rebuilding feasibility outside that decision has to
+    supply the same producers or the name is left as an unfilled argument.
+
+    Returns:
+        Mapping of `next_<state>` names to their deterministic transitions.
+
+    """
+    merged, _conflicting = _get_deterministic_transitions(
+        transitions=regime.simulation.transitions,
+        stochastic_transition_names=regime.simulation.stochastic_transition_names,
+    )
+    return merged
+
+
 def _check_regime_feasibility(  # noqa: C901
     *,
     regime: Regime,
@@ -873,6 +899,7 @@ def _check_regime_feasibility(  # noqa: C901
     feasibility_func = _get_feasibility(
         functions=regime.simulation.functions,
         constraints=regime.simulation.constraints,
+        deterministic_transitions=_simulation_deterministic_transitions(regime),
     )
     accepted = get_union_of_args([feasibility_func])
 
@@ -1027,11 +1054,13 @@ def _per_constraint_feasibility(
         name: arr[infeasible_positions] for name, arr in subject_states.items()
     }
 
+    deterministic_transitions = _simulation_deterministic_transitions(regime)
     out: dict[str, np.ndarray] = {}
     for name, constraint_func in constraints.items():
         single_feasibility = _get_feasibility(
             functions=functions,
             constraints=MappingProxyType({name: constraint_func}),
+            deterministic_transitions=deterministic_transitions,
         )
         accepted = get_union_of_args([single_feasibility])
         single_states = {k: v for k, v in infeasible_states.items() if k in accepted}

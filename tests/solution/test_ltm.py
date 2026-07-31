@@ -31,20 +31,12 @@ import numpy as np
 
 from _lcm.egm.upper_envelope import ltm
 from tests.conftest import X64_ENABLED
+from tests.solution._envelope_rows import drop_nan as _drop_nan
+from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
 # Tolerance for kernel-computed quantities (segment interpolation): float32
 # carries a few ulp through the bracketing arithmetic.
 _COMPUTED_ATOL = 1e-8 if X64_ENABLED else 1e-5
-
-
-def _drop_nan(arr: jnp.ndarray) -> np.ndarray:
-    out = np.asarray(arr)
-    return out[~np.isnan(out)]
-
-
-def _envelope_interp(grid, value, x_query):
-    keep = ~np.isnan(np.asarray(grid))
-    return np.interp(x_query, np.asarray(grid)[keep], np.asarray(value)[keep])
 
 
 def _crossing_segments_candidates():

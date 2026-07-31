@@ -11,6 +11,7 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
+from _lcm.regime_building.Q_and_F import _get_deterministic_transitions
 from _lcm.typing import FlatRegimeParams, RegimeName
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -243,9 +244,21 @@ def _fail_if_targets_depend_on_age_specialized(
 
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
-    """Build pool of available functions for target computation."""
+    """Build pool of available functions for target computation.
+
+    The deterministic `next_<state>` producers join the pool so a target reading a
+    chosen next state — the NEGM budget constraint cutting on the next durable
+    stock — resolves it from the row's own state and action, exactly as the
+    within-period decision does. They stay out of `available_targets`: a next state
+    is published as the following period's row, not as a target of this one.
+    """
     sim = regime.simulation
+    deterministic_transitions, _conflicting = _get_deterministic_transitions(
+        transitions=sim.transitions,
+        stochastic_transition_names=sim.stochastic_transition_names,
+    )
     pool: dict[str, UserFunction] = {
+        **dict(deterministic_transitions),
         **{k: v for k, v in sim.functions.items() if k != "H"},
         **sim.constraints,
     }

@@ -1,4 +1,4 @@
-"""DC-EGM/FUES for the DS-2026 App.3 with-tax model matches VFI.
+"""DC-EGM/FUES for the DS-2024 App.3 with-tax model matches VFI.
 
 Application 3's Table 5 adds a piecewise-linear capital-income tax to the
 discrete-housing model. The tax `T(a) = B + tau_a*(a - a0)` carries three level

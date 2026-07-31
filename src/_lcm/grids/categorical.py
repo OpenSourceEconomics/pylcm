@@ -1,4 +1,3 @@
-import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass, field, is_dataclass
 
@@ -74,11 +73,15 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
 
         cls._ordered = ordered  # ty: ignore[unresolved-attribute]
 
-        @classmethod
-        def _to_categorical_dtype(cls: type) -> pd.CategoricalDtype:
-            """Return a `pd.CategoricalDtype` with the category names of this class."""
-            names = [f.name for f in dataclasses.fields(cls)]
-            return pd.CategoricalDtype(categories=names, ordered=cls._ordered)  # ty: ignore[unresolved-attribute]
+        # The category names and their order are fixed by the declaration, so
+        # the published dtype closes over them instead of re-deriving them from
+        # the decorated class at call time.
+        category_names = tuple(annotations)
+
+        @staticmethod
+        def _to_categorical_dtype() -> pd.CategoricalDtype:
+            """Return a `pd.CategoricalDtype` with the class's category names."""
+            return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
 
         cls.to_categorical_dtype = _to_categorical_dtype  # ty: ignore[unresolved-attribute]
 

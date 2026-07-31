@@ -1,4 +1,4 @@
-"""DS-2026 App.2 housing keeps the next-housing choice inside the grid bounds.
+"""DS-2024 App.2 housing keeps the next-housing choice inside the grid bounds.
 
 The NEGM solve searches the next-housing choice on an outer grid floored at a
 small positive stock and capped at the top housing level, but the forward

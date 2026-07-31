@@ -53,11 +53,11 @@ pylcm's FUES backend is **adapted from**
 kernel. The reference implementation by the method's authors is
 [akshayshanker/FUES](https://github.com/akshayshanker/FUES).
 
-### Multidimensional & nested EGM (reserved / planned backends)
+### Multidimensional & nested EGM
 
-pylcm reserves an upper-envelope backend slot for multidimensional envelopes and is
-designed to grow toward solving models with more than one continuous (Euler) state. That
-roadmap builds on:
+pylcm solves models with more than one continuous (Euler) state through its nested-EGM
+(`NEGM`) and two-dimensional (`TwoDimEGM`, G2EGM) solvers, with roof-cut/RFC upper
+envelopes for the multidimensional case. Those methods are due to:
 
 - Druedahl (2021), "A Guide on Solving Non-convex Consumption-Saving Models,"
   *Computational Economics* 58(3), 747–775,

@@ -20,9 +20,10 @@ import pytest
 from tests.test_models import negm_kinked_toy
 from tests.test_models.negm_kinked_toy import RegimeId
 
-pytestmark = pytest.mark.skip(
-    reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"
-)
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.skip(reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"),
+]
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 

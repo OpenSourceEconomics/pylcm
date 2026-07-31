@@ -41,6 +41,7 @@ from lcm.ages import AgeGrid
 from lcm.typing import (
     Float1D,
     FloatND,
+    StateName,
 )
 
 
@@ -77,7 +78,8 @@ class OneAssetEGM(Solver):
         """
 
         savings_grid = self.savings_grid.to_jax()
-        liquid_grid = context.grids[context.state_action_space.state_names[0]].to_jax()
+        liquid_state = context.state_action_space.state_names[0]
+        liquid_grid = context.grids[liquid_state].to_jax()
 
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
@@ -91,6 +93,13 @@ class OneAssetEGM(Solver):
                 regime_name=context.regime_name,
                 continuation_target=target,
                 transition_target_names=tuple(context.transitions),
+                next_liquid_grid=_target_period_liquid_grid(
+                    context=context,
+                    period=period,
+                    target=target,
+                    liquid_state=liquid_state,
+                    fallback=liquid_grid,
+                ),
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
@@ -123,6 +132,13 @@ class _OneAssetEGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
+    next_liquid_grid: Float1D
+    """The continuation target's liquid nodes in the *next* period.
+
+    The abscissae of the continuation value and marginal this adapter reads. Equal
+    to this period's own grid unless the liquid state is an `AgeSpecializedGrid`.
+    """
+
     def cores(self) -> Mapping[str, Callable]:
         """Return the single EGM-step core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
@@ -154,6 +170,7 @@ class _OneAssetEGMPeriodKernel:
         """Build the core's lowering arguments: state, continuation, params."""
         return {
             **dict(state_action_space.states),
+            "next_liquid_grid": self.next_liquid_grid,
             "next_value": next_regime_to_V_arr[self.continuation_target],
             "next_marginal": next_regime_to_continuation[
                 self.continuation_target
@@ -179,6 +196,7 @@ class _OneAssetEGMPeriodKernel:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
         V_arr, carry = compiled_cores["main"](
             **state_action_space.states,
+            next_liquid_grid=self.next_liquid_grid,
             next_value=next_regime_to_V_arr[self.continuation_target],
             next_marginal=next_regime_to_continuation[
                 self.continuation_target
@@ -190,6 +208,30 @@ class _OneAssetEGMPeriodKernel:
             ),
         )
         return KernelResult(V_arr=V_arr, continuation=carry)
+
+
+def _target_period_liquid_grid(
+    *,
+    context: SolverBuildContext,
+    period: int,
+    target: RegimeName,
+    liquid_state: StateName,
+    fallback: Float1D,
+) -> Float1D:
+    """The continuation target's liquid nodes at `period + 1`.
+
+    A period-`t` kernel reads `V_{t+1}` and its marginal, both tabulated on the
+    target's period-`t+1` grid. Falls back to the representative grid whenever the
+    model declares no age-specialized state, where the two coincide by definition.
+    """
+    per_period = context.period_to_regime_v_interp
+    if per_period is None:
+        return fallback
+    target_info = per_period.get(period + 1, {}).get(target)
+    if target_info is None:
+        return fallback
+    grid = target_info.continuous_states.get(liquid_state)
+    return fallback if grid is None else grid.to_jax()
 
 
 def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Callable:
@@ -206,6 +248,7 @@ def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Calla
     def core(
         *,
         liquid: Float1D,
+        next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
         **params: FloatND,
@@ -214,6 +257,7 @@ def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Calla
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
