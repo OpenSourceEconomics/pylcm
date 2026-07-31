@@ -21,6 +21,8 @@ from _lcm.config import TEST_DATA
 from lcm import IrregSpacedGrid
 from tests.test_models import dcegm_paper_twin
 
+pytestmark = pytest.mark.slow
+
 SCALE = 0.2
 
 REGIME_FOR_LAGGED_CHOICE = {0: "working_life", 1: "retirement"}

@@ -133,7 +133,7 @@ DC-EGM regime.
 """
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -148,6 +148,10 @@ from _lcm.egm.continuation import (
     _is_runtime_process,
     build_continuation_plan,
     get_egm_continuation_targets,
+)
+from _lcm.egm.continuation_grids import (
+    continuation_grid_signature,
+    continuation_v_interpolation_info,
 )
 from _lcm.egm.kernel_scope import _find_unsupported_feature
 from _lcm.egm.published_policy import EGMSimPolicy
@@ -167,6 +171,10 @@ from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_eul
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.logsum import logsum_and_softmax
+from _lcm.regime_building.age_normalization import (
+    periodized_tree_signature,
+    resolve_periodized_nodes,
+)
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
@@ -212,12 +220,20 @@ def build_egm_step_functions(
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     state_action_space: StateActionSpace,
     has_taste_shocks: bool,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+    period_to_regime_grid_signature: (
+        MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
+    ) = None,
 ) -> tuple[MappingProxyType[int, EGMStepFunction], EGMCarry, frozenset[RegimeName]]:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
-    Periods sharing the same continuation-target configuration share one
-    kernel (and hence one compiled program), mirroring the per-period
-    grouping of the Q-and-F builders.
+    Periods sharing the same continuation-target configuration *and* the same
+    continuation-grid signature share one kernel (and hence one compiled
+    program), mirroring the per-period grouping of the Q-and-F builders. The
+    period-`t` kernel interpolates its targets' `V_{t+1}` on the targets'
+    period-`t+1` grids, so an age-specialized target splits the grouping.
 
     Args:
         solver: The regime's DC-EGM solver configuration.
@@ -249,6 +265,12 @@ def build_egm_step_functions(
             discrete-action grids and their canonical order).
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        period_to_regime_v_interp: Immutable mapping of period to that period's
+            V-interpolation info per regime, or `None` for an age-invariant
+            model. A period-`t` kernel reads its targets' entries at `t + 1`.
+        period_to_regime_grid_signature: Immutable mapping of period to each
+            regime's user-declared grid signature, or `None` for an
+            age-invariant model. Folded into the kernel-sharing group key.
 
     Returns:
         Tuple of the per-period kernel mapping, the regime's all-finite carry
@@ -349,32 +371,71 @@ def build_egm_step_functions(
             user_regime=user_regimes[regime_name], user_regimes=user_regimes
         )
     )
-    configs: dict[tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], list[int]] = {}
+
+    configs: dict[_EGMGroupKey, list[int]] = {}
     for period in regimes_to_active_periods[regime_name]:
-        target_split = get_egm_continuation_targets(
+        carry, scalar = get_egm_continuation_targets(
             period=period,
             transitions=transitions,
             reachable_targets=reachable_targets,
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=continuation_v_interpolation_info(
+                period=period,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                period_to_regime_v_interp=period_to_regime_v_interp,
+            ),
         )
-        configs.setdefault(target_split, []).append(period)
+        configs.setdefault(
+            (
+                carry,
+                scalar,
+                (
+                    continuation_grid_signature(
+                        period=period,
+                        targets=carry + scalar,
+                        period_to_regime_grid_signature=period_to_regime_grid_signature,
+                    ),
+                    # An `AgeSpecializedFunction` is a different function at each
+                    # age, so periods may share a program only where the user's
+                    # declared signature says the closures agree.
+                    periodized_tree_signature(functions, period),
+                    periodized_tree_signature(constraints, period),
+                ),
+            ),
+            [],
+        ).append(period)
 
-    built: dict[
-        tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]], EGMStepFunction
-    ] = {}
-    for carry_targets, scalar_targets in configs:
+    built: dict[_EGMGroupKey, EGMStepFunction] = {}
+    for group_key, group_periods in configs.items():
+        carry_targets, scalar_targets, _ = group_key
+        # Every period in the group shares a continuation-grid signature and the
+        # signatures of its periodized functions and constraints, so the first
+        # one's resolved economics is the whole group's.
+        representative_period = group_periods[0]
+        group_v_interp = continuation_v_interpolation_info(
+            period=representative_period,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            period_to_regime_v_interp=period_to_regime_v_interp,
+        )
+        group_functions = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(functions, representative_period),
+        )
+        group_constraints = cast(
+            "ConstraintFunctionsMapping",
+            resolve_periodized_nodes(constraints, representative_period),
+        )
         unsupported = _find_unsupported_feature(
             solver=solver,
             regime_name=regime_name,
             user_regimes=user_regimes,
-            functions=functions,
-            constraints=constraints,
+            functions=group_functions,
+            constraints=group_constraints,
             carry_targets=carry_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=group_v_interp,
             flat_param_names=flat_param_names,
             regime_to_flat_param_names=regime_to_flat_param_names,
             own_discrete_state_names=own_discrete_state_names,
@@ -388,8 +449,8 @@ def build_egm_step_functions(
             kernel = _get_egm_step(
                 solver=solver,
                 user_regimes=user_regimes,
-                functions=functions,
-                constraints=constraints,
+                functions=group_functions,
+                constraints=group_constraints,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
                 compute_regime_transition_probs=compute_regime_transition_probs,
@@ -403,24 +464,27 @@ def build_egm_step_functions(
                 own_runtime_process_names=own_runtime_process_names,
                 euler_axis_in_V=euler_axis_in_V,
                 has_taste_shocks=has_taste_shocks,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                regime_to_v_interpolation_info=group_v_interp,
                 asset_row_mode=asset_row_mode,
                 euler_batch_size=euler_batch_size,
                 savings_batch_size=savings_batch_size,
                 combo_state_batch_sizes=combo_state_batch_sizes,
             )
-        built[(carry_targets, scalar_targets)] = kernel
+        built[group_key] = kernel
 
     result: dict[int, EGMStepFunction] = {}
-    for target_split, periods in configs.items():
+    for key, periods in configs.items():
         for period in periods:
-            result[period] = built[target_split]
+            result[period] = built[key]
 
     return (
         MappingProxyType(dict(sorted(result.items()))),
         carry_template,
         reachable_targets,
     )
+
+
+type _EGMGroupKey = tuple[tuple[RegimeName, ...], tuple[RegimeName, ...], Hashable]
 
 
 def compute_egm_carry_length(*, solver: DCEGM) -> int:

@@ -30,6 +30,8 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_params,
 )
 
+pytestmark = pytest.mark.slow
+
 _DISCOUNT_FACTOR = 0.98
 
 

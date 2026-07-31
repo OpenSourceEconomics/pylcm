@@ -253,10 +253,10 @@ class Regime:
         UserFunction
         | MarkovTransition
         | Phased
-        | None
         # `Phased` inside a per-target dict passes the type check so the
         # validator can reject it with the outermost-only explanation.
-        | Mapping[RegimeName, UserFunction | MarkovTransition | Phased],
+        | Mapping[RegimeName, UserFunction | MarkovTransition | Phased]
+        | None,
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions or per-target dicts.
 

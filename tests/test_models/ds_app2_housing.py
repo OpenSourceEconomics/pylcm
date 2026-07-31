@@ -1,6 +1,6 @@
-"""Dobrescu-Shanker (2026) Application 2 housing model as a pylcm NEGM model.
+"""Dobrescu-Shanker (2024) Application 2 housing model as a pylcm NEGM model.
 
-The DS-2026 §2.2 housing model has a liquid financial asset, an illiquid housing
+The DS-2024 §2.2 housing model has a liquid financial asset, an illiquid housing
 stock with a proportional transaction cost, an AR1 wage, and a discrete
 adjust/keep choice. It maps onto pylcm's nested-EGM solver:
 

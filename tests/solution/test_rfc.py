@@ -40,6 +40,7 @@ from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, rfc
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
+from tests.solution._envelope_rows import drop_nan as _drop_nan
 
 # Interpolated bracket reads are float-eps-limited at the active precision.
 _BRACKET_ATOL = 1e-10 if X64_ENABLED else 1e-5
@@ -55,11 +56,6 @@ def _rfc_solver():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         upper_envelope="rfc",
     )
-
-
-def _drop_nan(arr: jnp.ndarray) -> np.ndarray:
-    out = np.asarray(arr)
-    return out[~np.isnan(out)]
 
 
 def _crossing_segments_candidates():

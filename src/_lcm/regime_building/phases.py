@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 type _PhaseStateTransition = (
     UserFunction
     | MarkovTransition
-    | None
     | Mapping[RegimeName, UserFunction | MarkovTransition]
+    | None
 )
 type _PhaseRegimeTransition = (
     UserFunction

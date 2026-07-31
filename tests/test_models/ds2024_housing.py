@@ -7,7 +7,7 @@ income `z`, and a discrete adjust/keep choice. Model and calibration are read
 from the authors' `InverseDCDP` repo (`housing/housing.py`,
 `settings/settings.yml`); see `ds2024-housing-build-plan.md`.
 
-It maps onto pylcm's nested-EGM solver exactly like the DS-2026 App.2 housing
+It maps onto pylcm's nested-EGM solver exactly like the DS-2024 App.2 housing
 model:
 
 - the **inner** DC-EGM solves liquid consumption-savings, the Euler equation

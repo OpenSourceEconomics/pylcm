@@ -17,14 +17,24 @@ confirms that an ill-typed argument to a public constructor surfaces as
 the project exception, not as `BeartypeCallHintViolation`.
 """
 
+import ast
+import importlib
+from pathlib import Path
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.door import is_bearable
 from beartype.roar import BeartypeCallHintViolation
+from jaxtyping import Int, Scalar
 
+import _lcm
+import lcm
+from _lcm.egm.upper_envelope.query import _Dyadic, _exact_sign_of_sum
 from _lcm.engine import _build_regime_sharding
+from _lcm.optimization.golden_section import maximize_golden_section
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation.simulate import _compute_starting_periods
 from _lcm.solution.diagnostics import _log_per_period_stats
@@ -137,6 +147,122 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
 
     assert int(argmax) == 2
     assert float(maximum) == 2.0
+
+
+def _fori_loop_body_index_annotations() -> list[tuple[str, str, str]]:
+    """Every `fori_loop` body index annotation in the clawed packages.
+
+    Derived by scanning the packages rather than listed, so a new `fori_loop`
+    is covered the day it is written instead of the day someone remembers to
+    extend an enumeration.
+
+    Returns `(module, body function, annotation source)` triples. Bodies with an
+    unannotated index (bare lambdas) are skipped: there is nothing for the claw
+    to enforce against.
+    """
+    annotations = []
+    for package in (_lcm, lcm):
+        root = Path(package.__file__).parent
+        for path in sorted(root.rglob("*.py")):
+            # Explicit encoding: the default is the locale's, which is cp1252 on
+            # the Windows runner, and the sources this scans contain UTF-8
+            # em-dashes. Without it the test fails with a `UnicodeDecodeError`
+            # that has nothing to do with what it is checking.
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            bodies = {
+                node.name: node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef)
+            }
+            module = ".".join(
+                (package.__name__, *path.relative_to(root).with_suffix("").parts)
+            ).removesuffix(".__init__")
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not ast.unparse(node.func).endswith("fori_loop"):
+                    continue
+                # `fori_loop(lower, upper, body, init)` — the body is third.
+                body_arg = node.args[2]
+                if not isinstance(body_arg, ast.Name):
+                    continue
+                index = bodies[body_arg.id].args.args[0]
+                if index.annotation is None:
+                    continue
+                annotations.append((module, body_arg.id, ast.unparse(index.annotation)))
+    return annotations
+
+
+def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:
+    """A `fori_loop` body must accept the EAGER index, which is a plain `int`.
+
+    `fori_loop` called with static Python-int bounds really loops in Python
+    under `jax.disable_jit()` and hands the body an `int`; only under trace is
+    the index a tracer. The claw is registered unconditionally, so an
+    array-only annotation turns every eager call into a type violation — a
+    deterministic failure with no numerical symptom, which is how it survived a
+    green suite until a jitted-vs-eager agreement test became the first eager
+    caller of the exact-arithmetic kernel in `upper_envelope.query`.
+
+    This is the class, not the witness: the sites are discovered by scanning.
+    """
+    array_only = Int[Scalar, ""]
+    assert not is_bearable(0, array_only), (
+        "self-check: the predicate must be able to FAIL, otherwise this test "
+        "passes vacuously for every annotation"
+    )
+
+    sites = _fori_loop_body_index_annotations()
+    assert len(sites) >= 1, (
+        f"the scan found {len(sites)} annotated `fori_loop` bodies; the known "
+        "one lives in `_lcm.optimization.golden_section`, so a smaller count "
+        "means the scan broke, not that the code is clean. The second site, in "
+        "`_lcm.egm.upper_envelope.query`, went away with the round-13 exact "
+        "kernel: it carries arrays through a `lax.scan` and annotates no loop "
+        "index at all."
+    )
+
+    rejected = []
+    for module, body, annotation in sites:
+        namespace = vars(importlib.import_module(module))
+        hint = eval(annotation, namespace)  # noqa: S307
+        if not is_bearable(0, hint):
+            rejected.append(f"{module}.{body}: {annotation}")
+    assert not rejected, (
+        "these `fori_loop` body indices reject the eager Python `int`: "
+        + "; ".join(rejected)
+    )
+
+
+def test_the_exact_sign_kernel_runs_eagerly() -> None:
+    """`_exact_sign_of_sum` is reachable with the claw live and jit disabled.
+
+    This test exists because a `jax.Array`-only annotation on a loop index made
+    every EAGER call raise a beartype violation, and the exact sign kernel is
+    reached eagerly only from `test_jitted_solve_matches_the_eager_solve`. The
+    round-13 rewrite carries arrays through a `lax.scan` instead of an index
+    through a `fori_loop`, so the original hazard is gone; the eager reachability
+    guard is kept because that is what caught it.
+    """
+    terms = _Dyadic(
+        mantissa=jnp.array([0.5, -0.5, 0.5]),
+        exponent=jnp.array([1, 1, -29], dtype=jnp.int32),
+    )
+    with jax.disable_jit():
+        sign = _exact_sign_of_sum(terms)
+    assert float(sign) == 1.0
+
+
+def test_golden_section_runs_eagerly() -> None:
+    """`maximize_golden_section` is reachable with the claw live and jit off."""
+    with jax.disable_jit():
+        result = maximize_golden_section(
+            lambda x: -((x - 0.25) ** 2),
+            lower=jnp.array([0.0, -1.0]),
+            upper=jnp.array([1.0, 2.0]),
+            iterations=8,
+        )
+    assert np.allclose(np.asarray(result.x), 0.25, atol=1e-2)
 
 
 def test_regime_with_bad_arg_raises_project_exception() -> None:

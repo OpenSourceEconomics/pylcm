@@ -423,8 +423,11 @@ def _run_period_kernel(
     period_kernel = regime.solution.period_kernels[period]
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
-    # nodes, not on the representative base axis. Same shape as the base, so the
-    # shared compiled core is not retraced.
+    # nodes, not on the representative base axis. This is what keeps the tabulation
+    # on the same grid as the continuation, which reads V_{t+1} on period-(t+1)'s
+    # grid; the two halves disagreeing makes the solved value function wrong at
+    # every node, not merely imprecise. Same shape as the base, so the shared
+    # compiled core is not retraced.
     #
     # This consumer was DROPPED by cascade merge 80f5e79 ("Cascade
     # feat/age-specialized into feat/dcegm"). The age-specialized side called

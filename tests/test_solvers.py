@@ -70,6 +70,7 @@ def test_regime_solver_defaults_to_grid_search():
     assert working_life.solver == GridSearch()
 
 
+@pytest.mark.slow
 def test_explicit_grid_search_matches_default_solution():
     """Setting `solver=GridSearch()` explicitly yields the same value function
     as leaving the solver at its default — the polymorphic dispatch changes no

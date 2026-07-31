@@ -14,10 +14,10 @@ step itself. Currently implemented:
   generalizes to multidimensional endogenous grids, and
 - the local-upper-bound brute method (`_lcm.egm.upper_envelope.ltm`), an
   $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
-  abscissa (the quadratic baseline of Dobrescu & Shanker 2026), and
+  abscissa (the quadratic baseline of Dobrescu & Shanker 2024), and
 - HARK's EGM upper envelope (`_lcm.egm.upper_envelope.mss`), a left-to-right
   sweep that keeps the max-value branch at every abscissa *and* inserts the
-  exact segment-crossing point (the `MSS` method of Dobrescu & Shanker 2026).
+  exact segment-crossing point (the `MSS` method of Dobrescu & Shanker 2024).
 
 All backends share one signature: they consume the candidate
 `(endog_grid, policy, value)` rows plus the candidate supgradient

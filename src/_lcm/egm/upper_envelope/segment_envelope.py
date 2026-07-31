@@ -104,21 +104,17 @@ def refine_envelope_exact(
     n_runs = count_linked_runs(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
 
     cell_left, cell_right, cell_live = _node_cells(endog_grid=endog_grid, dead=dead)
-    active = _active_link_per_run(
-        endog_grid=endog_grid,
-        run_id=run_id,
-        cell_left=cell_left,
-        cell_live=cell_live,
-        max_runs=max_runs,
-    )
+    runs = _run_node_order(endog_grid=endog_grid, run_id=run_id, max_runs=max_runs)
 
     sub_cells = _sub_cells_per_node_cell(
         cell_left=cell_left,
         cell_right=cell_right,
-        active=active,
+        cell_live=cell_live,
+        runs=runs,
         endog_grid=endog_grid,
         value=value,
         max_runs=max_runs,
+        n_refined=n_refined,
         cell_batch_size=cell_batch_size,
     )
 
@@ -140,20 +136,35 @@ def refine_envelope_exact(
     return out_grid, out_policy, out_value, n_kept
 
 
-class _ActiveLinks:
-    """Per node cell, the one link each run contributes to that cell."""
+class _RunNodes:
+    """Every run's nodes in one ascending sequence, with each run's extent in it.
 
-    def __init__(self, *, live: BoolND, left_index: IntND, right_index: IntND) -> None:
-        self.live = live
-        """Boolean `(max_runs, n_cells)`; whether the run covers the cell."""
-        self.left_index = left_index
-        """Candidate index of the link's lower endpoint, `(max_runs, n_cells)`."""
-        self.right_index = right_index
-        """Candidate index of the link's upper endpoint, `(max_runs, n_cells)`."""
+    Runs partition the candidates, so ordering by run and then by abscissa lays
+    each run's own nodes out contiguously in a single candidate-length sequence.
+    Holding the runs this way keeps the topology linear in the candidates rather
+    than the product of the candidates and the run capacity.
+    """
+
+    def __init__(
+        self, *, order: Int1D, node_x: Float1D, start: Int1D, n_nodes: Int1D
+    ) -> None:
+        self.order = order
+        """Candidate indices ordered by run, then abscissa, `(n_candidates,)`."""
+        self.node_x = node_x
+        """The abscissae in that same order, `(n_candidates,)`."""
+        self.start = start
+        """Where each run's block begins in that order, `(max_runs,)`."""
+        self.n_nodes = n_nodes
+        """How many candidates each run owns, `(max_runs,)`."""
 
 
 class _SubCells:
-    """The open intervals the envelope is piecewise affine on, with their owners."""
+    """The open intervals the envelope is piecewise affine on, with their owners.
+
+    Already compacted into a row-sized workspace: the owned sub-cells occupy the
+    first `n_live` slots in ascending order, so nothing here scales with the
+    number of node cells.
+    """
 
     def __init__(
         self,
@@ -162,19 +173,19 @@ class _SubCells:
         right: FloatND,
         owner_left_index: IntND,
         owner_right_index: IntND,
-        live: BoolND,
+        n_live: ScalarInt,
         poisoned: ScalarBool,
     ) -> None:
         self.left = left
-        """Left boundary of each sub-cell, flattened in ascending order."""
+        """Left boundary of each owned sub-cell, `(n_refined,)`, NaN-padded."""
         self.right = right
-        """Right boundary of each sub-cell, flattened in ascending order."""
+        """Right boundary of each owned sub-cell, `(n_refined,)`, NaN-padded."""
         self.owner_left_index = owner_left_index
-        """Candidate index of the owning link's lower endpoint."""
+        """Candidate index of the owning link's lower endpoint, `(n_refined,)`."""
         self.owner_right_index = owner_right_index
-        """Candidate index of the owning link's upper endpoint."""
-        self.live = live
-        """Whether the sub-cell spans a positive-width interval with an owner."""
+        """Candidate index of the owning link's upper endpoint, `(n_refined,)`."""
+        self.n_live = n_live
+        """How many sub-cells were owned, counted before any were dropped."""
         self.poisoned = poisoned
         """Whether any ownership decision could not be certified."""
 
@@ -195,46 +206,74 @@ def _node_cells(
     return left, right, live
 
 
-def _active_link_per_run(
-    *,
-    endog_grid: Float1D,
-    run_id: Int1D,
-    cell_left: Float1D,
-    cell_live: BoolND,
-    max_runs: int,
-) -> _ActiveLinks:
-    """Locate, for every run and node cell, the link covering that cell."""
-    n_candidates = endog_grid.shape[0]
+def _run_node_order(*, endog_grid: Float1D, run_id: Int1D, max_runs: int) -> _RunNodes:
+    """Order the candidates by run, then by abscissa, and record each run's block.
 
-    def locate(run: ScalarInt) -> tuple[BoolND, IntND, IntND]:
-        in_run = run_id == run
-        key = jnp.where(in_run, endog_grid, jnp.inf)
-        order = jnp.argsort(key).astype(jnp.int32)
-        run_x = key[order]
-        n_nodes = jnp.sum(in_run, dtype=jnp.int32)
-        # The cell's left boundary is itself a node abscissa, so a right-side
-        # search lands one past the node opening the covering link.
-        position = (
-            jnp.searchsorted(run_x, cell_left, side="right").astype(jnp.int32) - 1
-        )
-        live = cell_live & (position >= 0) & (position <= n_nodes - 2)
-        safe = jnp.clip(position, 0, n_candidates - 2)
-        return live, order[safe].astype(jnp.int32), order[safe + 1].astype(jnp.int32)
-
-    live, left_index, right_index = jax.vmap(locate)(
-        jnp.arange(max_runs, dtype=jnp.int32)
+    Locating the link a run contributes to a cell is a search in that run's own
+    nodes. The order does not depend on the cell, so it is established once here
+    rather than per cell. Ordering all runs together rather than each run over
+    the whole candidate array is what keeps this linear in the candidates: a
+    per-run order would carry a run axis alongside the candidate axis, and the
+    row maps production adds would then multiply that product by the row count.
+    """
+    dead = ~jnp.isfinite(endog_grid)
+    # Candidates belonging to no run get a block of their own past the last run,
+    # so they are outside every run's extent and can never be located.
+    block = jnp.where(dead, max_runs, jnp.clip(run_id, 0, max_runs))
+    order = jnp.lexsort(
+        (jnp.where(dead, jnp.inf, endog_grid), block.astype(jnp.float32))
+    ).astype(jnp.int32)
+    n_nodes = jax.ops.segment_sum(
+        jnp.ones_like(block, dtype=jnp.int32), block, num_segments=max_runs + 1
+    )[:max_runs]
+    start = jnp.concatenate(
+        [jnp.zeros(1, dtype=jnp.int32), jnp.cumsum(n_nodes)[:-1].astype(jnp.int32)]
     )
-    return _ActiveLinks(live=live, left_index=left_index, right_index=right_index)
+    return _RunNodes(
+        order=order, node_x=endog_grid[order], start=start, n_nodes=n_nodes
+    )
+
+
+def _active_links_at_cell(
+    *, runs: _RunNodes, cell_left: FloatND, cell_live: BoolND, n_candidates: int
+) -> tuple[BoolND, IntND, IntND]:
+    """Return, for one node cell, the link each run contributes to it."""
+    # A bisection over a run's block, carried as scalars. Searching the block in
+    # place keeps the cell body free of any candidate-length array, so what a
+    # cell holds is one entry per run and nothing that grows with the row.
+    n_steps = max(int(n_candidates).bit_length(), 1)
+
+    def locate(start: ScalarInt, n_nodes: ScalarInt) -> tuple[BoolND, IntND, IntND]:
+        low = jnp.zeros_like(n_nodes)
+        high = n_nodes
+        for _ in range(n_steps):
+            searching = low < high
+            middle = (low + high) // 2
+            at_middle = runs.node_x[jnp.clip(start + middle, 0, n_candidates - 1)]
+            below = at_middle <= cell_left
+            low = jnp.where(searching & below, middle + 1, low)
+            high = jnp.where(searching & ~below, middle, high)
+        # The cell's left boundary is itself a node abscissa, so counting the
+        # nodes at or below it lands one past the node opening the covering link.
+        position = low - 1
+        live = cell_live & (position >= 0) & (position <= n_nodes - 2)
+        safe = start + jnp.clip(position, 0, jnp.maximum(n_nodes - 2, 0))
+        safe = jnp.clip(safe, 0, n_candidates - 2)
+        return live, runs.order[safe], runs.order[safe + 1]
+
+    return jax.vmap(locate)(runs.start, runs.n_nodes)
 
 
 def _sub_cells_per_node_cell(
     *,
     cell_left: Float1D,
     cell_right: Float1D,
-    active: _ActiveLinks,
+    cell_live: BoolND,
+    runs: _RunNodes,
     endog_grid: Float1D,
     value: Float1D,
     max_runs: int,
+    n_refined: int,
     cell_batch_size: int | None,
 ) -> _SubCells:
     """Resolve the envelope's owners across every node cell.
@@ -243,19 +282,43 @@ def _sub_cells_per_node_cell(
     owning link, so it never influences which branch wins.
 
     Cells are independent, so `cell_batch_size` partitions them without changing
-    anything published. What it does change is the working set: the intermediate
-    in flight per row is `cell_batch_size * max_runs`, and rows are themselves
-    mapped over, so the peak carries the product of all three. `None` scans the
-    cells one at a time and so holds a single cell's worth — the floor.
+    anything published. What it does change is the working set. Cells are visited
+    in ascending order and each chunk's owned sub-cells are appended to the row
+    as it goes, so what is live is one chunk's `cell_batch_size * max_runs`
+    splits and the row itself — never the `n_cells * max_runs` product, which is
+    what the row count then multiplies. `None` resolves one cell at a time and so
+    holds a single cell's worth, the floor.
+
+    Appending in cell order needs no sort: node cells ascend, and each cell's
+    sub-cells ascend within it. Slots past the row's capacity are dropped while
+    the count keeps rising, so an overflow is still visible to the caller.
     """
+    n_slots = n_refined
+    chunk = max(1, cell_batch_size or 1)
+    n_cells = cell_left.shape[0]
+    n_chunks = -(-n_cells // chunk)
+    padded = n_chunks * chunk
+    n_candidates = endog_grid.shape[0]
+
+    def pad(array: FloatND | BoolND, *, fill: float | bool) -> FloatND | BoolND:
+        return jnp.concatenate(
+            [array, jnp.full(padded - n_cells, fill, dtype=array.dtype)]
+        )
+
+    # Padding cells are dead, so they contribute no sub-cell and cannot change
+    # the row; they only make the cell count divide by the chunk.
+    chunks = (
+        pad(cell_left, fill=0.0).reshape(n_chunks, chunk),
+        pad(cell_right, fill=0.0).reshape(n_chunks, chunk),
+        pad(cell_live, fill=False).reshape(n_chunks, chunk),
+    )
 
     def split(
-        left: FloatND,
-        right: FloatND,
-        live: BoolND,
-        low: IntND,
-        high: IntND,
+        left: FloatND, right: FloatND, live_cell: BoolND
     ) -> tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]:
+        live, low, high = _active_links_at_cell(
+            runs=runs, cell_left=left, cell_live=live_cell, n_candidates=n_candidates
+        )
         bounds, owner, unresolved = hull_owners(
             left=left,
             right=right,
@@ -269,35 +332,56 @@ def _sub_cells_per_node_cell(
         sub_left = bounds[:-1]
         sub_right = bounds[1:]
         sub_live = (sub_right > sub_left) & jnp.any(live)
-        return (
-            sub_left,
-            sub_right,
-            low[owner],
-            high[owner],
-            sub_live,
-            unresolved,
-        )
+        return sub_left, sub_right, low[owner], high[owner], sub_live, unresolved
 
-    # `lax.map` maps over a leading axis, so the per-run arrays are transposed to
-    # put cells first; `vmap` read them along axis 1 instead.
-    per_cell = (
-        cell_left,
-        cell_right,
-        active.live.T,
-        active.left_index.T,
-        active.right_index.T,
+    type _RowCarry = tuple[ScalarInt, FloatND, FloatND, IntND, IntND, ScalarBool]
+
+    def append_chunk(
+        carry: _RowCarry, cells: tuple[FloatND, FloatND, BoolND]
+    ) -> tuple[_RowCarry, None]:
+        cursor, row_left, row_right, row_low, row_high, poisoned = carry
+        sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
+            split
+        )(*cells)
+        keep = sub_live.reshape(-1)
+        target = cursor + jnp.cumsum(keep.astype(jnp.int32)) - 1
+        slot = jnp.where(keep, target, n_slots)
+
+        def place(
+            row: FloatND | IntND, source: FloatND | IntND, empty: float
+        ) -> FloatND | IntND:
+            return row.at[slot].set(
+                jnp.where(keep, source.reshape(-1), empty), mode="drop"
+            )
+
+        return (
+            cursor + jnp.sum(keep, dtype=jnp.int32),
+            place(row_left, sub_left, jnp.nan),
+            place(row_right, sub_right, jnp.nan),
+            place(row_low, owner_low, 0),
+            place(row_high, owner_high, 0),
+            poisoned | jnp.any(unresolved),
+        ), None
+
+    init = (
+        jnp.zeros((), dtype=jnp.int32),
+        jnp.full(n_slots, jnp.nan, dtype=cell_left.dtype),
+        jnp.full(n_slots, jnp.nan, dtype=cell_left.dtype),
+        jnp.zeros(n_slots, dtype=jnp.int32),
+        jnp.zeros(n_slots, dtype=jnp.int32),
+        jnp.zeros((), dtype=bool),
     )
-    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.lax.map(
-        lambda cell: split(*cell), per_cell, batch_size=cell_batch_size
+    (n_live, row_left, row_right, row_low, row_high, poisoned), _ = jax.lax.scan(
+        append_chunk, init, chunks
     )
 
     return _SubCells(
-        left=sub_left.reshape(-1),
-        right=sub_right.reshape(-1),
-        owner_left_index=owner_low.reshape(-1),
-        owner_right_index=owner_high.reshape(-1),
-        live=sub_live.reshape(-1),
-        poisoned=jnp.any(unresolved),
+        left=row_left,
+        right=row_right,
+        owner_left_index=row_low,
+        owner_right_index=row_high,
+        n_live=n_live,
+        poisoned=poisoned,
     )
 
 
@@ -319,27 +403,16 @@ def _emit_envelope(
     one-sided records there belong to the links that own the ground on either
     side.
     """
-    # Owned sub-cells already ascend — node cells ascend and each cell's
-    # sub-cells ascend within it — so dropping the empty ones preserves the
-    # order and needs no sort. Compacting straight into a row-sized workspace
-    # keeps everything downstream independent of the fold capacity: a chain with
-    # more owned sub-cells than the row has slots overflows regardless.
+    # The row arrives already compacted: owned sub-cells were appended in cell
+    # order as the cells were resolved. `n_live` is the untruncated count, so a
+    # chain with more owned sub-cells than the row has slots still reports the
+    # overflow even though the surplus was dropped on the way in.
     n_slots = n_refined
-    keep_at = jnp.cumsum(sub_cells.live.astype(jnp.int32)) - 1
-    target = jnp.where(sub_cells.live, keep_at, n_slots)
-    n_live = jnp.sum(sub_cells.live, dtype=jnp.int32)
-
-    def compact(source: FloatND | IntND, empty: float) -> FloatND | IntND:
-        return (
-            jnp.full(n_slots, empty, dtype=source.dtype)
-            .at[target]
-            .set(source, mode="drop")
-        )
-
-    left = compact(sub_cells.left, jnp.nan)
-    right = compact(sub_cells.right, jnp.nan)
-    low = compact(sub_cells.owner_left_index, 0)
-    high = compact(sub_cells.owner_right_index, 0)
+    n_live = sub_cells.n_live
+    left = sub_cells.left
+    right = sub_cells.right
+    low = sub_cells.owner_left_index
+    high = sub_cells.owner_right_index
     live = jnp.arange(n_slots) < n_live
 
     own_value = _line_value(low, high, left, endog_grid, value)

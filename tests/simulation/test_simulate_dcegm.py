@@ -49,6 +49,8 @@ CONSUMPTION_GRID_STEP = float(
     - dcegm_variants.CONSUMPTION_GRID.to_jax()[0]
 )
 
+pytestmark = pytest.mark.slow
+
 
 def test_dcegm_simulated_consumption_matches_brute_force():
     """Both solver variants simulate consumption paths within grid resolution.

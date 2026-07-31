@@ -8,8 +8,11 @@ to the softmax probabilities implied by the solve.
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from tests.test_models import taste_shocks_toy
+
+pytestmark = pytest.mark.slow
 
 N_SUBJECTS = 20_000
 

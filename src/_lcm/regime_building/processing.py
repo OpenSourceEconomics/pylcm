@@ -225,14 +225,6 @@ def process_regimes(
         The processed canonical regimes.
 
     """
-    # DC-EGM regimes must satisfy the EGM model contract before any kernel
-    # is built. `Model.__init__` validates earlier (so contract violations
-    # beat the generic unused-variable check); this call covers direct
-    # `process_regimes` callers.
-    validate_dcegm_regimes(user_regimes=user_regimes)
-    validate_negm_regimes(user_regimes=user_regimes)
-    validate_nnbegm_regimes(user_regimes=user_regimes)
-
     # Normalize phases first (local to one regime), then age specialization (needs
     # the model AgeGrid and each regime's active periods). After normalization every
     # age-known function/grid is a concrete build-time object: the representative
@@ -248,6 +240,16 @@ def process_regimes(
     )
     representative_user_regimes = age_normalization.representative_user_regimes
     grid_schedule = age_normalization.grid_schedule
+
+    # DC-EGM regimes must satisfy the EGM model contract before any kernel is built.
+    # `Model.__init__` validates earlier (so contract violations beat the generic
+    # unused-variable check); this call covers direct `process_regimes` callers.
+    # All three read the representative regimes: the contract is about a state's kind
+    # and shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is
+    # not a `Grid`, so a type-filtered collection of continuous states would drop it.
+    validate_dcegm_regimes(user_regimes=representative_user_regimes)
+    validate_negm_regimes(user_regimes=representative_user_regimes)
+    validate_nnbegm_regimes(user_regimes=representative_user_regimes)
 
     # Per-period continuation interpolation info, built from the schedule's cached
     # concrete grids (never an age factory). `None` for an age-invariant model.
@@ -436,7 +438,12 @@ def process_regimes(
         solution = _build_solution_phase(
             spec=spec,
             regime_name=regime_name,
-            user_regimes=user_regimes,
+            # Representative, not raw: these reach `SolverBuildContext`, and a solver
+            # reading a state grid off them wants a concrete `Grid`. Every such read
+            # is of a shape trait (`batch_size`, the `ContinuousGrid` kind), which is
+            # invariant across ages, so the representative grid answers it exactly.
+            # Node *values*, which do vary by age, come from the period's own axes.
+            user_regimes=representative_user_regimes,
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -1311,6 +1318,60 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         raise ModelInitializationError(format_messages(error_messages))
 
 
+def _period_to_state_nodes(
+    *, regime_name: RegimeName, grid_schedule: AgeGridSchedule | None
+) -> MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None:
+    """This regime's age-specialized state nodes, per active period.
+
+    `None` when the model has no age-specialized grid, or when this regime declares
+    none, so an age-invariant regime hands its solver exactly what it handed before.
+    """
+    if grid_schedule is None:
+        return None
+    specialized = grid_schedule.specialized_states_by_regime.get(
+        regime_name, frozenset()
+    )
+    if not specialized:
+        return None
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    state_name: by_regime[regime_name][state_name].nodes
+                    for state_name in sorted(specialized)
+                }
+            )
+            for period, by_regime in grid_schedule.by_period.items()
+            if regime_name in by_regime
+        }
+    )
+
+
+def _period_to_regime_grid_signature(
+    *, grid_schedule: AgeGridSchedule | None
+) -> MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None:
+    """Every regime's user-declared grid signature, per period.
+
+    `None` for an age-invariant model, so its solvers group periods exactly as
+    they did before.
+    """
+    if grid_schedule is None:
+        return None
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: grid_schedule.grid_signature(
+                        period=period, regime_name=regime_name
+                    )
+                    for regime_name in by_regime
+                }
+            )
+            for period, by_regime in grid_schedule.by_period.items()
+        }
+    )
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -1560,12 +1621,19 @@ def _build_solution_phase(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
+        period_to_state_nodes=_period_to_state_nodes(
+            regime_name=regime_name, grid_schedule=grid_schedule
+        ),
         functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        period_to_regime_grid_signature=_period_to_regime_grid_signature(
+            grid_schedule=grid_schedule
+        ),
         regimes_to_active_periods=regimes_to_active_periods,
         flat_param_names=flat_param_names,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -1777,7 +1845,10 @@ class _TerminalCarryPeriodKernel:
         # terminals carry actions, so no closed-form carry producer wraps them),
         # but the decorator must not silently drop a base kernel's output.
         return KernelResult(
-            V_arr=result.V_arr, continuation=carry, dissolution=result.dissolution
+            V_arr=result.V_arr,
+            continuation=carry,
+            simulation_policy=result.simulation_policy,
+            dissolution=result.dissolution,
         )
 
 
