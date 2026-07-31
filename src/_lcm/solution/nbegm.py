@@ -55,6 +55,7 @@ from _lcm.solution.dcegm import _reachable_carry_subset
 from _lcm.solution.one_asset_egm import (
     _build_one_asset_carry_template,
     _OneAssetEGMPeriodKernel,
+    _target_period_liquid_grid,
 )
 from _lcm.typing import (
     FlatParams,
@@ -438,6 +439,13 @@ class NBEGM(Solver):
                 regime_name=context.regime_name,
                 continuation_target=target,
                 transition_target_names=tuple(context.transitions),
+                next_liquid_grid=_target_period_liquid_grid(
+                    context=context,
+                    period=period,
+                    target=target,
+                    liquid_state=liquid_state_name,
+                    fallback=liquid_grid,
+                ),
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
