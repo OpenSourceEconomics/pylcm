@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import gc
 import logging
@@ -39,22 +40,28 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND
 
 
-def _states_for_period(
+def _state_action_space_for_period(
     regime: Regime, state_action_space: StateActionSpace, period: int
-) -> Mapping[str, object]:
-    """Current-period state axes, overriding age-varying states with period-t nodes.
+) -> StateActionSpace:
+    """The base space with age-varying states overridden by period-t's nodes.
 
     For a regime with `AgeSpecializedGrid` states, replace the representative base
     axis with this period's grid nodes so period-t's value function is tabulated on
-    period-t's grid (consistent with the continuation interpolation, which reads
-    V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
-    kernel is not retraced. Age-invariant regimes return the base axis unchanged.
+    period-t's grid. This is what makes the tabulation agree with the continuation
+    interpolation, which reads V_{t+1} on period-(t+1)'s grid; tabulating on any
+    other age's nodes puts the two halves on different grids and the solved value
+    function is wrong everywhere, not merely imprecise. Same shape as the base, so
+    the shared compiled kernel is not retraced. Age-invariant regimes return the
+    base space unchanged.
     """
     # getattr (not direct access) so a duck-typed mock regime without the field works.
     axes = getattr(regime.solution, "period_state_axes", None)
-    if axes is not None and period in axes:
-        return {**state_action_space.states, **axes[period]}
-    return state_action_space.states
+    if axes is None or period not in axes:
+        return state_action_space
+    return dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType({**state_action_space.states, **axes[period]}),
+    )
 
 
 def solve(
@@ -189,7 +196,9 @@ def solve(
                 regime=regime,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
-                state_action_space=base_state_action_spaces[regime_name],
+                state_action_space=_state_action_space_for_period(
+                    regime, base_state_action_spaces[regime_name], period
+                ),
                 flat_params=flat_params,
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
