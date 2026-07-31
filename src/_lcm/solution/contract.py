@@ -28,7 +28,7 @@ field annotations to resolve to real objects when an instance is constructed.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
@@ -53,7 +53,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
+from lcm.typing import Float1D, FloatND
 
 # The cross-period continuation channel a continuation-based parent
 # interpolates. Named solver-agnostically on the seam so the engine threads it
@@ -104,7 +104,24 @@ class SolverBuildContext:
     """Immutable mapping of period to Q-and-F closures."""
 
     grids: MappingProxyType[StateOrActionName, Grid]
-    """Immutable mapping of the regime's variable names to grid objects."""
+    """Immutable mapping of the regime's variable names to grid objects.
+
+    Age-invariant: for an `AgeSpecializedGrid` state this holds the representative
+    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype,
+    `batch_size` — which are invariant across ages by contract. For a grid's *node
+    values* in a particular period, read `period_to_state_nodes`.
+    """
+
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    ) = None
+    """Immutable mapping of period to that period's age-specialized state nodes.
+
+    `None` when the regime has no age-specialized state, in which case `grids` is
+    already the whole story. A solver that lifts a state's nodes into a numerical
+    computation must consult this per period: capturing one array outside its
+    per-period loop silently pins every period to the representative age.
+    """
 
     functions: EconFunctionsMapping
     """The regime's processed functions (params renamed to qualified names)."""
@@ -123,6 +140,28 @@ class SolverBuildContext:
 
     regime_to_v_interpolation_info: RegimeToVInterpolationInfo
     """Immutable mapping of regime names to V-interpolation info."""
+
+    period_to_regime_v_interp: (
+        MappingProxyType[int, RegimeToVInterpolationInfo] | None
+    ) = None
+    """Immutable mapping of period to that period's V-interpolation info per regime.
+
+    A period-`t` kernel reads its continuation on the *target's* period-`t+1` grid,
+    so a solver that interpolates `V_{t+1}` must look the target's info up under
+    `period + 1` rather than reuse `regime_to_v_interpolation_info`, which carries
+    the representative age. `None` when no regime has an age-specialized state.
+    """
+
+    period_to_regime_grid_signature: (
+        MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
+    ) = None
+    """Immutable mapping of period to each regime's age-specialized grid signature.
+
+    The user's own `AgeSpecializedGrid.signature(age)` values, so a solver that
+    groups periods into shared compiled programs can fold its targets' signatures
+    at `period + 1` into the group key. Periods whose continuation grids differ
+    then never share a trace. `None` when no regime has an age-specialized state.
+    """
 
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
     """Immutable mapping of regime names to their active period tuples."""

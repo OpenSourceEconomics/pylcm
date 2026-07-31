@@ -256,7 +256,20 @@ class NEGM(Solver):
             no_adjustment_func=no_adjustment_func,
             outer_cost_name=self.outer_cost,
         )
-        durable_grid_values = context.grids[durable_state].to_jax()
+        # The durable nodes enter a numerical lift (the credited-cost shift of cash
+        # on hand), so they must be the solved period's own. With an age-specialized
+        # durable grid the representative age's nodes are the wrong ones everywhere
+        # else, so read the period's own when the schedule offers them.
+        representative_durable_values = context.grids[durable_state].to_jax()
+
+        def _durable_values_at(period: int) -> Float1D:
+            per_period = context.period_to_state_nodes
+            if per_period is None:
+                return representative_durable_values
+            return per_period.get(period, {}).get(
+                durable_state, representative_durable_values
+            )
+
         period_kernels = MappingProxyType(
             {
                 period: _NEGMPeriodKernel(
@@ -266,7 +279,7 @@ class NEGM(Solver):
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=self.outer_post_decision,
                     coh_shift_func=coh_shift_func,
-                    durable_grid_values=durable_grid_values,
+                    durable_grid_values=_durable_values_at(period),
                     outer_batch_size=self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
