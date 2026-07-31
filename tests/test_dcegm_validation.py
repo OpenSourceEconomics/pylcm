@@ -598,6 +598,7 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
     assert "marginal_continuation" in template["retirement"]["inverse_marginal_utility"]
 
 
+@pytest.mark.slow
 def test_brute_force_solver_explicit_equals_default():
     """`solver=GridSearch()` is the default: identical solution either way."""
     params = retirement_only.get_params(N_PERIODS)

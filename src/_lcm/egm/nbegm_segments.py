@@ -12,11 +12,53 @@ envelope:
 - Fold/hole segmentation: the path is split into maximal ascending, hole-free
   subsegments, each carrying its own `segment_id`. The envelope links only
   same-id consecutive candidates, so it never bridges a fold or a masked gap.
+
+Feasibility itself is decided by `affords_an_action`, pointwise and exactly, so no
+attainable action is ever masked away and no point's candidate depends on another
+point's budget.
 """
 
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D
+from lcm.typing import BoolND, Float1D, FloatND
+
+
+def affords_an_action(budget: FloatND) -> BoolND:
+    """Whether `budget` affords an action, decided exactly and pointwise.
+
+    A residual budget — cash-on-hand, or cash-on-hand minus a savings node — affords
+    consuming it whenever it is positive, and its sign is exactly decidable. IEEE
+    subtraction is correctly rounded, so for the floats actually held, `a - b`
+    evaluates positive exactly when `a > b`: cancellation costs the difference its
+    significant digits, never its sign. The comparison is therefore a certificate,
+    not an estimate, and needs no tolerance.
+
+    Two properties follow, and both are contracts:
+
+    - **Every exactly represented positive budget is feasible.** A grid may place a
+      node anywhere, and a node whose budget is one ULP affords an action just as a
+      node whose budget is a thousand does. Deleting it would remove an attainable —
+      possibly optimal — candidate from the envelope.
+    - **The decision is pointwise.** It reads one point's own budget, so extending a
+      grid with a far-away node cannot change it. The signature admits no array-wide
+      magnitude for exactly that reason: any threshold scaled to a whole grid makes a
+      local action's existence depend on unrelated states.
+
+    What this does *not* certify is a budget the author meant to be zero and a grid
+    could not represent — `jnp.linspace(-1.0, 5.0, 13)` places its third node at
+    `+6e-8` in 32-bit and `-1e-16` in 64-bit. That is a question about the grid, not
+    about the sign of the number on it, and it belongs upstream where the intent is
+    still known. Downstream, the tiny positive budget is answered honestly: an action
+    exists, and it is a very bad one.
+
+    Args:
+        budget: Residual budget whose positivity decides feasibility.
+
+    Returns:
+        Boolean mask, `True` where an action exists.
+
+    """
+    return budget > 0.0
 
 
 def mask_dead_candidates(

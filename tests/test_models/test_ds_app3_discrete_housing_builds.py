@@ -1,6 +1,6 @@
-"""Construction spec for the DS-2026 Application 3 discrete-housing model (no tax).
+"""Construction spec for the DS-2024 Application 3 discrete-housing model (no tax).
 
-The Dobrescu-Shanker (2026) Section 2.3 discrete-housing model maps onto pylcm's
+The Dobrescu-Shanker (2024) Section 2.3 discrete-housing model maps onto pylcm's
 DC-EGM solver as a discrete-choice consumption-savings problem:
 
 - financial assets `assets` (`a >= 0`) are the continuous Euler state the Euler
@@ -186,6 +186,7 @@ def test_terminal_bequest_weight_is_threaded():
     assert default_params["dead"]["utility"]["theta"] == 0.5
 
 
+@pytest.mark.slow
 def test_brute_solve_at_tiny_grid_yields_a_finite_value_function():
     """The grid-search (VFI) twin solves to a finite value function.
 
@@ -215,6 +216,7 @@ def test_brute_solve_at_tiny_grid_yields_a_finite_value_function():
         "non-identity discrete-state terminal carries."
     )
 )
+@pytest.mark.slow
 def test_discrete_housing_model_solves_under_dcegm():
     """The DS App.3 discrete-housing model solves under DC-EGM to a finite V.
 

@@ -33,7 +33,7 @@ def _exact_line_margin(
     """
 
     def to_q(value: float) -> Fraction:
-        return Fraction.from_float(_as_represented(value))
+        return Fraction(_as_represented(value))
 
     def line(seg: tuple[float, float, float, float]) -> Fraction:
         x0, x1, v0, v1 = (to_q(value) for value in seg)

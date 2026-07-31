@@ -1618,14 +1618,25 @@ def _stacked_blend_payloads(
         left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
         right_dead_at_child=at_or_above_row_support.reshape(block_shape),
         left_dead_at_child=at_or_below_row_support.reshape(block_shape),
-        right_germ_at_child=tuple(
-            component.reshape(block_shape) for component in right_germ_at_child
-        ),
-        left_germ_at_child=tuple(
-            component.reshape(block_shape) for component in left_germ_at_child
-        ),
+        right_germ_at_child=_reshaped_germ(right_germ_at_child, shape=block_shape),
+        left_germ_at_child=_reshaped_germ(left_germ_at_child, shape=block_shape),
     )
     return value_at_child, [right_side, left_side, right_alive]
+
+
+def _reshaped_germ(
+    germ: tuple[BoolND, FloatND, FloatND, FloatND],
+    *,
+    shape: tuple[int, ...],
+) -> tuple[BoolND, FloatND, FloatND, FloatND]:
+    """Reshape every component of a value germ to `shape`."""
+    alive, first, second, third = germ
+    return (
+        alive.reshape(shape),
+        first.reshape(shape),
+        second.reshape(shape),
+        third.reshape(shape),
+    )
 
 
 def _choose_blended_side(

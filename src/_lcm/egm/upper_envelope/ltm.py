@@ -1,7 +1,7 @@
 """Local-upper-bound (LTM) upper-envelope refinement of EGM candidates.
 
 Implements the brute upper-envelope method of Druedahl's `consav` package (the
-`upperenvelope` routine), referenced in Dobrescu & Shanker (2026) as the
+`upperenvelope` routine), referenced in Dobrescu & Shanker (2024) as the
 quadratic baseline (`LTM`). Inverting the Euler equation in models with discrete
 choices yields a value *correspondence*: the candidates form a chain of linear
 segments between consecutive nodes that, in non-concave regions, overlap in the

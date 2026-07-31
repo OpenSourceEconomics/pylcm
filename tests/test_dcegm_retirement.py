@@ -25,6 +25,8 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
 )
 
+pytestmark = pytest.mark.slow
+
 ANALYTICAL_CASES = {
     "iskhakov_2017_five_periods": {"n_periods": 6, "disutility_of_work": 1.0},
     "iskhakov_2017_low_delta": {"n_periods": 4, "disutility_of_work": 0.1},

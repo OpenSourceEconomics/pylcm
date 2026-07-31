@@ -1,6 +1,6 @@
-"""Dobrescu-Shanker (2026) Application 2 housing — EGM-FUES discrete-grid variant.
+"""Dobrescu-Shanker (2024) Application 2 housing — EGM-FUES discrete-grid variant.
 
-The DS-2026 Section 2.2 housing model is compared in Table 3 by two methods,
+The DS-2024 Section 2.2 housing model is compared in Table 3 by two methods,
 **EGM-FUES** and **NEGM**. The NEGM column is pylcm's nested-EGM solver over a
 *continuous* housing margin (`ds_app2_housing.py`). This module builds the
 **EGM-FUES** column: the paper solves it with one-dimensional FUES nested over a

@@ -3,8 +3,10 @@ from dataclasses import make_dataclass
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import config as jax_config
+from numpy.typing import ArrayLike
 
 from lcm.typing import ScalarInt
 
@@ -54,35 +56,75 @@ def pytest_configure(config):
     jax_config.update("jax_default_matmul_precision", "highest")
 
 
-# DC-EGM-family module-name tokens outside `tests/solution/`. The whole
-# `tests/solution/` tree is the solve/oracle battery and is matched by directory.
-_SLOW_MODULE_TOKENS = (
-    "dcegm",
-    "negm",
-    "ds_app",
-    "ds2024",
-    "ds_pension",
-    "ds_housing",
-    "taste_shock",
-    "mahler_yum",
-    "solvers",
-)
+def assert_agrees_to_ulp(
+    got: ArrayLike, expected: ArrayLike, *, n_ulp: int, err_msg: str = ""
+) -> None:
+    """Assert two arrays name the same real number to within `n_ulp` of the format.
+
+    The instrument for a knob that partitions a computation without changing it —
+    a batch size, a block size. Such a knob changes the vmap width each block is
+    compiled for, and XLA emits a differently vectorized kernel per width, so the
+    two results can land on representable neighbours. Bounding the gap in units of
+    the working format's spacing states exactly that, and states it once for both
+    precisions: a partition-dependent *reduction*, the defect this guards against,
+    moves a value by orders of magnitude more than a few ULP.
+
+    Args:
+        got: Result under the partitioned computation.
+        expected: Result under the unpartitioned one.
+        n_ulp: Largest tolerated gap, in units of the spacing at the compared
+            magnitude.
+        err_msg: Context appended to the failure message.
+
+    """
+    got_arr = np.asarray(got)
+    expected_arr = np.asarray(expected)
+    # Compare the non-finite entries as the exact values they are. ULP distance is
+    # meaningless for them — `np.spacing(inf)` is NaN, so every comparison against
+    # it is false and any mismatch would pass silently.
+    finite = np.isfinite(expected_arr)
+    np.testing.assert_array_equal(
+        np.where(finite, 0.0, got_arr),
+        np.where(finite, 0.0, expected_arr),
+        err_msg=f"non-finite entries differ. {err_msg}",
+    )
+    np.testing.assert_array_equal(
+        np.isfinite(got_arr), finite, err_msg=f"finiteness differs. {err_msg}"
+    )
+    gap = np.where(finite, np.abs(got_arr - expected_arr), 0.0)
+    spacing = np.spacing(np.maximum(np.abs(got_arr), np.abs(expected_arr)))
+    in_ulp = np.divide(
+        gap, spacing, out=np.zeros(gap.shape, dtype=float), where=gap > 0.0
+    )
+    worst = float(in_ulp.max(initial=0.0))
+    if worst > n_ulp:
+        where = np.unravel_index(int(np.argmax(in_ulp)), in_ulp.shape)
+        msg = (
+            f"Values differ by up to {worst:.1f} ULP, above the {n_ulp} allowed; "
+            f"worst at {where}: {got_arr[where]!r} vs {expected_arr[where]!r}. "
+            f"{err_msg}"
+        )
+        raise AssertionError(msg)
 
 
 def pytest_collection_modifyitems(items):
-    """Mark the DC-EGM solve/simulate/oracle battery `slow`.
+    """Mark the whole `tests/solution/` battery `slow`.
 
-    These tests AOT-compile heavy JAX models; four in parallel exhaust a small
-    CI runner's RAM (the macOS and GPU runners). They carry the `slow` marker so
+    These tests AOT-compile heavy JAX models; four in parallel exhaust a small CI
+    runner's RAM (the macOS and Windows runners). They carry the `slow` marker so
     a memory-constrained runner can deselect them with `-m "not slow"` — the
     platform-independent kernel stays covered on the larger Linux/GPU runners.
+
+    `tests/solution/` is the solve/oracle battery in its entirety, so it is marked
+    by directory. Solving tests elsewhere declare the marker themselves —
+    `pytestmark` where a module solves throughout, `@pytest.mark.slow` per test
+    where it shares a module with construction and validation checks. Those checks
+    compile nothing, and they are exactly the platform surface the small runners
+    exist to cover, so they must not be swept along with their neighbours.
     """
     slow = pytest.mark.slow
     for item in items:
-        name = item.path.name
-        if "solution" in item.path.parts or any(
-            token in name for token in _SLOW_MODULE_TOKENS
-        ):
+        if "solution" in item.path.parts:
             item.add_marker(slow)
 
 
