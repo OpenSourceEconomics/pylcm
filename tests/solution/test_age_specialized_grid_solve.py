@@ -238,13 +238,13 @@ def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory
     they belong to: the grid this age carries, not the representative axis some other
     age contributes.
     """
-    model = _model(grid_factory())
-    v = model.solve(params=_PARAMS, log_level="debug")
+    grid = grid_factory()
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
     last_working = _N - 2
 
-    wealth = np.asarray(
-        model._regimes["alive"].solution.period_state_axes[last_working]["wealth"]
-    )
+    # Straight from the user's own grid factory, so the expectation is independent of
+    # the per-period axis table the solver reads.
+    wealth = np.asarray(grid.build(_AGES.period_to_age(last_working)).to_jax())
     consumption = np.asarray(_CGRID.to_jax())
     expected = np.array(
         [
@@ -259,6 +259,32 @@ def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory
     np.testing.assert_array_equal(np.isneginf(got), np.isneginf(expected))
     finite = np.isfinite(expected)
     aaae(got[finite], expected[finite], decimal=DECIMAL_PRECISION)
+
+
+def test_moving_floor_solves_on_each_periods_own_nodes():
+    """Period `t`'s value function is tabulated on period `t`'s grid, not the base one.
+
+    A solve on the representative-age axis still yields a finite, NaN-free,
+    wealth-monotone V — just the wrong one — so telling the two apart needs an oracle
+    independent of the solver. The model admits an exact one: `bc` requires
+    `consumption <= wealth` and the consumption grid starts at 0.05, so node `w` is
+    infeasible (`V = -inf`) iff `w < 0.05`, computable straight from the period's own
+    grid definition.
+    """
+    grid = _moving_floor_grid()
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
+    for period in range(_N):
+        if "alive" not in v[period]:
+            continue
+        nodes = np.asarray(grid.build(_AGES.period_to_age(period)).to_jax())
+        np.testing.assert_array_equal(
+            np.isneginf(np.asarray(v[period]["alive"])),
+            nodes < _CGRID.start,
+            err_msg=(
+                f"period {period}: V's feasibility pattern does not match this "
+                f"period's own grid nodes {nodes} — the solve used a different axis"
+            ),
+        )
 
 
 def test_non_shape_invariant_grid_is_rejected():

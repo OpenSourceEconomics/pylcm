@@ -21,6 +21,7 @@ from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
     _fold_period_diagnostics,
     _init_diagnostic_accumulators,
+    _states_for_period,
 )
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -38,30 +39,6 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND
-
-
-def _state_action_space_for_period(
-    regime: Regime, state_action_space: StateActionSpace, period: int
-) -> StateActionSpace:
-    """The base space with age-varying states overridden by period-t's nodes.
-
-    For a regime with `AgeSpecializedGrid` states, replace the representative base
-    axis with this period's grid nodes so period-t's value function is tabulated on
-    period-t's grid. This is what makes the tabulation agree with the continuation
-    interpolation, which reads V_{t+1} on period-(t+1)'s grid; tabulating on any
-    other age's nodes puts the two halves on different grids and the solved value
-    function is wrong everywhere, not merely imprecise. Same shape as the base, so
-    the shared compiled kernel is not retraced. Age-invariant regimes return the
-    base space unchanged.
-    """
-    # getattr (not direct access) so a duck-typed mock regime without the field works.
-    axes = getattr(regime.solution, "period_state_axes", None)
-    if axes is None or period not in axes:
-        return state_action_space
-    return dataclasses.replace(
-        state_action_space,
-        states=MappingProxyType({**state_action_space.states, **axes[period]}),
-    )
 
 
 def solve(
@@ -196,9 +173,7 @@ def solve(
                 regime=regime,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
-                state_action_space=_state_action_space_for_period(
-                    regime, base_state_action_spaces[regime_name], period
-                ),
+                state_action_space=base_state_action_spaces[regime_name],
                 flat_params=flat_params,
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -376,6 +351,20 @@ def _run_period_kernel(
 
     """
     period_kernel = regime.solution.period_kernels[period]
+
+    # With `AgeSpecializedGrid` states, tabulate period-t's value function on
+    # period-t's own grid nodes rather than the representative base axis. This is
+    # what keeps the tabulation on the same grid as the continuation, which reads
+    # V_{t+1} on period-(t+1)'s grid; the two halves disagreeing makes the solved
+    # value function wrong at every node, not merely imprecise. Same shape as the
+    # base, so the shared compiled core is not retraced.
+    state_action_space = dataclasses.replace(
+        state_action_space,
+        states=MappingProxyType(
+            dict(_states_for_period(regime, state_action_space, period))
+        ),
+    )
+
     return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
