@@ -86,7 +86,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, LoopIndex
+from lcm.typing import BoolND, Float1D, FloatND
 
 # ----------------------------------------------------------------------------
 # Error-free transforms and double-double arithmetic.
@@ -244,73 +244,60 @@ def _node_selection(
     return at_left | at_right, use_right
 
 
+class _Dyadic(NamedTuple):
+    """Exactly-represented reals `mantissa * 2**exponent`, one per trailing slot.
+
+    Every quantity in the ordering kernel travels this way: a finite float
+    mantissa and a SEPARATE `int32` exponent. That split is the whole design.
+    An exponent held as an integer never rounds, never overflows and never
+    flushes, so a term's magnitude may range over the entire real line while its
+    mantissa stays inside one binade — the binade where every error-free
+    transform below is exact.
+
+    Nine consecutive repairs to this kernel (rounds 6 to 12) each moved the same
+    defect one layer down: a value comparison, a slope tie-break, an exponent, a
+    normalization's scope, then its shape, then the last normalization inside
+    the "exact" fallback. All nine shared one premise — that a rescaling can
+    make a rounded evaluation safe. It cannot: scaling operands DOWN merges
+    distinct floats and scaling them UP eventually overflows, and no single
+    binade holds a problem whose terms span more binades than the format has.
+    Carrying the exponent outside the float removes the premise instead of
+    patching its latest consequence.
+    """
+
+    mantissa: FloatND
+    exponent: jax.Array
+
+
 class _ExactRatio(NamedTuple):
     """A candidate's value at the query as an exact rational `num / den`.
 
-    `numerator` and `denominator` are unevaluated sums of exactly-representable
-    floats — error-free transforms, so no information has been discarded. The
-    denominator is canonically positive, which lets a cross-multiplied
-    comparison read its sign straight off the numerator difference.
+    `numerator` and `denominator` are unevaluated sums of dyadic terms — error
+    free transforms throughout, so no information has been discarded and no
+    term's magnitude has been constrained. The denominator is canonically
+    positive, which lets a cross-multiplied comparison read its sign straight
+    off the numerator difference.
     """
 
-    numerator: FloatND
-    denominator: FloatND
+    numerator: _Dyadic
+    denominator: _Dyadic
 
 
-def _to_safe_binade(ratio: _ExactRatio) -> _ExactRatio:
-    """Rescale one candidate's ratio into a binade where cross products are safe.
+def _dyadic_parts(x: FloatND) -> tuple[FloatND, jax.Array]:
+    """`x` as `(m, e)` with `m` in `[0.5, 1)` and `x == m * 2**e` EXACTLY.
 
-    An error-free transform is exact only while its results stay representable.
-    `_two_prod` is not: at a small enough operand scale the product underflows
-    into the subnormal range and its residual is silently lost, and at a large
-    enough scale it overflows to infinity and poisons the expansion with NaN.
-    The cross-multiplied predicates below then read a strict sign as `0` or as
-    NaN, and the caller falls back to candidate order — so a pure power-of-two
-    rescaling of an entire model, which changes nothing mathematically, flips
-    the published policy and marginal (round-8 audit F2).
-
-    The repair is to divide the problem out rather than to widen a tolerance.
-    Scaling a numerator AND its denominator by one common power of two leaves
-    the rational `num / den` **identically** unchanged, so it cannot change any
-    ordering. Applied per candidate, it also cancels from the comparison
-    itself: with `a` scaled by `2**-i` and `b` by `2**-j`, the two cross
-    products `N_a*D_b` and `N_b*D_a` both acquire the same factor `2**-(i+j)`,
-    so the sign of their difference survives the transformation exactly.
-
-    Choosing the scale from the largest component puts every component at or
-    below one, which makes overflow in the subsequent products impossible and
-    is exactly the normalization that undoes a uniform rescaling of the model.
-    Powers of two scale a float without rounding, so the transform costs no
-    accuracy. Zero and non-finite magnitudes have no binade and are passed
-    through untouched: a NaN must stay NaN so it surfaces rather than being
-    ordered.
+    Zero and non-finite inputs carry exponent zero and pass through unchanged,
+    so a NaN stays a NaN and surfaces rather than being silently ordered.
     """
-    components = jnp.concatenate([ratio.numerator, ratio.denominator], axis=-1)
-    exponent = _binade_exponent(jnp.max(jnp.abs(components), axis=-1))[..., None]
-    return _ExactRatio(
-        numerator=jnp.ldexp(ratio.numerator, -exponent),
-        denominator=jnp.ldexp(ratio.denominator, -exponent),
-    )
-
-
-def _binade_exponent(magnitude: FloatND) -> jax.Array:
-    """Exponent `e` with `magnitude` in `[2**(e-1), 2**e)`; `0` where there is none.
-
-    Returned as an exponent rather than a factor so callers scale with `ldexp`.
-    Materializing `2**-e` as a float would itself be lossy at the extremes: for
-    a float32 magnitude near the top of the range `2**-e` is SUBNORMAL, so the
-    factor carries fewer bits than the scaling it is meant to perform exactly.
-    `ldexp` adjusts the exponent field directly and has no such failure mode.
-    """
-    _, exponent = jnp.frexp(magnitude)
-    usable = (magnitude > 0) & jnp.isfinite(magnitude)
-    return jnp.where(usable, exponent, jnp.zeros_like(exponent))
+    mantissa, exponent = jnp.frexp(x)
+    usable = jnp.isfinite(x) & (x != 0)
+    return mantissa, jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
 def _mid_range_target(dtype: jnp.dtype) -> int:
-    """Binade to normalize a product's operands into: half the exponent range.
+    """Binade to lift a difference's operands into: half the exponent range.
 
-    Normalizing the largest operand to `[0.5, 1)` — the obvious choice, and what
+    Lifting the largest operand to `[0.5, 1)` — the obvious choice, and what
     rounds 8 to 10 used — stops products overflowing but spends the entire lower
     half of the exponent range on nothing. Every operand more than `emax` binades
     below the largest is then pushed into the subnormals, where it loses bits, or
@@ -319,13 +306,12 @@ def _mid_range_target(dtype: jnp.dtype) -> int:
     zero, and the interpolant collapses onto its left value.
 
     Landing the largest operand mid-range instead leaves both halves of headroom:
-    a product of two such operands still cannot overflow (`2**(2*target)` plus
-    room for the sum of the terms stays inside the range), while an operand up to
-    `target + emax` binades below the largest stays finite NORMAL — 189 binades
-    of slack in float32, 1533 in float64, against zero before.
+    a difference of two such operands still cannot overflow, while an operand up
+    to `target + emax` binades below the largest stays finite NORMAL — 189
+    binades of slack in float32, 1533 in float64, against zero before.
     """
-    # Two operands multiply and up to sixteen such products are summed, so leave
-    # four binades of headroom above `2 * target`.
+    # Two operands multiply and up to sixteen such products are summed in the
+    # double-double screen, so leave four binades of headroom above `2 * target`.
     return (int(jnp.finfo(dtype).maxexp) - 4) // 2
 
 
@@ -340,6 +326,23 @@ def _scale_exponent(magnitude: FloatND, target: int) -> jax.Array:
     return jnp.where(usable, exponent - target, jnp.zeros_like(exponent))
 
 
+def _binade_exponent(magnitude: FloatND) -> jax.Array:
+    """Exponent `e` with `magnitude` in `[2**(e-1), 2**e)`; `0` where there is none.
+
+    Returned as an exponent rather than a factor so callers scale with `ldexp`.
+    Materializing `2**-e` as a float would itself be lossy at the extremes: for
+    a float32 magnitude near the top of the range `2**-e` is SUBNORMAL, so the
+    factor carries fewer bits than the scaling it is meant to perform exactly.
+    `ldexp` adjusts the exponent field directly and has no such failure mode.
+
+    Used only by the double-double SCREEN, which may round; the exact ordering
+    kernel carries its exponents in `_Dyadic` and normalizes nothing.
+    """
+    _, exponent = jnp.frexp(magnitude)
+    usable = (magnitude > 0) & jnp.isfinite(magnitude)
+    return jnp.where(usable, exponent, jnp.zeros_like(exponent))
+
+
 def _group_scale_exponent(*magnitudes: FloatND, target: int) -> jax.Array:
     """One shift for a group of quantities that must remain COMPARABLE.
 
@@ -352,99 +355,293 @@ def _group_scale_exponent(*magnitudes: FloatND, target: int) -> jax.Array:
     return _scale_exponent(jnp.max(stacked, axis=-1), target)
 
 
+def _as_dyadic(x: FloatND) -> _Dyadic:
+    """A raw float as a one-term dyadic list; its own exponent is implicit."""
+    return _Dyadic(
+        mantissa=x[..., None],
+        exponent=jnp.zeros((*x.shape, 1), dtype=jnp.int32),
+    )
+
+
+def _dyadic_join(*parts: _Dyadic) -> _Dyadic:
+    """Concatenate dyadic term lists — the exact sum of the parts."""
+    return _Dyadic(
+        mantissa=jnp.concatenate([part.mantissa for part in parts], axis=-1),
+        exponent=jnp.concatenate([part.exponent for part in parts], axis=-1),
+    )
+
+
+def _dyadic_negate(terms: _Dyadic, flip: BoolND) -> _Dyadic:
+    """Negate every term where `flip`; exact, and it leaves the exponents alone."""
+    return _Dyadic(
+        mantissa=jnp.where(flip[..., None], -terms.mantissa, terms.mantissa),
+        exponent=terms.exponent,
+    )
+
+
+def _exact_difference(a: FloatND, b: FloatND, *, target: int) -> _Dyadic:
+    """`a - b` as two exact floats sharing one exponent.
+
+    `_two_diff` is exact for any two finite floats whose residual is
+    representable, and the residual stops being representable only at the very
+    bottom of the range, where XLA flushes subnormals to zero: for
+    `a = tiny, b = 1.5 * tiny` — three distinct finite normals — the exact
+    difference is the smallest subnormal and comes back as `0.0`.
+
+    The operands are therefore LIFTED, never lowered, into `target` first.
+    Lifting is a power of two, hence exact and injective, and it cannot overflow
+    because the largest operand lands mid-range by construction; LOWERING is
+    what merges two distinct floats into one and destroys the difference. And
+    where the operands already reach `target` the lift is zero, so a huge `a`
+    against a tiny `b` keeps its residual `-b` at full precision — precisely the
+    case a common lowered frame would have thrown away.
+
+    The residual is therefore never below `2**(minexp - precision)` relative to
+    the returned exponent, which is what bounds the accumulator in
+    `_accumulator_layout`.
+    """
+    _, exponent_a = _dyadic_parts(a)
+    _, exponent_b = _dyadic_parts(b)
+    lift = jnp.maximum(target - jnp.maximum(exponent_a, exponent_b), 0)
+    head, tail = _two_diff(jnp.ldexp(a, lift), jnp.ldexp(b, lift))
+    return _Dyadic(
+        mantissa=jnp.stack([head, tail], axis=-1),
+        exponent=jnp.stack([-lift, -lift], axis=-1),
+    )
+
+
+def _dyadic_product(a: _Dyadic, b: _Dyadic, split: float) -> _Dyadic:
+    """Exact outer product of two dyadic term lists: `2 * k_a * k_b` terms.
+
+    Each pair of mantissas is normalized into `[0.5, 1)` BEFORE multiplying, so
+    `_two_prod` always runs on operands whose product lands in `[0.25, 1)`: it
+    can neither overflow to infinity nor lose its residual to underflow, at any
+    input scale whatsoever. Dekker's split constant is likewise safe there,
+    which retires the caveat at the top of this module for the exact path.
+
+    The magnitudes ride along in the integer exponents, where nothing rounds.
+    This is what the round-12 finding asked for: the decisive product of a
+    half-minimum-normal numerator term with a half-minimum-normal denominator
+    term used to flush to zero before the exact summation ever saw it.
+    """
+    b_parts = [_dyadic_parts(b.mantissa[..., j]) for j in range(b.mantissa.shape[-1])]
+    mantissas: list[FloatND] = []
+    exponents: list[jax.Array] = []
+    for i in range(a.mantissa.shape[-1]):
+        a_mantissa, a_exponent = _dyadic_parts(a.mantissa[..., i])
+        a_exponent = a_exponent + a.exponent[..., i]
+        for j, (b_mantissa, b_exponent) in enumerate(b_parts):
+            head, tail = _two_prod(a_mantissa, b_mantissa, split)
+            exponent = a_exponent + b_exponent + b.exponent[..., j]
+            mantissas += [head, tail]
+            exponents += [exponent, exponent]
+    return _Dyadic(
+        mantissa=jnp.stack(mantissas, axis=-1),
+        exponent=jnp.stack(exponents, axis=-1),
+    )
+
+
+class _AccumulatorLayout(NamedTuple):
+    """Geometry of the exact fixed-point accumulator, derived from the dtype."""
+
+    limb_bits: int
+    n_limb: int
+    n_digit: int
+
+
+def _accumulator_layout(dtype: jnp.dtype) -> _AccumulatorLayout:
+    """Limb width, limb count and digits per term of the exact accumulator.
+
+    Derived from the format rather than tabulated, so float32 and float64 cannot
+    drift apart and a wrong constant cannot hide behind a passing float64 test.
+
+    A limb holds a signed INTEGER in a float of the working dtype. It receives at
+    most one digit per term plus the carry from the limb below, so it needs
+    `log2(_EXACT_TERMS)` guard bits above `limb_bits` to stay exact.
+
+    The limb count covers the full exponent span a cross-product term can reach.
+    That span is what the previous nine repairs kept trying to compress into one
+    binade: a value and a grid difference each range over the whole format, and
+    their products then range over twice it. Nothing here compresses it — the
+    accumulator is simply wide enough to hold it, which is why no input scale can
+    make a term vanish before the sign is read.
+    """
+    info = jnp.finfo(dtype)
+    precision = int(info.nmant) + 1
+    # `frexp` exponents of the smallest and largest finite magnitudes.
+    min_exponent = int(info.minexp) + 1
+    max_exponent = int(info.maxexp)
+
+    limb_bits = precision - (_EXACT_TERMS.bit_length() + 2)
+    n_digit = -(-precision // limb_bits) + 1
+
+    # A lifted difference keeps its residual within `precision` binades of the
+    # smallest normal (`_exact_difference`); a product of two normalized
+    # mantissas puts its own residual at most `2 * precision` below its head.
+    difference_hi = max_exponent + 1
+    difference_lo = min_exponent - precision - 1
+    numerator_hi = max_exponent + difference_hi
+    numerator_lo = min_exponent + difference_lo - 2 * precision
+    cross_hi = numerator_hi + difference_hi
+    cross_lo = numerator_lo + difference_lo - 2 * precision
+
+    span = cross_hi - cross_lo
+    n_limb = -(-(span + n_digit * limb_bits) // limb_bits) + 2
+    return _AccumulatorLayout(limb_bits=limb_bits, n_limb=n_limb, n_digit=n_digit)
+
+
+def _exact_sign_of_sum(terms: _Dyadic) -> FloatND:
+    """Exact sign of `sum(mantissa * 2**exponent)`, with no rounding anywhere.
+
+    Every term is deposited into a fixed-point accumulator of `n_limb` limbs,
+    each limb an exact integer weighted by `2**(-limb_bits)` relative to the one
+    above it and anchored at the largest term exponent present. A term's mantissa
+    is sliced into `n_digit` such digits by repeated `trunc`, which is exact, and
+    the digits are scattered into consecutive limbs. Nothing is rounded, nothing
+    is compared against a tolerance, and no term is ever too small to contribute:
+    a term 3000 binades below the leading one simply lands 3000 binades further
+    down the accumulator.
+
+    That is the difference from the expansion this replaces. Shewchuk's
+    GROW-EXPANSION is exact for the terms it RECEIVES, and the loss was always
+    upstream — in forming the terms at all. A fixed-point accumulator has no
+    upstream: the exponent selects a limb, and selecting a limb cannot round.
+
+    Carries are then propagated once from the least significant limb upward,
+    leaving every limb in `[0, 2**limb_bits)` and the sum equal to
+    `carry * 2**(n_limb * limb_bits) + (non-negative remainder)`. So the carry
+    out decides the sign, and only an all-zero accumulator with zero carry is a
+    TRUE tie — the one thing a rounded evaluation can never certify.
+    """
+    dtype = terms.mantissa.dtype
+    limb_bits, n_limb, n_digit = _accumulator_layout(dtype)
+    scale = float(2**limb_bits)
+
+    mantissa, exponent = _dyadic_parts(terms.mantissa)
+    exponent = exponent + terms.exponent
+    active = mantissa != 0
+    finite = jnp.all(jnp.isfinite(terms.mantissa), axis=-1)
+
+    # A sentinel at or below every exponent present, so an all-zero lane picks a
+    # harmless anchor instead of an out-of-range one.
+    absent = jnp.min(exponent) - 1
+    top = jnp.max(jnp.where(active, exponent, absent), axis=-1, keepdims=True)
+    shift = jnp.where(active, top - exponent, jnp.zeros_like(exponent))
+    limb = shift // limb_bits
+    # `|mantissa| < 1` and the intra-limb offset is below `limb_bits`, so the
+    # carrier stays inside one limb's range and its lowest bit is `precision`
+    # bits below it — which is what `n_digit` is sized to drain exactly.
+    carrier = jnp.ldexp(
+        jnp.where(active, mantissa, jnp.zeros_like(mantissa)),
+        limb_bits - (shift - limb * limb_bits),
+    )
+
+    indices: list[jax.Array] = []
+    digits: list[FloatND] = []
+    residue = carrier
+    for offset in range(n_digit):
+        digit = jnp.trunc(residue)
+        indices.append(limb + offset)
+        digits.append(digit)
+        residue = jnp.ldexp(residue - digit, limb_bits)
+
+    leading = terms.mantissa.shape[:-1]
+    n_lane = 1
+    for size in leading:
+        n_lane *= size
+    flat_index = jnp.concatenate(indices, axis=-1).reshape(n_lane, -1)
+    flat_digit = jnp.concatenate(digits, axis=-1).reshape(n_lane, -1)
+    accumulator = (
+        jnp.zeros((n_lane, n_limb), dtype)
+        .at[jnp.arange(n_lane)[:, None], flat_index]
+        .add(flat_digit, mode="drop")
+    )
+
+    def propagate(carry: FloatND, limb_value: FloatND) -> tuple[FloatND, FloatND]:
+        total = limb_value + carry
+        quotient = jnp.floor(total * (1.0 / scale))
+        return quotient, total - quotient * scale
+
+    carry, residues = jax.lax.scan(
+        propagate,
+        jnp.zeros((n_lane,), dtype),
+        jnp.moveaxis(accumulator, -1, 0)[::-1],
+    )
+    sign = jnp.where(
+        carry < 0,
+        -jnp.ones_like(carry),
+        jnp.where(
+            (carry > 0) | jnp.any(residues != 0, axis=0),
+            jnp.ones_like(carry),
+            jnp.zeros_like(carry),
+        ),
+    ).reshape(leading)
+
+    # `_accumulator_layout` proves this cannot fire; it is kept because a silent
+    # `mode="drop"` is exactly the failure this rewrite exists to remove, and a
+    # loud NaN is recoverable evidence where a dropped digit is not.
+    dropped = jnp.any(active & (limb + n_digit > n_limb), axis=-1)
+    return jnp.where(finite & ~dropped, sign, jnp.full_like(sign, jnp.nan))
+
+
 def _exact_cross_sign(*, a: _ExactRatio, b: _ExactRatio, dtype: jnp.dtype) -> FloatND:
     """Exact sign of `a - b` for two rationals with positive denominators.
 
     `a - b = (N_a*D_b - N_b*D_a) / (D_a*D_b)`, so with both denominators
     canonically positive the sign is that of the cross-multiplied numerator
-    difference. Every cross product of two exactly-represented components is
-    itself split into an exact pair, so the terms sum to that difference with
-    no error and `_exact_sign_of_sum` reads its sign exactly.
+    difference. Every cross product is formed on normalized mantissas with its
+    exponent carried alongside, so the terms sum to that difference with no error
+    at ANY model scale — not merely at the scale the tests happened to use.
 
-    Both operands are moved into a safe binade first — see `_to_safe_binade`.
-    That step is what makes "exact" mean exact at every model scale rather than
-    only at the scale the tests happened to use.
-
-    This is the single ordering kernel: value selection and the
-    right-continuous slope tie-break share it, so the two can never disagree
-    about what an exact tie is.
+    This is the single ordering kernel: value selection and the right-continuous
+    slope tie-break share it, so the two can never disagree about what an exact
+    tie is.
     """
-    a = _to_safe_binade(a)
-    b = _to_safe_binade(b)
     split = _dekker_split_factor(dtype)
-    terms: list[FloatND] = []
-    for numerator, denominator, orientation in (
-        (a.numerator, b.denominator, 1.0),
-        (b.numerator, a.denominator, -1.0),
-    ):
-        for i in range(numerator.shape[-1]):
-            for j in range(denominator.shape[-1]):
-                # Scaling by +-1 is exact, so negation preserves the transform.
-                head, tail = _two_prod(numerator[..., i], denominator[..., j], split)
-                terms.extend([orientation * head, orientation * tail])
-    return _exact_sign_of_sum(jnp.stack(terms, axis=-1))
+    forward = _dyadic_product(a.numerator, b.denominator, split)
+    reverse = _dyadic_product(b.numerator, a.denominator, split)
+    return _exact_sign_of_sum(
+        _dyadic_join(forward, _Dyadic(-reverse.mantissa, reverse.exponent))
+    )
 
 
-def _exact_ratio(
-    *, cols: FloatND, q: FloatND, value_exponent: jax.Array
-) -> _ExactRatio:
+def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     """Exact rational value of one candidate per query, from its raw columns.
 
     `V = (v0*(x1 - q) + v1*(q - x0)) / (x1 - x0)` is the same interpolant
-    `_candidate_terms` evaluates, but every factor is kept as an error-free
-    pair instead of being rounded, so the pair `(numerator, denominator)`
-    represents `V` with no error at all. A node event publishes a STORED float,
-    so its exact value is that float over one.
+    `_candidate_terms` evaluates, but every factor is kept as a dyadic term list
+    instead of being rounded, so the pair `(numerator, denominator)` represents
+    `V` with no error at all. A node event publishes a STORED float, so its exact
+    value is that float over one — exact by construction, and expressible here
+    with a unit denominator and no arithmetic at all.
 
-    Returned in units of `2**value_exponent`, which the caller supplies because
-    it must be SHARED with the competitor: `V_a - V_b` only keeps its sign while
-    both are measured in the same units.
-
-    **The differences are formed FIRST, on the RAW columns.** `_two_diff` is
-    exact and the subtraction of two finite floats cannot overflow, so nothing
-    is lost and nothing needs rescuing. Scaling the columns first — which is
-    what the old `_to_safe_columns` did, with one grid exponent covering `q` and
-    both candidates' nodes — can map `q` and a node onto the SAME float, after
-    which `q - x0` is zero, the interpolant collapses onto its left value, and
-    no amount of downstream exactness recovers the difference (round-10 audit
-    F2, the same class as the value path's round-11 repair: scale the
-    DIFFERENCES, never the operands).
-
-    The grid scale is then PER CANDIDATE and cancels exactly — it multiplies
-    this candidate's numerator and denominator by one power of two, leaving the
-    rational identically unchanged — so it needs no coordination at all.
+    **No scale is shared and none is passed in.** Earlier rounds took a value
+    exponent from the caller so both candidates' values could be compared in one
+    frame; that frame is what underflowed. With the exponent carried per term,
+    `V_a` and `V_b` are comparable because they are EXACT, not because they were
+    manoeuvred into common units — and the grid differences, which used to need a
+    group scale of their own, need none either.
     """
-    split = _dekker_split_factor(cols.dtype)
+    dtype = cols.dtype
+    split = _dekker_split_factor(dtype)
+    target = _mid_range_target(dtype)
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
 
-    ah, al = _two_diff(right_grid, q)
-    bh, bl = _two_diff(q, left_grid)
-    dh, dl = _two_diff(right_grid, left_grid)
+    left_weight = _exact_difference(right_grid, q, target=target)
+    right_weight = _exact_difference(q, left_grid, target=target)
+    width = _exact_difference(right_grid, left_grid, target=target)
 
-    grid_exponent = _group_scale_exponent(
-        ah, bh, dh, target=_mid_range_target(cols.dtype)
+    numerator = _dyadic_join(
+        _dyadic_product(_as_dyadic(left_value), left_weight, split),
+        _dyadic_product(_as_dyadic(right_value), right_weight, split),
     )
-    ah, al, bh, bl, dh, dl = (
-        jnp.ldexp(term, -grid_exponent) for term in (ah, al, bh, bl, dh, dl)
-    )
-    scaled_left_value = jnp.ldexp(left_value, -value_exponent)
-    scaled_right_value = jnp.ldexp(right_value, -value_exponent)
-
-    products = (
-        _two_prod(scaled_left_value, ah, split),
-        _two_prod(scaled_left_value, al, split),
-        _two_prod(scaled_right_value, bh, split),
-        _two_prod(scaled_right_value, bl, split),
-    )
-    numerator = jnp.stack([term for pair in products for term in pair], axis=-1)
-    denominator = jnp.stack([dh, dl], axis=-1)
 
     # Canonical orientation. Endpoints may be stored in either order within a
     # branch; negating both numerator and denominator leaves `V` unchanged.
-    flip = (dh < 0)[..., None]
-    numerator = jnp.where(flip, -numerator, numerator)
-    denominator = jnp.where(flip, -denominator, denominator)
+    flip = width.mantissa[..., 0] < 0
+    numerator = _dyadic_negate(numerator, flip)
+    denominator = _dyadic_negate(width, flip)
 
     node, use_right = _node_selection(
         q=q,
@@ -453,70 +650,26 @@ def _exact_ratio(
         left_value=left_value,
         right_value=right_value,
     )
-    # Node detection reads the RAW grid and query — an equality that a shared
-    # power of two would have preserved anyway, but which is now never disturbed.
-    # The published value goes into the same `2**value_exponent` units as the
-    # interpolated branch so the two are directly comparable.
-    node_value = jnp.ldexp(
-        jnp.where(use_right, right_value, left_value), -value_exponent
-    )
+    node_value = jnp.where(use_right, right_value, left_value)
     zeros = jnp.zeros_like(node_value)
     is_node = node[..., None]
-    return _ExactRatio(
-        numerator=jnp.where(
-            is_node,
-            jnp.stack([node_value, *([zeros] * 7)], axis=-1),
-            numerator,
-        ),
-        denominator=jnp.where(
-            is_node, jnp.stack([jnp.ones_like(node_value), zeros], axis=-1), denominator
-        ),
+    node_numerator = jnp.stack(
+        [node_value, *([zeros] * (numerator.mantissa.shape[-1] - 1))], axis=-1
     )
-
-
-def _exact_sign_of_sum(terms: FloatND) -> FloatND:
-    """Exact sign of `terms.sum(-1)`, with no rounding anywhere.
-
-    Accumulates the terms into a non-overlapping floating-point expansion by
-    Shewchuk's GROW-EXPANSION: every TwoSum is exact, so the expansion's sum
-    equals the input's sum bit for bit however catastrophically the terms
-    cancel. Because the expansion is non-overlapping and increasing in
-    magnitude, its highest-index non-zero component dominates the sum of all
-    lower ones and therefore carries the sign.
-
-    Slots at or above the current length are zero and `TwoSum(Q, 0) = (Q, 0)`,
-    so the running total falls through them untouched and lands in the first
-    free slot — which is why a fixed-width buffer suffices for an expansion
-    that grows by one component per term.
-    """
-    n_term = terms.shape[-1]
-    expansion = jnp.zeros_like(terms)
-
-    # `LoopIndex`, not an array-only hint: a `jax.Array` annotation here made every
-    # EAGER call raise a beartype violation, which is what broke all 24
-    # `test_jitted_solve_matches_the_eager_solve[*]` cases — that test is the only
-    # one building its reference under `disable_jit`, so it was the first caller to
-    # reach this kernel eagerly. See the alias in `lcm.typing` for why both forms
-    # must be admitted.
-    def absorb_term(k: LoopIndex, expansion: FloatND) -> FloatND:
-        term = jax.lax.dynamic_index_in_dim(terms, k, axis=-1, keepdims=False)
-
-        def grow(total: FloatND, component: FloatND) -> tuple[FloatND, FloatND]:
-            return _two_sum(total, component)
-
-        total, residuals = jax.lax.scan(grow, term, jnp.moveaxis(expansion, -1, 0))
-        return jax.lax.dynamic_update_index_in_dim(
-            jnp.moveaxis(residuals, 0, -1), total, k, axis=-1
-        )
-
-    expansion = jax.lax.fori_loop(0, n_term, absorb_term, expansion)
-    # NaN compares unequal to zero, so a non-finite input surfaces as a NaN
-    # sign rather than a silently-ordered comparison.
-    nonzero = expansion != 0
-    top = n_term - 1 - jnp.argmax(nonzero[..., ::-1], axis=-1)
-    leading = jnp.take_along_axis(expansion, top[..., None], axis=-1)[..., 0]
-    return jnp.where(
-        jnp.any(nonzero, axis=-1), jnp.sign(leading), jnp.zeros_like(leading)
+    node_denominator = jnp.stack([jnp.ones_like(node_value), zeros], axis=-1)
+    return _ExactRatio(
+        numerator=_Dyadic(
+            mantissa=jnp.where(is_node, node_numerator, numerator.mantissa),
+            exponent=jnp.where(
+                is_node, jnp.zeros_like(numerator.exponent), numerator.exponent
+            ),
+        ),
+        denominator=_Dyadic(
+            mantissa=jnp.where(is_node, node_denominator, denominator.mantissa),
+            exponent=jnp.where(
+                is_node, jnp.zeros_like(denominator.exponent), denominator.exponent
+            ),
+        ),
     )
 
 
@@ -525,73 +678,57 @@ def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
 
     `V_a - V_b = (N_a*D_b - N_b*D_a) / (D_a*D_b)` with both denominators
     positive, so the sign is that of the cross-multiplied numerator difference.
-    Every cross product of two exactly-represented terms is itself split into
-    an exact pair, so the 64 terms sum to that difference with no error and
-    `_exact_sign_of_sum` reads its sign exactly. This is the only test that can
-    tell a genuine tie from a strict gap finer than the working precision —
-    double-double values cannot, because algebraically different segment
-    parameterizations of the SAME exact value need not produce the same low
-    word (round-6 audit F2).
+    This is the only test that can tell a genuine tie from a strict gap finer
+    than the working precision — double-double values cannot, because
+    algebraically different segment parameterizations of the SAME exact value
+    need not produce the same low word (round-6 audit F2).
 
-    Only the VALUE scale is shared, and it is the only thing this function has
-    to decide: each candidate normalizes its own grid differences, which cancel
-    within its own ratio. The grid columns are handed over RAW so that every
-    difference is formed before anything is rescaled (round-10 audit F2).
+    The columns are handed over RAW. Every difference is formed on them, every
+    product carries its own exponent, and the sum is accumulated in fixed point:
+    there is no scale to choose, hence no scale that can be chosen wrongly.
     """
-    value_exponent = _group_scale_exponent(
-        cols_a[..., 2],
-        cols_a[..., 3],
-        cols_b[..., 2],
-        cols_b[..., 3],
-        target=_mid_range_target(cols_a.dtype),
-    )
     return _exact_cross_sign(
-        a=_exact_ratio(cols=cols_a, q=q, value_exponent=value_exponent),
-        b=_exact_ratio(cols=cols_b, q=q, value_exponent=value_exponent),
+        a=_exact_ratio(cols=cols_a, q=q),
+        b=_exact_ratio(cols=cols_b, q=q),
         dtype=cols_a.dtype,
     )
 
 
-def _exact_slope_ratio(
-    *, cols: FloatND, value_exponent: jax.Array, grid_exponent: jax.Array
-) -> _ExactRatio:
+def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
     """A candidate's value slope as an exact rational `(v1-v0)/(x1-x0)`.
 
-    Both differences are error-free pairs, so the ratio carries no rounding at
-    all. The denominator is canonically positive so a cross-multiplied
-    comparison reads its sign off the numerator difference.
+    Both differences are dyadic pairs, so the ratio carries no rounding at all.
+    The denominator is canonically positive so a cross-multiplied comparison
+    reads its sign off the numerator difference.
 
-    Returned in units of `2**(grid_exponent - value_exponent)`. Unlike the value
-    ratio, a slope's numerator and denominator scales do NOT cancel within one
-    candidate — they change the ratio — so BOTH are supplied by the caller and
-    shared across the candidates being compared. The shared factor is a positive
-    power of two, so it cannot change which slope is larger.
-
-    As in `_exact_ratio`, both differences are formed on the RAW columns before
-    any scaling: a scale applied to the operands can merge two distinct floats
-    and silently zero the difference (round-10 audit F2).
+    A slope's numerator and denominator scales do NOT cancel within one candidate
+    — they change the ratio — which used to force BOTH on the caller as shared
+    exponents. Carrying the exponent per term removes that coupling: neither
+    scale is chosen at all, so neither can be chosen wrongly.
     """
+    target = _mid_range_target(cols.dtype)
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
-    nh, nl = _two_diff(right_value, left_value)
-    dh, dl = _two_diff(right_grid, left_grid)
-    # A zero-width segment has no grid span; the established convention
-    # publishes its raw value jump as the slope, i.e. a unit RAW denominator —
-    # substituted before scaling so it lands in the same units as every other
-    # candidate's width.
-    zero_width = right_grid == left_grid
-    dh = jnp.where(zero_width, jnp.ones_like(dh), dh)
-    dl = jnp.where(zero_width, jnp.zeros_like(dl), dl)
-    numerator = jnp.stack(
-        [jnp.ldexp(nh, -value_exponent), jnp.ldexp(nl, -value_exponent)], axis=-1
+
+    numerator = _exact_difference(right_value, left_value, target=target)
+    width = _exact_difference(right_grid, left_grid, target=target)
+
+    # A zero-width segment has no grid span; the established convention publishes
+    # its raw value jump as the slope, i.e. a unit denominator. Under exponent
+    # tagging that unit is literally `1 * 2**0`, so the convention is exact by
+    # construction rather than by surviving a scale choice.
+    zero_width = (right_grid == left_grid)[..., None]
+    ones = jnp.ones_like(width.mantissa[..., :1])
+    unit = jnp.concatenate([ones, jnp.zeros_like(width.mantissa[..., 1:])], axis=-1)
+    width = _Dyadic(
+        mantissa=jnp.where(zero_width, unit, width.mantissa),
+        exponent=jnp.where(zero_width, jnp.zeros_like(width.exponent), width.exponent),
     )
-    denominator = jnp.stack(
-        [jnp.ldexp(dh, -grid_exponent), jnp.ldexp(dl, -grid_exponent)], axis=-1
-    )
-    flip = (denominator[..., 0] < 0)[..., None]
+
+    flip = width.mantissa[..., 0] < 0
     return _ExactRatio(
-        numerator=jnp.where(flip, -numerator, numerator),
-        denominator=jnp.where(flip, -denominator, denominator),
+        numerator=_dyadic_negate(numerator, flip),
+        denominator=_dyadic_negate(width, flip),
     )
 
 
@@ -599,50 +736,19 @@ def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
     """Exact sign of `slope_a - slope_b`: `+1`, `-1`, or `0` for a TRUE tie.
 
     Same cross-multiplied construction as `_exact_compare`, on the slope ratio
-    instead of the value: `sign(N_a*D_b - N_b*D_a)` over 16 error-free terms.
+    instead of the value.
 
     This exists because an exact VALUE tie is only half the rule. The
     right-continuous break then orders slopes, and ordering them on
-    `fl((v1-v0)/(x1-x0))` re-introduces the very defect the exact value
-    predicate removed one operation earlier: two strictly ordered exact slopes
-    can share a single float key, and `argmax` then silently falls back to
-    candidate order, so a pure branch permutation flips the published policy
-    and marginal (round-7 audit F2).
-
-    Round 8 made that predicate exact but not exponent-safe: it multiplied the
-    cross terms at their native scale, so a uniformly rescaled model could
-    underflow a strict sign to zero or overflow it to NaN. `_exact_cross_sign`
-    normalizes each ratio into a safe binade first, which is a no-op on the
-    rational being compared (round-8 audit F2).
-
-    Both scales are shared across the two candidates and both are taken from the
-    DIFFERENCES, not the columns — a slope's numerator and denominator scales do
-    not cancel within a candidate, so neither may be chosen locally.
+    `fl((v1-v0)/(x1-x0))` re-introduces the very defect the exact value predicate
+    removed one operation earlier: two strictly ordered exact slopes can share a
+    single float key, and `argmax` then silently falls back to candidate order,
+    so a pure branch permutation flips the published policy and marginal
+    (round-7 audit F2).
     """
-
-    def effective_width(cols: FloatND) -> FloatND:
-        # The zero-width convention's unit RAW denominator has to sit inside the
-        # group that picks the shared scale, or that scale could push it into the
-        # subnormal range and cost the convention its exactness.
-        width = cols[..., 1] - cols[..., 0]
-        return jnp.where(width == 0, jnp.ones_like(width), width)
-
-    target = _mid_range_target(cols_a.dtype)
-    value_exponent = _group_scale_exponent(
-        cols_a[..., 3] - cols_a[..., 2],
-        cols_b[..., 3] - cols_b[..., 2],
-        target=target,
-    )
-    grid_exponent = _group_scale_exponent(
-        effective_width(cols_a), effective_width(cols_b), target=target
-    )
     return _exact_cross_sign(
-        a=_exact_slope_ratio(
-            cols=cols_a, value_exponent=value_exponent, grid_exponent=grid_exponent
-        ),
-        b=_exact_slope_ratio(
-            cols=cols_b, value_exponent=value_exponent, grid_exponent=grid_exponent
-        ),
+        a=_exact_slope_ratio(cols=cols_a),
+        b=_exact_slope_ratio(cols=cols_b),
         dtype=cols_a.dtype,
     )
 
@@ -1208,8 +1314,27 @@ def _right_continuous_winner(
     any_eligible = jnp.any(eligible, axis=1, keepdims=True)
     compete = jnp.where(any_eligible, eligible, tied)
 
+    # `-inf` is the MASK sentinel here, and it is also a REACHABLE rounded key:
+    # `slope` is `fl(v1-v0) / fl(x1-x0)` in original units, so a large value gap
+    # over a small grid width overflows to `-inf` with every stored input still
+    # finite normal. A plain `argmax` over `key` then cannot tell the only
+    # competitor from the candidates the mask excluded, and returns index 0 —
+    # a candidate that is not competing at all, which the loop below seeds as
+    # the lead and never revisits. The published policy and marginal are then
+    # whichever branch happens to sit first, so a pure branch permutation flips
+    # them while the value stays right: the round-7 F2 signature, reached
+    # through the sentinel rather than through a shared float key.
+    #
+    # Selecting the first COMPETING candidate that attains the maximum keeps the
+    # documented earliest-on-tie rule and makes the sentinel unreachable as an
+    # answer. NaN keys are folded onto the sentinel for the same reason — they
+    # must not be allowed to win a comparison the screen cannot make — and
+    # `contends` below then hands every one of them to the exact predicate.
     key = jnp.where(compete, terms.slope, -jnp.inf)
-    lead = jnp.argmax(key, axis=1)
+    rankable = jnp.where(jnp.isnan(key), -jnp.inf, key)
+    lead = jnp.argmax(
+        compete & (rankable == jnp.max(rankable, axis=1, keepdims=True)), axis=1
+    )
     lead_slope = jnp.take_along_axis(terms.slope, lead[:, None], axis=1)
     eps = jnp.finfo(terms.slope.dtype).eps
     reach = _SLOPE_SCREEN_ULPS * eps * (jnp.abs(terms.slope) + jnp.abs(lead_slope))

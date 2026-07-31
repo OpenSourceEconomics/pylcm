@@ -32,7 +32,7 @@ from jaxtyping import Int, Scalar
 
 import _lcm
 import lcm
-from _lcm.egm.upper_envelope.query import _exact_sign_of_sum
+from _lcm.egm.upper_envelope.query import _Dyadic, _exact_sign_of_sum
 from _lcm.engine import _build_regime_sharding
 from _lcm.optimization.golden_section import maximize_golden_section
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
@@ -213,11 +213,13 @@ def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:
     )
 
     sites = _fori_loop_body_index_annotations()
-    assert len(sites) >= 2, (
-        f"the scan found {len(sites)} annotated `fori_loop` bodies; the two "
-        "known ones live in `_lcm.egm.upper_envelope.query` and "
-        "`_lcm.optimization.golden_section`, so a smaller count means the scan "
-        "broke, not that the code is clean"
+    assert len(sites) >= 1, (
+        f"the scan found {len(sites)} annotated `fori_loop` bodies; the known "
+        "one lives in `_lcm.optimization.golden_section`, so a smaller count "
+        "means the scan broke, not that the code is clean. The second site, in "
+        "`_lcm.egm.upper_envelope.query`, went away with the round-13 exact "
+        "kernel: it carries arrays through a `lax.scan` and annotates no loop "
+        "index at all."
     )
 
     rejected = []
@@ -233,8 +235,19 @@ def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:
 
 
 def test_the_exact_sign_kernel_runs_eagerly() -> None:
-    """`_exact_sign_of_sum` is reachable with the claw live and jit disabled."""
-    terms = jnp.array([1.0, -1.0, 2.0**-30])
+    """`_exact_sign_of_sum` is reachable with the claw live and jit disabled.
+
+    This test exists because a `jax.Array`-only annotation on a loop index made
+    every EAGER call raise a beartype violation, and the exact sign kernel is
+    reached eagerly only from `test_jitted_solve_matches_the_eager_solve`. The
+    round-13 rewrite carries arrays through a `lax.scan` instead of an index
+    through a `fori_loop`, so the original hazard is gone; the eager reachability
+    guard is kept because that is what caught it.
+    """
+    terms = _Dyadic(
+        mantissa=jnp.array([0.5, -0.5, 0.5]),
+        exponent=jnp.array([1, 1, -29], dtype=jnp.int32),
+    )
     with jax.disable_jit():
         sign = _exact_sign_of_sum(terms)
     assert float(sign) == 1.0
