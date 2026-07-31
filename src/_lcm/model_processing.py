@@ -28,11 +28,15 @@ from _lcm.params.processing import (
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.age_normalization import _regime_has_markers
+from _lcm.regime_building.age_normalization import (
+    _regime_has_markers,
+    normalize_age_specialization,
+)
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
+from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
@@ -189,9 +193,19 @@ def validate_model_inputs(
     # violation (e.g. a missing resources function) typically also leaves
     # variables unused, and the contract-specific message is the actionable
     # one.
-    validate_dcegm_regimes(user_regimes=user_regimes)
-    validate_negm_regimes(user_regimes=user_regimes)
-    validate_nnbegm_regimes(user_regimes=user_regimes)
+    #
+    # They read the *representative* regimes, in which every `AgeSpecializedGrid`
+    # state is already the concrete representative-age grid. The solver contract is
+    # about a state's kind and shape, both invariant across ages by the
+    # `AgeSpecializedGrid` contract, so the representative grid answers it exactly —
+    # whereas the raw marker is not a `Grid` at all and would be dropped from every
+    # type-filtered collection of continuous states, rejecting a valid model.
+    solver_validation_regimes = _representative_for_validation(
+        user_regimes=user_regimes, ages=ages
+    )
+    validate_dcegm_regimes(user_regimes=solver_validation_regimes)
+    validate_negm_regimes(user_regimes=solver_validation_regimes)
+    validate_nnbegm_regimes(user_regimes=solver_validation_regimes)
 
     error_messages: list[str] = []
 
@@ -251,6 +265,32 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def _representative_for_validation(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    ages: AgeGrid | None,
+) -> Mapping[RegimeName, UserRegime]:
+    """Resolve age markers to their representatives, for solver-contract validation.
+
+    Runs the same normalization boundary the build runs — phases first (local to one
+    regime), then age specialization (needs the model `AgeGrid` and each regime's
+    active periods) — and returns its representative regimes, which are the declared
+    input to age-invariant validation.
+
+    Returns the input unchanged when no regime carries a marker, so an age-invariant
+    model neither pays for the walk nor changes behaviour, and when `ages` is absent,
+    since age specialization cannot be resolved without it.
+    """
+    if ages is None or not any(
+        _regime_has_markers(regime) for regime in user_regimes.values()
+    ):
+        return user_regimes
+    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    return normalize_age_specialization(
+        user_regimes=user_regimes, phased_specs=phased_specs, ages=ages
+    ).representative_user_regimes
 
 
 def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:

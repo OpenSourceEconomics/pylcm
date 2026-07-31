@@ -135,6 +135,7 @@ def make_alive_dead_model(
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
+    liquid_grid: Grid | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -158,6 +159,10 @@ def make_alive_dead_model(
         extra_states: Additional state grids beyond `liquid` (ride-along
             co-states, stochastic processes).
         extra_state_transitions: Transition entries for the extra states.
+        survival_transition: Regime transition for the alive regime.
+        model_states: States broadcast at model level.
+        liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
+            `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
 
     Returns:
         The assembled `Model`.
@@ -165,7 +170,8 @@ def make_alive_dead_model(
     """
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     final_age = ages.exact_values[-1]
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
+    if liquid_grid is None:
+        liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     alive = Regime(
         actions={
             "consumption": LinSpacedGrid(

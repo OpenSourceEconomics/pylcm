@@ -36,6 +36,13 @@ SAVINGS_GRID = jnp.linspace(0.0, 5.0, 21)
 NEXT_VALUE = -1.0 / (LIQUID_GRID + 2.0)
 NEXT_MARGINAL = 1.0 / (LIQUID_GRID + 2.0) ** 2
 
+# A node affords an action exactly when its budget is positive. `jnp.linspace(-1.0,
+# 5.0, 13)` is meant to place a node at exactly zero and does not — `+6e-8` in
+# 32-bit, `-1e-16` in 64-bit — so that node is feasible at one precision and not at
+# the other. That is a property of the grid, not of the solver: at both precisions
+# the solver answers for the budget the grid actually carries. Stated in the test's
+# own terms rather than imported, so it stays an independent statement of the
+# solver's feasible domain.
 INFEASIBLE = np.asarray(LIQUID_GRID) <= 0.0
 
 

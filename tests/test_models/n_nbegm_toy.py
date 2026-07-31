@@ -19,6 +19,7 @@ the degenerate plain-EGM case.
 
 import jax.numpy as jnp
 
+from _lcm.grids.base import Grid
 from lcm import (
     DCEGM,
     NEGM,
@@ -192,13 +193,19 @@ def build_solver(*, variant: str, outer_batch_size: int = 0) -> Solver:
 
 
 def build_model(
-    *, variant: str, outer_batch_size: int = 0, n_periods: int = N_PERIODS
+    *,
+    variant: str,
+    outer_batch_size: int = 0,
+    n_periods: int = N_PERIODS,
+    illiquid_grid: Grid = ILLIQUID_GRID,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
     With `n_periods=2` the single alive period reads only the terminal carry,
     isolating the outer wrapper from the nested-carry publication; longer
     horizons chain published nested carries between alive periods.
+
+    `illiquid_grid` overrides the durable state's grid in both regimes.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -222,7 +229,7 @@ def build_model(
     )
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
-        states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
+        states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -236,7 +243,7 @@ def build_model(
     dead = Regime(
         transition=None,
         active=lambda age, n=final_age_alive: age > n,
-        states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
+        states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility},
     )
     return Model(

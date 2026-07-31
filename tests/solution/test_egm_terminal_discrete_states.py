@@ -261,7 +261,7 @@ def test_dcegm_terminal_bequest_differs_by_pref_type():
     params = _get_params()
     dcegm_solution = _get_dcegm_model().solve(params=params, log_level="debug")
 
-    decision_period = sorted(dcegm_solution)[0]
+    decision_period = min(dcegm_solution)
     V = np.asarray(dcegm_solution[decision_period]["retirement"])
     impatient = V[PrefType.impatient_bequest]
     strong = V[PrefType.strong_bequest]

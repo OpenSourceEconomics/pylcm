@@ -582,9 +582,20 @@ Choose the instrument by what is being asserted:
 Which invariances a structural predicate has to satisfy is not uniform, so assert only
 the ones that carry numerical content:
 
-- **Across batch size — required, exactly.** `batch_size` partitions a computation whose
-  result does not depend on the partition, so any difference in a published value or
-  policy is a defect, never rounding. Test it as equality of the discrete choice.
+- **Across batch size — required, but not bit for bit.** A `batch_size` or block-size
+  knob partitions a computation whose *result* does not depend on the partition: no
+  operation and no operand order changes. What does change is the vmap width each block
+  is compiled for, and XLA emits a differently vectorized kernel per width — so two
+  partitions can land on adjacent representable neighbours of the same real number.
+  (Turning the backend optimizer off collapses every width onto one bit pattern, which
+  is what identifies the effect as code generation rather than arithmetic.) Assert
+  accordingly: structural properties — which discrete choice is taken, which nodes carry
+  a feasible action — exactly; published values with
+  `tests.conftest.assert_agrees_to_ulp`, which bounds the gap in units of the working
+  format's spacing and so says the same thing at either precision. The defect this
+  guards against is a partition-dependent *reduction* — a sum or max evaluated over a
+  block instead of the whole axis, or padding cells left in it — which moves a value by
+  orders of magnitude more than a few ULP.
 - **Across precision — not required.** Two candidates separated at float64 can be
   indistinguishable at float32, and the honest float32 answer is then a *deterministic*
   tie-break, not agreement with float64. Requiring the two to match would forbid the
@@ -684,7 +695,9 @@ prose hides cases.
 ### JAX Integration
 
 - All numerical computations use JAX arrays
-- GPU support available via jax[cuda13] (Linux) or jax-metal (macOS)
+- GPU support available via jax[cuda12] / jax[cuda13] (Linux). macOS runs on CPU: there
+  is no `metal` pixi environment, so Apple-Silicon GPU acceleration is not installable
+  from this project
 - Functions are JIT-compiled during Model initialization for performance
 - `MappingProxyType` is registered as a JAX pytree for use in JIT-compiled functions
 

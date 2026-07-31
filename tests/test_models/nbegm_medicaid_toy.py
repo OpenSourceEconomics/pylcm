@@ -18,6 +18,7 @@ import functools
 import jax.numpy as jnp
 
 import lcm
+from _lcm.grids.base import Grid
 from lcm import LinSpacedGrid, Model
 from lcm.typing import BoolND, ContinuousState, FloatND
 
@@ -83,6 +84,7 @@ def build_model(
     liquid_max: float = 20.0,
     n_savings: int = 100,
     savings_max: float = 20.0,
+    liquid_grid: Grid | None = None,
 ) -> Model:
     """Create the two-regime (alive, dead) Medicaid one-asset toy.
 
@@ -95,6 +97,8 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
+        liquid_grid: Grid for the `liquid` state, overriding the default
+            `LinSpacedGrid` built from `n_liquid` and `liquid_max`.
 
     Returns:
         The assembled `Model`.
@@ -119,6 +123,7 @@ def build_model(
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         ),
         constraints={"feasible": feasible},
+        liquid_grid=liquid_grid,
     )
 
 

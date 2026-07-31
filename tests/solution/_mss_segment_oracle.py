@@ -211,7 +211,7 @@ def f1_branches() -> tuple[Branch, ...]:
 
 def to_fraction(x: float) -> Fraction:
     """Return the exact rational value of an IEEE float."""
-    return Fraction.from_float(float(x))
+    return Fraction(float(x))
 
 
 @dataclass(frozen=True)

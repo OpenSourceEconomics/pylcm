@@ -1,7 +1,7 @@
 r"""MSS upper-envelope refinement of EGM candidates (HARK's EGM upper envelope).
 
 Implements the upper-envelope method of HARK (Carroll et al. 2018), referenced
-in Dobrescu & Shanker (2026) as the `MSS` method column. Inverting the Euler
+in Dobrescu & Shanker (2024) as the `MSS` method column. Inverting the Euler
 equation in models with discrete choices yields a value *correspondence*: the
 candidates form a chain of linear segments between consecutive nodes that, in
 non-concave regions, overlap in the endogenous grid. MSS sweeps the common grid
@@ -63,10 +63,10 @@ def refine_envelope(
         n_refined: Static length of the refined output arrays.
         segment_id: Optional per-candidate branch label, aligned with
             `endog_grid`. When supplied, a consecutive-pair link is a real value
-            segment iff both endpoints carry the same label, so unrelated
-            branches are never bridged — the explicit-topology path that replaces
-            the `decreases` heuristic. `None` (the default) infers segments from a
-            grid or value decrease, HARK's monotone split.
+            segment iff both endpoints carry the same label, so unrelated branches
+            are never bridged, and the topology is declared rather than inferred.
+            `None` (the default) infers it from a grid or value decrease past a
+            noise floor — HARK's monotone split.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -104,12 +104,15 @@ def refine_envelope(
     # Per-link branch id and live mask. With explicit topology a link is a real
     # value segment iff both endpoints carry the same branch label, so unrelated
     # branches are never bridged. Without it, fall back to HARK's monotone split:
-    # a new segment starts wherever the grid or value *decreases* between
-    # consecutive candidates, and a link spanning such a decrease is a
-    # non-monotone bridge excluded from the scan. Either way the winner stays
-    # constant across one branch, so only a genuine branch switch is a kink.
+    # a new segment starts wherever the grid decreases, or the value decreases past
+    # the noise floor, between consecutive candidates, and a link spanning such a
+    # decrease is a non-monotone bridge excluded from the scan. Either way the
+    # winner stays constant across one branch, so only a genuine branch switch is a
+    # kink.
     if segment_id is None:
-        decreases = (right_grid < left_grid) | (right_value < left_value)
+        decreases = (right_grid < left_grid) | _value_decrease_past_noise(
+            left_value=left_value, right_value=right_value
+        )
         link_segment = jnp.cumsum(decreases.astype(jnp.int32))
         segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
     else:
@@ -469,7 +472,14 @@ def _evaluate_envelope(
         left_policy[None, :] + relative * (right_policy - left_policy)[None, :]
     )
 
-    masked_value = jnp.where(brackets, value_interp, -jnp.inf)
+    # A link whose interpolated value is not finite is excluded rather than let
+    # into the reduction: `jnp.max` propagates a NaN across the whole row, which
+    # would publish NaN as live envelope data at every node the link covers. Losing
+    # only itself leaves the node to any other link that covers it, and a node no
+    # finite link covers reports `-inf` and joins the dropped tail.
+    masked_value = jnp.where(
+        brackets & jnp.isfinite(value_interp), value_interp, -jnp.inf
+    )
     envelope_value = jnp.max(masked_value, axis=1)
     # Select the winning segment deterministically: among segments whose
     # interpolated value sits within a scale-aware band of the max, take the
@@ -479,6 +489,13 @@ def _evaluate_envelope(
     # kept segment — hence `winner_segment`, the crossing decision, and `n_kept`
     # — backend-dependent. The band makes the near-tie choice reduction-order
     # independent.
+    #
+    # Link order is therefore the last tiebreak, and it is the *caller's* order:
+    # two colinear value lines from different discrete choices are separated by
+    # nothing else here, so the one concatenated first wins. That is arbitrary but
+    # reproducible — `jnp.argsort` above is stable, so the same inputs always
+    # produce the same order. Any rule would be arbitrary; a policy-based one would
+    # impose an ordering on a quantity with no envelope meaning.
     tie_floor = (
         16.0
         * jnp.finfo(value_interp.dtype).eps
@@ -493,6 +510,28 @@ def _evaluate_envelope(
     winner_link = jnp.where(any_bracket, best_link, 0).astype(jnp.int32)
     winner_segment = jnp.where(any_bracket, segment_id[best_link], -1).astype(jnp.int32)
     return envelope_value, envelope_policy, winner_link, winner_segment
+
+
+def _value_decrease_past_noise(*, left_value: Float1D, right_value: Float1D) -> BoolND:
+    """Whether the value genuinely falls from one candidate to the next.
+
+    Without an explicit `segment_id` the branch boundaries have to be inferred, and
+    a value decrease is the signal. Along a near-linear tail, though, the sign of
+    the difference between two consecutive values is set by rounding rather than by
+    economics — the same shape the FUES savings-monotonicity test guards against —
+    and reading such a decrease as a boundary drops the whole run above it from the
+    envelope. The floor `16 * eps * max(|left|, |right|)` scales with the values in
+    play, so it masks a genuine decrease only when the two values are
+    indistinguishable at the working precision.
+
+    Returns:
+        Per-link mask, true where the right value falls below the left one by more
+        than the noise floor.
+
+    """
+    scale = jnp.maximum(jnp.abs(left_value), jnp.abs(right_value))
+    noise_floor = 16.0 * jnp.finfo(left_value.dtype).eps * scale
+    return right_value < left_value - noise_floor
 
 
 def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND:

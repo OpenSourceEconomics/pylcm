@@ -43,6 +43,7 @@ def egm_one_asset_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -51,12 +52,21 @@ def egm_one_asset_step(
 ) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
+    The two grids are distinct roles, not a convenience: this period's value is
+    published on `liquid_grid`, while every next-period array is tabulated on
+    `next_liquid_grid` and must be read there. They coincide unless the liquid
+    state is an `AgeSpecializedGrid`, in which case reading `next_value` on this
+    period's nodes evaluates the continuation at wealth levels the next period's
+    grid never covers.
+
     Args:
-        next_value: Next period's value on `liquid_grid`, shape `(n_liquid,)`.
-        next_marginal: Next period's marginal value of liquid `V'` on `liquid_grid`,
-            shape `(n_liquid,)`. For a terminal bequest `u(liquid)` this is
-            `liquid ** (-crra)`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`, shape `(n_liquid,)`.
+        next_marginal: Next period's marginal value of liquid `V'` on
+            `next_liquid_grid`, shape `(n_liquid,)`. For a terminal bequest
+            `u(liquid)` this is `liquid ** (-crra)`.
+        liquid_grid: Regular liquid-state grid for this period (ascending).
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae of `next_value` and `next_marginal`.
         savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending,
             starting at 0), shape `(n_savings,)`.
         discount_factor: Discount factor `beta`.
@@ -71,8 +81,8 @@ def egm_one_asset_step(
     """
     gross_return = 1.0 + return_liquid
     next_liquid = gross_return * savings_grid + income
-    value_next = jnp.interp(next_liquid, liquid_grid, next_value)
-    marginal_next = jnp.interp(next_liquid, liquid_grid, next_marginal)
+    value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
+    marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = consumption + savings_grid
@@ -85,7 +95,7 @@ def egm_one_asset_step(
     # Constrained: below the smallest endogenous liquid the borrowing constraint binds,
     # so the agent consumes all liquid and saves nothing (`next_liquid = income`).
     constrained = liquid_grid < liquid_endog[0]
-    value_at_zero_savings = jnp.interp(income, liquid_grid, next_value)
+    value_at_zero_savings = jnp.interp(income, next_liquid_grid, next_value)
     constrained_value = (
         crra_utility(liquid_grid, crra) + discount_factor * value_at_zero_savings
     )

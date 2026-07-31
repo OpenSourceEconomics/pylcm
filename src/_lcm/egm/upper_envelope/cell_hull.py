@@ -340,23 +340,21 @@ def _place_handovers(
     exact double-double expressions in the two links' stored endpoints, each
     carrying its own error bound. Because the walk orders owners by increasing
     slope, `f` decreases across a handover, so the state to publish is the
-    smallest representable one at or above the root — and *which* one that is
-    the quotient's low word says: a positive low word puts the root above the
-    high word, anything else at or below it.
+    smallest representable one at or above the root.
 
-    What the row is asked to certify is that the bound fits inside a state, so
-    that only those two candidates are in play. It is deliberately not asked to
-    beat the low word as well. Where the bound straddles zero the crossing is
-    within the bound of the published state — a sub-state quantity, far finer
-    than the states the row is written in — and refusing there would discard the
-    row over a distinction it has no way to express. A bound wider than a state
-    is the genuinely undecided case, and that one is refused.
+    Locating the root and choosing between the two states it can fall on are
+    separate questions with separate certificates. The row is asked to certify
+    that the root's bound fits inside a state, so that only `root_high` and its
+    successor are in play; a bound wider than a state is the genuinely undecided
+    case and is refused.
 
-    The margin predicate is not the instrument for this. Adjacent to a crossing
-    the two links are within a rounding of each other, so
-    `certified_sign.certified_margin_sign` reports a determinant under its own
-    resolution there — by construction, not by accident — and a placement driven
-    by it would hand over a state early whenever it did.
+    Which of the two it is, `f` itself answers. Evaluated again at `root_high`
+    through the same recentred form, its certified sign says whether the
+    outgoing link still owns that state. The division's leftover cannot answer
+    it: that leftover is only as meaningful as its own bound, and it is smallest
+    in exactly the case that matters most — a crossing landing on a state, where
+    the true residual is zero — so reading its sign hands over one state late
+    there.
 
     This runs once per cell over all breakpoints at once, not inside the walk.
     The walk decides *who* owns what, which is certified separately; only the
@@ -394,6 +392,12 @@ def _place_handovers(
         dd_mul(dd_from_difference(a_v1, a_v0), width_b),
         dd_negate(dd_mul(dd_from_difference(b_v1, b_v0), width_a)),
     )
+    # A rate of exactly zero is two links `f` cannot separate: either they are
+    # genuinely parallel, in which case no crossing exists to publish, or their
+    # true difference in slope is finer than the pair itself can carry, in which
+    # case its bound `rate[2]` is all that is left of it. Both are refusals, so
+    # the substituted denominator below only keeps the arithmetic finite — the
+    # quotient it produces is never a located root, and `unresolved` says so.
     degenerate = (rate[0] + rate[1]) == 0.0
     safe_rate = (
         jnp.where(degenerate, jnp.ones_like(rate[0]), rate[0]),
@@ -401,7 +405,7 @@ def _place_handovers(
         rate[2],
     )
     step_high, step_low, step_error = dd_quotient_bounded(dd_negate(at_edge), safe_rate)
-    root_high, root_low, root_dropped = dd_add_float(
+    root_high, _root_low, root_dropped = dd_add_float(
         (step_high, step_low, jnp.zeros_like(step_high)), left
     )
 
@@ -415,16 +419,71 @@ def _place_handovers(
         (at_edge[2] + step * rate[2]) / safe_magnitude + step_error + root_dropped
     )
 
-    # What has to hold is that the bound fits inside a state: the crossing is
-    # then known to lie in `root_high` or the state above it, and no third
-    # candidate is in play. The low word is not part of that test — it is the
-    # exact residual of the located pair, routinely half a state wide, and it is
-    # what *chooses* between the two: a positive residual puts the crossing above
-    # `root_high`, so ownership passes at the state above it, and anything else
-    # puts it at or below, so `root_high` is already the incoming link's.
+    # Locating the root and choosing between the two states it can fall on are
+    # separate questions, and each needs its own certificate.
+    #
+    # The first is a width: once the bound fits inside a state, the crossing is
+    # known to lie on `root_high` or on the state above it, and no third
+    # candidate is in play. A bound wider than a state is genuinely undecided.
     resolution = jnp.nextafter(root_high, jnp.inf) - root_high
-    resolved = 2.0 * root_error < resolution
-    candidate = jnp.where(root_low > 0.0, jnp.nextafter(root_high, jnp.inf), root_high)
+    fits_in_one_state = 2.0 * root_error < resolution
+
+    # The second is a side, and the division's leftover cannot answer it. That
+    # leftover is only as meaningful as its own bound, so where it is smaller
+    # than `root_error` its sign is noise — and it is smallest in exactly the
+    # case that matters most, a crossing landing on a representable state, where
+    # the true residual is zero. Reading it there hands over one state late.
+    #
+    # So the side is decided by the difference itself, re-evaluated at
+    # `root_high` through the same recentred exact form. The walk orders owners
+    # by increasing slope, so `f` decreases across a handover and the incoming
+    # link owns every state where `f <= 0`; equality is the incoming link's by
+    # the right-continuous convention, which is what puts an exactly
+    # representable crossing on `root_high` rather than on its successor.
+    at_root = dd_add(
+        dd_mul(
+            _recentred_numerator(
+                x0=a_x0,
+                x1=a_x1,
+                v0=a_v0,
+                v1=a_v1,
+                reference=reference,
+                x_query=root_high,
+            ),
+            width_b,
+        ),
+        dd_negate(
+            dd_mul(
+                _recentred_numerator(
+                    x0=b_x0,
+                    x1=b_x1,
+                    v0=b_v0,
+                    v1=b_v1,
+                    reference=reference,
+                    x_query=root_high,
+                ),
+                width_a,
+            )
+        ),
+    )
+    # The test is one-sided on purpose. `root_high` goes to the incoming link
+    # unless the outgoing link is *certified* to still own it, which is the
+    # right-continuous convention applied to what the arithmetic can actually
+    # establish: a crossing landing on a state makes `f` there exactly zero,
+    # and a tie is the incoming link's. Demanding a certificate for the
+    # incoming side as well would refuse precisely that case — an exact zero
+    # satisfies neither strict inequality once its bound is conservative — and
+    # a cell whose crossing sits on a state is the ordinary shape of a solved
+    # row near a kink, not a pathology. Where `f` is positive but by less than
+    # its own bound the handover moves one state early, which is a difference
+    # the row has no way to express in the first place.
+    at_root_value = at_root[0] + at_root[1]
+    outgoing_owns_root_high = (at_root_value - at_root[2]) > 0.0
+
+    resolved = fits_in_one_state
+    candidate = jnp.where(
+        outgoing_owns_root_high, jnp.nextafter(root_high, jnp.inf), root_high
+    )
 
     # Breakpoints where ownership does not change are not handovers; the walk
     # parks them on the cell's right edge and they must stay there.
@@ -445,8 +504,12 @@ def _place_handovers(
         [jnp.ones_like(interior[:1], dtype=bool), interior[1:] != interior[:-1]]
     )
     placed = jax.lax.cummax(jnp.where(opens_group, placed, -jnp.inf))
-    finite = jnp.isfinite(at_edge[0] + at_edge[1]) & jnp.isfinite(rate[0] + rate[1])
-    unresolved = jnp.any(hands_over & (~finite | ~resolved))
+    finite = (
+        jnp.isfinite(at_edge[0] + at_edge[1])
+        & jnp.isfinite(rate[0] + rate[1])
+        & jnp.isfinite(at_root_value)
+    )
+    unresolved = jnp.any(hands_over & (~finite | degenerate | ~resolved))
     return jnp.concatenate([bounds[:1], placed, bounds[-1:]]), unresolved
 
 
@@ -500,6 +563,9 @@ def _approximate_crossing(
         numerator,
         dd_negate((margin_right[0], margin_right[1], jnp.zeros_like(margin_right[0]))),
     )
+    # A span the pair cannot separate costs an arbitrary *rank*, which the walk is
+    # allowed to be wrong about — a stranded link is caught by the all-live check.
+    # `_place_handovers` refuses the same case, because there a root is published.
     degenerate = (span[0] + span[1]) == 0.0
     safe_span = (
         jnp.where(degenerate, jnp.ones_like(span[0]), span[0]),

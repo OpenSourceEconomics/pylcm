@@ -51,7 +51,11 @@ from _lcm.egm.ez_kernel import (
     ez_marginal_of_resource,
     ez_period_value,
 )
-from _lcm.egm.nbegm_segments import mask_dead_candidates, segment_ids_from_folds
+from _lcm.egm.nbegm_segments import (
+    affords_an_action,
+    mask_dead_candidates,
+    segment_ids_from_folds,
+)
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
@@ -484,7 +488,7 @@ def nbegm_multi_interval_step_savings(
     # with a distinct segment id (below), so a node feasible at a single liquid
     # point stays bracketable by the link-only envelope at its own abscissa.
     node_consumption = coh_grid[None, :] - savings_grid[:, None]
-    node_feasible = node_consumption > 0.0
+    node_feasible = affords_an_action(node_consumption)
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     if inverse_eis is not None:
         node_value_safe = ez_period_value(
@@ -579,7 +583,7 @@ def _interval_corner_candidates(
     # degenerate Euler inversion. Where the budget slopes it is the ordinary no-save
     # candidate `u(coh(liquid)) + beta * V'(0)`.
     floor_consumption = coh_intercept - savings_grid
-    floor_feasible = floor_consumption > 0.0
+    floor_feasible = affords_an_action(floor_consumption)
     floor_node_value = jnp.where(
         floor_feasible,
         jax.vmap(utility_of_action)(jnp.where(floor_feasible, floor_consumption, 1.0))
@@ -597,7 +601,8 @@ def _interval_corner_candidates(
     # point where the budget is defined; the positivity guard drops any point where an
     # undeclared kink still leaves it non-positive rather than letting `u(<=0)` = NaN
     # leak into the envelope as a live candidate.
-    s0_consumption_safe = jnp.where(corner_coh_grid > 0.0, corner_coh_grid, 1.0)
+    s0_feasible = affords_an_action(corner_coh_grid)
+    s0_consumption_safe = jnp.where(s0_feasible, corner_coh_grid, 1.0)
     s0 = mask_dead_candidates(
         endog_grid=liquid_grid,
         value=jnp.where(
@@ -608,7 +613,7 @@ def _interval_corner_candidates(
         ),
         policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
         marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption_safe),
-        valid=in_interval & jnp.where(flat, floor_affordable, corner_coh_grid > 0.0),
+        valid=in_interval & jnp.where(flat, floor_affordable, s0_feasible),
     )
 
     # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
@@ -617,7 +622,7 @@ def _interval_corner_candidates(
     # reaches. Feasible only where residual consumption is positive; redundant on a flat
     # interval, whose dense floor search already spans the whole savings grid.
     smax_consumption = corner_coh_grid - savings_grid[-1]
-    smax_feasible = (smax_consumption > 0.0) & (~flat) & in_interval
+    smax_feasible = affords_an_action(smax_consumption) & (~flat) & in_interval
     smax_consumption_safe = jnp.where(smax_feasible, smax_consumption, 1.0)
     smax = mask_dead_candidates(
         endog_grid=liquid_grid,
@@ -2282,7 +2287,7 @@ def _no_save_corner(
         channels, each NaN where the corner has no feasible action.
 
     """
-    feasible = coh > 0.0
+    feasible = affords_an_action(coh)
     safe = jnp.where(feasible, coh, 1.0)
     return mask_dead_candidates(
         endog_grid=endog_grid,

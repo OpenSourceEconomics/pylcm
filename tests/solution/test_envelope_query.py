@@ -11,7 +11,17 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from tests.conftest import assert_agrees_to_ulp
 from tests.solution._envelope_oracle import exact_envelope
+
+# Bound on how far the blocked scan may sit from the dense reduction. The two
+# paths evaluate the same expressions and differ only in how XLA lowers them: a
+# link read the dense reduction emits as a separate multiply-and-add, the scan
+# body contracts into a fused one, moving a channel by an ULP or so in either
+# direction. The bound stays far below what a partition-dependent *reduction* —
+# a max taken over a block instead of the whole segment axis, or a padding cell
+# left in one — would cost.
+_BLOCKING_ULP = 16
 
 
 def _marginal(endog_grid, value, segment_id):
@@ -83,9 +93,9 @@ def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
     """`segment_block_size` is a memory knob: same value, policy, marginal.
 
     The two-pass blocked scan reproduces the dense `(n_query, n_segment)`
-    reduction — same envelope value, same right-continuous tie-break winner — for
-    any block size (divisor or not) below the segment count, up to floating-point
-    reassociation between the two XLA lowerings.
+    reduction — same envelope value, same right-continuous tie-break winner, same
+    unbracketed queries — for any block size (divisor or not) below the segment
+    count, to within the ULP or so the two XLA lowerings differ by.
     """
     rng = np.random.default_rng(20260626)
     # Three interleaved branches over a shared resource range, so several
@@ -121,9 +131,14 @@ def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
         x_query=x_query,
         segment_block_size=block_size,
     )
-    for dense_arr, blocked_arr in zip(dense, blocked, strict=True):
-        np.testing.assert_allclose(
-            np.asarray(blocked_arr), np.asarray(dense_arr), rtol=1e-12, atol=1e-12
+    for channel, dense_arr, blocked_arr in zip(
+        ("value", "policy", "marginal"), dense, blocked, strict=True
+    ):
+        assert_agrees_to_ulp(
+            blocked_arr,
+            dense_arr,
+            n_ulp=_BLOCKING_ULP,
+            err_msg=f"{channel} channel, block_size={block_size}",
         )
 
 

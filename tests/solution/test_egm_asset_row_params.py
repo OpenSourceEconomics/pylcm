@@ -177,7 +177,7 @@ def _assert_working_life_V_matches(
         )
 
 
-# --- Slice 1: child resources reads a model param --------------------------
+# Slice 1: child resources reads a model param
 
 
 def resources_with_rate(wealth: ContinuousState, rate_of_return: float) -> FloatND:
@@ -262,7 +262,7 @@ def test_child_resources_reading_param_matches_brute_force():
     )
 
 
-# --- Slice 2: regime-transition prob reads a param-dependent intermediate ---
+# Slice 2: regime-transition prob reads a param-dependent intermediate
 
 
 def capital_income(wealth: ContinuousState, rate_of_return: float) -> FloatND:
@@ -383,7 +383,7 @@ def test_regime_prob_reading_param_intermediate_matches_brute_force(
     )
 
 
-# --- Slice 3: Phased-imputed intermediate feeding resources ----------------
+# Slice 3: Phased-imputed intermediate feeding resources
 
 
 PENSION_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=4)
@@ -499,7 +499,7 @@ def test_imputed_pension_wealth_feeding_resources_matches_brute_force():
     )
 
 
-# --- Slice 4: a decreasing (parameter-dependent) resources map fails loud ---
+# Slice 4: a decreasing (parameter-dependent) resources map fails loud
 
 
 def resources_decreasing(wealth: ContinuousState, offset: float) -> FloatND:

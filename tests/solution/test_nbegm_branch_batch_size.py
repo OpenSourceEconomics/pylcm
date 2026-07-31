@@ -2,15 +2,19 @@
 
 `branch_batch_size` bounds how many discrete-action branches the two ride-along
 cores hold in flight at once: `0` runs the whole branch axis in one vectorized
-pass, `1` runs branch-by-branch (memory-minimal). The solved value function is
-identical either way — the knob trades peak memory against sequential execution.
+pass, `1` runs branch-by-branch (memory-minimal). The knob trades peak memory
+against sequential execution and changes no arithmetic.
 """
 
 from collections.abc import Mapping
 
-import numpy as np
-
+from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_discrete_toy as toy
+
+# Partitioning the branch axis leaves every operation and its operand order
+# untouched, so the two solves differ only by the vectorized kernel XLA emits for
+# each block width — a gap of a few ULP, not of an economic magnitude.
+_PARTITION_ULP = 16
 
 
 def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
@@ -37,9 +41,9 @@ def test_branch_batch_size_one_matches_whole_axis() -> None:
     assert whole.keys() == streamed.keys()
     for period in whole:
         for regime in whole[period]:
-            np.testing.assert_allclose(
-                np.asarray(streamed[period][regime]),
-                np.asarray(whole[period][regime]),
-                rtol=1e-12,
-                atol=1e-12,
+            assert_agrees_to_ulp(
+                streamed[period][regime],
+                whole[period][regime],
+                n_ulp=_PARTITION_ULP,
+                err_msg=f"period={period} regime={regime}",
             )
