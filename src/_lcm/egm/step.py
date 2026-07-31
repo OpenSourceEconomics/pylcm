@@ -167,6 +167,10 @@ from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_eul
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.logsum import logsum_and_softmax
+from _lcm.regime_building.age_normalization import (
+    periodized_tree_signature,
+    resolve_periodized_nodes,
+)
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
@@ -381,10 +385,17 @@ def build_egm_step_functions(
             (
                 carry,
                 scalar,
-                _continuation_grid_signature(
-                    period=period,
-                    targets=carry + scalar,
-                    period_to_regime_grid_signature=period_to_regime_grid_signature,
+                (
+                    _continuation_grid_signature(
+                        period=period,
+                        targets=carry + scalar,
+                        period_to_regime_grid_signature=period_to_regime_grid_signature,
+                    ),
+                    # An `AgeSpecializedFunction` is a different function at each
+                    # age, so periods may share a program only where the user's
+                    # declared signature says the closures agree.
+                    periodized_tree_signature(functions, period),
+                    periodized_tree_signature(constraints, period),
                 ),
             ),
             [],
@@ -393,19 +404,29 @@ def build_egm_step_functions(
     built: dict[_EGMGroupKey, EGMStepFunction] = {}
     for group_key, group_periods in configs.items():
         carry_targets, scalar_targets, _ = group_key
-        # Every period in the group shares a continuation-grid signature, so the
-        # first one's interpolation info is the whole group's.
+        # Every period in the group shares a continuation-grid signature and the
+        # signatures of its periodized functions and constraints, so the first
+        # one's resolved economics is the whole group's.
+        representative_period = group_periods[0]
         group_v_interp = _continuation_info(
-            period=group_periods[0],
+            period=representative_period,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             period_to_regime_v_interp=period_to_regime_v_interp,
+        )
+        group_functions = cast(
+            "EconFunctionsMapping",
+            resolve_periodized_nodes(functions, representative_period),
+        )
+        group_constraints = cast(
+            "ConstraintFunctionsMapping",
+            resolve_periodized_nodes(constraints, representative_period),
         )
         unsupported = _find_unsupported_feature(
             solver=solver,
             regime_name=regime_name,
             user_regimes=user_regimes,
-            functions=functions,
-            constraints=constraints,
+            functions=group_functions,
+            constraints=group_constraints,
             carry_targets=carry_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
@@ -424,8 +445,8 @@ def build_egm_step_functions(
             kernel = _get_egm_step(
                 solver=solver,
                 user_regimes=user_regimes,
-                functions=functions,
-                constraints=constraints,
+                functions=group_functions,
+                constraints=group_constraints,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
                 compute_regime_transition_probs=compute_regime_transition_probs,
