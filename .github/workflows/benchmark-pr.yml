@@ -22,7 +22,16 @@ jobs:
     runs-on:
       - self-hosted
       - gpu-benchmark
+    env:
+      # On the benchmark runner `/tmp` sits on a small root filesystem, while the
+      # runner's own work volume has hundreds of GB free. The benchmarks write
+      # hundreds of MB of debug-log snapshots per run, which filled the root
+      # filesystem and failed three branches' jobs with ENOSPC. Keep temporary
+      # files on the big volume.
+      TMPDIR: ${{ runner.temp }}
     steps:
+      - name: Report free disk space
+        run: df -h "$TMPDIR" /tmp / | cat
       - name: Wait for GPU to be free
         run: |
           echo "Waiting for GPU to be free..."
