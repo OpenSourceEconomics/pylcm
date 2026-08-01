@@ -1176,15 +1176,7 @@ def _build_simulation_phase(
             # declared-reachable targets: canonicalization expands even a coarse
             # regime transition into one cell per target, so a stateless target
             # is present here holding only its `next_regime` cell.
-            # Solve phase only, deliberately. Including stateless targets in the
-            # simulate-phase Q collapses a rank of `Q_arr` and breaks the action
-            # argmax; `test_simulate_using_raw_inputs` in
-            # `tests/simulation/test_simulate.py` reproduces it. The mechanism is
-            # not yet understood, so the
-            # simulate-phase Q keeps its previous target set rather than shipping a
-            # change whose failure mode is unexplained. The solved value function it
-            # reads already carries the stateless continuation.
-            reachable_targets=frozenset(),
+            reachable_targets=frozenset(nested_transitions),
             functions=functions,
             constraints=constraints,
             transitions=solve_transitions,

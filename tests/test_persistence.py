@@ -266,13 +266,13 @@ def test_snapshot_contains_environment_files(tmp_path, model_and_params):
     assert (snap_dir / "metadata.json").exists()
     assert (snap_dir / "REPRODUCE.md").exists()
 
-    with (snap_dir / "metadata.json").open() as fh:
+    with (snap_dir / "metadata.json").open(encoding="utf-8") as fh:
         metadata = json.load(fh)
     assert metadata["snapshot_type"] == "solve"
     assert "platform" in metadata
     assert "fields" in metadata
 
-    reproduce = (snap_dir / "REPRODUCE.md").read_text()
+    reproduce = (snap_dir / "REPRODUCE.md").read_text(encoding="utf-8")
     assert _get_platform() in reproduce
     assert "pixi install --frozen" in reproduce
 
