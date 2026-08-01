@@ -18,6 +18,7 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     TauchenAR1Process,
@@ -90,11 +91,6 @@ def test_a_stateless_regime_carries_its_own_value():
     )
 
 
-@pytest.mark.xfail(
-    reason="continuation targets are enumerated from state-law bundle keys, so a "
-    "stateless regime never appears as a target and its value is dropped",
-    strict=False,
-)
 @pytest.mark.parametrize("bequest", [0.0, 4.0, 10.0])
 def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest):
     """At wealth levels that leave, the parent's value is `beta * bequest`."""
@@ -110,10 +106,6 @@ def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest):
     )
 
 
-@pytest.mark.xfail(
-    reason="the stateless target's value never reaches the parent's continuation",
-    strict=True,
-)
 def test_the_stateless_bequest_moves_the_parent():
     """Changing the bequest changes the parent's value function.
 
@@ -123,6 +115,72 @@ def test_the_stateless_bequest_moves_the_parent():
     poor = np.asarray(_solve_with_bequest(0.0)[0]["alive"])
     rich = np.asarray(_solve_with_bequest(10.0)[0]["alive"])
     assert not np.allclose(poor, rich)
+
+
+@categorical(ordered=False)
+class _ThreeRegimeId:
+    alive: ScalarInt
+    gone: ScalarInt
+    limbo: ScalarInt
+
+
+def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
+    """Solve a model holding a stateless regime the parent cannot reach.
+
+    `alive`'s regime transition is a per-target mapping naming only `alive` and
+    `gone`, so `limbo` is structurally unreachable from it even though `limbo` is
+    a perfectly ordinary active stateless regime with a large payoff.
+    """
+
+    def _leaves(wealth, age):
+        return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
+
+    alive = Regime(
+        transition={
+            "alive": MarkovTransition(lambda wealth, age: 1.0 - _leaves(wealth, age)),
+            "gone": MarkovTransition(lambda wealth, age: 1.0 * _leaves(wealth, age)),
+        },
+        active=lambda age: age < _LAST_AGE,
+        states={"wealth": _WEALTH_GRID},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        state_transitions={"wealth": _next_wealth},
+        functions={"utility": _utility},
+    )
+    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(10.0)})
+    limbo = Regime(
+        transition=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
+    )
+    model = Model(
+        regimes={"alive": alive, "gone": gone, "limbo": limbo},
+        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        regime_id_class=_ThreeRegimeId,
+    )
+    params = {
+        "alive": {
+            "utility": {},
+            "H": {"discount_factor": _DISCOUNT},
+            "next_wealth": {},
+            "next_regime": {"alive": {}, "gone": {}},
+        },
+        "gone": {"utility": {}},
+        "limbo": {"utility": {}},
+    }
+    return model.solve(params=params, log_level="debug")
+
+
+def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
+    """A stateless regime the transition never names contributes nothing.
+
+    The discriminator between the two candidate rules. *Declared reachability ∩
+    activity* excludes `limbo`, because `alive`'s per-target transition does not
+    name it. The weaker rule "every regime active next period is a target" would
+    include it, and the parent's value would move with a payoff it can never
+    collect. Only a model where the two rules disagree can tell them apart, which
+    is why `limbo` is active and richly paid rather than merely absent.
+    """
+    poor = np.asarray(_solve_with_an_unreachable_stateless_regime(0.0)[0]["alive"])
+    rich = np.asarray(_solve_with_an_unreachable_stateless_regime(1000.0)[0]["alive"])
+    np.testing.assert_array_almost_equal(poor, rich, decimal=DECIMAL_PRECISION)
 
 
 def _solve_with_process_only_target(level: float):
@@ -175,8 +233,9 @@ def test_a_process_only_regime_carries_its_own_value():
 
 
 @pytest.mark.xfail(
-    reason="a process-only target contributes no non-process state law, so it never "
-    "appears as a continuation target and its expectation is dropped",
+    reason="an AR(1) process transition conditions on this period's value of the "
+    "process, and a source that does not carry the process has no such value; what "
+    "law a target-only process should follow is undecided",
     strict=True,
 )
 def test_the_process_only_level_moves_the_parent():
