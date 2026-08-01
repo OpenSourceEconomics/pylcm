@@ -17,7 +17,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
-from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName, StateName
 from _lcm.utils.logging import v_array_has_nan
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -278,3 +278,62 @@ def contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
         for regime_to_V_arr in period_to_regime_to_V_arr.values()
         for V_arr in regime_to_V_arr.values()
     )
+
+
+def validate_supplied_V_shapes(
+    *,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
+    regime_to_state_names: Mapping[RegimeName, tuple[StateName, ...]],
+) -> None:
+    """Fail if a supplied value function has the wrong number of axes.
+
+    A regime's value function is a table indexed by that regime's states, so it
+    carries one axis per declared state; a regime declaring no states has a
+    rank-zero value function, a single number.
+
+    Nothing downstream can recover this. An array of the wrong rank still
+    broadcasts, so it reaches the Bellman equation as an ordinary value and
+    either fails far from its origin — as a shape complaint naming some other
+    array — or silently contributes an expectation over an axis the regime does
+    not have. The declared state space is known only here, which is why the
+    check lives at the boundary that accepts a caller-supplied solution.
+
+    Only the rank is checked, not the axis lengths. Under age-specialized grids
+    a regime's grids legitimately change length from period to period, so a
+    length check would reject valid models; the number of states does not vary
+    with age, so the rank check is safe wherever the length check would not be.
+
+    Args:
+        period_to_regime_to_V_arr: Mapping of periods to regime names to value
+            function arrays, as supplied by the caller.
+        regime_to_state_names: Mapping of regime names to the tuple of state
+            names each regime declares.
+
+    Raises:
+        InvalidValueFunctionError: If any array's rank disagrees with the number
+            of states declared by the regime it is keyed under.
+
+    """
+    mismatches = []
+    for period, regime_to_V_arr in period_to_regime_to_V_arr.items():
+        for regime_name, V_arr in regime_to_V_arr.items():
+            if regime_name not in regime_to_state_names:
+                continue
+            state_names = regime_to_state_names[regime_name]
+            actual = tuple(jnp.shape(V_arr))
+            if len(actual) != len(state_names):
+                mismatches.append(
+                    f"  period {period}, regime {regime_name!r}: value function "
+                    f"has shape {actual} ({len(actual)} axes), but the regime "
+                    f"declares {len(state_names)} state(s) {list(state_names)}"
+                )
+    if mismatches:
+        detail = "\n".join(mismatches)
+        msg = (
+            "Supplied value function arrays do not match the state spaces of "
+            "the regimes they are keyed under:\n"
+            f"{detail}\n"
+            "A regime's value function has one axis per declared state, in "
+            "declaration order; a regime with no states has a rank-zero array."
+        )
+        raise InvalidValueFunctionError(msg)

@@ -359,21 +359,36 @@ def get_Q_and_F(
         # so its value enters weighted only by the probability of going there
         # (#407 `ec96c12` -- such a target is NOT worth zero).
         #
-        # These seed `mixture_terms` rather than being summed separately as
-        # `E += p*V`, so they get the same reduction as every other target:
-        # `zero_safe_weighted_term` masks a zero-probability `+-inf` to exactly 0
-        # instead of yielding NaN, and the sum stays value-ordered (invariant to
-        # regime alpha-renaming). A raw product here would reintroduce both
-        # defects on the collective branch, where dissolution makes `-inf`
+        # A nonlinear certainty equivalent still transforms it FIRST (#407
+        # `d9aec7d`): `transform` precedes every expectation, the
+        # regime-transition one included, and `inverse` applies once to the
+        # finished sum. That is the same order the carry targets below follow.
+        #
+        # The transformed value then seeds `mixture_terms` rather than being
+        # summed separately as `E += p*V`, so it gets the same reduction as every
+        # other target: `zero_safe_weighted_term` masks a zero-probability `+-inf`
+        # to exactly 0 instead of yielding NaN, and the sum stays value-ordered
+        # (invariant to regime alpha-renaming). A raw product would reintroduce
+        # both defects on the collective branch, where dissolution makes `-inf`
         # continuations ordinary rather than exotic.
-        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = [
-            (
-                scalar_target_name,
-                active_regime_probs[scalar_target_name],
-                next_regime_to_V_arr[scalar_target_name],
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        for scalar_target_name in scalar_targets:
+            scalar_V = next_regime_to_V_arr[scalar_target_name]
+            if ce is not None:
+                scalar_V = ce.transform(
+                    value=scalar_V,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
+            mixture_terms.append(
+                (
+                    scalar_target_name,
+                    active_regime_probs[scalar_target_name],
+                    scalar_V,
+                )
             )
-            for scalar_target_name in scalar_targets
-        ]
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -598,16 +613,26 @@ def get_compute_intermediates(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        # Stateless targets seed the mixture; see `get_Q_and_F` above for why they
-        # go through `mixture_terms` rather than a separate `E += p*V` sum.
-        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = [
-            (
-                scalar_target_name,
-                active_regime_probs[scalar_target_name],
-                next_regime_to_V_arr[scalar_target_name],
+        # Stateless targets: CE-transform first, then seed the mixture. See
+        # `get_Q_and_F` above for why both halves are needed.
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        for scalar_target_name in scalar_targets:
+            scalar_V = next_regime_to_V_arr[scalar_target_name]
+            if ce is not None:
+                scalar_V = ce.transform(
+                    value=scalar_V,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
+            mixture_terms.append(
+                (
+                    scalar_target_name,
+                    active_regime_probs[scalar_target_name],
+                    scalar_V,
+                )
             )
-            for scalar_target_name in scalar_targets
-        ]
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,

@@ -91,10 +91,10 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         period_to_regime_to_V_arr=MappingProxyType(
             {
                 0: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
                 1: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
             }
         ),

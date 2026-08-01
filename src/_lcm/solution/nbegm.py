@@ -379,7 +379,7 @@ class NBEGM(Solver):
                 path="single-liquid-state kernels",
             )
         )
-        fail_if_kernel_naming_contract_unmet(
+        fail_if_kernel_fixed_form_contract_unmet(
             context=context, liquid_state_name=liquid_state_name
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
@@ -1229,18 +1229,28 @@ _KERNEL_UTILITY = ("utility", "crra")
 _KERNEL_LIQUID_LAW_PARAMS = ("return_liquid", "income")
 
 
-def fail_if_kernel_naming_contract_unmet(
+def fail_if_kernel_fixed_form_contract_unmet(
     *, context: SolverBuildContext, liquid_state_name: StateName
 ) -> None:
-    """Check the fixed names the single-liquid NB-EGM kernels read.
+    """Check the fixed economic form the single-liquid NB-EGM kernels solve.
 
-    Those kernels are not DAG-composed: they bind the Euler grid to a keyword
-    named `liquid` and read the CRRA coefficient, gross return, and income
-    under fixed qualified parameter names. A regime naming any of them
-    differently otherwise fails deep inside a traced kernel with a
-    missing-argument or missing-parameter error, which says nothing about the
-    contract it broke. The ride-along schedule route composes its budget from
-    the DAG and is exempt.
+    Those kernels are not DAG-composed. They bind the Euler grid to a keyword
+    named `liquid` and solve one fixed consumption-saving problem — CRRA flow
+    utility and an affine liquid law — reading its coefficients under fixed
+    qualified parameter names. The declared `utility` and liquid-law bodies are
+    never called.
+
+    So the contract is exact in both directions:
+
+    - a *missing* coefficient would otherwise fail deep inside a traced kernel
+      with a missing-argument error that says nothing about the contract broken;
+    - an *extra* flat parameter is structure the kernel cannot honour, and
+      accepting it would silently solve a different problem from the declared
+      one — a wrong value and policy rather than an error.
+
+    The ride-along schedule route composes its budget and utility from the DAG
+    and is exempt; a regime needing a richer objective declares a
+    `lcm.piecewise_affine` schedule with a `post_decision_function`.
 
     Args:
         context: The regime's solver build context.
@@ -1249,7 +1259,7 @@ def fail_if_kernel_naming_contract_unmet(
     Raises:
         RegimeInitializationError: If the liquid state, the utility function's
             CRRA parameter, or the liquid law's budget parameters are named
-            differently.
+            differently, or if either carries a flat parameter beyond them.
 
     """
     regime_name = context.regime_name
@@ -1275,6 +1285,18 @@ def fail_if_kernel_naming_contract_unmet(
             "not declare it."
         )
         raise RegimeInitializationError(msg)
+    extra_utility_params = _flat_params(utility_func) - {qualified_crra}
+    if extra_utility_params:
+        msg = (
+            f"NBEGM's single-liquid kernels evaluate unscaled CRRA flow utility, "
+            f"so {qualified_crra!r} is the only parameter of {utility_name!r} "
+            f"they read; regime {regime_name!r} also declares "
+            f"{sorted(extra_utility_params)}, which would not enter the solved "
+            "objective. Declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the utility is composed from the DAG, "
+            "or use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
     liquid_law_name = f"next_{_KERNEL_LIQUID_STATE}"
     for target, target_transitions in context.transitions.items():
         liquid_law = target_transitions.get(liquid_law_name)
@@ -1294,6 +1316,34 @@ def fail_if_kernel_naming_contract_unmet(
                 f"{target!r} is missing the flat param(s) {list(missing)}."
             )
             raise RegimeInitializationError(msg)
+        supported = {
+            f"{target}__{liquid_law_name}__{name}" for name in _KERNEL_LIQUID_LAW_PARAMS
+        }
+        extra_law_params = law_params - supported if callable(liquid_law) else set()
+        extra_law_params = {name for name in extra_law_params if "__" in name}
+        if extra_law_params:
+            msg = (
+                f"NBEGM's single-liquid kernels evaluate the liquid law as "
+                f"`(1 + return_liquid) * savings + income`, so "
+                f"{sorted(supported)} are the only parameters of "
+                f"{liquid_law_name!r} they read; regime {regime_name!r}'s "
+                f"transition to {target!r} also declares "
+                f"{sorted(extra_law_params)}, which would not enter the solved "
+                "budget. Declare a `lcm.piecewise_affine` schedule with a "
+                "`post_decision_function` so the budget is composed from the "
+                "DAG, or use `GridSearch` for this regime."
+            )
+            raise RegimeInitializationError(msg)
+
+
+def _flat_params(func: Callable[..., object]) -> frozenset[str]:
+    """Return the qualified flat parameters a function reads.
+
+    States, actions, and other DAG nodes reach a function under their bare
+    names; a flat parameter always arrives qualified by the function that owns
+    it, so the qualifying separator is what tells the two apart.
+    """
+    return frozenset(name for name in _parameter_names(func) if "__" in name)
 
 
 def _parameter_names(func: Callable[..., object]) -> frozenset[str]:

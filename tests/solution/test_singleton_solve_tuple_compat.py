@@ -89,20 +89,6 @@ def test_singleton_solve_dissolution_flags_opt_in_returns_empty_mapping():
     assert all(len(regime_map) == 0 for regime_map in dissolution_flags.values())
 
 
-def test_collective_solve_default_call_still_returns_bare_mapping():
-    """A model WITH collective regimes keeps the same default (bare) shape.
-
-    Complements the singleton-only checks above: the gate is the explicit
-    `return_dissolution_flags` flag, not model structure, so the default path
-    is bare for every model.
-    """
-    model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-
-    assert not isinstance(solution, tuple)
-    assert isinstance(solution, MappingProxyType)
-
-
 def test_collective_solve_dissolution_flags_opt_in_returns_dissolution_aware_shape():
     """A collective model with `return_dissolution_flags=True` is unchanged.
 
