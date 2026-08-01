@@ -60,7 +60,7 @@ def _project(root: Path, name: str) -> Path:
     """A directory that looks like a project root, i.e. carries a `pyproject.toml`."""
     project = root / name
     project.mkdir(parents=True)
-    (project / "pyproject.toml").write_text("[project]\n")
+    (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
     return project
 
 
