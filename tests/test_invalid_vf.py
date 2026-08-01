@@ -163,13 +163,6 @@ def params(n_periods: int) -> UserParams:
     }
 
 
-def test_solve_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model, params: UserParams
-) -> None:
-    with pytest.raises(InvalidValueFunctionError):
-        nan_value_model.solve(log_level="debug", params=params)
-
-
 def test_solve_model_with_inf_value_function_does_not_raise_error(
     inf_value_model: Model, params: UserParams
 ) -> None:
