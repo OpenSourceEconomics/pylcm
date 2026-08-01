@@ -248,10 +248,20 @@ class NEGM(Solver):
         keeper_kernels_by_period: dict[int, PeriodKernel] = {}
         coh_shift_by_period: dict[int, Callable[..., FloatND]] = {}
         keeper_continuation_template: EGMCarry | None = None
-        for group_periods in _periodized_function_groups(
+        # A regime whose inner builder produced no period kernels still owes the
+        # caller a continuation template, so fall back to one group holding no
+        # periods: it builds the template and contributes no per-period entries.
+        groups = _periodized_function_groups(
             periods=all_periods, functions=context.functions
-        ):
-            representative_period = group_periods[0]
+        ) or ((),)
+        active = context.regimes_to_active_periods.get(context.regime_name, ())
+        template_period = (
+            all_periods[0] if all_periods else (active[0] if active else 0)
+        )
+        for group_periods in groups:
+            representative_period = (
+                group_periods[0] if group_periods else (template_period)
+            )
             group_functions = cast(
                 "EconFunctionsMapping",
                 resolve_periodized_nodes(context.functions, representative_period),
