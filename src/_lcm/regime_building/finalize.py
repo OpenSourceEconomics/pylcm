@@ -26,6 +26,7 @@ from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import NEGM
 from lcm.temporal_aggregation import H_linear
+from lcm.transition import _AgeSpecialized
 from lcm.typing import FloatND, UserFunction
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
@@ -168,8 +169,14 @@ def _return_annotation(func: UserFunction | Phased | None) -> str:
 
     The composed resources function copies its producers' annotations so the
     DAG's annotation-consistency check stays satisfied.
+
+    An `AgeSpecializedFunction` carries no annotation of its own — the annotation
+    belongs to the concrete functions `build(age)` returns, which this stage has no
+    age to ask for. The default stands in, and the DAG's own annotation check still
+    compares it against the resolved function once the age is known, so a genuine
+    mismatch is caught there rather than passed through.
     """
-    if not callable(func):
+    if not callable(func) or isinstance(func, _AgeSpecialized):
         return "FloatND"
     annotations = ensure_annotations_are_strings(get_annotations(func))
     return annotations.get("return", "FloatND")

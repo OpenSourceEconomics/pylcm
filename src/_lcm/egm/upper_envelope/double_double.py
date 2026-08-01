@@ -81,14 +81,15 @@ def normalizing_exponent(*values: FloatND) -> IntND:
     Scaling by a power of two is exact, so it moves no information. Pulling the
     operands into the binade around one is what keeps products out of the range
     where the error-free transforms stop being error-free. Zero and non-finite
-    terms are ignored; an all-zero group scales by `2**0`, which leaves it alone.
+    terms are ignored; a group holding nothing else scales by `2**0`, which
+    leaves it alone.
     """
     magnitude = jnp.zeros_like(values[0])
     for term in values:
         magnitude = jnp.maximum(magnitude, jnp.abs(term))
     usable = jnp.isfinite(magnitude) & (magnitude > 0.0)
     _mantissa, exponent = jnp.frexp(jnp.where(usable, magnitude, 1.0))
-    return exponent
+    return jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
 def dd_from_difference(a: FloatND, b: FloatND) -> DoubleDouble:
