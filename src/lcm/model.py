@@ -53,7 +53,7 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.validate_V import contains_nan
+from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
@@ -543,6 +543,34 @@ class Model:
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
 
+    def _check_supplied_V_shapes(
+        self,
+        *,
+        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
+        log: logging.Logger,
+    ) -> None:
+        """Validate a caller-supplied solution against the declared state spaces.
+
+        A freshly solved value function is correct by construction, so only a
+        supplied one is checked. It is the one simulate input nothing else
+        validates: a value function of the wrong rank broadcasts rather than
+        raising, so it has to be caught against the declared state space here.
+        """
+        if period_to_regime_to_V_arr is None or not validation_enabled(log):
+            return
+        try:
+            validate_supplied_V_shapes(
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                regime_to_state_names=MappingProxyType(
+                    {
+                        name: tuple(regime.states)
+                        for name, regime in self.user_regimes.items()
+                    }
+                ),
+            )
+        except InvalidValueFunctionError as error:
+            raise_or_warn(logger=log, error=error)
+
     @beartype(conf=PARAMS_CONF)
     def simulate(
         self,
@@ -682,6 +710,9 @@ class Model:
             flat_params=flat_params,
             max_compilation_workers=max_compilation_workers,
             log=log,
+        )
+        self._check_supplied_V_shapes(
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
         )
         period_to_regime_to_sim_policy = None
         if period_to_regime_to_V_arr is None:
