@@ -86,8 +86,26 @@ def _sum_regime_mixture(
     """
     if not mixture_terms:
         return jnp.zeros_like(like)
-    probs = jnp.stack([prob for _, prob, _ in mixture_terms], axis=0)
-    values = jnp.stack([value for _, _, value in mixture_terms], axis=0)
+    prob_list = [prob for _, prob, _ in mixture_terms]
+    value_list = [value for _, _, value in mixture_terms]
+    # Targets do not all arrive at the same rank: a CARRY target's expected
+    # continuation carries the cell axes (and, collectively, a trailing stakeholder
+    # axis), while a STATELESS target's V is rank-zero -- there is no next state to
+    # evaluate it at. `jnp.stack` needs one shape, so lift the rank-deficient ones
+    # to the common value shape first. `broadcast_to` replicates, it does not
+    # resample, so this changes no number; it only makes the target axis stackable.
+    #
+    # The `len < len` guard covers the all-stateless case: with no carry target the
+    # common value shape is `()` while the probabilities still carry the cell axes,
+    # and `zero_safe_weighted_term` right-aligns -- it would weight a cell axis by
+    # the target axis. Lifting values to the probability shape keeps axis 0 the
+    # target axis, which is what the right-padding below then assumes.
+    value_shape = jnp.broadcast_shapes(*(v.shape for v in value_list))
+    prob_shape = jnp.broadcast_shapes(*(p.shape for p in prob_list))
+    if len(value_shape) < len(prob_shape):
+        value_shape = jnp.broadcast_shapes(value_shape, prob_shape)
+    probs = jnp.stack(prob_list, axis=0)
+    values = jnp.stack([jnp.broadcast_to(v, value_shape) for v in value_list], axis=0)
     # Right-pad the probability rank to the value rank so the per-target weight
     # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
     # trailing value-only axes. The collective site carries a trailing stakeholder
@@ -115,6 +133,7 @@ def get_Q_and_F(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -157,8 +176,12 @@ def get_Q_and_F(
         functions: Immutable mapping of function names to internal user functions.
             Supplies the current-period flow (utility, feasibility, `H`).
         constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Target regimes whose continuation enters E[V]
-            this period (reachable, with state laws, active next period).
+        period_targets: Carry targets — reachable, active next period, and
+            carrying at least one state, so their continuation is read at the
+            next states their laws produce.
+        scalar_targets: Reachable targets active next period that carry no state.
+            Their value function is rank-zero, so it enters `E[V]` directly,
+            weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
@@ -328,10 +351,29 @@ def get_Q_and_F(
         # §2 (E2) / §3.
         U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        # A target carrying no state has a rank-zero value function: there is no
+        # next state to evaluate it at and no stochastic weight to average over,
+        # so its value enters weighted only by the probability of going there
+        # (#407 `ec96c12` -- such a target is NOT worth zero).
+        #
+        # These seed `mixture_terms` rather than being summed separately as
+        # `E += p*V`, so they get the same reduction as every other target:
+        # `zero_safe_weighted_term` masks a zero-probability `+-inf` to exactly 0
+        # instead of yielding NaN, and the sum stays value-ordered (invariant to
+        # regime alpha-renaming). A raw product here would reintroduce both
+        # defects on the collective branch, where dissolution makes `-inf`
+        # continuations ordinary rather than exotic.
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = [
+            (
+                scalar_target_name,
+                active_regime_probs[scalar_target_name],
+                next_regime_to_V_arr[scalar_target_name],
+            )
+            for scalar_target_name in scalar_targets
+        ]
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -417,6 +459,7 @@ def get_compute_intermediates(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -437,8 +480,12 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Target regimes whose continuation enters E[V]
-            this period (reachable, with state laws, active next period).
+        period_targets: Carry targets — reachable, active next period, and
+            carrying at least one state.
+        scalar_targets: Reachable stateless targets active next period, whose
+            rank-zero value enters `E[V]` weighted only by the regime transition
+            probability. Must match what `get_Q_and_F` was built with, or the
+            diagnostics disagree with the solve they explain.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
@@ -548,10 +595,19 @@ def get_compute_intermediates(
         )
         U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        # Stateless targets seed the mixture; see `get_Q_and_F` above for why they
+        # go through `mixture_terms` rather than a separate `E += p*V` sum.
+        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = [
+            (
+                scalar_target_name,
+                active_regime_probs[scalar_target_name],
+                next_regime_to_V_arr[scalar_target_name],
+            )
+            for scalar_target_name in scalar_targets
+        ]
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -1581,18 +1637,25 @@ def get_period_targets(
     transitions: TransitionFunctionsMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> tuple[RegimeName, ...]:
-    """Return the target regimes whose continuation enters E[V] this period.
+    """Return the *carry* targets whose continuation is interpolated this period.
 
     The canonical transition bundles (`transitions` keys) carry exactly the
     reachable targets with at least one state law; the period filter keeps
-    those active in the next period. A reachable target absent from the
-    bundles is ASSUMED to have no states — its V identically zero, so it
-    contributes nothing to the continuation.
+    those active in the next period.
 
-    That assumption is load-bearing, and only as good as the bundle
-    construction in `_process_regime_core`: a target that DOES declare states
-    yet ends up with an empty bundle is dropped from E[V] SILENTLY — no error,
-    and its value is not in fact zero. Known remaining hole (fold-review F2,
+    These are not all of a period's targets. A reachable target that carries no
+    state contributes no bundle, yet its value function is whatever its utility
+    returns — not zero — so it enters `E[V]` as a rank-zero term. Enumerate those
+    with `get_period_scalar_targets` and pass both to `get_Q_and_F`.
+
+    That split reads a target's KIND off its V-interpolation `state_names`, never
+    off bundle presence, so it does not rest on the old (wrong) assumption that a
+    target absent from the bundles has no states. It does leave one gap: a target
+    that DOES declare states yet ends up with an empty bundle is in NEITHER set —
+    it is not a carry target, and `get_period_scalar_targets` excludes it because
+    it has `state_names` — so it is dropped from E[V] SILENTLY, no error, and its
+    value is neither zero nor its own stateless utility. Known remaining hole
+    (fold-review F2,
     deliberately NOT closed in this slice): a target declaring a state the
     SOURCE does not also declare gets nothing wired for it —
     `target_process_grids` intersects each target's grids with the SOURCE
@@ -1612,13 +1675,59 @@ def get_period_targets(
             their active period tuples.
 
     Returns:
-        Tuple of this period's target regime names.
+        Tuple of this period's carry-target regime names.
 
     """
     return tuple(
         regime_name
         for regime_name in transitions
         if period + 1 in regimes_to_active_periods.get(regime_name, ())
+    )
+
+
+def get_period_scalar_targets(
+    *,
+    period: int,
+    carry_targets: tuple[RegimeName, ...],
+    reachable_targets: frozenset[RegimeName],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> tuple[RegimeName, ...]:
+    """Return the stateless targets whose rank-zero value enters E[V] this period.
+
+    A target's *kind* follows from whether it carries state, read off its
+    V-interpolation info — never from whether it contributed a transition bundle.
+    A stateless regime has no state law to contribute, so bundle presence would
+    misclassify it as absent rather than as scalar.
+
+    Membership is declared reachability intersected with activity at `period + 1`.
+    Reachability comes from the regime transition, which is its single source of
+    truth: a per-target mapping declares exactly its key set, any coarse form
+    reaches every regime. Transition probabilities may depend on states, actions,
+    and runtime params, so a target carrying zero probability everywhere is not
+    prunable at build time and stays in the set.
+
+    Args:
+        period: The period to enumerate targets for.
+        carry_targets: This period's carry targets, which are excluded here so a
+            target is read exactly once.
+        reachable_targets: The regime's declared-reachable target names.
+        regimes_to_active_periods: Immutable mapping of regime names to their
+            active period tuples.
+        regime_to_v_interpolation_info: Immutable mapping of regime names to
+            V-interpolation info, whose `state_names` decide the target's kind.
+
+    Returns:
+        Tuple of this period's scalar-target regime names.
+
+    """
+    return tuple(
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if regime_name in reachable_targets
+        and period + 1 in regimes_to_active_periods.get(regime_name, ())
+        and not regime_to_v_interpolation_info[regime_name].state_names
+        and regime_name not in carry_targets
     )
 
 

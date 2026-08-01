@@ -95,6 +95,7 @@ from _lcm.regime_building.Q_and_F import (
     LAW_SOURCE_ATTR,
     ResolvedSamePeriodRef,
     _get_deterministic_transitions,
+    get_period_scalar_targets,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_collective,
@@ -1566,6 +1567,11 @@ def _build_solution_phase(
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
+            # The bundle keys before the state-law split are exactly the
+            # declared-reachable targets: canonicalization expands even a coarse
+            # regime transition into one cell per target, so a stateless target
+            # is present here holding only its `next_regime` cell.
+            reachable_targets=frozenset(nested_transitions),
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
@@ -1591,6 +1597,7 @@ def _build_solution_phase(
         else:
             compute_intermediates = _build_compute_intermediates_per_period(
                 active_periods=regimes_to_active_periods[regime_name],
+                reachable_targets=frozenset(nested_transitions),
                 flat_param_names=flat_param_names,
                 regimes_to_active_periods=regimes_to_active_periods,
                 functions=core.functions,
@@ -2257,6 +2264,19 @@ def _build_simulation_phase(  # noqa: PLR0915
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
+            # The bundle keys before the state-law split are exactly the
+            # declared-reachable targets: canonicalization expands even a coarse
+            # regime transition into one cell per target, so a stateless target
+            # is present here holding only its `next_regime` cell.
+            # Solve phase only, deliberately. Including stateless targets in the
+            # simulate-phase Q collapses a rank of `Q_arr` and breaks the action
+            # argmax; `test_simulate_using_raw_inputs` in
+            # `tests/simulation/test_simulate.py` reproduces it. The mechanism is
+            # not yet understood, so the
+            # simulate-phase Q keeps its previous target set rather than shipping a
+            # change whose failure mode is unexplained. The solved value function it
+            # reads already carries the stateless continuation.
+            reachable_targets=frozenset(),
             functions=functions,
             constraints=constraints,
             transitions=solve_transitions,
@@ -2702,13 +2722,23 @@ def _process_regime_core(  # noqa: C901
     # from each target's grid. Scope to genuinely reachable targets to avoid
     # spurious entries for unreachable regimes.
     #
-    # A target is reachable if it carries an ordinary (non-process) state law
-    # OR if a PER-TARGET regime transition names it explicitly. The second
-    # half was historically missing: a target named only by a per-target
-    # transition, whose sole other content is a process state, has an empty
-    # state-law bundle, so deriving reachability from `flat_nested_transitions`
-    # alone left it with no process transitions — silently dropping it from
-    # `get_period_targets`, and hence its continuation from E[V].
+    # A target is reachable if it is DECLARED by the regime transition
+    # (`nested_transitions` keys — #407 `ec96c12`: declared reachability is the
+    # single source of truth, not state laws), OR if a PER-TARGET regime
+    # transition names it explicitly, OR if it is a coarse candidate. Deriving
+    # from `flat_nested_transitions` alone — i.e. from ordinary (non-process)
+    # state laws — was the historical defect on both counts: a target whose sole
+    # content is a process state has an empty state-law bundle, so it was left
+    # with no process transitions and silently dropped from `get_period_targets`,
+    # and hence its continuation from E[V].
+    #
+    # The components are UNIONed rather than one replacing the others. The
+    # asymmetry is spelled out below and runs one way: a spurious candidate
+    # carries zero regime-transition probability and contributes nothing to E[V],
+    # whereas omitting a genuinely-routed one silently drops a whole
+    # continuation. Note this keeps `_fail_if_coarse_candidate_folds_ambiguously`
+    # reachable, which a straight `reachable_targets = frozenset(nested_
+    # transitions)` would have bypassed along with the fold-round4 F2 guarantee.
     #
     # A coarse `transition=func` emits a `next_regime` cell for EVERY regime
     # (the routing is decided at runtime from the returned id), so its cell keys
@@ -2754,8 +2784,12 @@ def _process_regime_core(  # noqa: C901
         all_grids=all_grids,
         active_periods_by_regime=active_periods_by_regime,
     )
+    # The per-target process grids below are scoped to the processes the *source*
+    # carries: an intrinsic law is a transition from this period's value of the
+    # process, so a target-only process has no from-value here to condition on.
     reachable_targets = (
-        {
+        frozenset(nested_transitions)
+        | {
             tree_path_from_qname(k)[0]
             for k in flat_nested_transitions
             if QNAME_DELIMITER in k
@@ -4294,6 +4328,7 @@ def _build_Q_and_F_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    reachable_targets: frozenset[RegimeName],
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
@@ -4393,6 +4428,13 @@ def _build_Q_and_F_per_period(
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
         )
+        scalar = get_period_scalar_targets(
+            period=period,
+            carry_targets=complete,
+            reachable_targets=reachable_targets,
+            regimes_to_active_periods=regimes_to_active_periods,
+            regime_to_v_interpolation_info=continuation_info(period),
+        )
         # The explicit user grid signatures of the continuation targets at t+1 —
         # periods with different continuation grids get distinct kernels.
         continuation_sig = continuation_grid_signature_from_schedule(
@@ -4415,6 +4457,10 @@ def _build_Q_and_F_per_period(
             periodized_tree_signature(constraints, period),
             continuation_sig,
             continuation_functions_sig,
+            # Scalar targets ride in the signature, not the target tuple, so
+            # periods differing only in which stateless regimes they can reach
+            # never share a closure.
+            scalar,
         )
         return (complete, signature)
 
@@ -4494,6 +4540,13 @@ def _build_Q_and_F_per_period(
                 resolve_periodized_nodes(constraints, representative_period),
             ),
             period_targets=period_targets,
+            scalar_targets=get_period_scalar_targets(
+                period=representative_period,
+                carry_targets=period_targets,
+                reachable_targets=reachable_targets,
+                regimes_to_active_periods=regimes_to_active_periods,
+                regime_to_v_interpolation_info=continuation_info(representative_period),
+            ),
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,

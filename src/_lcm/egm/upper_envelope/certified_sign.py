@@ -69,10 +69,9 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_mul,
     dd_mul_float,
     dd_negate,
-    dd_quotient_bounded,
+    dd_quotient,
     normalizing_exponent,
     scale_by_power_of_two,
-    two_sum,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -241,11 +240,29 @@ def certified_quotient_margin(
         dd_negate(dd_mul(right_numerator, left_divisor)),
     )
     divisor_product = dd_mul(left_divisor, right_divisor)
-    high, low, referred = dd_quotient_bounded(determinant, divisor_product)
-    # Collapsing the pair to one float is a rounding whose discarded part is
-    # available exactly, so it is measured rather than charged as a blanket ULP —
-    # a flat charge would be the width of the very gaps this margin has to resolve.
-    value, discarded = two_sum(high, low)
+    high, low = dd_quotient(determinant, divisor_product)
+    value = high + low
+
+    # The bound is a residual, taken against the single float that is published
+    # rather than against the pair it came from. How well a quotient *pair*
+    # reproduces its numerator says nothing about the float the caller acts on,
+    # and the two differ by more than the pair's own accuracy suggests; the
+    # residual of the published value has no such gap by construction. It is also
+    # exactly zero for a quotient that divides out exactly, which is what lets an
+    # exact tie be certified rather than inferred.
+    residual = dd_add(determinant, dd_negate(dd_mul_float(divisor_product, value)))
+    unreproduced = jnp.abs(residual[0] + residual[1]) + residual[2]
+    # Referring the residual back through the divisor must not understate it, so
+    # it is divided by a *lower* bound on the divisor rather than its leading word.
+    divisor_floor = (
+        jnp.abs(divisor_product[0])
+        - jnp.abs(divisor_product[1])
+        - jnp.abs(divisor_product[2])
+    )
+    epsilon = jnp.finfo(value.dtype).eps
+    # The residual's own sum, the division, and this widening each round once; the
+    # widening is multiplicative, so a residual of exactly zero stays exactly zero.
+    bound = (unreproduced / divisor_floor) * (1.0 + 8.0 * epsilon)
 
     # Dekker's transform is exact only while its products stay normal. Outside that
     # range the determinant is not evidence of anything, least of all of a tie.
@@ -254,14 +271,13 @@ def certified_quotient_margin(
         & _product_in_transform_domain(right_numerator[0], left_divisor[0])
         & _product_in_transform_domain(left_divisor[0], right_divisor[0])
     )
-    bound = referred + jnp.abs(discarded)
     return QuotientMargin(
         value=value,
         bound=bound,
         trustworthy=in_domain
         & jnp.isfinite(value)
         & jnp.isfinite(bound)
-        & (divisor_product[0] != 0.0),
+        & (divisor_floor > 0.0),
     )
 
 
