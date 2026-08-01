@@ -254,12 +254,20 @@ def get_Q_and_F(
         # A target carrying no state has a rank-zero value function: there is no
         # next state to evaluate it at and no stochastic weight to average over,
         # so its value enters weighted only by the probability of going there.
+        # A nonlinear certainty equivalent still transforms it first: `transform`
+        # precedes every expectation, the regime-transition one included, and
+        # `inverse` applies once to the finished sum.
         for scalar_target_name in scalar_targets:
-            E_next_V = (
-                E_next_V
-                + active_regime_probs[scalar_target_name]
-                * next_regime_to_V_arr[scalar_target_name]
-            )
+            scalar_V = next_regime_to_V_arr[scalar_target_name]
+            if ce is not None:
+                scalar_V = ce.transform(
+                    value=scalar_V,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
+            E_next_V = E_next_V + active_regime_probs[scalar_target_name] * scalar_V
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -475,11 +483,16 @@ def get_compute_intermediates(
 
         E_next_V = jnp.zeros_like(U_arr)
         for scalar_target_name in scalar_targets:
-            E_next_V = (
-                E_next_V
-                + active_regime_probs[scalar_target_name]
-                * next_regime_to_V_arr[scalar_target_name]
-            )
+            scalar_V = next_regime_to_V_arr[scalar_target_name]
+            if ce is not None:
+                scalar_V = ce.transform(
+                    value=scalar_V,
+                    **{
+                        arg: states_actions_params[flat_name]
+                        for arg, flat_name in ce_transform_flat_names.items()
+                    },
+                )
+            E_next_V = E_next_V + active_regime_probs[scalar_target_name] * scalar_V
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
