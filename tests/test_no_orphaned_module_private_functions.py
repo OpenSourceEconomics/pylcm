@@ -38,7 +38,10 @@ def _module_private_defs_and_names(
 ) -> tuple[set[str], set[str]]:
     """Return (module-level private function names, all names referenced) for `path`."""
     try:
-        tree = ast.parse(path.read_text())
+        # Python source is UTF-8 by definition; `read_text()` would decode with the
+        # locale default instead (cp1252 on Windows), which has no 0x81 and so dies on
+        # the superscript minus in `g⁻¹`-style math notation the docstrings use.
+        tree = ast.parse(path.read_text(encoding="utf-8"))
     except SyntaxError:  # pragma: no cover - a syntax error is another test's problem
         return set(), set()
     defs = {

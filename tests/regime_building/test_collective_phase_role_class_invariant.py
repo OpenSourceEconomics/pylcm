@@ -63,7 +63,9 @@ def normalized(path: Path) -> str:
     return re.sub(
         r"(?m)^(\s*)except ([A-Za-z_][\w.]*), ([A-Za-z_][\w.]*)\s*:",
         r"\1except (\2, \3):",
-        path.read_text(),
+        # UTF-8 explicitly: the locale default (cp1252 on Windows) cannot decode the
+        # superscript minus the sources' math notation uses.
+        path.read_text(encoding="utf-8"),
     )
 
 
