@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 import jax
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
@@ -75,6 +75,7 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
 )
 from _lcm.regime_building.Q_and_F import (
+    get_period_scalar_targets,
     get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -603,6 +604,11 @@ def _build_solution_phase(
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
+            # The bundle keys before the state-law split are exactly the
+            # declared-reachable targets: canonicalization expands even a coarse
+            # regime transition into one cell per target, so a stateless target
+            # is present here holding only its `next_regime` cell.
+            reachable_targets=frozenset(nested_transitions),
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
@@ -617,6 +623,7 @@ def _build_solution_phase(
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             active_periods=regimes_to_active_periods[regime_name],
+            reachable_targets=frozenset(nested_transitions),
             flat_param_names=flat_param_names,
             regimes_to_active_periods=regimes_to_active_periods,
             functions=core.functions,
@@ -1165,6 +1172,19 @@ def _build_simulation_phase(
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
+            # The bundle keys before the state-law split are exactly the
+            # declared-reachable targets: canonicalization expands even a coarse
+            # regime transition into one cell per target, so a stateless target
+            # is present here holding only its `next_regime` cell.
+            # Solve phase only, deliberately. Including stateless targets in the
+            # simulate-phase Q collapses a rank of `Q_arr` and breaks the action
+            # argmax; `test_simulate_using_raw_inputs` in
+            # `tests/simulation/test_simulate.py` reproduces it. The mechanism is
+            # not yet understood, so the
+            # simulate-phase Q keeps its previous target set rather than shipping a
+            # change whose failure mode is unexplained. The solved value function it
+            # reads already carries the stateless continuation.
+            reachable_targets=frozenset(),
             functions=functions,
             constraints=constraints,
             transitions=solve_transitions,
@@ -1552,14 +1572,16 @@ def _process_regime_core(
 
     # Transitions of continuous stochastic processes bypass the stub pipeline
     # entirely. Build weight and next functions for reachable target regimes
-    # from each target's grid. Scope to targets already present in non-process
-    # transitions to avoid spurious entries for unreachable regimes.
+    # from each target's grid, scoped to the *declared* targets so unreachable
+    # regimes get no spurious entries. Scoping instead to the targets carrying a
+    # non-process law would drop a target whose only states are processes: it
+    # contributes no such law, so it would receive no intrinsic transition and
+    # its expectation would vanish from the continuation.
+    # Scoped to the processes the *source* carries: an intrinsic law is a
+    # transition from this period's value of the process, so a target-only
+    # process has no from-value here to condition on.
     process_names = variables.process_names
-    reachable_targets = {
-        tree_path_from_qname(k)[0]
-        for k in flat_nested_transitions
-        if QNAME_DELIMITER in k
-    }
+    reachable_targets = frozenset(nested_transitions)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {
@@ -2577,6 +2599,7 @@ def _build_Q_and_F_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    reachable_targets: frozenset[RegimeName],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     grid_schedule: AgeGridSchedule | None = None,
@@ -2649,6 +2672,13 @@ def _build_Q_and_F_per_period(
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
         )
+        scalar = get_period_scalar_targets(
+            period=period,
+            carry_targets=complete,
+            reachable_targets=reachable_targets,
+            regimes_to_active_periods=regimes_to_active_periods,
+            regime_to_v_interpolation_info=continuation_info(period),
+        )
         # The explicit user grid signatures of the continuation targets at t+1 —
         # periods with different continuation grids get distinct kernels.
         continuation_sig = continuation_grid_signature_from_schedule(
@@ -2660,6 +2690,10 @@ def _build_Q_and_F_per_period(
             periodized_tree_signature(functions, period),
             periodized_tree_signature(constraints, period),
             continuation_sig,
+            # Scalar targets ride in the signature, not the target tuple, so
+            # periods differing only in which stateless regimes they can reach
+            # never share a closure.
+            scalar,
         )
         return (complete, signature)
 
@@ -2688,6 +2722,13 @@ def _build_Q_and_F_per_period(
                 resolve_periodized_nodes(constraints, representative_period),
             ),
             period_targets=period_targets,
+            scalar_targets=get_period_scalar_targets(
+                period=representative_period,
+                carry_targets=period_targets,
+                reachable_targets=reachable_targets,
+                regimes_to_active_periods=regimes_to_active_periods,
+                regime_to_v_interpolation_info=continuation_info(representative_period),
+            ),
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,

@@ -27,7 +27,11 @@ from _lcm.regime_building.age_normalization import (
     periodized_tree_signature,
     resolve_periodized_nodes,
 )
-from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
+from _lcm.regime_building.Q_and_F import (
+    get_compute_intermediates,
+    get_period_scalar_targets,
+    get_period_targets,
+)
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -55,6 +59,7 @@ def _build_compute_intermediates_per_period(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    reachable_targets: frozenset[RegimeName],
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
@@ -142,6 +147,13 @@ def _build_compute_intermediates_per_period(
             periodized_tree_signature(functions, period),
             periodized_tree_signature(constraints, period),
             cont_sig,
+            get_period_scalar_targets(
+                period=period,
+                carry_targets=complete,
+                reachable_targets=reachable_targets,
+                regimes_to_active_periods=regimes_to_active_periods,
+                regime_to_v_interpolation_info=continuation_info(period),
+            ),
         )
         return (complete, signature)
 
@@ -166,6 +178,13 @@ def _build_compute_intermediates_per_period(
                 resolve_periodized_nodes(constraints, representative_period),
             ),
             period_targets=period_targets,
+            scalar_targets=get_period_scalar_targets(
+                period=representative_period,
+                carry_targets=period_targets,
+                reachable_targets=reachable_targets,
+                regimes_to_active_periods=regimes_to_active_periods,
+                regime_to_v_interpolation_info=continuation_info(representative_period),
+            ),
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
