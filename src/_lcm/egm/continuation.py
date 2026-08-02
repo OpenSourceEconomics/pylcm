@@ -52,7 +52,7 @@ from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
-from _lcm.regime_building.Q_and_F import get_period_targets
+from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -91,35 +91,22 @@ def _is_runtime_process(grid: Grid) -> bool:
 
 def get_egm_continuation_targets(
     *,
-    period: int,
-    transitions: TransitionFunctionsMapping,
-    reachable_targets: frozenset[RegimeName],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    targets: tuple[RegimeName, ...],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
-    """Split next-period-active targets into carry-interpolated and scalar ones.
+    """Split canonical graph targets into carry-interpolated and scalar ones.
 
-    This adapter is the single place where the EGM step derives "which target
-    regimes / which transition functions" from the engine regime's
-    transitions; changes to the transition representation swap this body
-    without touching the kernel.
-
-    - *Carry targets* have state-transition entries; their continuation is
+    - *Carry targets* have states; their continuation is
       interpolated from their `EGMCarry` rows.
-    - *Scalar targets* are stateless (no transition entries, no states; e.g.
+    - *Scalar targets* are stateless (e.g.
       a `dead` regime); their continuation is the constant value of their
-      carry rows and their marginal continuation is zero. Only declared-
-      reachable regimes qualify: a stateless regime the model contains for
-      other regimes' sake has no transition-probability cell here, and the
-      regime transition is the single source of truth for reachability.
+      carry rows and their marginal continuation is zero.
+
+    This function classifies representation only. It does not add, remove, or
+    otherwise infer graph membership.
 
     Args:
-        period: The period the kernel solves.
-        transitions: Immutable mapping of target regime names to their state
-            transition functions.
-        reachable_targets: The regime's declared-reachable target names.
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active period tuples.
+        targets: Canonical graph targets for one source and period.
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info.
 
@@ -127,20 +114,10 @@ def get_egm_continuation_targets(
         Tuple of carry-target names and scalar-target names.
 
     """
-    carry_targets = get_period_targets(
-        period=period,
-        transitions=transitions,
-        regimes_to_active_periods=regimes_to_active_periods,
+    return partition_continuation_targets(
+        targets=targets,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
-    scalar_targets = tuple(
-        name
-        for name in regime_to_v_interpolation_info
-        if name in reachable_targets
-        and period + 1 in regimes_to_active_periods.get(name, ())
-        and not regime_to_v_interpolation_info[name].state_names
-        and name not in carry_targets
-    )
-    return carry_targets, scalar_targets
 
 
 @dataclass(frozen=True, kw_only=True)

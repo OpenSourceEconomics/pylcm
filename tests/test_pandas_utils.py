@@ -20,13 +20,14 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Phased,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -618,8 +619,8 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         retiree: ScalarInt
         dead: ScalarInt
 
-    def _next_regime() -> ScalarInt:
-        return _Rid.dead
+    def _one_probability() -> ScalarFloat:
+        return jnp.float32(1)
 
     def _earner_utility(wealth: float, income: float) -> float:
         return wealth + income
@@ -628,7 +629,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         return wealth
 
     earner = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
@@ -637,7 +638,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},

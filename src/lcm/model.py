@@ -33,6 +33,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.reachability import ModelReachability
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
@@ -42,7 +43,7 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
-from _lcm.regime_building.processing import Regime
+from _lcm.regime_building.processing import Regime, prepare_model_structure
 from _lcm.simulation.compile import compile_all_simulation_phases
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -115,6 +116,9 @@ class Model:
     """Per regime, the broadcast states and actions pruned because no root
     computation of either phase reads them (directly or through a law of
     motion toward a reachable target that keeps them)."""
+
+    reachability: ModelReachability
+    """Static solution and simulation regime graphs."""
 
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
@@ -269,12 +273,18 @@ class Model:
                 )
             )
         )
+        prepared_structure = prepare_model_structure(
+            user_regimes=self.user_regimes,
+            ages=self.ages,
+        )
+        self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            prepared_structure=prepared_structure,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(

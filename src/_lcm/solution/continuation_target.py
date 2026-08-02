@@ -23,25 +23,22 @@ def _period_to_continuation_target(
 ) -> dict[int, RegimeName]:
     """Resolve each active period's single deterministic continuation target.
 
-    The model's deterministic lifecycle transition reaches exactly one target
-    next period: the regime among this regime's transition targets that is
-    active at `period + 1`. The last active period continues into the target
-    active at the period beyond the horizon's interior (the terminal regime).
+    The canonical solution graph must retain exactly one target from every
+    active source period represented in backward induction.
     """
-    own_active = set(context.regimes_to_active_periods[context.regime_name])
-    target_active = {
-        target: set(context.regimes_to_active_periods[target])
-        for target in context.transitions
-    }
     result: dict[int, RegimeName] = {}
-    for period in sorted(own_active):
-        reached = [
-            target for target, active in target_active.items() if (period + 1) in active
-        ]
+    for period, active_regimes in enumerate(
+        context.solution_reachability.active_regimes_by_period[:-1]
+    ):
+        if context.regime_name not in active_regimes:
+            continue
+        reached = context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
         if len(reached) != 1:
             msg = (
                 f"Regime '{context.regime_name}' does not reach exactly one "
-                f"active target at period {period + 1}: candidates {reached}. "
+                f"active target at period {period + 1}: candidates {list(reached)}. "
                 "The endogenous-grid solvers require a deterministic "
                 "lifecycle transition (one active target per period)."
             )

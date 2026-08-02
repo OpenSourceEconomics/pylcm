@@ -312,12 +312,6 @@ def _simulate_subject_chunk(
             if period in regime.active_periods
         }
 
-        active_regimes_next_period = tuple(
-            regime_name
-            for regime_name, regime in regimes.items()
-            if period + 1 in regime.active_periods
-        )
-
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
         for regime_name, regime in active_regimes.items():
@@ -337,7 +331,13 @@ def _simulate_subject_chunk(
                     .get(regime_name),
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
-                    active_regimes_next_period=active_regimes_next_period,
+                    active_regimes_next_period=(
+                        ()
+                        if period == ages.n_periods - 1
+                        else regime.simulation.reachability.targets(
+                            period=period, source=regime_name
+                        )
+                    ),
                     key=key,
                     logger=logger,
                     n_subjects=n_subjects,
@@ -488,8 +488,9 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    next_regime_to_V_arr = period_to_regime_to_V_arr.get(
-        period + 1, MappingProxyType({})
+    next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+    next_regime_to_V_arr = MappingProxyType(
+        {target: next_period_values[target] for target in active_regimes_next_period}
     )
 
     # The Q-function values contain the information of how much value each

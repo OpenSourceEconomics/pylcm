@@ -36,6 +36,7 @@ from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
     process_regimes,
 )
@@ -61,6 +62,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -85,6 +87,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            prepared_structure=prepared_structure,
         )
         params_template = create_params_template(regimes)
     else:
@@ -94,6 +97,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            prepared_structure=prepared_structure,
         )
 
     return regimes, params_template
@@ -106,6 +110,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -127,6 +132,7 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
     )
     raw_params_template = create_params_template(raw_regimes)
 
@@ -318,7 +324,7 @@ def _validate_all_variables_used(
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
-    of motion toward a reachable target (which this per-regime check cannot
+    of motion toward a candidate target (which this per-regime check cannot
     see).
 
     Args:
@@ -526,6 +532,17 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
+                else None
+            ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    solution.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solution.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.validation_regime_transition_probs is not None
                 else None
             ),
         )

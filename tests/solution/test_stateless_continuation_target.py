@@ -55,6 +55,10 @@ def _next_regime(wealth, age):
     return jnp.where(leaves, RegimeId.gone, RegimeId.alive)
 
 
+def _enter_shock() -> ScalarInt:
+    return jnp.int32(1)
+
+
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
     alive = Regime(
@@ -186,16 +190,18 @@ def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
 def _solve_with_process_only_target(level: float):
     """Solve a model whose terminal regime's only state is a stochastic process.
 
-    A process carries its own intrinsic transition and must not appear in
-    `state_transitions`, so this regime — like the stateless one above — contributes
-    no state-law bundle, while its value is genuinely non-trivial.
+    The source supplies an explicit entry law because it does not carry the
+    target's process. Once entered, the process carries its own intrinsic law.
     """
     alive = Regime(
         transition=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        state_transitions={"wealth": _next_wealth},
+        state_transitions={
+            "wealth": _next_wealth,
+            "shock": {"gone": _enter_shock},
+        },
         functions={"utility": _utility},
     )
     retired = Regime(
@@ -213,6 +219,7 @@ def _solve_with_process_only_target(level: float):
             "utility": {},
             "H": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
+            "next_shock": {},
             "next_regime": {},
         },
         "gone": {
@@ -232,12 +239,6 @@ def test_a_process_only_regime_carries_its_own_value():
     assert retired[0] < retired[1] < retired[2]
 
 
-@pytest.mark.xfail(
-    reason="an AR(1) process transition conditions on this period's value of the "
-    "process, and a source that does not carry the process has no such value; what "
-    "law a target-only process should follow is undecided",
-    strict=True,
-)
 def test_the_process_only_level_moves_the_parent():
     """Shifting the process-only regime's level changes the parent's value.
 
