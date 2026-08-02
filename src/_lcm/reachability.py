@@ -4,15 +4,16 @@ This module owns the model graph. Solver code may derive layouts from the graph,
 but may not infer which regime pairs are reachable.
 """
 
-from __future__ import annotations
-
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from types import MappingProxyType
 from typing import Literal
 
-PhaseName = Literal["solution", "simulation"]
+from _lcm.typing import ActiveFunction, RegimeName
+from lcm.typing import UserAge
+
+type PhaseName = Literal["solution", "simulation"]
 
 
 class EdgeStatus(IntEnum):
@@ -23,7 +24,7 @@ class EdgeStatus(IntEnum):
     CONDITIONAL = 2
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PhaseReachability:
     """One phase's immutable period-indexed regime graph.
 
@@ -32,24 +33,29 @@ class PhaseReachability:
     """
 
     n_periods: int
-    active_regimes_by_period: tuple[frozenset[str], ...]
-    candidate_targets_by_source: Mapping[str, tuple[str, ...]]
-    targets_by_period: tuple[Mapping[str, tuple[str, ...]], ...]
-    edge_status_by_period: tuple[Mapping[tuple[str, str], EdgeStatus], ...]
+    active_regimes_by_period: tuple[frozenset[RegimeName], ...]
+    candidate_targets_by_source: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
+    targets_by_period: tuple[MappingProxyType[RegimeName, tuple[RegimeName, ...]], ...]
+    edge_status_by_period: tuple[
+        MappingProxyType[tuple[RegimeName, RegimeName], EdgeStatus], ...
+    ]
 
-    def targets(self, *, period: int, source: str) -> tuple[str, ...]:
+    def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
         """Return retained targets for the edge from ``period`` to ``period + 1``."""
         if not 0 <= period < self.n_periods - 1:
             raise IndexError(period)
         return self.targets_by_period[period].get(source, ())
 
-    def has_edge(self, *, period: int, source: str, target: str) -> bool:
-        """Whether the static graph contains this period-specific edge."""
-        return self.edge_status(
-            period=period, source=source, target=target
-        ) != EdgeStatus.FALSE
+    def has_edge(self, *, period: int, source: RegimeName, target: RegimeName) -> bool:
+        """Return whether the static graph contains this period-specific edge."""
+        return (
+            self.edge_status(period=period, source=source, target=target)
+            != EdgeStatus.FALSE
+        )
 
-    def edge_status(self, *, period: int, source: str, target: str) -> EdgeStatus:
+    def edge_status(
+        self, *, period: int, source: RegimeName, target: RegimeName
+    ) -> EdgeStatus:
         """Return the construction-time status of a candidate edge."""
         if not 0 <= period < self.n_periods - 1:
             raise IndexError(period)
@@ -57,16 +63,18 @@ class PhaseReachability:
             (source, target), EdgeStatus.FALSE
         )
 
-    def periods_for_edge(self, *, source: str, target: str) -> tuple[int, ...]:
-        """All source periods in which the edge is retained."""
+    def periods_for_edge(
+        self, *, source: RegimeName, target: RegimeName
+    ) -> tuple[int, ...]:
+        """Return all source periods in which the edge is retained."""
         return tuple(
             period
             for period in range(self.n_periods - 1)
             if self.has_edge(period=period, source=source, target=target)
         )
 
-    def union_targets(self, *, source: str) -> tuple[str, ...]:
-        """Union of retained targets over periods, for build-time coverage/layouts."""
+    def union_targets(self, *, source: RegimeName) -> tuple[RegimeName, ...]:
+        """Return retained targets over all periods for build-time consumers."""
         return tuple(
             sorted(
                 {
@@ -78,12 +86,10 @@ class PhaseReachability:
         )
 
     def reachable_from(
-        self, initial_regimes: Collection[str]
-    ) -> tuple[frozenset[str], ...]:
-        """Optional forward closure over the already-built static graph."""
-        reachable = [
-            frozenset(initial_regimes) & self.active_regimes_by_period[0]
-        ]
+        self, initial_regimes: Collection[RegimeName]
+    ) -> tuple[frozenset[RegimeName], ...]:
+        """Return the forward closure over the already-built static graph."""
+        reachable = [frozenset(initial_regimes) & self.active_regimes_by_period[0]]
         for period in range(self.n_periods - 1):
             targets = {
                 target
@@ -96,7 +102,7 @@ class PhaseReachability:
         return tuple(reachable)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ModelReachability:
     """The model's static solve and simulate graphs."""
 
@@ -110,16 +116,14 @@ class ModelReachability:
 
 def active_periods_from_predicates(
     *,
-    ages: Sequence[int | float],
-    active_by_regime: Mapping[str, Callable[[int | float], bool]],
-) -> Mapping[str, frozenset[int]]:
+    ages: Sequence[UserAge],
+    active_by_regime: Mapping[RegimeName, ActiveFunction],
+) -> MappingProxyType[RegimeName, frozenset[int]]:
     """Evaluate all activity predicates once at model construction."""
     return MappingProxyType(
         {
             regime: frozenset(
-                period
-                for period, age in enumerate(ages)
-                if bool(is_active(age))
+                period for period, age in enumerate(ages) if bool(is_active(age))
             )
             for regime, is_active in active_by_regime.items()
         }
@@ -127,8 +131,8 @@ def active_periods_from_predicates(
 
 
 def candidate_targets_from_transition(
-    *, transition: object, all_regime_names: Collection[str]
-) -> tuple[str, ...]:
+    *, transition: object, all_regime_names: Collection[RegimeName]
+) -> tuple[RegimeName, ...]:
     """Return the static candidate universe declared by one transition.
 
     * ``None``: terminal, no targets.
@@ -144,17 +148,18 @@ def candidate_targets_from_transition(
     if transition is None:
         return ()
     if isinstance(transition, Mapping):
-        return tuple(sorted(str(name) for name in transition))
-    return tuple(sorted(str(name) for name in all_regime_names))
+        return tuple(sorted(transition))
+    return tuple(sorted(all_regime_names))
 
 
 def build_phase_reachability(
     *,
     n_periods: int,
-    active_periods_by_regime: Mapping[str, Collection[int]],
-    candidate_targets_by_source: Mapping[str, Collection[str]],
-    terminal_regimes: Collection[str] = (),
-    unconditional_targets_by_source: Mapping[str, Collection[str]] | None = None,
+    active_periods_by_regime: Mapping[RegimeName, Collection[int]],
+    candidate_targets_by_source: Mapping[RegimeName, Collection[RegimeName]],
+    terminal_regimes: Collection[RegimeName] = (),
+    unconditional_targets_by_source: Mapping[RegimeName, Collection[RegimeName]]
+    | None = None,
 ) -> PhaseReachability:
     """Build one static graph; retain both TRUE and CONDITIONAL edges."""
     if n_periods < 1:
@@ -191,13 +196,13 @@ def build_phase_reachability(
         for period in range(n_periods)
     )
 
-    target_maps: list[Mapping[str, tuple[str, ...]]] = []
-    status_maps: list[Mapping[tuple[str, str], EdgeStatus]] = []
+    target_maps: list[MappingProxyType[RegimeName, tuple[RegimeName, ...]]] = []
+    status_maps: list[MappingProxyType[tuple[RegimeName, RegimeName], EdgeStatus]] = []
     for period in range(n_periods - 1):
-        period_targets: dict[str, tuple[str, ...]] = {}
-        period_status: dict[tuple[str, str], EdgeStatus] = {}
+        period_targets: dict[RegimeName, tuple[RegimeName, ...]] = {}
+        period_status: dict[tuple[RegimeName, RegimeName], EdgeStatus] = {}
         for source in sorted(regimes):
-            retained: list[str] = []
+            retained: list[RegimeName] = []
             for target in candidates.get(source, ()):
                 if (
                     source in terminal
@@ -228,10 +233,10 @@ def build_phase_reachability(
 
 def build_model_reachability(
     *,
-    ages: Sequence[int | float],
-    active_by_regime: Mapping[str, Callable[[int | float], bool]],
-    transitions_by_phase: Mapping[PhaseName, Mapping[str, object]],
-    terminal_regimes: Collection[str] = (),
+    ages: Sequence[UserAge],
+    active_by_regime: Mapping[RegimeName, ActiveFunction],
+    transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]],
+    terminal_regimes: Collection[RegimeName] = (),
 ) -> ModelReachability:
     """Build solve and simulate graphs from the same construction-time semantics."""
     all_regime_names = frozenset(active_by_regime)

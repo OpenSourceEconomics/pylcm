@@ -19,6 +19,7 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     continuation_grid_signature_from_schedule,
@@ -27,7 +28,7 @@ from _lcm.regime_building.age_normalization import (
     periodized_tree_signature,
     resolve_periodized_nodes,
 )
-from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
+from _lcm.regime_building.Q_and_F import get_compute_intermediates
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -48,7 +49,8 @@ def _build_compute_intermediates_per_period(
     *,
     active_periods: tuple[int, ...],
     flat_param_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
@@ -128,10 +130,10 @@ def _build_compute_intermediates_per_period(
     # signature), mirroring `_build_Q_and_F_per_period`: with no age-specialized node
     # the signature is constant and the grouping collapses to the target configuration.
     def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
-        complete = get_period_targets(
-            period=period,
-            transitions=transitions,
-            regimes_to_active_periods=regimes_to_active_periods,
+        complete = (
+            ()
+            if period == phase_reachability.n_periods - 1
+            else phase_reachability.targets(period=period, source=source_regime_name)
         )
         cont_sig = continuation_grid_signature_from_schedule(
             grid_schedule=grid_schedule,

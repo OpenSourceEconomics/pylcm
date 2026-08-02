@@ -24,15 +24,13 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
-from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.reachability import ModelReachability, build_model_reachability
 from _lcm.regime_building.age_normalization import _regime_has_markers
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
-from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
     process_regimes,
 )
@@ -58,6 +56,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -82,6 +81,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            prepared_structure=prepared_structure,
         )
         params_template = create_params_template(regimes)
     else:
@@ -91,6 +91,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            prepared_structure=prepared_structure,
         )
 
     return regimes, params_template
@@ -103,6 +104,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -124,6 +126,7 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
     )
     raw_params_template = create_params_template(raw_regimes)
 
@@ -228,12 +231,6 @@ def validate_model_inputs(
             user_regimes, broadcast_variables=broadcast_variables, ages=ages
         )
     )
-    if ages is not None:
-        error_messages.extend(
-            _validate_no_target_only_processes(
-                user_regimes=user_regimes, ages=ages
-            )
-        )
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -249,97 +246,6 @@ def validate_model_inputs(
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
 
-
-def _build_reachability_for_validation(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    ages: AgeGrid,
-) -> tuple[ModelReachability, Mapping[str, Mapping[RegimeName, frozenset[str]]]]:
-    """Build the canonical phase graphs and phase-specific process inventories."""
-    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
-    transitions_by_phase = {
-        "solution": {
-            name: spec.solution.regime_transition for name, spec in phased_specs.items()
-        },
-        "simulation": {
-            name: spec.simulation.regime_transition
-            for name, spec in phased_specs.items()
-        },
-    }
-    processes_by_phase = {
-        "solution": {
-            name: frozenset(
-                state_name
-                for state_name, grid in spec.solution.grid_states.items()
-                if isinstance(grid, _ContinuousStochasticProcess)
-            )
-            for name, spec in phased_specs.items()
-        },
-        "simulation": {
-            name: frozenset(
-                state_name
-                for state_name, grid in spec.simulation.grid_states.items()
-                if isinstance(grid, _ContinuousStochasticProcess)
-            )
-            for name, spec in phased_specs.items()
-        },
-    }
-    graph = build_model_reachability(
-        ages=ages.exact_values,
-        active_by_regime={name: regime.active for name, regime in user_regimes.items()},
-        transitions_by_phase=transitions_by_phase,
-        terminal_regimes={
-            name for name, regime in user_regimes.items() if regime.terminal
-        },
-    )
-    return graph, processes_by_phase
-
-
-def _validate_no_target_only_processes(
-    *,
-    user_regimes: Mapping[RegimeName, UserRegime],
-    ages: AgeGrid,
-) -> list[str]:
-    """Reject a missing process entry law only on a retained temporal edge.
-
-    Coarse transitions are deliberately conservative: without a static support
-    declaration, all next-period-active regimes are candidate targets. Those edges are
-    ``CONDITIONAL`` and are validated exactly like ``TRUE`` edges. There is no runtime
-    reachability pass.
-    """
-    graph, processes_by_phase = _build_reachability_for_validation(
-        user_regimes=user_regimes, ages=ages
-    )
-    violations: dict[tuple[str, str, str, str], list[int]] = {}
-    for phase_name in ("solution", "simulation"):
-        phase_graph = graph.for_phase(phase_name)
-        process_inventory = processes_by_phase[phase_name]
-        for period in range(phase_graph.n_periods - 1):
-            for source_name in phase_graph.active_regimes_by_period[period]:
-                source_processes = process_inventory[source_name]
-                for target_name in phase_graph.targets(
-                    period=period, source=source_name
-                ):
-                    for process in sorted(
-                        process_inventory[target_name] - source_processes
-                    ):
-                        violations.setdefault(
-                            (phase_name, source_name, target_name, process), []
-                        ).append(period)
-
-    return [
-        f"Regime '{source_name}' has a retained {phase_name} edge to regime "
-        f"'{target_name}' in source period(s) {periods}, and the target declares "
-        f"the stochastic process '{process}'. A process transition is a law from "
-        f"this period's value of the process, but '{source_name}' does not carry "
-        f"'{process}', so there is no value to condition on and no entry law is "
-        f"defined. Either declare '{process}' on '{source_name}' as well, give "
-        f"'{target_name}' a non-process state, or narrow the transition's static "
-        f"target support."
-        for (phase_name, source_name, target_name, process), periods in sorted(
-            violations.items()
-        )
-    ]
 
 def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
     """Raise TypeError if non-int, ValueError if non-positive."""
@@ -369,7 +275,7 @@ def _validate_all_variables_used(
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
-    of motion toward a reachable target (which this per-regime check cannot
+    of motion toward a candidate target (which this per-regime check cannot
     see).
 
     Args:
@@ -556,6 +462,17 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
+                else None
+            ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    solution.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solution.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.validation_regime_transition_probs is not None
                 else None
             ),
         )

@@ -52,8 +52,7 @@ def get_Q_and_F(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Target regimes whose continuation enters E[V]
-            this period (reachable, with state laws, active next period).
+        period_targets: Graph targets whose continuation enters E[V] this period.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
@@ -79,10 +78,11 @@ def get_Q_and_F(
     next_V = {}
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
 
     for target_regime_name in period_targets:
         # Transitions from the current regime to the target regime
-        bundle = transitions[target_regime_name]
+        bundle = transitions.get(target_regime_name, MappingProxyType({}))
 
         # Functions required to calculate the expected continuation values
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
@@ -117,6 +117,7 @@ def get_Q_and_F(
         stochastic_variables = tuple(
             key for key in bundle if key in stochastic_transition_names
         )
+        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
@@ -213,10 +214,13 @@ def get_Q_and_F(
 
             # We then take the weighted average of the next value function at the
             # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
-                next_V_at_stochastic_states_arr,
-                weights=joint_next_stochastic_states_weights,
-            )
+            if next_V_has_stochastic_states[target_regime_name]:
+                next_V_expected_arr = jnp.average(
+                    next_V_at_stochastic_states_arr,
+                    weights=joint_next_stochastic_states_weights,
+                )
+            else:
+                next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
@@ -268,8 +272,7 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Target regimes whose continuation enters E[V]
-            this period (reachable, with state laws, active next period).
+        period_targets: Graph targets whose continuation enters E[V] this period.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
@@ -292,9 +295,10 @@ def get_compute_intermediates(
     next_V = {}
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
 
     for target_regime_name in period_targets:
-        bundle = transitions[target_regime_name]
+        bundle = transitions.get(target_regime_name, MappingProxyType({}))
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=functions,
             transitions=bundle,
@@ -324,6 +328,7 @@ def get_compute_intermediates(
         stochastic_variables = tuple(
             key for key in bundle if key in stochastic_transition_names
         )
+        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
@@ -393,7 +398,11 @@ def get_compute_intermediates(
                         for arg, flat_name in ce_transform_flat_names.items()
                     },
                 )
-            contribution = jnp.average(next_V_stoch, weights=joint)
+            contribution = (
+                jnp.average(next_V_stoch, weights=joint)
+                if next_V_has_stochastic_states[target_regime_name]
+                else jnp.average(next_V_stoch)
+            )
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
         if ce is not None:
@@ -471,38 +480,6 @@ def get_Q_and_F_terminal(
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
-
-
-def get_period_targets(
-    *,
-    period: int,
-    transitions: TransitionFunctionsMapping,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-) -> tuple[RegimeName, ...]:
-    """Return the target regimes whose continuation enters E[V] this period.
-
-    The canonical transition bundles (`transitions` keys) carry exactly the
-    reachable targets with at least one state law; the period filter keeps
-    those active in the next period. A reachable target absent from the
-    bundles has no states (its V is identically zero) and contributes
-    nothing to the continuation.
-
-    Args:
-        period: The period to enumerate targets for.
-        transitions: Immutable mapping of target regime names to their
-            state transition functions.
-        regimes_to_active_periods: Immutable mapping of regime names to
-            their active period tuples.
-
-    Returns:
-        Tuple of this period's target regime names.
-
-    """
-    return tuple(
-        regime_name
-        for regime_name in transitions
-        if period + 1 in regimes_to_active_periods.get(regime_name, ())
-    )
 
 
 def _get_arg_names_of_Q_and_F(
