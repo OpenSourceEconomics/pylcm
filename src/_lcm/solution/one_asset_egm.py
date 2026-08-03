@@ -38,6 +38,7 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -69,6 +70,42 @@ class OneAssetEGM(Solver):
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return True
 
+    def validate(self, *, context: SolverBuildContext) -> None:
+        """Check the regime is a 1-D consumption--saving problem.
+
+        The solver's liquid role is filled positionally, which is only
+        unambiguous with a single continuous state. Both checks report the
+        regime's own state names, never the solver's internal role vocabulary.
+        """
+        continuous = tuple(
+            context.regime_to_v_interpolation_info[
+                context.regime_name
+            ].continuous_states
+        )
+        if len(continuous) != 1:
+            msg = (
+                f"OneAssetEGM regime '{context.regime_name}' must have exactly one "
+                f"continuous state, but has {len(continuous)}: {list(continuous)}. "
+                f"Use a solver that handles more than one Euler state, or move the "
+                f"extra states to discrete grids."
+            )
+            raise RegimeInitializationError(msg)
+        liquid_state = continuous[0]
+        for target in set(_period_to_continuation_target(context=context).values()):
+            target_states = context.regime_to_v_interpolation_info[
+                target
+            ].continuous_states
+            if liquid_state not in target_states:
+                msg = (
+                    f"OneAssetEGM regime '{context.regime_name}' continues into "
+                    f"target regime '{target}', which does not carry the Euler state "
+                    f"'{liquid_state}' (its continuous states are "
+                    f"{sorted(target_states)}). The Euler inversion reads the "
+                    f"target's value on that state's grid, so the target must "
+                    f"declare it."
+                )
+                raise RegimeInitializationError(msg)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one 1-D EGM period adapter per active period.
 
@@ -78,7 +115,13 @@ class OneAssetEGM(Solver):
         """
 
         savings_grid = self.savings_grid.to_jax()
-        liquid_state = context.state_action_space.state_names[0]
+        liquid_state = next(
+            iter(
+                context.regime_to_v_interpolation_info[
+                    context.regime_name
+                ].continuous_states
+            )
+        )
         liquid_grid = context.grids[liquid_state].to_jax()
 
         period_to_target = _period_to_continuation_target(context=context)
@@ -86,12 +129,17 @@ class OneAssetEGM(Solver):
         period_kernels: dict[int, PeriodKernel] = {}
         for period, target in period_to_target.items():
             if target not in cores:
-                core = _build_one_asset_core(savings_grid=savings_grid, target=target)
+                core = _build_one_asset_core(
+                    savings_grid=savings_grid,
+                    target=target,
+                    liquid_state=liquid_state,
+                )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _OneAssetEGMPeriodKernel(
                 core=cores[target],
                 regime_name=context.regime_name,
                 continuation_target=target,
+                liquid_state=liquid_state,
                 transition_target_names=tuple(context.transitions),
                 next_liquid_grid=_target_period_liquid_grid(
                     context=context,
@@ -128,6 +176,14 @@ class _OneAssetEGMPeriodKernel:
 
     continuation_target: RegimeName
     """The regime active next period; its value and marginal continue this one."""
+
+    liquid_state: StateName
+    """The regime's own name for the state filling the kernel's liquid role.
+
+    The core takes its state grid under the private keyword `liquid`; this is
+    the name the modeller gave it, used to look the grid up in the state-action
+    space and to qualify the liquid law's parameters.
+    """
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
@@ -169,7 +225,7 @@ class _OneAssetEGMPeriodKernel:
     ) -> Mapping[str, object]:
         """Build the core's lowering arguments: state, continuation, params."""
         return {
-            **dict(state_action_space.states),
+            "liquid": state_action_space.states[self.liquid_state],
             "next_liquid_grid": self.next_liquid_grid,
             "next_value": next_regime_to_V_arr[self.continuation_target],
             "next_marginal": next_regime_to_continuation[
@@ -195,7 +251,7 @@ class _OneAssetEGMPeriodKernel:
     ) -> KernelResult:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
         V_arr, carry = compiled_cores["main"](
-            **state_action_space.states,
+            liquid=state_action_space.states[self.liquid_state],
             next_liquid_grid=self.next_liquid_grid,
             next_value=next_regime_to_V_arr[self.continuation_target],
             next_marginal=next_regime_to_continuation[
@@ -234,15 +290,20 @@ def _target_period_liquid_grid(
     return fallback if grid is None else grid.to_jax()
 
 
-def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Callable:
+def _build_one_asset_core(
+    *, savings_grid: Float1D, target: RegimeName, liquid_state: StateName
+) -> Callable:
     """Build the jitted-able 1-D EGM core closing over the savings grid.
 
-    The core reads the state grid (`liquid`), the continuation value and
-    marginal, and the regime's scalar params, runs `egm_one_asset_step`, and
-    returns the value array and the marginal-value carry on the liquid grid.
-    The liquid law params are qualified by the continuation target's transition
-    (`{target}__next_liquid__...`).
+    The core reads the state grid under the private role keyword `liquid`, the
+    continuation value and marginal, and the regime's scalar params, runs
+    `egm_one_asset_step`, and returns the value array and the marginal-value
+    carry on the liquid grid. The liquid law's params are qualified by the
+    continuation target's transition into the regime's own state name
+    (`{target}__next_{liquid_state}__...`), so the role keyword stays private
+    and the modeller's vocabulary reaches the params template unchanged.
     """
+    liquid_law = f"{target}__next_{liquid_state}"
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
 
     def core(
@@ -261,8 +322,8 @@ def _build_one_asset_core(*, savings_grid: Float1D, target: RegimeName) -> Calla
             savings_grid=savings_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
-            return_liquid=params[f"{target}__next_liquid__return_liquid"],
-            income=params[f"{target}__next_liquid__retirement_income"],
+            return_liquid=params[f"{liquid_law}__return_liquid"],
+            income=params[f"{liquid_law}__retirement_income"],
         )
         carry = EGMCarry(
             endog_grid=liquid,

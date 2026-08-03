@@ -23,6 +23,7 @@ negative control is exactly today's model.
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from dags import rename_arguments
 
 from _lcm.egm.two_asset_post_decision import post_decision_value_and_grad
 from lcm import (
@@ -43,6 +44,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.deterministic import ds_pension as ds
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _N_PERIODS = 5
@@ -58,6 +60,10 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 # dense brute is least reliable.
 _WORKING_INTERIOR = {2: np.s_[3:, :9], 1: np.s_[3:, :8], 0: np.s_[3:, :7]}
 _RETIRED_INTERIOR = np.s_[2:]
+# The renamed 1-D model's borrowing constraint binds over its lowest wealth
+# nodes, where the exact EGM solution and a discrete consumption sweep are not
+# comparable. Above them the two agree to well under a percent.
+_RENAMED_UNCONSTRAINED = np.s_[5:]
 
 # The agreement the matched-grid configuration achieves. A kernel reading its
 # continuation off the wrong grid misses these by a wide margin.
@@ -330,7 +336,7 @@ def test_the_two_asset_solve_is_finite_on_every_moving_grid(upper_envelope):
             assert np.isfinite(np.asarray(V_arr)).all()
 
 
-def _renamed_one_asset_model(*, solver):
+def _renamed_one_asset_model(*, solver, n_consumption=14):
     """A 1-D consumption--saving model whose state is `wealth`, not `liquid`.
 
     Structurally identical to the DS pension retired sub-problem, but the
@@ -371,7 +377,9 @@ def _renamed_one_asset_model(*, solver):
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
     ages = AgeGrid(start=0, stop=3, step="Y")
     alive = Regime(
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=14)},
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
+        },
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={"feasible": feasible},
@@ -411,11 +419,6 @@ def _renamed_one_asset_params():
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the one-asset core demands a keyword named 'liquid' "
-    "regardless of the state's name",
-)
 def test_w5_one_asset_egm_does_not_require_the_state_to_be_named_liquid():
     """W5 (D3, one asset). The kernel's private role vocabulary stays private.
 
@@ -427,11 +430,151 @@ def test_w5_one_asset_egm_does_not_require_the_state_to_be_named_liquid():
     egm = _renamed_one_asset_model(
         solver=OneAssetEGM(savings_grid=_SAVINGS_GRID)
     ).solve(params=_renamed_one_asset_params(), log_level="debug")
-    brute = _renamed_one_asset_model(solver=GridSearch()).solve(
+    brute = _renamed_one_asset_model(solver=GridSearch(), n_consumption=200).solve(
         params=_renamed_one_asset_params(), log_level="debug"
     )
     for period in (0, 1, 2):
-        egm_v = np.asarray(egm[period]["alive"])[_RETIRED_INTERIOR]
-        brute_v = np.asarray(brute[period]["alive"])[_RETIRED_INTERIOR]
+        egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]
+        brute_v = np.asarray(brute[period]["alive"])[_RENAMED_UNCONSTRAINED]
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
         assert np.max(rel) < _RETIRED_MAX_TOL
+
+
+def _renamed_two_asset_model(*, upper_envelope="g2egm", n_consumption=14):
+    """The DS pension model with `cash` / `fund` in place of `liquid` / `pension`.
+
+    Built by renaming the shared model's transition arguments, so the economics
+    is bit-for-bit the benchmark's and only the vocabulary differs. The boundary
+    target names its own state `cash_only`, distinct from the source's liquid
+    role, so resolving it cannot fall back to the source's name.
+    """
+    rename = {"liquid": "cash", "pension": "fund"}
+    boundary_rename = {"liquid": "cash_only"}
+
+    def _r(func, mapping=rename):
+        return rename_arguments(func, mapper=mapping)
+
+    liquid_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
+    pension_grid = LinSpacedGrid(start=0.0, stop=15.0, n_points=10)
+    consumption_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
+    ages = AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y")
+    retirement_age = ages.exact_values[_RETIREMENT_PERIOD]
+    final_age = ages.exact_values[-1]
+
+    working = Regime(
+        actions={
+            "consumption": consumption_grid,
+            "deposit": LinSpacedGrid(start=0.0, stop=15.0, n_points=8),
+        },
+        states={"cash": liquid_grid, "fund": pension_grid},
+        state_transitions={
+            "cash": {"working": _r(ds.next_liquid_working)},
+            "fund": {"working": _r(ds.next_pension_working)},
+            # The boundary target names its state `cash_only`, which this
+            # regime does not carry, so the lump-sum payout is declared as
+            # an entry law into that target.
+            "cash_only": {"retired": _r(ds.next_liquid_retiring)},
+        },
+        constraints={"feasible": _r(ds.feasible_working)},
+        transition={
+            "working": MarkovTransition(ds.prob_stay_working),
+            "retired": MarkovTransition(ds.prob_retire),
+        },
+        functions={"utility": ds.utility_working},
+        active=lambda age, ra=retirement_age: age < ra,
+        solver=TwoDimEGM(
+            liquid_state="cash",
+            pension_state="fund",
+            a_grid=_A_GRID,
+            b_grid=_B_GRID,
+            consumption_grid=_CONSUMPTION_GRID,
+            upper_envelope=upper_envelope,
+        ),
+    )
+    retired = Regime(
+        actions={"consumption": consumption_grid},
+        states={"cash_only": liquid_grid},
+        state_transitions={
+            "cash_only": {
+                "retired": _r(ds.next_liquid_retired, boundary_rename),
+                "dead": _r(ds.next_liquid_retired, boundary_rename),
+            }
+        },
+        constraints={"feasible": _r(ds.feasible_retired, boundary_rename)},
+        transition={
+            "retired": MarkovTransition(ds.prob_stay_retired),
+            "dead": MarkovTransition(ds.prob_die),
+        },
+        functions={"utility": ds.utility_retired},
+        active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+        solver=OneAssetEGM(savings_grid=_SAVINGS_GRID),
+    )
+    dead = Regime(
+        transition=None,
+        states={"cash_only": liquid_grid},
+        functions={"utility": _r(ds.bequest, boundary_rename)},
+        solver=GridSearch(),
+    )
+    return Model(
+        regimes={"working": working, "retired": retired, "dead": dead},
+        ages=ages,
+        regime_id_class=ds.RegimeId,
+    )
+
+
+def _renamed_two_asset_params():
+    """The benchmark params, re-keyed onto the renamed states' laws."""
+    params = get_params()
+    working = params["working"]
+    return {
+        "working": {
+            "utility": working["utility"],
+            "H": working["H"],
+            "working": {
+                "next_cash": working["working"]["next_liquid"],
+                "next_fund": working["working"]["next_pension"],
+                "next_regime": working["working"]["next_regime"],
+            },
+            "retired": {
+                "next_cash_only": working["retired"]["next_liquid"],
+                "next_regime": working["retired"]["next_regime"],
+            },
+        },
+        "retired": {
+            "utility": params["retired"]["utility"],
+            "H": params["retired"]["H"],
+            "retired": {
+                "next_cash_only": params["retired"]["retired"]["next_liquid"],
+                "next_regime": params["retired"]["retired"]["next_regime"],
+            },
+            "dead": {
+                "next_cash_only": params["retired"]["dead"]["next_liquid"],
+                "next_regime": params["retired"]["dead"]["next_regime"],
+            },
+        },
+        "dead": params["dead"],
+    }
+
+
+def test_w6_two_asset_egm_takes_the_regimes_own_state_names():
+    """W6/W11/W12 (D3). Renamed states solve and match the dense brute.
+
+    The two-asset regime calls its states `cash` and `fund` and its laws
+    `next_cash` / `next_fund`; the boundary target calls its own state
+    `cash_only`. Naming the roles on the solver is all that is required —
+    nothing about the kernel's `(m, n)` vocabulary reaches the model or the
+    params template.
+    """
+    egm = _renamed_two_asset_model().solve(
+        params=_renamed_two_asset_params(), log_level="debug"
+    )
+    brute = _renamed_two_asset_model(n_consumption=200).solve(
+        params=_renamed_two_asset_params(), log_level="debug"
+    )
+    for period in (0, 1, 2):
+        sl = _WORKING_INTERIOR[period]
+        egm_v = np.asarray(egm[period]["working"])[sl]
+        brute_v = np.asarray(brute[period]["working"])[sl]
+        assert np.isfinite(egm_v).all()
+        rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
+        assert np.median(rel) < _WORKING_MEDIAN_TOL

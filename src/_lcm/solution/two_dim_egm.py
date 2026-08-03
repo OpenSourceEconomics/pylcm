@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Literal
 
 import jax
+import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
@@ -40,6 +41,7 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
     Float1D,
     FloatND,
+    StateName,
 )
 
 
@@ -63,6 +65,17 @@ class TwoDimEGM(Solver):
     the active-period structure, so the right step is selected without a
     runtime fork.
     """
+
+    liquid_state: StateName = "liquid"
+    """Name of the regime's liquid (cash-on-hand) continuous state.
+
+    Two continuous states cannot be told apart positionally, so the modeller
+    names which one fills each economic role. The kernel's own `(m, n)`
+    vocabulary stays private to it.
+    """
+
+    pension_state: StateName = "pension"
+    """Name of the regime's illiquid (pension) continuous state."""
 
     a_grid: ContinuousGrid
     """Liquid post-decision grid for the `ucon`/`dcon` segments (include 0)."""
@@ -90,6 +103,89 @@ class TwoDimEGM(Solver):
         """The boundary step reads the retired regime's marginal value of liquid."""
         return True
 
+    def validate(self, *, context: SolverBuildContext) -> None:
+        """Check the regime and its targets fit the two-asset G2EGM step.
+
+        Every message names the regime's own states and the role field that
+        assigns them, so a mismatch is fixed without knowing the kernel's
+        internal `(m, n)` vocabulary.
+        """
+        own_states = context.regime_to_v_interpolation_info[
+            context.regime_name
+        ].continuous_states
+        if len(own_states) != 2:  # noqa: PLR2004
+            msg = (
+                f"TwoDimEGM regime '{context.regime_name}' must have exactly two "
+                f"continuous states, but has {len(own_states)}: "
+                f"{sorted(own_states)}."
+            )
+            raise RegimeInitializationError(msg)
+        missing = {
+            field: name
+            for field, name in (
+                ("liquid_state", self.liquid_state),
+                ("pension_state", self.pension_state),
+            )
+            if name not in own_states
+        }
+        if missing:
+            msg = (
+                f"TwoDimEGM regime '{context.regime_name}' has continuous states "
+                f"{sorted(own_states)}, which do not include "
+                + ", ".join(f"{field}='{name}'" for field, name in missing.items())
+                + ". Set the role fields to the regime's own state names."
+            )
+            raise RegimeInitializationError(msg)
+        if self.liquid_state == self.pension_state:
+            msg = (
+                f"TwoDimEGM regime '{context.regime_name}' assigns the same state "
+                f"'{self.liquid_state}' to both the liquid and the pension role."
+            )
+            raise RegimeInitializationError(msg)
+        # The step's value array has one axis per role and nothing else, so a
+        # third state has no axis to land on. Rejecting here beats publishing a
+        # value array whose axes silently mean something other than they claim.
+        declared = tuple(context.state_action_space.state_names)
+        if set(declared) != {self.liquid_state, self.pension_state}:
+            msg = (
+                f"TwoDimEGM regime '{context.regime_name}' declares states "
+                f"{list(declared)}; the two-asset step supports exactly the two "
+                f"role states '{self.liquid_state}' and '{self.pension_state}' "
+                f"and no others."
+            )
+            raise RegimeInitializationError(msg)
+
+        period_to_target = _period_to_continuation_target(context=context)
+        boundary_targets = {
+            target
+            for target in period_to_target.values()
+            if target != context.regime_name
+        }
+        # The boundary step reads exactly one target regime's continuation (the
+        # retirement boundary). More than one distinct boundary target has no
+        # single well-defined prefix, so fail loud rather than pick one by set
+        # iteration order.
+        if len(boundary_targets) > 1:
+            msg = (
+                f"TwoDimEGM regime '{context.regime_name}' leaves to more than one "
+                f"target regime ({sorted(boundary_targets)}); the boundary step "
+                f"supports a single continuation target."
+            )
+            raise RegimeInitializationError(msg)
+        for target in boundary_targets:
+            target_states = context.regime_to_v_interpolation_info[
+                target
+            ].continuous_states
+            if len(target_states) != 1:
+                msg = (
+                    f"TwoDimEGM regime '{context.regime_name}' leaves to target "
+                    f"regime '{target}', whose continuous states are "
+                    f"{sorted(target_states)}. The boundary step pays the pension "
+                    f"out as a lump sum into a single continuous state, so the "
+                    f"target must declare exactly one."
+                )
+                raise RegimeInitializationError(msg)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one G2EGM period adapter per active period.
 
@@ -106,21 +202,32 @@ class TwoDimEGM(Solver):
 
         period_to_target = _period_to_continuation_target(context=context)
         own_name = context.regime_name
+        # `validate` has already established there is at most one of these.
         boundary_targets = {
             target for target in period_to_target.values() if target != own_name
         }
-        # The boundary step reads exactly one target regime's continuation (the
-        # retirement boundary). More than one distinct boundary target has no
-        # single well-defined prefix, so fail loud rather than pick one by set
-        # iteration order.
-        if len(boundary_targets) > 1:
-            msg = (
-                f"TwoDimEGM regime '{own_name}' leaves to more than one target "
-                f"regime ({sorted(boundary_targets)}); the boundary step "
-                f"supports a single continuation target."
-            )
-            raise RegimeInitializationError(msg)
         boundary_prefix = next(iter(boundary_targets), own_name)
+        # The boundary target's own name for the state the pension is paid into.
+        # It is resolved from that regime, not assumed to match this regime's
+        # liquid role: the two are different regimes and may name it differently.
+        boundary_liquid_state = (
+            next(
+                iter(
+                    context.regime_to_v_interpolation_info[
+                        boundary_prefix
+                    ].continuous_states
+                )
+            )
+            if boundary_targets
+            else self.liquid_state
+        )
+        # The step always works in its own `(liquid, pension)` axis order, while
+        # the regime's value array follows the order the states were declared in.
+        # `validate` has established the two are a permutation of each other.
+        publishes_pension_first = tuple(context.state_action_space.state_names) == (
+            self.pension_state,
+            self.liquid_state,
+        )
         cores: dict[bool, Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period, target in period_to_target.items():
@@ -135,6 +242,9 @@ class TwoDimEGM(Solver):
                     interior_prefix=own_name,
                     boundary_prefix=boundary_prefix,
                     upper_envelope=self.upper_envelope,
+                    liquid_state=self.liquid_state,
+                    pension_state=self.pension_state,
+                    boundary_liquid_state=boundary_liquid_state,
                 )
                 cores[is_boundary] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _TwoDimEGMPeriodKernel(
@@ -143,6 +253,9 @@ class TwoDimEGM(Solver):
                 continuation_target=target,
                 is_boundary=is_boundary,
                 transition_target_names=tuple(context.transitions),
+                liquid_state=self.liquid_state,
+                pension_state=self.pension_state,
+                publishes_pension_first=publishes_pension_first,
             )
         return SolutionKernels(period_kernels=MappingProxyType(period_kernels))
 
@@ -173,6 +286,20 @@ class _TwoDimEGMPeriodKernel:
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
+
+    liquid_state: StateName
+    """The regime's own name for the state filling the kernel's liquid role."""
+
+    pension_state: StateName
+    """The regime's own name for the state filling the kernel's pension role."""
+
+    publishes_pension_first: bool
+    """Whether the regime declares its pension state before its liquid state.
+
+    The step returns its value on the `(liquid, pension)` grid; the regime's
+    value array follows the declaration order. When the two disagree the result
+    is transposed on the way out, so a regime's axis order is its own business.
+    """
 
     def cores(self) -> Mapping[str, Callable]:
         """Return the single EGM-step core under the `"main"` key."""
@@ -230,6 +357,8 @@ class _TwoDimEGMPeriodKernel:
                 flat_params=flat_params,
             )
         )
+        if self.publishes_pension_first:
+            V_arr = jnp.swapaxes(V_arr, 0, 1)
         return KernelResult(V_arr=V_arr)
 
     def _core_args(
@@ -263,8 +392,8 @@ class _TwoDimEGMPeriodKernel:
                 "next_value_working": next_regime_to_V_arr[self.continuation_target],
             }
         return {
-            "liquid": states["liquid"],
-            "pension": states["pension"],
+            "liquid": states[self.liquid_state],
+            "pension": states[self.pension_state],
             **continuation,
             **_union_free_params(
                 flat_params=flat_params,
@@ -283,6 +412,9 @@ def _build_two_dim_core(
     is_boundary: bool,
     interior_prefix: RegimeName,
     boundary_prefix: RegimeName,
+    liquid_state: StateName,
+    pension_state: StateName,
+    boundary_liquid_state: StateName,
     upper_envelope: Literal["g2egm", "rfc"] = "g2egm",
 ) -> Callable:
     """Build the jitted-able two-asset core for one branch (interior or boundary).
@@ -297,7 +429,15 @@ def _build_two_dim_core(
 
     `upper_envelope` selects the interior step's envelope — the G2EGM mesh or the
     combined-cloud RFC. The boundary (retiring) step is always G2EGM.
+
+    Each law's parameters are qualified by the state it moves, under that
+    regime's own name for it: this regime's `liquid_state` / `pension_state`
+    for its own laws, and the boundary target's `boundary_liquid_state` for
+    the payout law it reads.
     """
+    boundary_liquid_law = f"{boundary_prefix}__next_{boundary_liquid_state}"
+    interior_liquid_law = f"{interior_prefix}__next_{liquid_state}"
+    interior_pension_law = f"{interior_prefix}__next_{pension_state}"
     from _lcm.egm.rfc_two_asset_step import rfc_two_asset_step  # noqa: PLC0415
     from _lcm.egm.two_asset_g2egm_step import (  # noqa: PLC0415
         g2egm_retiring_step,
@@ -323,14 +463,12 @@ def _build_two_dim_core(
             consumption_grid=consumption_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
-            match_rate=params[f"{boundary_prefix}__next_liquid__match_rate"],
-            return_liquid=params[f"{boundary_prefix}__next_liquid__return_liquid"],
+            match_rate=params[f"{boundary_liquid_law}__match_rate"],
+            return_liquid=params[f"{boundary_liquid_law}__return_liquid"],
             pension_payout_return=params[
-                f"{boundary_prefix}__next_liquid__pension_payout_return"
+                f"{boundary_liquid_law}__pension_payout_return"
             ],
-            retirement_income=params[
-                f"{boundary_prefix}__next_liquid__retirement_income"
-            ],
+            retirement_income=params[f"{boundary_liquid_law}__retirement_income"],
             threshold=threshold,
         )
         return result.value - params["utility__work_disutility"]
@@ -344,10 +482,10 @@ def _build_two_dim_core(
     ) -> FloatND:
         discount_factor = params["H__discount_factor"]
         crra = params["utility__crra"]
-        match_rate = params[f"{interior_prefix}__next_pension__match_rate"]
-        return_liquid = params[f"{interior_prefix}__next_liquid__return_liquid"]
-        return_pension = params[f"{interior_prefix}__next_pension__return_pension"]
-        wage = params[f"{interior_prefix}__next_liquid__wage"]
+        match_rate = params[f"{interior_pension_law}__match_rate"]
+        return_liquid = params[f"{interior_liquid_law}__return_liquid"]
+        return_pension = params[f"{interior_pension_law}__return_pension"]
+        wage = params[f"{interior_liquid_law}__wage"]
         if upper_envelope == "rfc":
             result = rfc_two_asset_step(
                 next_value=next_value_working,
