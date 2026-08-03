@@ -59,7 +59,9 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 # boundary layer thickens backward, and the steep low-liquid rows are where the
 # dense brute is least reliable.
 _WORKING_INTERIOR = {2: np.s_[3:, :9], 1: np.s_[3:, :8], 0: np.s_[3:, :7]}
-_RETIRED_INTERIOR = np.s_[2:]
+# The lowest liquid nodes are borrowing-constrained, where an exact EGM
+# inversion and a discrete consumption sweep are not comparable at all.
+_RETIRED_INTERIOR = np.s_[3:]
 # The renamed 1-D model's borrowing constraint binds over its lowest wealth
 # nodes, where the exact EGM solution and a discrete consumption sweep are not
 # comparable. Above them the two agree to well under a percent.
@@ -178,11 +180,6 @@ def test_w7_matched_grids_agree_with_brute():
     _assert_retired_matches_brute(egm, brute)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the one-asset kernel reads its continuation on its own liquid "
-    "grid, not the target's",
-)
 def test_w1_retired_egm_reads_the_terminal_regime_on_the_terminal_grid():
     """W1 (cross-regime, one asset). The `dead` regime's own liquid grid is used.
 

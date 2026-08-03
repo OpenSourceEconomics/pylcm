@@ -16,6 +16,7 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.typing import Float1D, StateName
 
 
 def _period_to_continuation_target(
@@ -80,3 +81,55 @@ def _union_fixed_params(
         ).items():
             bound.setdefault(key, value)
     return bound
+
+
+def target_period_grid(
+    *,
+    context: SolverBuildContext,
+    period: int,
+    target: RegimeName,
+    target_state_name: StateName,
+) -> Float1D:
+    """The nodes `target` tabulates `target_state_name` on at `period + 1`.
+
+    A period-`t` kernel reads `V_{t+1}` and its marginal on the *target's*
+    grid, which differs from this regime's on two independent axes: the target
+    may be a different regime with its own grid, and the state may be
+    age-specialized so the same regime's nodes move between periods.
+
+    Args:
+        context: The solver build context of the regime doing the reading.
+        period: The period whose kernel reads the continuation, so the grid
+            wanted is the target's at `period + 1`.
+        target: The regime the continuation is read from.
+        target_state_name: That regime's own name for the state the
+            continuation is tabulated on.
+
+    Returns:
+        The target's nodes for that state at `period + 1`.
+
+    Raises:
+        RegimeInitializationError: If the target does not carry the state at
+            all, so no continuation for it exists to read.
+
+    """
+    representative = context.regime_to_v_interpolation_info[target].continuous_states
+    if target_state_name not in representative:
+        msg = (
+            f"Regime '{context.regime_name}' reads its continuation from target "
+            f"regime '{target}', which does not carry the state "
+            f"'{target_state_name}' (its continuous states are "
+            f"{sorted(representative)}). There is no continuation for that state "
+            f"to read."
+        )
+        raise RegimeInitializationError(msg)
+
+    per_period = context.period_to_regime_v_interp
+    if per_period is not None:
+        info = per_period.get(period + 1, {}).get(target)
+        if info is not None and target_state_name in info.continuous_states:
+            return info.continuous_states[target_state_name].to_jax()
+    # No age-specialized state anywhere in the model: the target's
+    # representative grid is its grid in every period. It is still the
+    # target's, though, never this regime's.
+    return representative[target_state_name].to_jax()

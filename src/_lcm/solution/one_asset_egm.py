@@ -24,6 +24,7 @@ from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
     _union_free_params,
+    target_period_grid,
 )
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -141,12 +142,11 @@ class OneAssetEGM(Solver):
                 continuation_target=target,
                 liquid_state=liquid_state,
                 transition_target_names=tuple(context.transitions),
-                next_liquid_grid=_target_period_liquid_grid(
+                next_liquid_grid=target_period_grid(
                     context=context,
                     period=period,
                     target=target,
-                    liquid_state=liquid_state,
-                    fallback=liquid_grid,
+                    target_state_name=liquid_state,
                 ),
             )
         return SolutionKernels(
@@ -264,30 +264,6 @@ class _OneAssetEGMPeriodKernel:
             ),
         )
         return KernelResult(V_arr=V_arr, continuation=carry)
-
-
-def _target_period_liquid_grid(
-    *,
-    context: SolverBuildContext,
-    period: int,
-    target: RegimeName,
-    liquid_state: StateName,
-    fallback: Float1D,
-) -> Float1D:
-    """The continuation target's liquid nodes at `period + 1`.
-
-    A period-`t` kernel reads `V_{t+1}` and its marginal, both tabulated on the
-    target's period-`t+1` grid. Falls back to the representative grid whenever the
-    model declares no age-specialized state, where the two coincide by definition.
-    """
-    per_period = context.period_to_regime_v_interp
-    if per_period is None:
-        return fallback
-    target_info = per_period.get(period + 1, {}).get(target)
-    if target_info is None:
-        return fallback
-    grid = target_info.continuous_states.get(liquid_state)
-    return fallback if grid is None else grid.to_jax()
 
 
 def _build_one_asset_core(
