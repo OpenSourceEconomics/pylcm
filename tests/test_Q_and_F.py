@@ -3,7 +3,9 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from dags import concatenate_functions
 from numpy.testing import assert_array_equal
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
@@ -18,9 +20,12 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
+    get_compute_intermediates,
+    get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from lcm import AgeGrid
+from _lcm.regime_building.V import VInterpolationInfo
+from lcm import AgeGrid, PowerMean
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -382,3 +387,181 @@ def test_partial_state_laws_solve_with_declared_targets():
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V_arr.values():
             assert not jnp.any(jnp.isnan(V_arr))
+
+
+def _sum_utility(utility_level: FloatND) -> FloatND:
+    return utility_level
+
+
+def _epstein_zin_H(utility: FloatND, E_next_V: FloatND) -> FloatND:
+    return utility + E_next_V
+
+
+def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, FloatND]:
+    return MappingProxyType(
+        {"low": regime_prob_low, "high": 1.0 - regime_prob_low},
+    )
+
+
+# A target regime without states: its value function array is a scalar, so the
+# interpolator is the identity and each target contributes a single lottery node.
+_STATELESS_V_INFO = VInterpolationInfo(
+    state_names=(),
+    discrete_states=MappingProxyType({}),
+    continuous_states=MappingProxyType({}),
+)
+
+
+def _build_two_target_closure(builder: Callable, *, certainty_equivalent) -> Callable:
+    """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
+    return builder(
+        flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
+        functions=MappingProxyType({"utility": _sum_utility, "H": _epstein_zin_H}),
+        constraints=MappingProxyType({}),
+        period_targets=("low", "high"),
+        transitions=MappingProxyType({}),
+        stochastic_transition_names=frozenset(),
+        compute_regime_transition_probs=concatenate_functions(
+            functions={"regime_transition_probs": _low_and_high_probs},
+            targets="regime_transition_probs",
+            enforce_signature=False,
+            set_annotations=True,
+        ),
+        regime_to_v_interpolation_info=MappingProxyType(
+            {"low": _STATELESS_V_INFO, "high": _STATELESS_V_INFO}
+        ),
+        certainty_equivalent=certainty_equivalent,
+    )
+
+
+def _two_target_call_kwargs(
+    *,
+    values: tuple[float, float],
+    regime_prob_low: float,
+    utility_level: float,
+    risk_aversion: float,
+    dtype,
+) -> dict:
+    return {
+        "next_regime_to_V_arr": MappingProxyType(
+            {
+                "low": jnp.asarray(values[0], dtype=dtype),
+                "high": jnp.asarray(values[1], dtype=dtype),
+            }
+        ),
+        "utility_level": jnp.asarray(utility_level, dtype=dtype),
+        "regime_prob_low": jnp.asarray(regime_prob_low, dtype=dtype),
+        "age": jnp.asarray(25),
+        "period": jnp.asarray(0),
+        "certainty_equivalent__risk_aversion": jnp.asarray(risk_aversion, dtype=dtype),
+    }
+
+
+def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
+    """A `(1e-50, 2e-50)` regime lottery at risk aversion 8 keeps its exact value."""
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    got = jax.jit(
+        lambda: Q_and_F(
+            **_two_target_call_kwargs(
+                values=(1e-50, 2e-50),
+                regime_prob_low=0.5,
+                utility_level=0.0,
+                risk_aversion=8.0,
+                dtype=jnp.float64,
+            )
+        )[0]
+    )()
+    np.testing.assert_allclose(float(got), 1.102862741485982e-50, rtol=5e-5, atol=0.0)
+
+
+def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None):
+    """A `(1e-8, 2e-8)` regime lottery at risk aversion 8 keeps its exact value."""
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    got = jax.jit(
+        lambda: Q_and_F(
+            **_two_target_call_kwargs(
+                values=(1e-8, 2e-8),
+                regime_prob_low=0.5,
+                utility_level=0.0,
+                risk_aversion=8.0,
+                dtype=jnp.float32,
+            )
+        )[0]
+    )()
+    np.testing.assert_allclose(float(got), 1.102862741485982e-8, rtol=5e-5, atol=0.0)
+
+
+# Risk aversion and lottery scale at which the naive
+# `inverse(Σ w · transform(v))` route overflows float64.
+_FLOAT64_ACTION_CASES = [(8.0, 1e-50), (12.0, 1e-30), (20.0, 1e-20), (50.0, 1e-8)]
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_ACTION_CASES)
+def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
+    x64_enabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The action with the larger certainty equivalent wins however small values are.
+
+    The two actions face the same two-point lottery `(scale, 2 * scale)`
+    under different regime probabilities. The even lottery has the higher
+    power mean by more than the first action's utility advantage, so it is
+    optimal at every scale.
+    """
+    values = (scale, 2.0 * scale)
+    skewed = PowerMean().aggregate(
+        values=jnp.asarray(values, dtype=jnp.float64),
+        weights=jnp.asarray((0.9, 0.1), dtype=jnp.float64),
+        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
+    )
+    even = PowerMean().aggregate(
+        values=jnp.asarray(values, dtype=jnp.float64),
+        weights=jnp.asarray((0.5, 0.5), dtype=jnp.float64),
+        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
+    )
+    assert float(even) > float(skewed) > 0.0
+    utility_advantage = 0.4 * (float(even) - float(skewed))
+
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_per_action = jax.jit(
+        lambda: jnp.asarray(
+            [
+                Q_and_F(
+                    **_two_target_call_kwargs(
+                        values=values,
+                        regime_prob_low=prob_low,
+                        utility_level=utility,
+                        risk_aversion=risk_aversion,
+                        dtype=jnp.float64,
+                    )
+                )[0]
+                for prob_low, utility in ((0.9, utility_advantage), (0.5, 0.0))
+            ]
+        )
+    )()
+    expected = jnp.asarray([utility_advantage + float(skewed), float(even)])
+    np.testing.assert_allclose(
+        np.asarray(Q_per_action), np.asarray(expected), rtol=8e-5
+    )
+    assert int(jnp.argmax(Q_per_action)) == 1
+
+
+def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):
+    """The NaN diagnostics recompute the same `Q` the backward induction used."""
+    call_kwargs = _two_target_call_kwargs(
+        values=(1e-50, 2e-50),
+        regime_prob_low=0.25,
+        utility_level=3e-51,
+        risk_aversion=8.0,
+        dtype=jnp.float64,
+    )
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    compute_intermediates = _build_two_target_closure(
+        get_compute_intermediates, certainty_equivalent=PowerMean()
+    )
+    Q_arr = jax.jit(lambda: Q_and_F(**call_kwargs)[0])()
+    diagnostic_Q_arr = jax.jit(lambda: compute_intermediates(**call_kwargs)[3])()
+    np.testing.assert_allclose(
+        np.asarray(diagnostic_Q_arr), np.asarray(Q_arr), rtol=0.0, atol=0.0
+    )
