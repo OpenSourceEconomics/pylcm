@@ -610,7 +610,16 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
 
 def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
-    """A process state (income) only present in one regime is NaN-filled elsewhere."""
+    """A process state (income) only present in one regime is NaN-filled elsewhere.
+
+    `earner` and `retiree` each transition to `dead` only, via a per-target
+    dict — not a bare coarse transition. A bare transition declares
+    conservative support over every regime active next period, and `retiree`
+    neither carries `income` nor defines an entry law for it, so a coarse
+    transition from `earner` would fail strict state-handoff validation. The
+    per-target dict is required here, not an arbitrary workaround: it narrows
+    `earner`'s declared targets to `dead`, which needs no `income` handoff.
+    """
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
     @categorical(ordered=False)

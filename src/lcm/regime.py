@@ -77,6 +77,14 @@ class Regime:
       probability. The key set declares the regime's reachable targets;
       omitted regimes are structurally unreachable.
 
+    A bare callable or bare `MarkovTransition` declares conservative support
+    over every regime active in the next period — every temporally
+    compatible candidate must therefore have a valid state handoff (a
+    carried state, a deterministic/stochastic law, or an explicit
+    target-local/entry law). Use a per-target mapping to declare narrower
+    support instead. Runtime-zero transition probabilities do not narrow
+    this topology; only the declared form does.
+
     `Phased` gives each phase its own variant (matching form required; for
     per-target dicts, identical key sets).
     """
