@@ -603,9 +603,6 @@ class NBEGM(Solver):
                 ),
                 probe_failure=self.probe_failure,
             )
-        reachable_targets = frozenset(
-            context.solution_reachability.union_targets(source=context.regime_name)
-        )
         transition_target_names = tuple(context.transitions)
 
         # The ride-along kernel takes the continuation as a probability-weighted
@@ -734,7 +731,7 @@ class NBEGM(Solver):
                 statics=statics_by_key[key],
                 cliff_candidates=cliff_candidates_by_key[key],
                 regime_name=context.regime_name,
-                reachable_targets=reachable_targets,
+                carry_targets=frozenset(plan.carry_targets),
                 transition_target_names=transition_target_names,
             )
         return SolutionKernels(
@@ -792,8 +789,8 @@ class _RideAlongNBEGMPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
-    reachable_targets: frozenset[RegimeName]
-    """The carry keys the core reads; the rolling carry is filtered to these."""
+    carry_targets: frozenset[RegimeName]
+    """Carry keys this period's core reads; the rolling carry is filtered to these."""
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
@@ -862,7 +859,7 @@ class _RideAlongNBEGMPeriodKernel:
             **states,
             "next_regime_to_continuation": _carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                carry_targets=self.reachable_targets,
+                carry_targets=self.carry_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **params,
@@ -888,7 +885,7 @@ class _RideAlongNBEGMPeriodKernel:
             **states,
             next_regime_to_continuation=_carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                carry_targets=self.reachable_targets,
+                carry_targets=self.carry_targets,
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
             **params,
