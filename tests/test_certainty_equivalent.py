@@ -773,6 +773,66 @@ def test_zero_risk_aversion_reduces_to_expected_utility():
             )
 
 
+_STATELESS_BEQUEST = 2.0
+
+
+def _utility_dead_stateless() -> FloatND:
+    """A stateless target's value: a constant, with no state to evaluate it at."""
+    return jnp.asarray(_STATELESS_BEQUEST)
+
+
+@pytest.mark.parametrize("risk_aversion", [0.5, 2.0, 3.0])
+def test_stateless_target_is_transformed_before_the_regime_expectation(
+    risk_aversion: float,
+):
+    """A stateless target reached with probability 1 contributes its own value.
+
+    `QuasiArithmeticMean` is `CE = g^-1(sum_r p_r * E_w[g(V'_r)])`, so `transform`
+    applies to next-period values before EVERY expectation -- the
+    regime-transition one included -- and `inverse` once to the finished sum. A
+    target carrying no state has no stochastic expectation to take, but it is
+    still inside the regime-transition sum, so it must be transformed too.
+
+    `_next_regime` routes to `dead` with probability 1, which makes the identity
+    sharp and independent of the mixture arithmetic: with a single target at
+    `p = 1`, `g` and `g^-1` cancel EXACTLY, so the continuation is `V_dead` for
+    ANY `g`, and the solved value is
+    `max_{c <= wealth} log(c) + discount_factor * V_dead`.
+
+    This discriminates rather than smoke-tests. Before `d9aec7d` a stateless
+    target was probability-weighted RAW and only then inverted, leaving the
+    transformed domain: the continuation came out as `g^-1(V_dead)`, which
+    differs from `V_dead` at every `risk_aversion != 0`. MEASURED at `d9aec7d`'s
+    parent `3934701` with `risk_aversion = 2`, the solved values were
+    `[-0.2181, 1.4866, 2.0844, 2.0844, 2.0844]` against the correct
+    `[1.2069, 2.9116, 3.5094, 3.5094, 3.5094]` -- this test fails there.
+    """
+    model = _make_model(
+        alive_kwargs={"certainty_equivalent": PowerMean()},
+        dead_kwargs={"states": {}, "functions": {"utility": _utility_dead_stateless}},
+    )
+    discount_factor = 0.95
+    V = model.solve(
+        params={
+            "alive": {
+                "H": {"discount_factor": discount_factor},
+                "certainty_equivalent": {"risk_aversion": risk_aversion},
+            },
+            "dead": {},
+        },
+        log_level="off",
+    )
+    wealth = np.asarray(_WEALTH.to_jax())
+    consumption = np.asarray(_CONSUMPTION.to_jax())
+    best_flow = np.array([np.log(consumption[consumption <= w].max()) for w in wealth])
+    np.testing.assert_allclose(
+        np.asarray(V[0]["alive"]),
+        best_flow + discount_factor * _STATELESS_BEQUEST,
+        rtol=1e-6,
+        err_msg=f"risk_aversion={risk_aversion}",
+    )
+
+
 from lcm_examples.epstein_zin import (  # noqa: E402
     BAD_HEALTH_SURVIVAL_FACTOR,
     CONSUMPTION_GRID,
