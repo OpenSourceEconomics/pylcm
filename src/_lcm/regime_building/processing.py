@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 import jax
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
@@ -588,6 +588,8 @@ def _build_solution_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        phase_reachability=phase_reachability,
+        source_regime_name=regime_name,
     )
 
     flat_param_names = _engine_flat_param_names(
@@ -834,6 +836,8 @@ def _build_simulation_phase(
         all_grids=all_grids,
         regime_params_template=regime_params_template,
         variables=variables,
+        phase_reachability=simulation_reachability,
+        source_regime_name=regime_name,
     )
     functions = core.functions
     constraints = core.constraints
@@ -1025,6 +1029,8 @@ def _process_regime_core(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -1042,6 +1048,10 @@ def _process_regime_core(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
+        phase_reachability: This phase's static regime graph, the sole source
+            of which targets need a continuation built.
+        source_regime_name: This regime's name, used to read its retained
+            targets from `phase_reachability`.
 
     Returns:
         Core processing result with functions, constraints, transitions, stochastic
@@ -1133,21 +1143,20 @@ def _process_regime_core(
         )
 
     # Transitions of continuous stochastic processes bypass the stub pipeline
-    # entirely. Build weight and next functions for carried-to target regimes
-    # from each target's grid. Scope to targets already present in non-process
-    # transitions to avoid spurious entries for unrelated regimes.
+    # entirely. Build weight and next functions for every graph-retained
+    # continuation target's grid. Scope to the phase reachability graph's
+    # retained targets for this source — not to whichever targets happen to
+    # have a non-process law bundle — so a target reached solely by carrying
+    # a shared process state (no other law) still gets its intrinsic
+    # process transition synthesized.
     process_names = variables.process_names
-    carry_targets = {
-        tree_path_from_qname(k)[0]
-        for k in flat_nested_transitions
-        if QNAME_DELIMITER in k
-    }
+    continuation_targets = phase_reachability.union_targets(source=source_regime_name)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {
         (user_regime, process): grid
         for user_regime, grids in all_grids.items()
-        if user_regime in carry_targets
+        if user_regime in continuation_targets
         for process in process_names
         if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
     }
