@@ -466,13 +466,12 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
-                    handoff = _classify_state_handoff(
+                    if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
                         target_grid=target_grid,
                         state_name=state_name,
-                    )
-                    if handoff is not None:
+                    ):
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
@@ -481,8 +480,9 @@ def _state_handoff_errors(
                     )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
-                        f"(age {ages.exact_values[period]}), source '{source}' -> "
-                        f"period {period + 1} (age {ages.exact_values[period + 1]}), "
+                        f"(age {_display_age(ages, period)}), source '{source}' -> "
+                        f"period {period + 1} "
+                        f"(age {_display_age(ages, period + 1)}), "
                         f"target '{target}' retains a {status.name} edge. The target "
                         f"declares stochastic process '{state_name}', but the source "
                         f"does not carry '{state_name}' and defines no entry law, so "
@@ -493,36 +493,32 @@ def _state_handoff_errors(
     return error_messages
 
 
-def _classify_state_handoff(
+def _display_age(ages: AgeGrid, period: int) -> float:
+    """Return period's age as a decimal float, never a raw `Fraction`."""
+    return float(ages.exact_values[period])
+
+
+def _has_valid_state_handoff(
     *,
     source_slice: RegimePhaseSpec,
     target: RegimeName,
     target_grid: Grid | AgeSpecializedGrid,
     state_name: StateName,
-) -> Literal["carried", "deterministic", "stochastic", "target_local"] | None:
-    """Classify how one target state obtains its next-period value."""
+) -> bool:
+    """Return whether one target state obtains a valid next-period value.
+
+    Every target state on a retained edge must be supplied by one of: a
+    carried/shared state, a deterministic law, a stochastic law, an explicit
+    entry/reset law, or a legitimate target-local non-process state.
+    """
     if state_name in source_slice.grid_states:
-        return "carried"
+        return True
 
     law = source_slice.state_transitions.get(state_name)
     if law is not None and (not isinstance(law, Mapping) or target in law):
-        selected_law = (
-            cast(
-                "Mapping[RegimeName, UserFunction | MarkovTransition]",
-                law,
-            )[target]
-            if isinstance(law, Mapping)
-            else law
-        )
-        return (
-            "stochastic"
-            if isinstance(selected_law, MarkovTransition)
-            else "deterministic"
-        )
+        return True
 
-    if not isinstance(target_grid, _ContinuousStochasticProcess):
-        return "target_local"
-    return None
+    return not isinstance(target_grid, _ContinuousStochasticProcess)
 
 
 def _build_solution_phase(

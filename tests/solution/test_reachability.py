@@ -34,8 +34,8 @@ def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
     return probability_high
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
+def _complement_of_dormant_probability() -> ScalarFloat:
+    return jnp.float32(0.9)
 
 
 def _positive_dormant_probability() -> ScalarFloat:
@@ -97,7 +97,11 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
 
 
 def test_positive_granular_probability_outside_graph_is_rejected() -> None:
-    """A dormant declaration cannot receive positive transition probability."""
+    """A dormant declaration cannot receive positive transition probability.
+
+    The two probabilities sum to exactly 1.0, so this isolates the
+    inactive-target check from the (separately tested) sum-to-1 check.
+    """
 
     @categorical(ordered=False)
     class _DormantRegimeId:
@@ -109,7 +113,7 @@ def test_positive_granular_probability_outside_graph_is_rejected() -> None:
         regimes={
             "source": Regime(
                 transition={
-                    "target": MarkovTransition(_one_probability),
+                    "target": MarkovTransition(_complement_of_dormant_probability),
                     "dormant": MarkovTransition(_positive_dormant_probability),
                 },
                 active=lambda age: age < 1,
