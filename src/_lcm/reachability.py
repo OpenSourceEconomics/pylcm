@@ -1,26 +1,51 @@
 """Construction-time, solver-independent temporal regime reachability.
 
-This module owns the model graph. Solver code may derive layouts from the graph,
-but may not infer which regime pairs are reachable.
+This module owns the model graph, built once — via `build_model_reachability` — at
+model construction, from the single canonical `active_periods_by_regime` mapping and
+the declared regime transitions. There is no runtime topology pass: the graph never
+changes after construction, and no runtime probability value narrows or widens it.
+
+Every retained edge in `targets_by_period` / `edge_status_by_period` is
+`EdgeStatus.CONDITIONAL` — there is no `TRUE` status, because no declaration form
+proves unconditional positive probability independently of state, action, and free
+runtime parameters. A coarse (bare callable / bare `MarkovTransition`) regime
+transition is therefore conservative: it retains an edge to every regime active in
+the next period, and every such edge is checked for a valid state handoff (a carried
+state, a deterministic/stochastic law, or an explicit target-local/entry law) at
+model build. A per-target dict narrows support to its declared key set instead.
+
+The solve and simulate phases build independent graphs (`ModelReachability.solution`
+/ `.simulation`) from the same construction-time semantics, and may retain different
+edges for the same source period when the regime transition's `Phased` sides differ.
+
+Solver and simulation runtime code consume this graph (`PhaseReachability.targets`,
+`.union_targets`, `.edge_status`, ...) but never infers reachability itself — it does
+not call an activity predicate, inspect a declared transition's raw mapping keys, or
+derive continuation targets from state-law-bundle keys.
 """
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from types import MappingProxyType
 from typing import Literal, cast
 
-from _lcm.typing import ActiveFunction, RegimeName
-from lcm.typing import UserAge
+from _lcm.typing import RegimeName
 
 type PhaseName = Literal["solution", "simulation"]
 
 
 class EdgeStatus(IntEnum):
-    """Static classification of a declared one-period regime edge."""
+    """Static classification of a declared one-period regime edge.
+
+    No current declaration proves unconditional positive probability
+    independently of state, action, and free runtime parameters — a
+    per-target mapping with one key is still not such a proof. Every
+    retained edge is therefore `CONDITIONAL`; there is no `TRUE` status to
+    infer from declaration shape alone.
+    """
 
     FALSE = 0
-    TRUE = 1
     CONDITIONAL = 2
 
 
@@ -132,22 +157,6 @@ class ModelReachability:
         return self.solution if phase == "solution" else self.simulation
 
 
-def active_periods_from_predicates(
-    *,
-    ages: Sequence[UserAge],
-    active_by_regime: Mapping[RegimeName, ActiveFunction],
-) -> MappingProxyType[RegimeName, frozenset[int]]:
-    """Evaluate all activity predicates once at model construction."""
-    return MappingProxyType(
-        {
-            regime: frozenset(
-                period for period, age in enumerate(ages) if bool(is_active(age))
-            )
-            for regime, is_active in active_by_regime.items()
-        }
-    )
-
-
 def candidate_targets_from_transition(
     *, transition: object, all_regime_names: Collection[RegimeName]
 ) -> tuple[RegimeName, ...]:
@@ -177,10 +186,8 @@ def build_phase_reachability(
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     candidate_targets_by_source: Mapping[RegimeName, Collection[RegimeName]],
     terminal_regimes: Collection[RegimeName] = (),
-    unconditional_targets_by_source: Mapping[RegimeName, Collection[RegimeName]]
-    | None = None,
 ) -> PhaseReachability:
-    """Build one static graph; retain both TRUE and CONDITIONAL edges."""
+    """Build one static graph; every retained edge is `CONDITIONAL`."""
     if n_periods < 1:
         raise ValueError("n_periods must be positive")
 
@@ -203,7 +210,6 @@ def build_phase_reachability(
         for regime, periods in active_periods_by_regime.items()
     }
     terminal = frozenset(terminal_regimes)
-    unconditional = unconditional_targets_by_source or {}
     candidates = MappingProxyType(
         {
             source: tuple(sorted(set(targets)))
@@ -229,8 +235,6 @@ def build_phase_reachability(
                     or period + 1 not in active[target]
                 ):
                     status = EdgeStatus.FALSE
-                elif target in unconditional.get(source, ()):
-                    status = EdgeStatus.TRUE
                 else:
                     status = EdgeStatus.CONDITIONAL
                 period_status[(source, target)] = status
@@ -252,16 +256,18 @@ def build_phase_reachability(
 
 def build_model_reachability(
     *,
-    ages: Sequence[UserAge],
-    active_by_regime: Mapping[RegimeName, ActiveFunction],
+    n_periods: int,
+    active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]],
     terminal_regimes: Collection[RegimeName] = (),
 ) -> ModelReachability:
-    """Build solve and simulate graphs from the same construction-time semantics."""
-    all_regime_names = frozenset(active_by_regime)
-    active = active_periods_from_predicates(
-        ages=ages, active_by_regime=active_by_regime
-    )
+    """Build solve and simulate graphs from the same construction-time semantics.
+
+    `active_periods_by_regime` must be the single canonical activity mapping
+    computed once at model preparation (via `AgeGrid.get_periods_where`) —
+    this function does not evaluate `Regime.active` itself.
+    """
+    all_regime_names = frozenset(active_periods_by_regime)
 
     def build(phase: PhaseName) -> PhaseReachability:
         transitions = transitions_by_phase[phase]
@@ -273,8 +279,8 @@ def build_model_reachability(
             for source in all_regime_names
         }
         return build_phase_reachability(
-            n_periods=len(ages),
-            active_periods_by_regime=active,
+            n_periods=n_periods,
+            active_periods_by_regime=active_periods_by_regime,
             candidate_targets_by_source=candidates,
             terminal_regimes=terminal_regimes,
         )

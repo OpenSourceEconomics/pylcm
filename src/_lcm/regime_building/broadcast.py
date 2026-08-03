@@ -140,6 +140,7 @@ def prune_broadcast_variables(
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -154,8 +155,13 @@ def prune_broadcast_variables(
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
         broadcast_variables: Per regime, the broadcast state/action names.
-        ages: The model's `AgeGrid`, used to resolve `AgeSpecializedFunction`
-            markers to a representative age before DAG-reachability walks so a
+        ages: The model's `AgeGrid`, used to convert a representative period
+            to an age before resolving `AgeSpecializedFunction` markers.
+            `None` skips resolution (no marker can appear then).
+        active_periods_by_regime: The canonical per-regime activity mapping
+            (from `compute_active_periods_by_regime`), used to pick each
+            regime's representative active period before resolving
+            `AgeSpecializedFunction` markers to a representative age so a
             broadcast variable read only through a marker is not misread as
             unused. `None` skips resolution (no marker can appear then).
 
@@ -189,6 +195,7 @@ def prune_broadcast_variables(
             phase_name=phase_name,
             all_regime_names=all_regime_names,
             ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
@@ -238,6 +245,7 @@ def _phase_fixed_point(
     phase_name: PhaseName,
     all_regime_names: frozenset[RegimeName],
     ages: AgeGrid | None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
@@ -271,6 +279,11 @@ def _phase_fixed_point(
                 candidate_targets=candidates_by_source[regime_name],
                 kept=grown,
                 ages=ages,
+                active_periods=(
+                    None
+                    if active_periods_by_regime is None
+                    else active_periods_by_regime.get(regime_name, ())
+                ),
             )
             newly_kept = candidates & needed
             if newly_kept:
@@ -283,22 +296,23 @@ def _phase_fixed_point(
 def _resolved_at_representative_age(
     mapping: Mapping[str, UserFunction],
     *,
-    user_regime: UserRegime,
     ages: AgeGrid | None,
+    active_periods: tuple[int, ...] | None,
 ) -> Mapping[str, UserFunction]:
     """Resolve `AgeSpecializedFunction` markers in `mapping` at a representative age.
 
     The dependency structure `get_ancestors` needs is age-invariant, so any active
-    age serves. Returns `mapping` unchanged when `ages` is `None` (no marker can
-    appear then) or the regime has no active period (it is about to fail with a
+    period serves. Returns `mapping` unchanged when `ages` is `None` (no marker can
+    appear then) or `active_periods` is empty (the regime is about to fail with a
     more specific error once age normalization runs).
     """
-    if ages is None or not any(
-        isinstance(value, AgeSpecializedFunction) for value in mapping.values()
+    if (
+        ages is None
+        or not active_periods
+        or not any(
+            isinstance(value, AgeSpecializedFunction) for value in mapping.values()
+        )
     ):
-        return mapping
-    active_periods = ages.get_periods_where(user_regime.active)
-    if not active_periods:
         return mapping
     representative_age = float(ages.period_to_age(active_periods[0]))
     return {
@@ -314,6 +328,7 @@ def _needed_names(
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: AgeGrid | None,
+    active_periods: tuple[int, ...] | None,
 ) -> set[str]:
     """Collect every name this phase slice's root computations read.
 
@@ -325,15 +340,15 @@ def _needed_names(
     - the regime transition (coarse inputs, or every granular cell)
     - the laws of motion toward candidate targets that keep the law's state
 
-    `functions`/`constraints` are resolved at a representative active age before
+    `functions`/`constraints` are resolved at a representative active period before
     the DAG walk, so `get_ancestors` sees a marked node's real argument names
     instead of `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
     """
     functions = _resolved_at_representative_age(
-        phase_slice.functions, user_regime=user_regime, ages=ages
+        phase_slice.functions, ages=ages, active_periods=active_periods
     )
     constraints = _resolved_at_representative_age(
-        phase_slice.constraints, user_regime=user_regime, ages=ages
+        phase_slice.constraints, ages=ages, active_periods=active_periods
     )
 
     pool: dict[str, UserFunction] = dict(functions)

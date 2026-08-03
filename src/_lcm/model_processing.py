@@ -38,6 +38,7 @@ from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
+    compute_active_periods_by_regime,
     process_regimes,
 )
 from _lcm.typing import (
@@ -179,6 +180,7 @@ def validate_model_inputs(
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -251,7 +253,10 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables, ages=ages
+            user_regimes,
+            broadcast_variables=broadcast_variables,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
     )
 
@@ -292,7 +297,12 @@ def _representative_for_validation(
         return user_regimes
     phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     return normalize_age_specialization(
-        user_regimes=user_regimes, phased_specs=phased_specs, ages=ages
+        user_regimes=user_regimes,
+        phased_specs=phased_specs,
+        ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
     ).representative_user_regimes
 
 
@@ -314,6 +324,7 @@ def _validate_all_variables_used(
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -345,7 +356,11 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         if ages is not None:
-            active_periods = ages.get_periods_where(user_regime.active)
+            active_periods = (
+                ()
+                if active_periods_by_regime is None
+                else active_periods_by_regime.get(regime_name, ())
+            )
             if not active_periods and _regime_has_markers(user_regime):
                 # This regime is about to fail with the precise
                 # "active at no model age" `RegimeInitializationError` once

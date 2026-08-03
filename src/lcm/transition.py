@@ -58,6 +58,14 @@ class MarkovTransition:
 
     A bare callable (without the wrapper) is deterministic at both levels.
 
+    At the regime level, a bare callable or a bare `MarkovTransition` (as
+    opposed to a per-target dict) declares conservative support over every
+    regime active in the next period: every temporally compatible candidate
+    must have a valid state handoff, and the check runs regardless of what
+    probability the transition function happens to return at runtime. Use a
+    per-target dict on `Regime.transition` to declare narrower, structural
+    support — a runtime-zero probability does not narrow it.
+
     """
 
     func: Callable[..., FloatND]

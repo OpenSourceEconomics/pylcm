@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 
 import jax
@@ -6,6 +6,14 @@ import jax.numpy as jnp
 import pytest
 from jax import config as jax_config
 
+from _lcm.regime_building.finalize import FinalizedUserRegime
+from _lcm.regime_building.processing import (
+    PreparedModelStructure,
+    compute_active_periods_by_regime,
+    prepare_model_structure,
+)
+from _lcm.typing import RegimeName
+from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
@@ -92,6 +100,24 @@ def pytest_runtest_teardown(item, nextitem):
     if upcoming is not None and upcoming is current:
         return
     jax.clear_caches()
+
+
+def build_prepared_structure(
+    *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
+) -> PreparedModelStructure:
+    """Build the `PreparedModelStructure` `process_regimes` requires.
+
+    Tests that call `process_regimes` directly (bypassing `Model`) build this
+    the same way `Model.__init__` does, rather than `process_regimes` growing
+    a test-only fallback for constructing one internally.
+    """
+    return prepare_model_structure(
+        user_regimes=user_regimes,
+        ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
+    )
 
 
 @pytest.fixture(scope="session")

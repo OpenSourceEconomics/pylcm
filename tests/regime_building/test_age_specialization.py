@@ -12,8 +12,10 @@ Two contracts, promoted from the Pro-review counterexample RT1:
 import pytest
 
 from _lcm.grids import DiscreteGrid
+from _lcm.regime_building.age_normalization import periodized_tree_signature
 from _lcm.regime_building.age_specialization import (
     INVARIANT,
+    _tree_signature,
     node_signature,
     tree_signature,
 )
@@ -78,6 +80,38 @@ def test_tree_signature_recurses_into_the_nested_transition_mapping():
     assert tree_signature(transitions, age=60.0) != tree_signature(
         transitions, age=61.0
     )
+
+
+def test_tree_signature_helper_is_invariant_to_key_insertion_order():
+    """`_tree_signature` sorts keys, so insertion order cannot affect the result."""
+    tree_a = {"b": "second", "a": "first"}
+    tree_b = {"a": "first", "b": "second"}
+
+    assert _tree_signature(tree_a, leaf_signature=str) == _tree_signature(
+        tree_b, leaf_signature=str
+    )
+
+
+def test_tree_signature_helper_recurses_regardless_of_leaf_signature():
+    """A different `leaf_signature` still descends into nested mappings."""
+    nested = {"outer": {"inner": "value"}}
+
+    assert _tree_signature(nested, leaf_signature=lambda leaf: len(str(leaf))) == (
+        ("outer", (("inner", len("value")),)),
+    )
+
+
+def test_tree_signature_wrappers_share_recursive_semantics():
+    """`tree_signature` (age) and `periodized_tree_signature` (period) agree.
+
+    Both are thin wrappers over the same recursive helper, so an
+    age-invariant tree and a period-invariant tree with identical structure
+    (only the leaf-signature source differs) recurse and sort keys the same
+    way.
+    """
+    tree = {"b": lambda x: x, "a": {"nested": lambda x: x}}
+
+    assert tree_signature(tree, age=60.0) == periodized_tree_signature(tree, period=3)
 
 
 def test_age_specialized_regime_transition_is_rejected(binary_category_class):
