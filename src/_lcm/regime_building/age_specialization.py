@@ -12,7 +12,7 @@ lazily; this module also hosts the grid shape-invariance traits (`_grid_traits` 
 `_GridTraits`) that the normalizer reuses to validate `AgeSpecializedGrid` families.
 """
 
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
@@ -52,8 +52,12 @@ def node_signature(node: object, age: float) -> Hashable:
     return INVARIANT
 
 
-def tree_signature(tree: Mapping[str, object], age: float) -> Hashable:
-    """Fingerprint a (possibly nested) mapping of nodes at `age`.
+def _tree_signature(
+    tree: Mapping[str, object],
+    *,
+    leaf_signature: Callable[[object], Hashable],
+) -> Hashable:
+    """Fingerprint a (possibly nested) mapping of nodes via `leaf_signature`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
     marked node nested under one key cannot collide with one under another.
@@ -61,12 +65,24 @@ def tree_signature(tree: Mapping[str, object], age: float) -> Hashable:
     pairs: list[tuple[str, Hashable]] = []
     for key in sorted(tree):
         value = tree[key]
-        if isinstance(value, Mapping):
-            nested = cast("Mapping[str, object]", value)
-            pairs.append((key, tree_signature(nested, age)))
-        else:
-            pairs.append((key, node_signature(value, age)))
+        signature = (
+            _tree_signature(
+                cast("Mapping[str, object]", value), leaf_signature=leaf_signature
+            )
+            if isinstance(value, Mapping)
+            else leaf_signature(value)
+        )
+        pairs.append((key, signature))
     return tuple(pairs)
+
+
+def tree_signature(tree: Mapping[str, object], age: float) -> Hashable:
+    """Fingerprint a (possibly nested) mapping of nodes at `age`.
+
+    Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
+    marked node nested under one key cannot collide with one under another.
+    """
+    return _tree_signature(tree, leaf_signature=lambda node: node_signature(node, age))
 
 
 class _GridTraitsError(Exception):

@@ -43,7 +43,11 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
-from _lcm.regime_building.processing import Regime, prepare_model_structure
+from _lcm.regime_building.processing import (
+    Regime,
+    compute_active_periods_by_regime,
+    prepare_model_structure,
+)
 from _lcm.simulation.compile import compile_all_simulation_phases
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -236,6 +240,16 @@ class Model:
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
 
+        # The single canonical activity schedule: every regime's `active`
+        # predicate is evaluated exactly once, here, and threaded through
+        # pruning, validation, and model-structure preparation below. Its
+        # `.active` predicate is unaffected by slot merging/finalization, so
+        # the raw `regimes` argument is the correct — and only — evaluation
+        # point.
+        active_periods_by_regime = compute_active_periods_by_regime(
+            ages=ages, user_regimes=regimes
+        )
+
         model_slots = {
             "functions": functions,
             "constraints": constraints,
@@ -252,6 +266,7 @@ class Model:
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
             ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
         self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
@@ -264,6 +279,7 @@ class Model:
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -276,6 +292,7 @@ class Model:
         prepared_structure = prepare_model_structure(
             user_regimes=self.user_regimes,
             ages=self.ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
         self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(

@@ -43,7 +43,7 @@ def _mss_solver():
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-        upper_envelope="mss",
+        envelope="mss",
     )
 
 
@@ -231,7 +231,7 @@ def test_overflow_is_reported_via_n_kept():
 
 
 def test_mss_backend_is_selected_by_solver_config():
-    """`upper_envelope="mss"` dispatches to the MSS backend.
+    """`envelope="mss"` dispatches to the MSS backend.
 
     The backend selected for an `mss` solver must reproduce the standalone MSS
     kernel on a non-concave candidate set.

@@ -41,6 +41,8 @@ def _g2egm_step(next_value):
         next_value=next_value,
         m_grid=_M_GRID,
         n_grid=_N_GRID,
+        next_m_grid=_M_GRID,
+        next_n_grid=_N_GRID,
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         consumption_grid=_CONSUMPTION_GRID,

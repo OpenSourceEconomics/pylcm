@@ -31,10 +31,20 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
+from _lcm.grids.continuous import ContinuousGrid
+from lcm import (
+    AgeGrid,
+    AgeSpecializedGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+
+type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
 
 @categorical(ordered=False)
@@ -181,6 +191,10 @@ def get_model(
     n_deposit: int = 8,
     liquid_max: float = 20.0,
     pension_max: float = 15.0,
+    working_liquid_grid: _StateGrid | None = None,
+    working_pension_grid: _StateGrid | None = None,
+    retired_liquid_grid: _StateGrid | None = None,
+    dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
@@ -190,11 +204,30 @@ def get_model(
     to a small oracle scale; pass larger values for a finer reference solve.
 
     Args:
+        working_liquid_grid: Optional override for the working regime's `liquid`
+            grid. Defaults to the shared grid built from `n_liquid` / `liquid_max`.
+            Pass an `AgeSpecializedGrid` to make the working liquid support move
+            with age.
+        working_pension_grid: Optional override for the working regime's `pension`
+            grid, defaulting to the shared grid built from `n_pension` /
+            `pension_max`.
+        retired_liquid_grid: Optional override for the retired regime's `liquid`
+            grid, defaulting to the shared liquid grid.
+        dead_liquid_grid: Optional override for the terminal regime's `liquid`
+            grid, defaulting to the shared liquid grid.
         solvers: Optional mapping of regime name to its `Solver`. A name absent from
             the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
             default model is the dense-grid brute oracle. Pass
-            `{"working": TwoDimEGM(...)}` to drive the working regime by the two-asset
-            G2EGM method, and `{"retired": OneAssetEGM(...)}` for the 1-D retired EGM.
+            `{"working": TwoAssetEGM(...)}` to drive the working regime by the
+            two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
+            consumption--saving problem.
+
+    Every grid override defaults to the shared grid, so calling `get_model` without
+    them reproduces one common `liquid` support across all three regimes. Passing a
+    different grid to one regime is what makes continuation-grid provenance
+    observable: a solver that reads `V_{t+1}` on its own grid rather than the
+    target's then disagrees with the dense brute.
+
     """
     solvers = solvers or {}
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
@@ -209,7 +242,10 @@ def get_model(
             "consumption": consumption_grid,
             "deposit": LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_deposit),
         },
-        states={"liquid": liquid_grid, "pension": pension_grid},
+        states={
+            "liquid": working_liquid_grid or liquid_grid,
+            "pension": working_pension_grid or pension_grid,
+        },
         state_transitions={
             "liquid": {
                 "working": next_liquid_working,
@@ -228,7 +264,7 @@ def get_model(
     )
     retired = Regime(
         actions={"consumption": consumption_grid},
-        states={"liquid": liquid_grid},
+        states={"liquid": retired_liquid_grid or liquid_grid},
         state_transitions={
             "liquid": {
                 "retired": next_liquid_retired,
@@ -246,7 +282,7 @@ def get_model(
     )
     dead = Regime(
         transition=None,
-        states={"liquid": liquid_grid},
+        states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
     )

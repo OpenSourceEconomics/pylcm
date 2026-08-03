@@ -337,17 +337,6 @@ def _validate_regime_transition_probs(
             f"function of the '{regime_name}' regime."
         )
 
-    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
-    for r in inactive:
-        if jnp.any(regime_transition_probs[r] > 0):
-            period_detail = "" if period is None else f" in period {period}"
-            raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{r}' is inactive at age {next_age} but has positive "
-                f"transition probability from '{regime_name}' between ages {age} and "
-                f"{next_age}{period_detail}. Either make '{r}' active or ensure its "
-                "probability is 0."
-            )
-
     sum_all = jnp.sum(all_probs, axis=0)
     if not jnp.allclose(sum_all, 1.0):
         detail = _format_sum_violation(
@@ -359,6 +348,17 @@ def _validate_regime_transition_probs(
             f"and {next_age} do not sum to 1.0. {detail}\n"
             f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
+
+    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
+    for r in inactive:
+        if jnp.any(regime_transition_probs[r] > 0):
+            period_detail = "" if period is None else f" in period {period}"
+            raise InvalidRegimeTransitionProbabilitiesError(
+                f"Regime '{r}' is inactive at age {next_age} but has positive "
+                f"transition probability from '{regime_name}' between ages {age} and "
+                f"{next_age}{period_detail}. Either make '{r}' active or ensure its "
+                "probability is 0."
+            )
 
 
 def _format_sum_violation(
@@ -488,14 +488,19 @@ def _state_transition_unused_in_period(
     regime: Regime,
     period: int,
 ) -> bool:
-    """Return whether a state transition has no retained edge this period."""
+    """Return whether a state transition has no retained edge this period.
+
+    A coarse (`target_regime_name is None`) state law applies regardless of
+    the regime-transition graph's own target set — an empty `period_targets`
+    is a fact about *which regime* is reached, not about whether a coarse
+    state law still needs checking. Only a per-target state law can be
+    unused, and only when its specific target isn't retained this period.
+    """
+    if transition.target_regime_name is None:
+        return False
     period_targets = regime.solution.reachability.targets(
         period=period, source=regime.name
     )
-    if not period_targets:
-        return True
-    if transition.target_regime_name is None:
-        return False
     return transition.target_regime_name not in period_targets
 
 

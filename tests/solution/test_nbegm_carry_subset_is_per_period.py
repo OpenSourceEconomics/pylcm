@@ -46,7 +46,8 @@ def test_each_period_kernel_carries_exactly_its_own_periods_targets(model):
     reachability = model.reachability.solution
     period_kernels = model._regimes[_REGIME].solution.period_kernels
     carried = {
-        period: set(kernel.carry_targets) for period, kernel in period_kernels.items()
+        period: set(kernel.stateful_targets)
+        for period, kernel in period_kernels.items()
     }
     expected = {
         period: set(reachability.targets(period=period, source=_REGIME))

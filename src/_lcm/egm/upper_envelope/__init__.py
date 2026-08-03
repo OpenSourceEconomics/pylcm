@@ -80,7 +80,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
     """Build the upper-envelope backend selected by the solver configuration.
 
     Args:
-        solver: The regime's DC-EGM solver configuration; `upper_envelope`
+        solver: The regime's DC-EGM solver configuration; `envelope`
             selects the backend and the `fues_*` / `rfc_*` fields parametrize
             it.
         n_refined: Static length of the refined output rows.
@@ -89,7 +89,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
         The configured backend.
 
     """
-    if solver.upper_envelope == "fues":
+    if solver.envelope == "fues":
 
         def fues_backend(
             *,
@@ -119,10 +119,10 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return fues_backend
 
-    if solver.upper_envelope == "exact":
+    if solver.envelope == "exact":
         return _build_exact_backend(solver=solver, n_refined=n_refined)
 
-    if solver.upper_envelope == "rfc":
+    if solver.envelope == "rfc":
 
         def rfc_backend(
             *,
@@ -150,7 +150,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return rfc_backend
 
-    if solver.upper_envelope == "ltm":
+    if solver.envelope == "ltm":
 
         def ltm_backend(
             *,
@@ -175,7 +175,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return ltm_backend
 
-    if solver.upper_envelope == "mss":
+    if solver.envelope == "mss":
 
         def mss_backend(
             *,
@@ -200,7 +200,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return mss_backend
 
-    msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
+    msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
 
 
@@ -234,7 +234,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
         The configured bracket finder.
 
     """
-    if solver.upper_envelope == "fues":
+    if solver.envelope == "fues":
 
         def fues_bracket_finder(
             *,
@@ -269,7 +269,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return fues_bracket_finder
 
-    if solver.upper_envelope == "rfc":
+    if solver.envelope == "rfc":
 
         def rfc_bracket_finder(
             *,
@@ -309,7 +309,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return rfc_bracket_finder
 
-    if solver.upper_envelope == "ltm":
+    if solver.envelope == "ltm":
 
         def ltm_bracket_finder(
             *,
@@ -348,7 +348,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return ltm_bracket_finder
 
-    if solver.upper_envelope == "mss":
+    if solver.envelope == "mss":
 
         def mss_bracket_finder(
             *,
@@ -387,10 +387,10 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return mss_bracket_finder
 
-    if solver.upper_envelope == "exact":
+    if solver.envelope == "exact":
         return _build_exact_bracket_finder(solver=solver, n_refined=n_refined)
 
-    msg = f"Unknown upper-envelope backend: {solver.upper_envelope!r}."
+    msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
 
 

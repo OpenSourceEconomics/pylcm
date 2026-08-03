@@ -5,7 +5,6 @@ import pytest
 
 from _lcm.reachability import (
     EdgeStatus,
-    active_periods_from_predicates,
     build_model_reachability,
     build_phase_reachability,
 )
@@ -30,13 +29,16 @@ def test_forcedout_cannot_transition_back_to_canwork() -> None:
     """A later-life regime cannot transition into an earlier-life regime."""
     ages = tuple(range(60, 69))
     cutoff = 65
-    active = active_periods_from_predicates(
-        ages=ages,
-        active_by_regime={
-            "canwork": lambda age: age < cutoff,
-            "forcedout": lambda age: age >= cutoff,
-        },
-    )
+    active_by_regime = {
+        "canwork": lambda age: age < cutoff,
+        "forcedout": lambda age: age >= cutoff,
+    }
+    active = {
+        regime: frozenset(
+            period for period, age in enumerate(ages) if bool(is_active(age))
+        )
+        for regime, is_active in active_by_regime.items()
+    }
     graph = build_phase_reachability(
         n_periods=len(ages),
         active_periods_by_regime=active,
@@ -68,10 +70,8 @@ def test_coarse_transition_retains_all_activity_compatible_regimes() -> None:
     regime_names = ("source", "low", "high")
     coarse_transition = object()
     graph = build_model_reachability(
-        ages=(20, 21),
-        active_by_regime={
-            regime_name: lambda _age: True for regime_name in regime_names
-        },
+        n_periods=2,
+        active_periods_by_regime=dict.fromkeys(regime_names, (0, 1)),
         transitions_by_phase={
             "solution": {
                 "source": coarse_transition,
@@ -139,11 +139,11 @@ def test_unknown_target_is_rejected() -> None:
 def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
     """Phase-specific declarations produce phase-specific temporal graphs."""
     graph = build_model_reachability(
-        ages=(20, 21),
-        active_by_regime={
-            "source": lambda _age: True,
-            "solve_target": lambda _age: True,
-            "simulate_target": lambda _age: True,
+        n_periods=2,
+        active_periods_by_regime={
+            "source": (0, 1),
+            "solve_target": (0, 1),
+            "simulate_target": (0, 1),
         },
         transitions_by_phase={
             "solution": {
@@ -170,7 +170,7 @@ def test_engine_has_no_period_target_inference_helper() -> None:
     definitions = [
         (path, node.lineno)
         for path in package_root.rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.FunctionDef)
         and node.name in {"get_period_targets", "_active_regimes_at_period"}
     ]
@@ -195,8 +195,95 @@ def test_solver_runtime_does_not_import_regime_declaration_topology() -> None:
     imports = [
         (path, node.lineno, node.module)
         for path in runtime_paths
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom) and node.module in forbidden_modules
     ]
 
     assert imports == []
+
+
+def _solver_runtime_paths() -> list[Path]:
+    package_root = Path(__file__).parents[2] / "src" / "_lcm"
+    return [
+        *sorted((package_root / "solution").rglob("*.py")),
+        package_root / "simulation" / "compile.py",
+        package_root / "simulation" / "simulate.py",
+        package_root / "simulation" / "transitions.py",
+    ]
+
+
+def test_solver_runtime_does_not_call_activity_predicates() -> None:
+    """Solver runtime modules consume the graph, not `Regime.active` directly.
+
+    Only `compute_active_periods_by_regime` (the single canonical activity
+    schedule) may call an activity predicate or `AgeGrid.get_periods_where`;
+    every other consumer, including the solve/simulate runtime, reads the
+    prepared `active_periods_by_regime` mapping instead.
+    """
+    calls = [
+        (path, node.lineno)
+        for path in _solver_runtime_paths()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"active", "get_periods_where"}
+    ]
+
+    assert calls == []
+
+
+def test_solver_runtime_does_not_inspect_regime_transition_mapping_keys() -> None:
+    """Solver runtime modules never read `.transition` / `.state_transitions`.
+
+    Which regime pairs are reachable is a graph property; a solver module
+    inspecting the raw declared transition or state-transition mapping to
+    decide targets would bypass the single-source-of-truth graph.
+    """
+    accesses = [
+        (path, node.lineno)
+        for path in _solver_runtime_paths()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute)
+        and node.attr in {"transition", "state_transitions"}
+    ]
+
+    assert accesses == []
+
+
+def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
+    """`carry_targets` (a law-bundle-keyed target set) must not reappear.
+
+    Continuation/process-target membership is `phase_reachability.union_targets`
+    (or an equivalent graph query) — never a set of regime names collected from
+    `flat_nested_transitions` or other state-law-bundle keys.
+    """
+    package_root = Path(__file__).parents[2] / "src" / "_lcm"
+    hits = [
+        (path, lineno)
+        for path in package_root.rglob("*.py")
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if "carry_targets" in line
+    ]
+
+    assert hits == []
+
+
+def test_active_periods_are_computed_at_a_single_call_site() -> None:
+    """`AgeGrid.get_periods_where` is combined with `Regime.active` exactly once.
+
+    `compute_active_periods_by_regime` is that single canonical evaluation
+    point; a second call site would let two subsystems compute active
+    periods independently and risk disagreement (e.g. Fraction vs.
+    float32-rounded ages).
+    """
+    src_root = Path(__file__).parents[2] / "src"
+    hits = [
+        path
+        for path in src_root.rglob("*.py")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "get_periods_where(" in line and ".active" in line
+    ]
+
+    assert hits == [src_root / "_lcm" / "regime_building" / "processing.py"]

@@ -121,7 +121,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
+    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     `"exact"` is pylcm's own construction and the default. The other four are
@@ -307,7 +307,7 @@ class DCEGM(Solver):
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
-        egm_step, egm_carry_template, egm_carry_targets = build_egm_step_functions(
+        egm_step, egm_carry_template, egm_stateful_targets = build_egm_step_functions(
             solver=self,
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
@@ -338,7 +338,7 @@ class DCEGM(Solver):
                 period: _DCEGMPeriodKernel(
                     core=core,
                     regime_name=context.regime_name,
-                    carry_targets=egm_carry_targets,
+                    stateful_targets=egm_stateful_targets,
                     transition_target_names=tuple(context.transitions),
                 )
                 for period, core in egm_step.items()
@@ -367,7 +367,7 @@ class _DCEGMPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
-    carry_targets: frozenset[RegimeName]
+    stateful_targets: frozenset[RegimeName]
     """The carry keys the EGM core reads; the rolling carry is filtered to these."""
 
     transition_target_names: tuple[RegimeName, ...]
@@ -414,7 +414,7 @@ class _DCEGMPeriodKernel:
             **dict(state_action_space.states),
             "next_regime_to_continuation": _carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                carry_targets=self.carry_targets,
+                stateful_targets=self.stateful_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **self._egm_kernel_params(flat_params=flat_params),
@@ -439,7 +439,7 @@ class _DCEGMPeriodKernel:
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=_carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                carry_targets=self.carry_targets,
+                stateful_targets=self.stateful_targets,
             ),
             **self._egm_kernel_params(flat_params=flat_params),
             period=jnp.int32(period),
@@ -475,7 +475,7 @@ class _DCEGMPeriodKernel:
 def _carry_subset(
     *,
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    carry_targets: frozenset[RegimeName],
+    stateful_targets: frozenset[RegimeName],
 ) -> MappingProxyType[RegimeName, EGMCarry]:
     """Return the carries a regime's EGM core actually reads.
 
@@ -493,7 +493,7 @@ def _carry_subset(
         {
             name: next_regime_to_continuation[name]
             for name in next_regime_to_continuation
-            if name in carry_targets
+            if name in stateful_targets
         }
     )
 
