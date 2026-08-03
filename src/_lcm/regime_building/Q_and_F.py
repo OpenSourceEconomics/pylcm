@@ -468,7 +468,7 @@ def _get_compute_E_next_V(
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
-        states_actions_params: Mapping[str, _ParamsLeaf],
+        states_actions_params: Mapping[str, Any],
     ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
         """Aggregate the continuation lottery into `E[V']` at one state-action point.
 
@@ -477,7 +477,10 @@ def _get_compute_E_next_V(
                 next period's value function arrays.
             zero: Zero at the shape and dtype of the value being built up.
             states_actions_params: Mapping of states, actions, age, period, and
-                flat regime params.
+                flat regime params. Forwarded verbatim to the transition and
+                probability functions, so it carries whatever the caller
+                supplies — including params that never passed through
+                `cast_params_to_canonical_dtypes`.
 
         Returns:
             Tuple of the aggregated continuation value and the regime transition
