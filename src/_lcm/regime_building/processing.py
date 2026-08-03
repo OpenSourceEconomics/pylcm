@@ -112,62 +112,6 @@ type _TransitionBundles = dict[
 ]
 
 
-@dataclass(frozen=True, kw_only=True)
-class PreparedModelStructure:
-    """Construction-time declarations shared by validation and compilation."""
-
-    representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
-    """Age-normalized user regimes used for phase compilation."""
-
-    phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
-    """Age-normalized phase declarations."""
-
-    grid_schedule: AgeGridSchedule | None
-    """Concrete period grids for age-specialized states."""
-
-    reachability: ModelReachability
-    """Static solution and simulation regime graphs."""
-
-    active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
-    """Periods in which each regime is locally active."""
-
-
-def build_period_v_interpolation_info(
-    *,
-    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    grid_schedule: AgeGridSchedule | None,
-) -> MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None:
-    """Per-period continuation interpolation info, from cached concrete grids.
-
-    For every active period holding an age-specialized grid, overlay that period's
-    concrete grids on the representative regime and build its `VInterpolationInfo`,
-    so period `t`'s continuation `V_{t+1}` is tabulated on the target regime's
-    grid **at period `t+1`**. Never calls an age factory — it only transforms
-    already-built concrete grids. `None` when no state is age-specialized.
-    """
-    if grid_schedule is None:
-        return None
-    result: dict[int, MappingProxyType[RegimeName, VInterpolationInfo]] = {}
-    for period, regimes_at_period in grid_schedule.by_period.items():
-        result[period] = MappingProxyType(
-            {
-                regime_name: create_v_interpolation_info(
-                    representative_user_regimes[regime_name].replace(
-                        states={
-                            **representative_user_regimes[regime_name].states,
-                            **{
-                                state_name: resolved.grid
-                                for state_name, resolved in states.items()
-                            },
-                        }
-                    )
-                )
-                for regime_name, states in regimes_at_period.items()
-            }
-        )
-    return MappingProxyType(result)
-
-
 def compute_active_periods_by_regime(
     *,
     ages: AgeGrid,
@@ -187,6 +131,26 @@ def compute_active_periods_by_regime(
             for regime_name, regime in user_regimes.items()
         }
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedModelStructure:
+    """Construction-time declarations shared by validation and compilation."""
+
+    representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    """Age-normalized user regimes used for phase compilation."""
+
+    phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
+    """Age-normalized phase declarations."""
+
+    grid_schedule: AgeGridSchedule | None
+    """Concrete period grids for age-specialized states."""
+
+    reachability: ModelReachability
+    """Static solution and simulation regime graphs."""
+
+    active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
+    """Periods in which each regime is locally active."""
 
 
 def prepare_model_structure(
@@ -294,7 +258,7 @@ def process_regimes(
 
     # Per-period continuation interpolation info, built from the schedule's cached
     # concrete grids (never an age factory). `None` for an age-invariant model.
-    period_to_regime_v_interp = build_period_v_interpolation_info(
+    period_to_regime_v_interp = _build_period_v_interpolation_info(
         representative_user_regimes=representative_user_regimes,
         grid_schedule=grid_schedule,
     )
@@ -444,6 +408,42 @@ def process_regimes(
         )
 
     return ensure_containers_are_immutable(canonical_regimes)
+
+
+def _build_period_v_interpolation_info(
+    *,
+    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    grid_schedule: AgeGridSchedule | None,
+) -> MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None:
+    """Per-period continuation interpolation info, from cached concrete grids.
+
+    For every active period holding an age-specialized grid, overlay that period's
+    concrete grids on the representative regime and build its `VInterpolationInfo`,
+    so period `t`'s continuation `V_{t+1}` is tabulated on the target regime's
+    grid **at period `t+1`**. Never calls an age factory — it only transforms
+    already-built concrete grids. `None` when no state is age-specialized.
+    """
+    if grid_schedule is None:
+        return None
+    result: dict[int, MappingProxyType[RegimeName, VInterpolationInfo]] = {}
+    for period, regimes_at_period in grid_schedule.by_period.items():
+        result[period] = MappingProxyType(
+            {
+                regime_name: create_v_interpolation_info(
+                    representative_user_regimes[regime_name].replace(
+                        states={
+                            **representative_user_regimes[regime_name].states,
+                            **{
+                                state_name: resolved.grid
+                                for state_name, resolved in states.items()
+                            },
+                        }
+                    )
+                )
+                for regime_name, states in regimes_at_period.items()
+            }
+        )
+    return MappingProxyType(result)
 
 
 def _state_handoff_errors(
