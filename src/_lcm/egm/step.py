@@ -363,7 +363,7 @@ def build_egm_step_functions(
     )
 
     configs: dict[_EGMGroupKey, list[int]] = {}
-    carry_targets_union = frozenset(
+    stateful_targets_union = frozenset(
         solution_reachability.union_targets(source=regime_name)
     )
     active_periods = tuple(
@@ -409,7 +409,7 @@ def build_egm_step_functions(
 
     built: dict[_EGMGroupKey, EGMStepFunction] = {}
     for group_key, group_periods in configs.items():
-        carry_targets, scalar_targets, _ = group_key
+        stateful_targets, scalar_targets, _ = group_key
         # Every period in the group shares a continuation-grid signature and the
         # signatures of its periodized functions and constraints, so the first
         # one's resolved economics is the whole group's.
@@ -433,7 +433,7 @@ def build_egm_step_functions(
             user_regimes=user_regimes,
             functions=group_functions,
             constraints=group_constraints,
-            carry_targets=carry_targets,
+            stateful_targets=stateful_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -456,7 +456,7 @@ def build_egm_step_functions(
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
                 compute_regime_transition_probs=compute_regime_transition_probs,
-                carry_targets=carry_targets,
+                stateful_targets=stateful_targets,
                 scalar_targets=scalar_targets,
                 n_pad=n_pad,
                 n_carry_rows=n_carry_rows,
@@ -482,7 +482,7 @@ def build_egm_step_functions(
     return (
         MappingProxyType(dict(sorted(result.items()))),
         carry_template,
-        carry_targets_union,
+        stateful_targets_union,
     )
 
 
@@ -563,7 +563,7 @@ def _get_egm_step(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     n_pad: int,
     n_carry_rows: int,
@@ -606,7 +606,7 @@ def _get_egm_step(
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         n_pad=n_pad,
         n_carry_rows=n_carry_rows,
@@ -864,7 +864,7 @@ def _build_kernel_pieces(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     n_pad: int,
     n_carry_rows: int,
@@ -884,7 +884,7 @@ def _build_kernel_pieces(
         functions=functions,
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=solver.post_decision_function,

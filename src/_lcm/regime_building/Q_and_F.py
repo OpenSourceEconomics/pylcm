@@ -334,10 +334,10 @@ def partition_continuation_targets(
             metadata whose state names determine the continuation representation.
 
     Returns:
-        Tuple of `(carry_targets, scalar_targets)` preserving graph order.
+        Tuple of `(stateful_targets, scalar_targets)` preserving graph order.
 
     """
-    carry_targets = tuple(
+    stateful_targets = tuple(
         target
         for target in targets
         if regime_to_v_interpolation_info[target].state_names
@@ -347,7 +347,7 @@ def partition_continuation_targets(
         for target in targets
         if not regime_to_v_interpolation_info[target].state_names
     )
-    return carry_targets, scalar_targets
+    return stateful_targets, scalar_targets
 
 
 def _get_compute_E_next_V(

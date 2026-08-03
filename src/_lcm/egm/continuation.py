@@ -288,7 +288,7 @@ class ContinuationPlan:
     that bound callable, never these statics directly.
     """
 
-    carry_targets: tuple[RegimeName, ...]
+    stateful_targets: tuple[RegimeName, ...]
     """Targets whose continuation is interpolated from their carry rows."""
 
     scalar_targets: tuple[RegimeName, ...]
@@ -386,7 +386,7 @@ def bind_continuation(
             resolved_process_grids=resolved_process_grids,
             risk_aversion=risk_aversion,
         )
-        for target in plan.carry_targets
+        for target in plan.stateful_targets
     }
 
     def continuation(
@@ -409,7 +409,7 @@ def bind_continuation(
             marginal_log_scales: list[ScalarFloat] = []
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
-            for target in plan.carry_targets:
+            for target in plan.stateful_targets:
                 # The reader returns the anchored quint whenever risk_aversion
                 # is set (this branch); ty cannot correlate the union's arity
                 # with the mode.
@@ -468,7 +468,7 @@ def bind_continuation(
             )
         blended_marginal = jnp.asarray(0.0, dtype=dtype)
         blended_value = jnp.asarray(0.0, dtype=dtype)
-        for target in plan.carry_targets:
+        for target in plan.stateful_targets:
             # Linear mode: the reader returns the plain (value, marginal) pair.
             target_value, target_marginal = cast(
                 "tuple[ScalarFloat, ScalarFloat]",
@@ -502,7 +502,7 @@ def build_continuation_plan(
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     post_decision_name: FunctionName,
@@ -529,12 +529,12 @@ def build_continuation_plan(
         functions=functions,
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
     return ContinuationPlan(
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         child_reads=child_reads,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1865,7 +1865,7 @@ def _build_child_reads(
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> MappingProxyType[RegimeName, _ChildRead]:
@@ -1885,7 +1885,7 @@ def _build_child_reads(
         {name: func for name, func in functions.items() if name != post_decision_name}
     )
     reads: dict[RegimeName, _ChildRead] = {}
-    for target in carry_targets:
+    for target in stateful_targets:
         target_info = regime_to_v_interpolation_info[target]
         target_regime = user_regimes[target]
         euler_state_name = _get_child_state_name(user_regime=target_regime)

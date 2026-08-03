@@ -137,7 +137,7 @@ def _build_compute_intermediates_per_period(
     for key, periods in configs.items():
         targets = key[0]
         representative_period = periods[0]
-        carry_targets, scalar_targets = partition_continuation_targets(
+        stateful_targets, scalar_targets = partition_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_info(representative_period),
         )
@@ -151,7 +151,7 @@ def _build_compute_intermediates_per_period(
                 "ConstraintFunctionsMapping",
                 resolve_periodized_nodes(constraints, representative_period),
             ),
-            period_targets=carry_targets,
+            period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
