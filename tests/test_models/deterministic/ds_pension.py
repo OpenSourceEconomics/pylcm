@@ -29,6 +29,8 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 (whether `retirement_income` is received in the first retired period).
 """
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 
 from _lcm.grids.continuous import ContinuousGrid
@@ -196,6 +198,7 @@ def get_model(
     retired_liquid_grid: _StateGrid | None = None,
     dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
+    laws: dict[str, Callable] | None = None,
     enable_jit: bool = True,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
@@ -222,6 +225,10 @@ def get_model(
             `{"working": TwoAssetEGM(...)}` to drive the working regime by the
             two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
             consumption--saving problem.
+        laws: Optional mapping of law-of-motion function name to a replacement.
+            A name absent from the mapping keeps this module's own function. Use
+            it to vary a law's parameter spellings without varying its
+            behaviour.
         enable_jit: Whether the model JIT-compiles its kernels. Pass `False` to
             run the same solve eagerly.
 
@@ -233,6 +240,11 @@ def get_model(
 
     """
     solvers = solvers or {}
+    laws = laws or {}
+    liquid_working = laws.get("next_liquid_working", next_liquid_working)
+    liquid_retiring = laws.get("next_liquid_retiring", next_liquid_retiring)
+    pension_working = laws.get("next_pension_working", next_pension_working)
+    liquid_retired = laws.get("next_liquid_retired", next_liquid_retired)
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     retirement_age = ages.exact_values[retirement_period]
     final_age = ages.exact_values[-1]
@@ -251,10 +263,10 @@ def get_model(
         },
         state_transitions={
             "liquid": {
-                "working": next_liquid_working,
-                "retired": next_liquid_retiring,
+                "working": liquid_working,
+                "retired": liquid_retiring,
             },
-            "pension": {"working": next_pension_working},
+            "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
         transition={
@@ -270,8 +282,8 @@ def get_model(
         states={"liquid": retired_liquid_grid or liquid_grid},
         state_transitions={
             "liquid": {
-                "retired": next_liquid_retired,
-                "dead": next_liquid_retired,
+                "retired": liquid_retired,
+                "dead": liquid_retired,
             }
         },
         constraints={"feasible": feasible_retired},

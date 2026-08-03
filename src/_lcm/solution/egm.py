@@ -66,6 +66,17 @@ class EGM(Solver):
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
 
+    return_param: str = "return_liquid"
+    """Name of the law's gross-return parameter.
+
+    The Euler inversion needs the return on the liquid balance, but which of
+    the law's parameters carries it is the modeller's choice, exactly as which
+    state fills the liquid role is. The default is the conventional spelling.
+    """
+
+    income_param: str = "retirement_income"
+    """Name of the law's additive income parameter."""
+
     @property
     def requires_continuation(self) -> bool:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
@@ -146,6 +157,8 @@ class EGM(Solver):
                     savings_grid=savings_grid,
                     target=target,
                     target_state=target_state,
+                    return_param=self.return_param,
+                    income_param=self.income_param,
                 )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
@@ -277,7 +290,12 @@ class _EGMPeriodKernel:
 
 
 def _build_egm_core(
-    *, savings_grid: Float1D, target: RegimeName, target_state: StateName
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    target_state: StateName,
+    return_param: str,
+    income_param: str,
 ) -> Callable:
     """Build the jitted-able 1-D EGM core closing over the savings grid.
 
@@ -309,8 +327,8 @@ def _build_egm_core(
             savings_grid=savings_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
-            return_liquid=params[f"{liquid_law}__return_liquid"],
-            income=params[f"{liquid_law}__retirement_income"],
+            return_liquid=params[f"{liquid_law}__{return_param}"],
+            income=params[f"{liquid_law}__{income_param}"],
         )
         carry = EGMCarry(
             endog_grid=liquid,
