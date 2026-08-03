@@ -90,6 +90,30 @@ class TwoAssetEGM(Solver):
     threshold: float = 0.25
     """Barycentric extrapolation tolerance for triangle admissibility."""
 
+    return_liquid_param: str = "return_liquid"
+    """Name of the law parameter carrying the gross return on the liquid balance.
+
+    The step needs specific economic quantities out of the laws of motion, but
+    which parameter carries each is the modeller's choice — the same contract
+    as `liquid_state` and `pension_state`, one level in. Every default is the
+    conventional spelling, so a model that uses them declares nothing.
+    """
+
+    return_pension_param: str = "return_pension"
+    """Name of the law parameter carrying the gross return on the pension."""
+
+    match_rate_param: str = "match_rate"
+    """Name of the law parameter carrying the employer match rate."""
+
+    wage_param: str = "wage"
+    """Name of the liquid law's additive labour-income parameter."""
+
+    retirement_income_param: str = "retirement_income"
+    """Name of the boundary law's additive retirement-income parameter."""
+
+    pension_payout_return_param: str = "pension_payout_return"
+    """Name of the boundary law's pension lump-sum payout factor."""
+
     envelope: Literal["g2egm", "rfc"] = "g2egm"
     """Multidimensional upper-envelope backend.
 
@@ -103,6 +127,17 @@ class TwoAssetEGM(Solver):
     def requires_continuation(self) -> bool:
         """The boundary step reads the retired regime's marginal value of liquid."""
         return True
+
+    def _law_params(self) -> dict[str, str]:
+        """The modeller's name for each quantity the step reads out of a law."""
+        return {
+            "return_liquid": self.return_liquid_param,
+            "return_pension": self.return_pension_param,
+            "match_rate": self.match_rate_param,
+            "wage": self.wage_param,
+            "retirement_income": self.retirement_income_param,
+            "pension_payout_return": self.pension_payout_return_param,
+        }
 
     def validate(self, *, context: SolverBuildContext) -> None:
         """Check the regime and its targets fit the two-asset G2EGM step.
@@ -231,6 +266,15 @@ class TwoAssetEGM(Solver):
             self.pension_state,
             self.liquid_state,
         )
+        # The order the *interior* target's value array resolves in. It is read
+        # off that regime, not inherited from this one: the two coincide for the
+        # self-transition the interior step supports today, but the adapter must
+        # not depend on that.
+        target_reads_pension_first = {
+            target: tuple(context.regime_to_v_interpolation_info[target].state_names)
+            == (self.pension_state, self.liquid_state)
+            for target in period_to_target.values()
+        }
         cores: dict[bool, Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period, target in period_to_target.items():
@@ -248,6 +292,7 @@ class TwoAssetEGM(Solver):
                     liquid_state=self.liquid_state,
                     pension_state=self.pension_state,
                     boundary_liquid_state=boundary_liquid_state,
+                    law_params=self._law_params(),
                 )
                 cores[is_boundary] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _TwoAssetEGMPeriodKernel(
@@ -259,6 +304,7 @@ class TwoAssetEGM(Solver):
                 liquid_state=self.liquid_state,
                 pension_state=self.pension_state,
                 publishes_pension_first=publishes_pension_first,
+                target_reads_pension_first=target_reads_pension_first[target],
                 next_liquid_grid=target_period_grid(
                     context=context,
                     period=period,
@@ -337,11 +383,22 @@ class _TwoAssetEGMPeriodKernel:
     """
 
     publishes_pension_first: bool
-    """Whether the regime declares its pension state before its liquid state.
+    """Whether this regime's own value array resolves pension before liquid.
 
     The step returns its value on the `(liquid, pension)` grid; the regime's
-    value array follows the declaration order. When the two disagree the result
-    is transposed on the way out, so a regime's axis order is its own business.
+    value array follows the order its states resolve in. When the two disagree
+    the result is transposed on the way out, so a regime's axis order is its
+    own business.
+    """
+
+    target_reads_pension_first: bool
+    """Whether the interior target's value array resolves pension before liquid.
+
+    The mirror of `publishes_pension_first`, and a separate fact: it describes
+    the array this adapter *reads*, not the one it publishes. The step consumes
+    its continuation in `(liquid, pension)`, so a pension-first target is
+    transposed on the way in. Both permutations are applied unconditionally
+    rather than relying on the two orders coinciding, which they need not.
     """
 
     def cores(self) -> Mapping[str, Callable]:
@@ -432,10 +489,13 @@ class _TwoAssetEGMPeriodKernel:
                 ].marginal_utility,
             }
         else:
+            next_value = next_regime_to_V_arr[self.continuation_target]
+            if self.target_reads_pension_first:
+                next_value = jnp.swapaxes(next_value, 0, 1)
             continuation = {
                 "next_liquid": self.next_liquid_grid,
                 "next_pension": self.next_pension_grid,
-                "next_value_working": next_regime_to_V_arr[self.continuation_target],
+                "next_value_working": next_value,
             }
         return {
             "liquid": states[self.liquid_state],
@@ -461,6 +521,7 @@ def _build_two_asset_core(
     liquid_state: StateName,
     pension_state: StateName,
     boundary_liquid_state: StateName,
+    law_params: dict[str, str],
     envelope: Literal["g2egm", "rfc"] = "g2egm",
 ) -> Callable:
     """Build the jitted-able two-asset core for one branch (interior or boundary).
@@ -510,12 +571,16 @@ def _build_two_asset_core(
             consumption_grid=consumption_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
-            match_rate=params[f"{boundary_liquid_law}__match_rate"],
-            return_liquid=params[f"{boundary_liquid_law}__return_liquid"],
-            pension_payout_return=params[
-                f"{boundary_liquid_law}__pension_payout_return"
+            match_rate=params[f"{boundary_liquid_law}__{law_params['match_rate']}"],
+            return_liquid=params[
+                f"{boundary_liquid_law}__{law_params['return_liquid']}"
             ],
-            retirement_income=params[f"{boundary_liquid_law}__retirement_income"],
+            pension_payout_return=params[
+                f"{boundary_liquid_law}__{law_params['pension_payout_return']}"
+            ],
+            retirement_income=params[
+                f"{boundary_liquid_law}__{law_params['retirement_income']}"
+            ],
             threshold=threshold,
         )
         return result.value - params["utility__work_disutility"]
@@ -531,10 +596,12 @@ def _build_two_asset_core(
     ) -> FloatND:
         discount_factor = params["H__discount_factor"]
         crra = params["utility__crra"]
-        match_rate = params[f"{interior_pension_law}__match_rate"]
-        return_liquid = params[f"{interior_liquid_law}__return_liquid"]
-        return_pension = params[f"{interior_pension_law}__return_pension"]
-        wage = params[f"{interior_liquid_law}__wage"]
+        match_rate = params[f"{interior_pension_law}__{law_params['match_rate']}"]
+        return_liquid = params[f"{interior_liquid_law}__{law_params['return_liquid']}"]
+        return_pension = params[
+            f"{interior_pension_law}__{law_params['return_pension']}"
+        ]
+        wage = params[f"{interior_liquid_law}__{law_params['wage']}"]
         if envelope == "rfc":
             result = rfc_two_asset_step(
                 next_value=next_value_working,

@@ -66,17 +66,31 @@ class EGM(Solver):
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
 
+    return_param: str = "return_liquid"
+    """Name of the law's gross-return parameter.
+
+    The Euler inversion needs the return on the liquid balance, but which of
+    the law's parameters carries it is the modeller's choice, exactly as which
+    state fills the liquid role is. The default is the conventional spelling.
+    """
+
+    income_param: str = "retirement_income"
+    """Name of the law's additive income parameter."""
+
     @property
     def requires_continuation(self) -> bool:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return True
 
     def validate(self, *, context: SolverBuildContext) -> None:
-        """Check the regime is a 1-D consumption--saving problem.
+        """Check the regime and its targets are 1-D consumption--saving problems.
 
         The solver's liquid role is filled positionally, which is only
-        unambiguous with a single continuous state. Both checks report the
-        regime's own state names, never the solver's internal role vocabulary.
+        unambiguous with a single continuous state. The same is asked of each
+        target, and for the same reason: with one continuous state on each side
+        the correspondence is determined, whatever the two regimes call it.
+        Every message reports the regimes' own state names, never the solver's
+        internal role vocabulary.
         """
         continuous = tuple(
             context.regime_to_v_interpolation_info[
@@ -91,19 +105,17 @@ class EGM(Solver):
                 f"extra states to discrete grids."
             )
             raise RegimeInitializationError(msg)
-        liquid_state = continuous[0]
         for target in set(_period_to_continuation_target(context=context).values()):
-            target_states = context.regime_to_v_interpolation_info[
-                target
-            ].continuous_states
-            if liquid_state not in target_states:
+            target_states = tuple(
+                context.regime_to_v_interpolation_info[target].continuous_states
+            )
+            if len(target_states) != 1:
                 msg = (
-                    f"EGM regime '{context.regime_name}' continues into "
-                    f"target regime '{target}', which does not carry the Euler state "
-                    f"'{liquid_state}' (its continuous states are "
-                    f"{sorted(target_states)}). The Euler inversion reads the "
-                    f"target's value on that state's grid, so the target must "
-                    f"declare it."
+                    f"EGM regime '{context.regime_name}' continues into target "
+                    f"regime '{target}', whose continuous states are "
+                    f"{sorted(target_states)}. The Euler inversion reads a single "
+                    f"continuation state, so the target must declare exactly one — "
+                    f"its name need not match this regime's '{continuous[0]}'."
                 )
                 raise RegimeInitializationError(msg)
 
@@ -128,12 +140,25 @@ class EGM(Solver):
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        # The target's own name for its single continuous state. It is read off
+        # that regime: the value grid it is tabulated on and the namespace its
+        # transition params live under are both facts about the target, so
+        # neither is inherited from this regime's spelling.
+        target_state_names = {
+            target: next(
+                iter(context.regime_to_v_interpolation_info[target].continuous_states)
+            )
+            for target in period_to_target.values()
+        }
         for period, target in period_to_target.items():
+            target_state = target_state_names[target]
             if target not in cores:
                 core = _build_egm_core(
                     savings_grid=savings_grid,
                     target=target,
-                    liquid_state=liquid_state,
+                    target_state=target_state,
+                    return_param=self.return_param,
+                    income_param=self.income_param,
                 )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
@@ -146,7 +171,7 @@ class EGM(Solver):
                     context=context,
                     period=period,
                     target=target,
-                    target_state_name=liquid_state,
+                    target_state_name=target_state,
                 ),
             )
         return SolutionKernels(
@@ -265,19 +290,25 @@ class _EGMPeriodKernel:
 
 
 def _build_egm_core(
-    *, savings_grid: Float1D, target: RegimeName, liquid_state: StateName
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    target_state: StateName,
+    return_param: str,
+    income_param: str,
 ) -> Callable:
     """Build the jitted-able 1-D EGM core closing over the savings grid.
 
     The core reads the state grid under the private role keyword `liquid`, the
     continuation value and marginal, and the regime's scalar params, runs
     `egm_one_asset_step`, and returns the value array and the marginal-value
-    carry on the liquid grid. The liquid law's params are qualified by the
-    continuation target's transition into the regime's own state name
-    (`{target}__next_{liquid_state}__...`), so the role keyword stays private
-    and the modeller's vocabulary reaches the params template unchanged.
+    carry on the liquid grid. The law's params are qualified by the transition
+    into the *target's* name for its continuation state
+    (`{target}__next_{target_state}__...`) — that is the namespace the params
+    template writes them under — so the role keyword stays private and the
+    modeller's vocabulary reaches the template unchanged.
     """
-    liquid_law = f"{target}__next_{liquid_state}"
+    liquid_law = f"{target}__next_{target_state}"
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
 
     def core(
@@ -296,8 +327,8 @@ def _build_egm_core(
             savings_grid=savings_grid,
             discount_factor=params["H__discount_factor"],
             crra=params["utility__crra"],
-            return_liquid=params[f"{liquid_law}__return_liquid"],
-            income=params[f"{liquid_law}__retirement_income"],
+            return_liquid=params[f"{liquid_law}__{return_param}"],
+            income=params[f"{liquid_law}__{income_param}"],
         )
         carry = EGMCarry(
             endog_grid=liquid,

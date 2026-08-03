@@ -17,7 +17,7 @@ import functools
 import inspect
 import math
 import warnings
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -60,6 +60,7 @@ from _lcm.solution.egm import (
 from _lcm.typing import (
     FlatParams,
     RegimeName,
+    TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
@@ -1641,8 +1642,6 @@ def _fail_if_discrete_action_feeds_continuation(
     """
     import inspect  # noqa: PLC0415
 
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
-
     def _reject(where: str) -> None:
         msg = (
             f"NBEGM's discrete envelope shares one continuation across the "
@@ -1684,31 +1683,47 @@ def _fail_if_discrete_action_feeds_continuation(
             return False
         return action_name in inspect.signature(combined).parameters
 
-    # The canonical per-target laws, not the regime's declared mapping: which
-    # targets a regime reaches is the graph's to say, and the canonical form has
-    # already broadcast bare laws over exactly those targets.
-    for target_laws in context.transitions.values():
+    # The branch-indexed continuation reads each branch's own next-state
+    # coordinate, so on the ride-along path every state-law feed is supported.
+    if allow_continuation_feed:
+        return
+
+    for state_name, func in _state_laws(transitions=context.transitions):
+        is_liquid = state_name == liquid_state_name
+        if _law_reads_action(func, cut_budget=is_liquid):
+            where = (
+                f"the law of motion for {state_name!r} off the budget channel"
+                if is_liquid
+                else f"the law of motion for {state_name!r}"
+            )
+            _reject(where)
+
+
+def _state_laws(
+    *, transitions: TransitionFunctionsMapping
+) -> Iterator[tuple[StateName, Callable[..., object]]]:
+    """Yield each canonical state law with the state it evolves.
+
+    Reads the canonical per-target laws rather than a regime's declared
+    `state_transitions`: which targets a regime reaches is the graph's to say,
+    and the canonical form has already broadcast bare laws over exactly those
+    targets. The regime transition and the stochastic weight laws carry no
+    state coordinate, so neither is yielded.
+    """
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    for target_laws in transitions.values():
         for law_name, candidate in target_laws.items():
             if law_name.startswith("weight_"):
                 continue
             state_name = law_name.removeprefix("next_")
             if state_name == "regime":
                 continue
-            is_liquid = state_name == liquid_state_name
             func = (
                 candidate.func if isinstance(candidate, MarkovTransition) else candidate
             )
-            if callable(func) and _law_reads_action(func, cut_budget=is_liquid):
-                if allow_continuation_feed:
-                    # The branch-indexed continuation reads each branch's own
-                    # next-state coordinate, so any state-law feed is supported.
-                    continue
-                where = (
-                    f"the law of motion for {state_name!r} off the budget channel"
-                    if is_liquid
-                    else f"the law of motion for {state_name!r}"
-                )
-                _reject(where)
+            if callable(func):
+                yield state_name, func
 
 
 def _ride_discrete_action(
