@@ -1,7 +1,27 @@
 """Construction-time, solver-independent temporal regime reachability.
 
-This module owns the model graph. Solver code may derive layouts from the graph,
-but may not infer which regime pairs are reachable.
+This module owns the model graph, built once — via `build_model_reachability` — at
+model construction, from the single canonical `active_periods_by_regime` mapping and
+the declared regime transitions. There is no runtime topology pass: the graph never
+changes after construction, and no runtime probability value narrows or widens it.
+
+Every retained edge in `targets_by_period` / `edge_status_by_period` is
+`EdgeStatus.CONDITIONAL` — there is no `TRUE` status, because no declaration form
+proves unconditional positive probability independently of state, action, and free
+runtime parameters. A coarse (bare callable / bare `MarkovTransition`) regime
+transition is therefore conservative: it retains an edge to every regime active in
+the next period, and every such edge is checked for a valid state handoff (a carried
+state, a deterministic/stochastic law, or an explicit target-local/entry law) at
+model build. A per-target dict narrows support to its declared key set instead.
+
+The solve and simulate phases build independent graphs (`ModelReachability.solution`
+/ `.simulation`) from the same construction-time semantics, and may retain different
+edges for the same source period when the regime transition's `Phased` sides differ.
+
+Solver and simulation runtime code consume this graph (`PhaseReachability.targets`,
+`.union_targets`, `.edge_status`, ...) but never infers reachability itself — it does
+not call an activity predicate, inspect a declared transition's raw mapping keys, or
+derive continuation targets from state-law-bundle keys.
 """
 
 from collections.abc import Collection, Mapping

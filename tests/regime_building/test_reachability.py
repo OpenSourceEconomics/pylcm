@@ -200,3 +200,90 @@ def test_solver_runtime_does_not_import_regime_declaration_topology() -> None:
     ]
 
     assert imports == []
+
+
+def _solver_runtime_paths() -> list[Path]:
+    package_root = Path(__file__).parents[2] / "src" / "_lcm"
+    return [
+        *sorted((package_root / "solution").rglob("*.py")),
+        package_root / "simulation" / "compile.py",
+        package_root / "simulation" / "simulate.py",
+        package_root / "simulation" / "transitions.py",
+    ]
+
+
+def test_solver_runtime_does_not_call_activity_predicates() -> None:
+    """Solver runtime modules consume the graph, not `Regime.active` directly.
+
+    Only `compute_active_periods_by_regime` (the single canonical activity
+    schedule) may call an activity predicate or `AgeGrid.get_periods_where`;
+    every other consumer, including the solve/simulate runtime, reads the
+    prepared `active_periods_by_regime` mapping instead.
+    """
+    calls = [
+        (path, node.lineno)
+        for path in _solver_runtime_paths()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"active", "get_periods_where"}
+    ]
+
+    assert calls == []
+
+
+def test_solver_runtime_does_not_inspect_regime_transition_mapping_keys() -> None:
+    """Solver runtime modules never read `.transition` / `.state_transitions`.
+
+    Which regime pairs are reachable is a graph property; a solver module
+    inspecting the raw declared transition or state-transition mapping to
+    decide targets would bypass the single-source-of-truth graph.
+    """
+    accesses = [
+        (path, node.lineno)
+        for path in _solver_runtime_paths()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute)
+        and node.attr in {"transition", "state_transitions"}
+    ]
+
+    assert accesses == []
+
+
+def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
+    """`carry_targets` (a law-bundle-keyed target set) must not reappear.
+
+    Continuation/process-target membership is `phase_reachability.union_targets`
+    (or an equivalent graph query) — never a set of regime names collected from
+    `flat_nested_transitions` or other state-law-bundle keys.
+    """
+    package_root = Path(__file__).parents[2] / "src" / "_lcm"
+    hits = [
+        (path, lineno)
+        for path in package_root.rglob("*.py")
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if "carry_targets" in line
+    ]
+
+    assert hits == []
+
+
+def test_active_periods_are_computed_at_a_single_call_site() -> None:
+    """`AgeGrid.get_periods_where` is combined with `Regime.active` exactly once.
+
+    `compute_active_periods_by_regime` is that single canonical evaluation
+    point; a second call site would let two subsystems compute active
+    periods independently and risk disagreement (e.g. Fraction vs.
+    float32-rounded ages).
+    """
+    src_root = Path(__file__).parents[2] / "src"
+    hits = [
+        path
+        for path in src_root.rglob("*.py")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "get_periods_where(" in line and ".active" in line
+    ]
+
+    assert hits == [src_root / "_lcm" / "regime_building" / "processing.py"]
