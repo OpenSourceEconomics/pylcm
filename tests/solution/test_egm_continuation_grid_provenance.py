@@ -18,6 +18,13 @@ share the defect.
 Every configuration here is reachable from the public API: the DS pension model
 takes per-regime grid overrides, all defaulting to one shared grid, so the
 negative control is exactly today's model.
+
+A third axis makes the target's array differ from this regime's without moving
+any node: the **order** the two regimes' states resolve in, which decides what
+the value array's axes mean. W10 covers it, in
+`tests/solution/test_egm_continuation_axis_order.py` — a pension-first target
+reaching a liquid-first kernel is a layout question rather than a grid one, and
+it is asserted against an exact affine oracle rather than against brute force.
 """
 
 import jax.numpy as jnp
