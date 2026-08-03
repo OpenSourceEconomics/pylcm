@@ -20,15 +20,42 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   feasibility check, its per-constraint diagnostic, and the additional-target
   pool now resolve that name the way the within-period decision does.
 
-- `upper_envelope="mss"`: a value decrease no larger than rounding noise is no
+- `envelope="mss"`: a value decrease no larger than rounding noise is no
   longer read as a branch boundary. Along a near-linear tail the sign of the
   difference between consecutive candidate values is set by rounding, and
   splitting there silently dropped the top of the published row. A candidate
   whose value is not finite now costs only its own nodes instead of poisoning
   every node it covers with NaN.
 
-- `upper_envelope="exact"`: a handover between two links the pair's arithmetic
+- `envelope="exact"`: a handover between two links the pair's arithmetic
   cannot separate is refused rather than placed at a fabricated abscissa.
+
+- An endogenous-grid regime reads its continuation on the grid the *target*
+  regime tabulates at period `t+1`, not on its own period-`t` grid. The two
+  differ whenever the target is a different regime whose grid differs, or
+  whenever an `AgeSpecializedGrid` moves the nodes with age; before, such a
+  model either raised on the length mismatch or published values inverted
+  against the wrong abscissae. A target that does not carry the state now
+  raises instead of falling back.
+
+- `EGM` and `TwoAssetEGM` validate their regime when the model is built:
+  the number of continuous states, the declared roles, and — for the
+  two-asset solver — the retirement boundary target. The errors name the
+  regime's own state names and the field that fixes them.
+
+### Solver naming
+
+- The endogenous-grid solvers are named by the problem they solve rather than
+  by the dimension count they were built around: `OneAssetEGM` is now `EGM`
+  and `TwoDimEGM` is now `TwoAssetEGM`. There are no aliases.
+
+- `TwoAssetEGM` takes the regime's two continuous states by name —
+  `liquid_state=` and `pension_state=` — instead of requiring them to be
+  spelled `liquid` and `pension`.
+
+- The refinement argument is `envelope=` on both `TwoAssetEGM` and `DCEGM`
+  (was `upper_envelope=`). The `_lcm/egm/upper_envelope/` package keeps its
+  name: it is the FUES backend, not the field.
 
 ### Platform support
 
