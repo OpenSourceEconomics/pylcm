@@ -643,6 +643,7 @@ def normalize_age_specialization(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     phased_specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> AgeNormalizationResult:
     """Resolve every age-specialized marker into concrete model-creation objects.
 
@@ -680,7 +681,7 @@ def normalize_age_specialization(
             rewritten_specs[regime_name] = spec
             continue
 
-        active_periods = ages.get_periods_where(user_regime.active)
+        active_periods = active_periods_by_regime[regime_name]
         if not active_periods:
             msg = (
                 f"Regime '{regime_name}' declares age-specialized objects but is "

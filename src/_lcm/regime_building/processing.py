@@ -167,17 +167,45 @@ def build_period_v_interpolation_info(
     return MappingProxyType(result)
 
 
+def compute_active_periods_by_regime(
+    *,
+    ages: AgeGrid,
+    user_regimes: Mapping[RegimeName, object],
+) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+    """Evaluate every regime's `active` predicate exactly once.
+
+    The single canonical activity schedule for the model: every other
+    subsystem that needs to know which periods a regime is active in
+    (reachability, age specialization, broadcast pruning, model-input
+    validation) consumes this mapping instead of re-evaluating
+    `Regime.active` or calling `AgeGrid.get_periods_where` itself.
+    """
+    return MappingProxyType(
+        {
+            regime_name: tuple(ages.get_periods_where(regime.active))  # ty: ignore[unresolved-attribute]
+            for regime_name, regime in user_regimes.items()
+        }
+    )
+
+
 def prepare_model_structure(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
+    active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> PreparedModelStructure:
-    """Prepare normalized declarations and static phase graphs once."""
+    """Prepare normalized declarations and static phase graphs once.
+
+    `active_periods_by_regime` must be the single canonical activity
+    mapping from `compute_active_periods_by_regime`, computed once by the
+    caller — this function does not evaluate `Regime.active` itself.
+    """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     age_normalization = normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=raw_phase_specs,
         ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
     )
     phased_specs = age_normalization.phased_specs
     transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]] = {
@@ -192,11 +220,8 @@ def prepare_model_structure(
     }
     try:
         reachability = build_model_reachability(
-            ages=ages.exact_values,
-            active_by_regime={
-                regime_name: regime.active
-                for regime_name, regime in user_regimes.items()
-            },
+            n_periods=ages.n_periods,
+            active_periods_by_regime=active_periods_by_regime,
             transitions_by_phase=transitions_by_phase,
             terminal_regimes={
                 regime_name
@@ -206,18 +231,6 @@ def prepare_model_structure(
         )
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
-    active_periods_by_regime = MappingProxyType(
-        {
-            regime_name: tuple(
-                period
-                for period, active_regimes in enumerate(
-                    reachability.solution.active_regimes_by_period
-                )
-                if regime_name in active_regimes
-            )
-            for regime_name in user_regimes
-        }
-    )
     return PreparedModelStructure(
         representative_user_regimes=age_normalization.representative_user_regimes,
         phased_specs=phased_specs,
@@ -256,6 +269,9 @@ def process_regimes(
     prepared_structure = prepared_structure or prepare_model_structure(
         user_regimes=user_regimes,
         ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
     )
     representative_user_regimes = prepared_structure.representative_user_regimes
     phased_specs = prepared_structure.phased_specs

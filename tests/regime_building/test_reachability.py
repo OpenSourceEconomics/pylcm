@@ -5,7 +5,6 @@ import pytest
 
 from _lcm.reachability import (
     EdgeStatus,
-    active_periods_from_predicates,
     build_model_reachability,
     build_phase_reachability,
 )
@@ -30,13 +29,16 @@ def test_forcedout_cannot_transition_back_to_canwork() -> None:
     """A later-life regime cannot transition into an earlier-life regime."""
     ages = tuple(range(60, 69))
     cutoff = 65
-    active = active_periods_from_predicates(
-        ages=ages,
-        active_by_regime={
-            "canwork": lambda age: age < cutoff,
-            "forcedout": lambda age: age >= cutoff,
-        },
-    )
+    active_by_regime = {
+        "canwork": lambda age: age < cutoff,
+        "forcedout": lambda age: age >= cutoff,
+    }
+    active = {
+        regime: frozenset(
+            period for period, age in enumerate(ages) if bool(is_active(age))
+        )
+        for regime, is_active in active_by_regime.items()
+    }
     graph = build_phase_reachability(
         n_periods=len(ages),
         active_periods_by_regime=active,
@@ -68,10 +70,8 @@ def test_coarse_transition_retains_all_activity_compatible_regimes() -> None:
     regime_names = ("source", "low", "high")
     coarse_transition = object()
     graph = build_model_reachability(
-        ages=(20, 21),
-        active_by_regime={
-            regime_name: lambda _age: True for regime_name in regime_names
-        },
+        n_periods=2,
+        active_periods_by_regime=dict.fromkeys(regime_names, (0, 1)),
         transitions_by_phase={
             "solution": {
                 "source": coarse_transition,
@@ -139,11 +139,11 @@ def test_unknown_target_is_rejected() -> None:
 def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
     """Phase-specific declarations produce phase-specific temporal graphs."""
     graph = build_model_reachability(
-        ages=(20, 21),
-        active_by_regime={
-            "source": lambda _age: True,
-            "solve_target": lambda _age: True,
-            "simulate_target": lambda _age: True,
+        n_periods=2,
+        active_periods_by_regime={
+            "source": (0, 1),
+            "solve_target": (0, 1),
+            "simulate_target": (0, 1),
         },
         transitions_by_phase={
             "solution": {
