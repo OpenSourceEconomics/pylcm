@@ -42,7 +42,8 @@ from _lcm.regime_building.age_normalization import (
     PeriodizedEconFunction,
     PeriodizedUserFunction,
     assert_continuation_grids_agree,
-    continuation_grid_signature_from_schedule,
+    continuation_group_key,
+    continuation_info_lookup,
     expand_groups_to_periods,
     group_periods_by_key,
     normalize_age_specialization,
@@ -2253,9 +2254,8 @@ def _build_Q_and_F_per_period(
 
     When the model has `AgeSpecializedGrid` states, period `t`'s continuation
     `V_{t+1}` is interpolated on the target regimes' grids **at period `t+1`**
-    (`period_to_regime_v_interp`), and the group signature folds in those grids'
-    explicit user signatures (`grid_schedule`, via
-    `continuation_grid_signature_from_schedule`) so periods with different
+    (`period_to_regime_v_interp`), and `continuation_group_key` folds in those
+    grids' explicit user signatures (`grid_schedule`) so periods with different
     continuation grids do not false-share a compiled `Q_and_F`. With no
     age-specialized objects the grouping collapses to the target configuration
     exactly as an age-invariant model.
@@ -2282,46 +2282,22 @@ def _build_Q_and_F_per_period(
 
     """
 
-    def continuation_info(
-        period: int,
-    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-        """All-regime interpolation info for period `t`'s continuation V_{t+1}.
-
-        Uses each target's grid at period `t+1` where age-specialized (from the
-        schedule-built per-period map), falling back to its representative grid
-        otherwise. The last period's continuation is the zero template.
-        """
-        if period_to_regime_v_interp is None:
-            return regime_to_v_interpolation_info
-        per_period = period_to_regime_v_interp.get(
-            period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
-        )
-        return MappingProxyType(
-            {
-                regime_name: per_period.get(regime_name, info)
-                for regime_name, info in regime_to_v_interpolation_info.items()
-            }
-        )
-
-    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
-        complete = (
-            ()
-            if period == phase_reachability.n_periods - 1
-            else phase_reachability.targets(period=period, source=source_regime_name)
-        )
-        # The explicit user grid signatures of the continuation targets at t+1 —
-        # periods with different continuation grids get distinct kernels.
-        continuation_sig = continuation_grid_signature_from_schedule(
-            grid_schedule=grid_schedule,
-            target_period=period + 1,
-            target_regimes=complete,
-        )
-        signature = (
-            periodized_tree_signature(functions, period),
-            periodized_tree_signature(constraints, period),
-            continuation_sig,
-        )
-        return (complete, signature)
+    # `continuation_info`: all-regime interpolation info for period `t`'s
+    # continuation V_{t+1}. The last period's continuation is the zero template.
+    # `group_key` folds in the continuation targets' explicit user grid signatures
+    # at t+1 (`grid_schedule`), so periods with different continuation grids do
+    # not false-share a compiled kernel.
+    continuation_info = continuation_info_lookup(
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    group_key = continuation_group_key(
+        phase_reachability=phase_reachability,
+        source_regime_name=source_regime_name,
+        functions=functions,
+        constraints=constraints,
+        grid_schedule=grid_schedule,
+    )
 
     configs = group_periods_by_key(active_periods, group_key)
 

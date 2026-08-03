@@ -45,7 +45,7 @@ def _grid_mapping_errors(
     suffix = " or Phased" if allow_phase_variants else ""
     if allow_age_specialized_grid:
         # An age-varying continuous-state grid is a valid state (states only).
-        allowed = allowed | AgeSpecializedGrid  # type: ignore[operator]
+        allowed = allowed | AgeSpecializedGrid
         suffix += " or AgeSpecializedGrid"
     error_messages: list[str] = []
     for k, v in mapping.items():

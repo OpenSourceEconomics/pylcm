@@ -40,8 +40,7 @@ def _states_for_period(
     V_{t+1} on period-(t+1)'s grid). Same shape as the base, so the shared compiled
     kernel is not retraced. Age-invariant regimes return the base axis unchanged.
     """
-    # getattr (not direct access) so a duck-typed mock regime without the field works.
-    axes = getattr(regime.solution, "period_state_axes", None)
+    axes = regime.solution.period_state_axes
     if axes is not None and period in axes:
         return {**state_action_space.states, **axes[period]}
     return state_action_space.states

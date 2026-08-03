@@ -23,6 +23,9 @@ class MockSolutionPhase:
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
