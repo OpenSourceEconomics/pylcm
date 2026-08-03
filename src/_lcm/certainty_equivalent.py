@@ -6,7 +6,7 @@ Engine modules may import directly from here.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -82,6 +82,40 @@ class QuasiArithmeticMean(CertaintyEquivalent):
             get_union_of_args([self.transform, self.inverse]) - {CE_VALUE_ARG}
         )
 
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the certainty equivalent `g⁻¹(Σ w · g(v))` over the last axis.
+
+        The single aggregation entry point of the engine: the whole
+        continuation lottery — every stochastic node of every reachable
+        target regime, weighted by the regime probability — arrives here
+        flattened, so `transform` is applied before every expectation and
+        `inverse` exactly once.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative probabilities over `values`. A unit-mass
+                lottery yields a certainty equivalent; a smaller mass carries
+                through as the correspondingly smaller aggregate.
+            params: Mapping of runtime parameter names to their values.
+                `transform` and `inverse` each receive the subset their
+                signature declares.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        transformed = self.transform(value=values, **_args_for(self.transform, params))
+        return self.inverse(
+            value=jnp.sum(weights * transformed, axis=-1),
+            **_args_for(self.inverse, params),
+        )
+
 
 def power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
     """Apply `g(v) = v^(1 - risk_aversion)`, or `log(v)` at `risk_aversion = 1`."""
@@ -111,10 +145,102 @@ class PowerMean(QuasiArithmeticMean):
     Requires strictly positive continuation values. `risk_aversion = 1` is
     the geometric-mean (log) limit, `CE = exp(E[log V'])`; `risk_aversion
     = 0` reduces to the linear expectation.
+
+    The aggregation is evaluated in an anchored log form, so the result stays
+    finite wherever the mathematical power mean is — including high risk
+    aversion at continuation values near the borrowing constraint, where
+    `V'^(1 - risk_aversion)` alone would overflow the dtype.
     """
 
     transform: Callable[..., FloatND] = power_transform
     inverse: Callable[..., FloatND] = power_inverse
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the weighted power mean `(Σ w · v^(1-ra))^(1/(1-ra))`, stably.
+
+        `ra` is `risk_aversion`. The naive `inverse(Σ w · transform(v))`
+        overflows when `risk_aversion > 1` and `v` is near the borrowing
+        constraint: the intermediate `v^(1-ra)` exceeds the dtype's range and
+        the certainty equivalent collapses to zero or infinity. The
+        aggregation evaluates in an anchored weight/deviation log form —
+        `log CE = a + [log(W) + log1p(E/W)] / (1-ra)` with `a` the extremal
+        log value, `W` the weight sum, and `E` the `expm1`-deviation sum —
+        which stays finite wherever the mathematical value is and keeps the
+        geometric-mean limit exact arbitrarily close to `risk_aversion = 1`.
+        `risk_aversion = 1` is the weighted geometric mean `exp(E[log v])`.
+
+        Args:
+            values: Strictly positive continuation values along the last axis.
+            weights: Nonnegative probabilities over `values`, summing to one.
+                A weight sum within sqrt(eps) of one is floating summation
+                roundoff on a unit-mass lottery and aggregates as exactly
+                normalized — the power mean has a finite `ra -> 1` limit only
+                at unit mass. Scaling the weights by a materially non-unit
+                `k` scales the result by `k^(1/(1-ra))` (with no `ra -> 1`
+                limit; `ra = 1` publishes the normalized geometric mean), so
+                only a unit-mass lottery yields a certainty equivalent.
+                Zero-weight entries drop out exactly.
+            params: Mapping carrying the `risk_aversion` runtime parameter.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        risk_aversion = params["risk_aversion"]
+        log_v = jnp.log(values)
+        positive = weights > 0.0
+        exponent = 1.0 - risk_aversion
+        # The `risk_aversion == 1` power branch must not divide by zero.
+        safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
+        # Anchored weight/deviation form: with `a` the extremal log value on
+        # the side that keeps every exponent nonpositive,
+        # `log CE = a + [log(W) + log1p(E / W)] / (1-ra)` where `W = sum w`
+        # and `E = sum w expm1((1-ra)(log v - a))`. The deviation ratio keeps
+        # the quotient exact arbitrarily close to `ra = 1` — a rounded
+        # log-sum divided by a near-zero exponent loses the geometric-mean
+        # limit to cancellation — while the mass term `log(W)` carries a
+        # materially non-unit weight sum exactly and drops out for a
+        # unit-mass lottery (up to summation roundoff; see below).
+        anchor_high = jnp.max(jnp.where(positive, log_v, -jnp.inf), axis=-1)
+        anchor_low = jnp.min(jnp.where(positive, log_v, jnp.inf), axis=-1)
+        anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
+        anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+        centered = log_v - anchor[..., None]
+        masked_weights = jnp.where(positive, weights, weights * 0.0)
+        weight_sum = jnp.sum(jnp.broadcast_to(masked_weights, centered.shape), axis=-1)
+        deviation_sum = jnp.sum(
+            jnp.where(
+                positive,
+                weights * jnp.expm1(exponent * centered),
+                weights * 0.0,
+            ),
+            axis=-1,
+        )
+        safe_weight = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        # A mass gap below sqrt(eps) is floating summation roundoff on a
+        # mathematically unit-mass lottery (quadrature weights rarely sum to
+        # one bit-exactly): `log(W)/(1-ra)` would amplify it to an order-one
+        # error near `ra = 1`, so such lotteries aggregate as exactly
+        # normalized. A materially non-unit mass keeps its exact `log(W)`
+        # contribution (the documented `k^(1/(1-ra))` scaling).
+        roundoff_mass = jnp.abs(weight_sum - 1.0) <= jnp.sqrt(
+            jnp.finfo(safe_weight.dtype).eps
+        )
+        log_mass = jnp.where(roundoff_mass, 0.0, jnp.log(safe_weight))
+        log_ce_power = (
+            anchor + (log_mass + jnp.log1p(deviation_sum / safe_weight)) / safe_exponent
+        )
+        log_ce_geometric = (
+            jnp.sum(jnp.where(positive, weights * log_v, weights * 0.0), axis=-1)
+            / safe_weight
+        )
+        return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
 
 
 def resolve_certainty_equivalent(
@@ -122,23 +248,21 @@ def resolve_certainty_equivalent(
 ) -> tuple[
     QuasiArithmeticMean | None,
     MappingProxyType[str, str],
-    MappingProxyType[str, str],
 ]:
     """Narrow the certainty equivalent and map its args to flat param names.
 
     The runtime parameters live under the pseudo-function name
     `certainty_equivalent` in the regime's flat params
-    (`certainty_equivalent__<arg>`); the returned mappings let the Q-and-F
-    closure pull each callable's kwargs from `states_actions_params`.
+    (`certainty_equivalent__<arg>`); the returned mapping lets the Q-and-F
+    closure assemble `aggregate`'s `params` from `states_actions_params`.
 
     Returns:
-        Tuple of the narrowed quasi-arithmetic-mean CE (or `None`), the
-        transform's arg-to-flat-name mapping, and the inverse's
+        Tuple of the narrowed quasi-arithmetic-mean CE (or `None`) and its
         arg-to-flat-name mapping.
 
     """
     if certainty_equivalent is None:
-        return None, MappingProxyType({}), MappingProxyType({})
+        return None, MappingProxyType({})
     if not isinstance(certainty_equivalent, QuasiArithmeticMean):
         msg = (
             "Only `QuasiArithmeticMean` certainty equivalents are "
@@ -146,16 +270,19 @@ def resolve_certainty_equivalent(
         )
         raise NotImplementedError(msg)
 
-    def flat_names(func: Callable[..., FloatND]) -> MappingProxyType[str, str]:
-        return MappingProxyType(
-            {
-                arg: f"certainty_equivalent__{arg}"
-                for arg in get_union_of_args([func]) - {CE_VALUE_ARG}
-            }
-        )
-
     return (
         certainty_equivalent,
-        flat_names(certainty_equivalent.transform),
-        flat_names(certainty_equivalent.inverse),
+        MappingProxyType(
+            {
+                arg: f"certainty_equivalent__{arg}"
+                for arg in certainty_equivalent.param_names
+            }
+        ),
     )
+
+
+def _args_for(
+    func: Callable[..., FloatND], params: Mapping[str, FloatND]
+) -> dict[str, FloatND]:
+    """Pick the entries of `params` that `func`'s signature declares."""
+    return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}

@@ -1,6 +1,7 @@
 """Tests for nonlinear certainty equivalents over the continuation value."""
 
 from collections.abc import Callable
+from decimal import Decimal, localcontext
 from typing import Any
 
 import jax.numpy as jnp
@@ -9,7 +10,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    DiscreteGrid,
+    H_epstein_zin,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Phased,
     PowerMean,
@@ -19,7 +23,15 @@ from lcm import (
 )
 from lcm.exceptions import InvalidNameError, RegimeInitializationError
 from lcm.solvers import DCEGM
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    Period,
+    ScalarInt,
+)
 from lcm_examples.epstein_zin import get_model, get_params
 
 
@@ -373,3 +385,274 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
             rtol=5e-5,
             err_msg=f"period={period}",
         )
+
+
+def _stable_power_mean(
+    values: tuple[float, ...],
+    weights: tuple[float, ...],
+    risk_aversion: float,
+) -> float:
+    """Evaluate the weighted power mean of a positive lottery in decimal arithmetic.
+
+    An independent reference for `(Σ w · v^(1-ra))^(1/(1-ra))` on the
+    mass-normalised lottery, carried at 120 significant digits so it is
+    unaffected by the floating-point range that makes the naive
+    `inverse(Σ w · transform(v))` route overflow. `risk_aversion = 1` is the
+    weighted geometric mean.
+    """
+    with localcontext() as context:
+        context.prec = 120
+        vals = tuple(Decimal(str(v)) for v in values)
+        raw_weights = tuple(Decimal(str(w)) for w in weights)
+        mass = sum(raw_weights, start=Decimal(0))
+        normalized = tuple(w / mass for w in raw_weights)
+        exponent = Decimal(1) - Decimal(str(risk_aversion))
+        logs = tuple(v.ln() for v in vals)
+        if exponent == 0:
+            log_mean = sum(
+                (w * log_v for w, log_v in zip(normalized, logs, strict=True)),
+                start=Decimal(0),
+            )
+            return float(log_mean.exp())
+        # A negative exponent makes the smallest log the safe anchor, a positive
+        # exponent the largest; either keeps every scaled exponent nonpositive.
+        anchor = min(logs) if exponent < 0 else max(logs)
+        scaled = sum(
+            (
+                w * (exponent * (log_v - anchor)).exp()
+                for w, log_v in zip(normalized, logs, strict=True)
+            ),
+            start=Decimal(0),
+        )
+        return float((anchor + scaled.ln() / exponent).exp())
+
+
+# Risk aversion and lottery scale combinations at which the naive
+# `inverse(Σ w · transform(v))` route overflows the dtype.
+_FLOAT64_STRESS_CASES = [(8.0, 1e-50), (12.0, 1e-30), (20.0, 1e-20), (50.0, 1e-8)]
+_FLOAT32_STRESS_CASES = [(8.0, 1e-8), (12.0, 1e-5), (20.0, 1e-3)]
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_STRESS_CASES)
+def test_power_mean_aggregate_matches_reference_at_float64_scales(
+    x64_enabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The power mean of a tiny positive lottery equals its high-precision value."""
+    values = (scale, 2.0 * scale)
+    weights = (0.9, 0.1)
+    got = PowerMean().aggregate(
+        values=jnp.asarray(values, dtype=jnp.float64),
+        weights=jnp.asarray(weights, dtype=jnp.float64),
+        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
+    )
+    expected = _stable_power_mean(values, weights, risk_aversion)
+    np.testing.assert_allclose(float(got), expected, rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT32_STRESS_CASES)
+def test_power_mean_aggregate_matches_reference_at_float32_scales(
+    x64_disabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The float32 power mean of a tiny positive lottery stays at its exact value."""
+    values = (scale, 2.0 * scale)
+    weights = (0.9, 0.1)
+    got = PowerMean().aggregate(
+        values=jnp.asarray(values, dtype=jnp.float32),
+        weights=jnp.asarray(weights, dtype=jnp.float32),
+        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float32)},
+    )
+    expected = _stable_power_mean(values, weights, risk_aversion)
+    np.testing.assert_allclose(float(got), expected, rtol=5e-5, atol=0.0)
+
+
+def test_power_mean_aggregate_is_geometric_mean_at_unit_risk_aversion():
+    """At `risk_aversion = 1` the power mean is the weighted geometric mean."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 0.5]),
+        params={"risk_aversion": jnp.asarray(1.0)},
+    )
+    np.testing.assert_allclose(float(got), 3.0, rtol=1e-6)
+
+
+@pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0 + 1e-6])
+def test_power_mean_aggregate_is_continuous_around_unit_risk_aversion(
+    risk_aversion: float,
+):
+    """Just off `risk_aversion = 1` the power mean is still the geometric mean."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 0.5]),
+        params={"risk_aversion": jnp.asarray(risk_aversion)},
+    )
+    np.testing.assert_allclose(float(got), 3.0, rtol=1e-5)
+
+
+def test_power_mean_aggregate_is_linear_expectation_at_zero_risk_aversion():
+    """At `risk_aversion = 0` the power mean is the probability-weighted mean."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.25, 0.75]),
+        params={"risk_aversion": jnp.asarray(0.0)},
+    )
+    np.testing.assert_allclose(float(got), 7.0, rtol=1e-6)
+
+
+def test_power_mean_aggregate_drops_zero_weight_entries():
+    """A zero-probability branch leaves the certainty equivalent unchanged."""
+    kept = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 0.5]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    padded = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0, 1e-30]),
+        weights=jnp.array([0.5, 0.5, 0.0]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    np.testing.assert_allclose(float(padded), float(kept), rtol=1e-12)
+
+
+def test_power_mean_aggregate_is_homogeneous_of_degree_one():
+    """Rescaling the lottery by `k > 0` rescales the certainty equivalent by `k`."""
+    weights = jnp.array([0.3, 0.7])
+    params = {"risk_aversion": jnp.asarray(6.0)}
+    unit = PowerMean().aggregate(
+        values=jnp.array([1.0, 4.0]), weights=weights, params=params
+    )
+    scaled = PowerMean().aggregate(
+        values=jnp.array([1e-12, 4e-12]), weights=weights, params=params
+    )
+    np.testing.assert_allclose(float(scaled), 1e-12 * float(unit), rtol=1e-5)
+
+
+def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse():
+    """A generic quasi-arithmetic mean aggregates as `g⁻¹(Σ w · g(v))`.
+
+    Each callable receives exactly the runtime parameters its own signature
+    declares: `transform` sees `theta`, `inverse` sees `theta` and `offset`.
+    """
+
+    def g(value: FloatND, theta: FloatND) -> FloatND:
+        return value * theta
+
+    def g_inv(value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
+        return value / theta + offset
+
+    got = QuasiArithmeticMean(transform=g, inverse=g_inv).aggregate(
+        values=jnp.array([1.0, 3.0]),
+        weights=jnp.array([0.25, 0.75]),
+        params={"theta": jnp.asarray(2.0), "offset": jnp.asarray(0.5)},
+    )
+    # g: (2, 6); Σ w g(v) = 5; g_inv(5) = 5 / 2 + 0.5
+    np.testing.assert_allclose(float(got), 3.0, rtol=1e-6)
+
+
+@categorical(ordered=True)
+class _Health:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+def _health_probs(health: DiscreteState) -> FloatND:
+    return jnp.where(
+        health == _Health.good, jnp.array([0.1, 0.9]), jnp.array([0.8, 0.2])
+    )
+
+
+def _survival_probs(health: DiscreteState, period: Period) -> FloatND:
+    alive_next = jnp.where(health == _Health.good, 0.9, 0.7) * (period < 1)
+    return jnp.array([alive_next, 1.0 - alive_next])
+
+
+def _make_scale_equivariant_model(scale: float) -> Model:
+    """Build a two-regime Epstein-Zin model whose value function scales with `scale`.
+
+    Every primitive is homogeneous of degree one in `scale` - the grids, the
+    income flow and both utilities - and `H_epstein_zin` and the power mean
+    are themselves homogeneous of degree one. The solved value function of
+    the model at `scale` is therefore exactly `scale` times the value
+    function at `scale = 1`, and the optimal consumption grid point is
+    identical.
+    """
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return jnp.clip(wealth - consumption + 0.5 * scale, 0.5 * scale, 12.0 * scale)
+
+    def utility_dead(wealth: ContinuousState) -> FloatND:
+        return 0.5 * wealth + 1e-3 * scale
+
+    def utility_alive(consumption: ContinuousAction) -> FloatND:
+        return consumption
+
+    alive = Regime(
+        transition=MarkovTransition(_survival_probs),
+        states={
+            "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
+            "health": DiscreteGrid(_Health),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": {"alive": MarkovTransition(_health_probs)},
+        },
+        actions={
+            "consumption": LinSpacedGrid(
+                start=0.5 * scale, stop=5.0 * scale, n_points=7
+            )
+        },
+        constraints={"budget": _budget},
+        functions={"utility": utility_alive, "H": H_epstein_zin},
+        certainty_equivalent=PowerMean(),
+        active=lambda age: age < 27,
+    )
+    dead = Regime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=0.0, stop=12.0 * scale, n_points=25)},
+        functions={"utility": utility_dead},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=25, stop=27, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def _scaled_model_params(risk_aversion: float) -> dict:
+    return {
+        "alive": {
+            "H": {
+                "discount_factor": 0.9,
+                "intertemporal_elasticity_of_substitution": 2.0,
+            },
+            "certainty_equivalent": {"risk_aversion": risk_aversion},
+        },
+        "dead": {},
+    }
+
+
+@pytest.mark.parametrize("risk_aversion", [2.0, 50.0])
+def test_solved_values_are_equivariant_to_rescaling_the_model(
+    x64_enabled: None,
+    risk_aversion: float,
+):
+    """Scaling a homogeneous model by `k > 0` scales its solved values by `k`."""
+    scale = 1e-7
+    params = _scaled_model_params(risk_aversion)
+    unit = _make_scale_equivariant_model(1.0).solve(params=params, log_level="debug")
+    scaled = _make_scale_equivariant_model(scale).solve(
+        params=params, log_level="debug"
+    )
+    for period in unit:
+        for regime_name in unit[period]:
+            np.testing.assert_allclose(
+                np.asarray(scaled[period][regime_name]) / scale,
+                np.asarray(unit[period][regime_name]),
+                rtol=1e-6,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
