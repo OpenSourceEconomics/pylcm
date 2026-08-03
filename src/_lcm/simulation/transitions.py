@@ -295,12 +295,17 @@ def draw_key_from_dict(
         A random key from the dictionary for each entry in the arrays.
 
     """
-    regime_names = list(d)
+    # Sorted by regime id, not `d`'s insertion order: the draw for a fixed key
+    # must not depend on which order an upstream caller happened to list
+    # candidates in (e.g. a reachability graph's alphabetical convention).
+    regime_names = sorted(d, key=lambda name: regime_names_to_ids[name])
     regime_ids = jnp.asarray(
         [regime_names_to_ids[regime_name] for regime_name in regime_names],
         dtype=jnp.int32,
     )
-    return _draw_random_regime_ids(keys, tuple(d.values()), regime_ids)
+    return _draw_random_regime_ids(
+        keys, tuple(d[name] for name in regime_names), regime_ids
+    )
 
 
 @jax.jit
