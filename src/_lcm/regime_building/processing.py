@@ -247,7 +247,7 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
-    prepared_structure: PreparedModelStructure | None = None,
+    prepared_structure: PreparedModelStructure,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Process finalized regimes into canonical regimes.
 
@@ -262,18 +262,15 @@ def process_regimes(
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the canonical regime.
+        prepared_structure: Normalized declarations and static phase graphs,
+            from `prepare_model_structure`. The caller builds this once and
+            shares it with every other consumer that needs the same
+            reachability graph, instead of each recomputing its own copy.
 
     Returns:
         The processed canonical regimes.
 
     """
-    prepared_structure = prepared_structure or prepare_model_structure(
-        user_regimes=user_regimes,
-        ages=ages,
-        active_periods_by_regime=compute_active_periods_by_regime(
-            ages=ages, user_regimes=user_regimes
-        ),
-    )
     representative_user_regimes = prepared_structure.representative_user_regimes
     phased_specs = prepared_structure.phased_specs
     grid_schedule = prepared_structure.grid_schedule

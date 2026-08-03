@@ -22,6 +22,7 @@ from lcm import Phased, categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.conftest import build_prepared_structure
 from tests.mock_regime import MockRegime
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -114,13 +115,17 @@ def test_process_regimes():
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
+    finalized_user_regimes = finalize_regimes(
+        user_regimes=user_regimes, derived_categoricals={}
+    )
     regimes = process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes=user_regimes, derived_categoricals={}
-        ),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
     working_regime = regimes["working_life"]
 
@@ -214,15 +219,20 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         functions={"utility": lambda x: x},
         active=lambda age: age >= 1,
     )
+    ages = AgeGrid(start=0, stop=2, step="Y")
+    finalized_user_regimes = finalize_regimes(
+        user_regimes={"early": early, "late": late}, derived_categoricals={}
+    )
     return process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes={"early": early, "late": late}, derived_categoricals={}
-        ),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        user_regimes=finalized_user_regimes,
+        ages=ages,
         regime_names_to_ids=MappingProxyType(
             {"early": jnp.int32(0), "late": jnp.int32(1)}
         ),
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
 
 

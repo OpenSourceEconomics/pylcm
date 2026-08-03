@@ -22,6 +22,7 @@ from lcm.result import (
     _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
 )
+from tests.conftest import build_prepared_structure
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -47,13 +48,17 @@ def simulate_inputs():
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
+    finalized_user_regimes = finalize_regimes(
+        user_regimes=user_regimes, derived_categoricals={}
+    )
     regimes = process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes=user_regimes, derived_categoricals={}
-        ),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
 
     return {
