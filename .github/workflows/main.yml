@@ -152,6 +152,12 @@ jobs:
           frozen: false
       - name: Run pytest on GPU
         shell: bash {0}
+        # Invoking `pytest` directly rather than the pixi task drops the task's
+        # `env`, so the preallocation setting is restored here. Without it JAX
+        # claims most of the device up front and the Mahler & Yum solve has
+        # nothing left to grow into.
+        env:
+          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
         # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
         #
@@ -183,9 +189,23 @@ jobs:
           frozen: false
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
+        # Invoking `pytest` directly rather than the pixi task drops the task's
+        # `env`, so the preallocation setting is restored here.
+        env:
+          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
         # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
-        run: pixi run -e tests-cuda12 tests-32bit -n0
+        #
+        # Mahler & Yum runs first in its own process, for the reason given on the
+        # 64-bit job. Keeping it in the same process as the rest of the suite has
+        # exhausted host memory late in the run, and the OOM takes the runner
+        # agent with it — the job then reports "the hosted runner lost
+        # communication with the server" and uploads no log to explain itself.
+        run: |
+          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py \
+            --precision=32 -n0 \
+          && pixi run -e tests-cuda12 pytest tests --precision=32 -n0 \
+            --ignore=tests/test_mahler_yum_2024.py
   run-explanation-notebooks:
     name: Run explanation notebooks on Python 3.14
     runs-on: ubuntu-latest
