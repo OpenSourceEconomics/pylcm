@@ -545,6 +545,53 @@ def test_coarse_transition_reaching_brute_regime_raises():
         _three_regime_model_with_brute_worker(base.next_regime_from_retirement)
 
 
+def test_solver_configuration_does_not_change_reachability() -> None:
+    """Grid search and DC-EGM expose equal lifecycle graphs and graph hashes."""
+    dcegm_model = _build_model(VALID)
+    grid_search_model = _build_model(VALID.replace(solver=GridSearch()))
+
+    assert dcegm_model.reachability == grid_search_model.reachability
+    assert hash(dcegm_model.reachability) == hash(grid_search_model.reachability)
+    assert (
+        dcegm_model._regimes["retirement"].solution.reachability
+        is dcegm_model.reachability.solution
+    )
+    assert (
+        grid_search_model._regimes["retirement"].solution.reachability
+        is grid_search_model.reachability.solution
+    )
+
+
+def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
+    """A catalog target outside every adjacent activity window is not an edge."""
+    brute_target = dcegm_variants.dcegm_retirement.replace(
+        solver=GridSearch(),
+        active=lambda age: age < 50,
+        state_transitions={"wealth": next_wealth},
+        constraints={"borrowing_constraint": borrowing_constraint},
+        functions={"utility": utility_retirement},
+    )
+    dcegm_source = dcegm_variants.dcegm_working_life.replace(
+        active=lambda age: 50 <= age < 60,
+    )
+    model = Model(
+        regimes={
+            "working_life": dcegm_source,
+            "retirement": brute_target,
+            "dead": dead,
+        },
+        ages=AgeGrid(start=40, stop=60, step="10Y"),
+        regime_id_class=base.RegimeId,
+    )
+
+    assert (
+        model.reachability.solution.periods_for_edge(
+            source="working_life", target="retirement"
+        )
+        == ()
+    )
+
+
 def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     brute_target = dcegm_variants.dcegm_retirement.replace(

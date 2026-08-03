@@ -122,6 +122,16 @@ def _build() -> tuple[object, object, object]:
         n_subjects=_N_SUBJECTS,
         pref_type_grid=DiscreteGrid(BenchmarkPrefType),
     )
+    edge_periods = model.reachability.solution.periods_for_edge(
+        source="retiree_oamc_forced_forcedout",
+        target="nongroup_dimc_choose_canwork",
+    )
+    if edge_periods:
+        msg = (
+            "ACA activity windows must exclude the forced-out to can-work edge; "
+            f"retained periods: {edge_periods}."
+        )
+        raise AssertionError(msg)
     model_params = get_benchmark_params(model=model)[2]
     initial_conditions = get_benchmark_initial_conditions(
         model=model, n_subjects=_N_SUBJECTS, seed=0

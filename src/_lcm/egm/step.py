@@ -163,10 +163,11 @@ from _lcm.egm.step_core import (
     _get_solve_one_combo,
 )
 from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
-from _lcm.egm.validation import _reachable_target_names, savings_stage_reads_euler_state
+from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.logsum import logsum_and_softmax
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     periodized_tree_signature,
     resolve_periodized_nodes,
@@ -211,7 +212,7 @@ def build_egm_step_functions(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    solution_reachability: PhaseReachability,
     flat_param_names: frozenset[str],
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     state_action_space: StateActionSpace,
@@ -249,8 +250,7 @@ def build_egm_step_functions(
             function for solve.
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info.
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active period tuples.
+        solution_reachability: Static solution graph shared by every solver.
         flat_param_names: Frozenset of flat parameter names for the regime.
         regime_to_flat_param_names: Immutable mapping of every regime name to
             its flat parameter names. A carry target's resources / transition
@@ -271,7 +271,7 @@ def build_egm_step_functions(
     Returns:
         Tuple of the per-period kernel mapping, the regime's all-finite carry
         template (leading axes: discrete states, then passive states, then
-        discrete actions), and the regime's reachable-target names — the only
+        discrete actions), and the regime's carry-target names — the only
         carry keys any of its kernels read, used to filter the rolling carry
         mapping the solve loop hands each kernel.
 
@@ -362,19 +362,25 @@ def build_egm_step_functions(
         n_rows=n_carry_rows, leading_shape=leading_shape
     )
 
-    reachable_targets = frozenset(
-        _reachable_target_names(
-            user_regime=user_regimes[regime_name], user_regimes=user_regimes
-        )
-    )
-
     configs: dict[_EGMGroupKey, list[int]] = {}
-    for period in regimes_to_active_periods[regime_name]:
+    carry_targets_union = frozenset(
+        solution_reachability.union_targets(source=regime_name)
+    )
+    active_periods = tuple(
+        period
+        for period, active_regimes in enumerate(
+            solution_reachability.active_regimes_by_period
+        )
+        if regime_name in active_regimes
+    )
+    for period in active_periods:
+        targets = (
+            ()
+            if period == solution_reachability.n_periods - 1
+            else solution_reachability.targets(period=period, source=regime_name)
+        )
         carry, scalar = get_egm_continuation_targets(
-            period=period,
-            transitions=transitions,
-            reachable_targets=reachable_targets,
-            regimes_to_active_periods=regimes_to_active_periods,
+            targets=targets,
             regime_to_v_interpolation_info=_continuation_info(
                 period=period,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -476,7 +482,7 @@ def build_egm_step_functions(
     return (
         MappingProxyType(dict(sorted(result.items()))),
         carry_template,
-        reachable_targets,
+        carry_targets_union,
     )
 
 
