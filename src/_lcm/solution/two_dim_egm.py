@@ -23,6 +23,7 @@ from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
     _union_free_params,
+    target_period_grid,
 )
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -224,6 +225,8 @@ class TwoDimEGM(Solver):
         # The step always works in its own `(liquid, pension)` axis order, while
         # the regime's value array follows the order the states were declared in.
         # `validate` has established the two are a permutation of each other.
+        own_liquid_grid = context.grids[self.liquid_state].to_jax()
+        own_pension_grid = context.grids[self.pension_state].to_jax()
         publishes_pension_first = tuple(context.state_action_space.state_names) == (
             self.pension_state,
             self.liquid_state,
@@ -256,6 +259,30 @@ class TwoDimEGM(Solver):
                 liquid_state=self.liquid_state,
                 pension_state=self.pension_state,
                 publishes_pension_first=publishes_pension_first,
+                next_liquid_grid=target_period_grid(
+                    context=context,
+                    period=period,
+                    target=target,
+                    target_state_name=self.liquid_state,
+                )
+                if not is_boundary
+                else own_liquid_grid,
+                next_pension_grid=target_period_grid(
+                    context=context,
+                    period=period,
+                    target=target,
+                    target_state_name=self.pension_state,
+                )
+                if not is_boundary
+                else own_pension_grid,
+                next_boundary_liquid_grid=target_period_grid(
+                    context=context,
+                    period=period,
+                    target=target,
+                    target_state_name=boundary_liquid_state,
+                )
+                if is_boundary
+                else own_liquid_grid,
             )
         return SolutionKernels(period_kernels=MappingProxyType(period_kernels))
 
@@ -292,6 +319,22 @@ class _TwoDimEGMPeriodKernel:
 
     pension_state: StateName
     """The regime's own name for the state filling the kernel's pension role."""
+
+    next_liquid_grid: Float1D
+    """The interior target's liquid nodes at `period + 1`.
+
+    Unused on the boundary branch, which reads a 1-D continuation instead.
+    """
+
+    next_pension_grid: Float1D
+    """The interior target's pension nodes at `period + 1`."""
+
+    next_boundary_liquid_grid: Float1D
+    """The boundary target's sole continuous nodes at `period + 1`.
+
+    The abscissae of the retired value and marginal the boundary step reads
+    through the lump-sum payout. Unused on the interior branch.
+    """
 
     publishes_pension_first: bool
     """Whether the regime declares its pension state before its liquid state.
@@ -382,6 +425,7 @@ class _TwoDimEGMPeriodKernel:
         continuation: dict[str, object]
         if self.is_boundary:
             continuation = {
+                "next_boundary_liquid": self.next_boundary_liquid_grid,
                 "next_value_retired": next_regime_to_V_arr[self.continuation_target],
                 "next_marginal_retired": next_regime_to_continuation[
                     self.continuation_target
@@ -389,6 +433,8 @@ class _TwoDimEGMPeriodKernel:
             }
         else:
             continuation = {
+                "next_liquid": self.next_liquid_grid,
+                "next_pension": self.next_pension_grid,
                 "next_value_working": next_regime_to_V_arr[self.continuation_target],
             }
         return {
@@ -448,6 +494,7 @@ def _build_two_dim_core(
         *,
         liquid: Float1D,
         pension: Float1D,
+        next_boundary_liquid: Float1D,
         next_value_retired: Float1D,
         next_marginal_retired: Float1D,
         **params: FloatND,
@@ -455,7 +502,7 @@ def _build_two_dim_core(
         result = g2egm_retiring_step(
             next_value_retired=next_value_retired,
             next_marginal_retired=next_marginal_retired,
-            liquid_grid=liquid,
+            liquid_grid=next_boundary_liquid,
             m_grid=liquid,
             n_grid=pension,
             a_grid=a_grid,
@@ -477,6 +524,8 @@ def _build_two_dim_core(
         *,
         liquid: Float1D,
         pension: Float1D,
+        next_liquid: Float1D,
+        next_pension: Float1D,
         next_value_working: FloatND,
         **params: FloatND,
     ) -> FloatND:
@@ -491,6 +540,8 @@ def _build_two_dim_core(
                 next_value=next_value_working,
                 m_grid=liquid,
                 n_grid=pension,
+                next_m_grid=next_liquid,
+                next_n_grid=next_pension,
                 a_grid=a_grid,
                 b_grid=b_grid,
                 consumption_grid=consumption_grid,
@@ -506,6 +557,8 @@ def _build_two_dim_core(
                 next_value=next_value_working,
                 m_grid=liquid,
                 n_grid=pension,
+                next_m_grid=next_liquid,
+                next_n_grid=next_pension,
                 a_grid=a_grid,
                 b_grid=b_grid,
                 consumption_grid=consumption_grid,

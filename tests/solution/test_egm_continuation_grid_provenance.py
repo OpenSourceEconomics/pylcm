@@ -122,7 +122,12 @@ def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
 
 
 def _moving_liquid_grid(*, start, stop_at_age, n_points):
-    """A liquid grid whose ceiling moves with age, shape held fixed."""
+    """A liquid grid whose ceiling moves with age, shape held fixed.
+
+    The ceiling stays inside the solver's post-decision `a_grid`, so the
+    envelope covers every node and the comparison measures which grid the
+    continuation is read on rather than how uncovered holes are filled.
+    """
     return AgeSpecializedGrid(
         build=lambda age: LinSpacedGrid(
             start=start, stop=stop_at_age(age), n_points=n_points
@@ -195,10 +200,6 @@ def test_w1_retired_egm_reads_the_terminal_regime_on_the_terminal_grid():
     _assert_retired_matches_brute(egm, brute, period=_N_PERIODS - 2)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the two-asset boundary reads the retired continuation on the working grid",
-)
 def test_w2_two_asset_boundary_reads_the_retired_regime_on_the_retired_grid():
     """W2 (cross-regime, two assets). The retirement boundary uses retired's grid.
 
@@ -213,11 +214,6 @@ def test_w2_two_asset_boundary_reads_the_retired_regime_on_the_retired_grid():
     _assert_working_matches_brute(egm, brute, _RETIREMENT_PERIOD - 1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the G2EGM interior step reads next period's value on the "
-    "current period's liquid grid",
-)
 def test_w3_two_asset_interior_reads_the_next_period_liquid_grid():
     """W3 (temporal, two assets, G2EGM). Age-specialized liquid support.
 
@@ -228,7 +224,7 @@ def test_w3_two_asset_interior_reads_the_next_period_liquid_grid():
     egm, brute = _solve_pair(
         solvers=_two_asset_solvers(),
         working_liquid_grid=_moving_liquid_grid(
-            start=0.1, stop_at_age=lambda age: 20.0 + 7.0 * float(age), n_points=12
+            start=0.1, stop_at_age=lambda age: 20.0 - 2.0 * float(age), n_points=12
         ),
     )
     for period in (0, 1):
@@ -249,7 +245,7 @@ def test_w4_rfc_interior_reads_the_next_period_liquid_grid():
     egm, brute = _solve_pair(
         solvers=_two_asset_solvers(upper_envelope="rfc"),
         working_liquid_grid=_moving_liquid_grid(
-            start=0.1, stop_at_age=lambda age: 20.0 + 7.0 * float(age), n_points=12
+            start=0.1, stop_at_age=lambda age: 20.0 - 2.0 * float(age), n_points=12
         ),
     )
     for period in (0, 1):
@@ -272,7 +268,7 @@ def test_w8_two_asset_interior_reads_the_next_period_pension_grid():
         solvers=_two_asset_solvers(),
         working_pension_grid=AgeSpecializedGrid(
             build=lambda age: LinSpacedGrid(
-                start=0.0, stop=15.0 + 7.0 * float(age), n_points=10
+                start=0.0, stop=15.0 - 1.5 * float(age), n_points=10
             ),
             signature=float,
         ),
@@ -292,7 +288,7 @@ def test_w9_rfc_interior_reads_the_next_period_pension_grid():
         solvers=_two_asset_solvers(upper_envelope="rfc"),
         working_pension_grid=AgeSpecializedGrid(
             build=lambda age: LinSpacedGrid(
-                start=0.0, stop=15.0 + 7.0 * float(age), n_points=10
+                start=0.0, stop=15.0 - 1.5 * float(age), n_points=10
             ),
             signature=float,
         ),
@@ -325,7 +321,7 @@ def test_the_two_asset_solve_is_finite_on_every_moving_grid(upper_envelope):
     solution, _ = _solve_pair(
         solvers=_two_asset_solvers(upper_envelope=upper_envelope),
         working_liquid_grid=_moving_liquid_grid(
-            start=0.1, stop_at_age=lambda age: 20.0 + 7.0 * float(age), n_points=12
+            start=0.1, stop_at_age=lambda age: 20.0 - 2.0 * float(age), n_points=12
         ),
     )
     for period_solution in solution.values():
