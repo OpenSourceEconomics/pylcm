@@ -196,6 +196,7 @@ def get_model(
     retired_liquid_grid: _StateGrid | None = None,
     dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
+    enable_jit: bool = True,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
 
@@ -221,6 +222,8 @@ def get_model(
             `{"working": TwoAssetEGM(...)}` to drive the working regime by the
             two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
             consumption--saving problem.
+        enable_jit: Whether the model JIT-compiles its kernels. Pass `False` to
+            run the same solve eagerly.
 
     Every grid override defaults to the shared grid, so calling `get_model` without
     them reproduces one common `liquid` support across all three regimes. Passing a
@@ -290,6 +293,7 @@ def get_model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        enable_jit=enable_jit,
     )
 
 
