@@ -19,6 +19,7 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     continuation_grid_signature_from_schedule,
@@ -29,8 +30,7 @@ from _lcm.regime_building.age_normalization import (
 )
 from _lcm.regime_building.Q_and_F import (
     get_compute_intermediates,
-    get_period_scalar_targets,
-    get_period_targets,
+    partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
@@ -52,14 +52,14 @@ def _build_compute_intermediates_per_period(
     *,
     active_periods: tuple[int, ...],
     flat_param_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    reachable_targets: frozenset[RegimeName],
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
@@ -79,8 +79,8 @@ def _build_compute_intermediates_per_period(
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        regimes_to_active_periods: Immutable mapping of regime names to
-            their active period tuples.
+        phase_reachability: Static graph for the solution phase.
+        source_regime_name: Regime whose continuation targets are requested.
         functions: Immutable mapping of internal user functions.
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition
@@ -133,29 +133,27 @@ def _build_compute_intermediates_per_period(
     # signature), mirroring `_build_Q_and_F_per_period`: with no age-specialized node
     # the signature is constant and the grouping collapses to the target configuration.
     def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
-        complete = get_period_targets(
-            period=period,
-            transitions=transitions,
-            regimes_to_active_periods=regimes_to_active_periods,
+        targets = (
+            ()
+            if period == phase_reachability.n_periods - 1
+            else phase_reachability.targets(period=period, source=source_regime_name)
+        )
+        _, scalar_targets = partition_continuation_targets(
+            targets=targets,
+            regime_to_v_interpolation_info=continuation_info(period),
         )
         cont_sig = continuation_grid_signature_from_schedule(
             grid_schedule=grid_schedule,
             target_period=period + 1,
-            target_regimes=complete,
+            target_regimes=targets,
         )
         signature = (
             periodized_tree_signature(functions, period),
             periodized_tree_signature(constraints, period),
             cont_sig,
-            get_period_scalar_targets(
-                period=period,
-                carry_targets=complete,
-                reachable_targets=reachable_targets,
-                regimes_to_active_periods=regimes_to_active_periods,
-                regime_to_v_interpolation_info=continuation_info(period),
-            ),
+            scalar_targets,
         )
-        return (complete, signature)
+        return (targets, signature)
 
     configs = group_periods_by_key(active_periods, group_key)
 
@@ -165,9 +163,13 @@ def _build_compute_intermediates_per_period(
     )
     built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
     for key, periods in configs.items():
-        period_targets = key[0]
+        targets = key[0]
         representative_period = periods[0]
-        scalar = get_compute_intermediates(
+        carry_targets, scalar_targets = partition_continuation_targets(
+            targets=targets,
+            regime_to_v_interpolation_info=continuation_info(representative_period),
+        )
+        compute_intermediates = get_compute_intermediates(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
@@ -177,14 +179,8 @@ def _build_compute_intermediates_per_period(
                 "ConstraintFunctionsMapping",
                 resolve_periodized_nodes(constraints, representative_period),
             ),
-            period_targets=period_targets,
-            scalar_targets=get_period_scalar_targets(
-                period=representative_period,
-                carry_targets=period_targets,
-                reachable_targets=reachable_targets,
-                regimes_to_active_periods=regimes_to_active_periods,
-                regime_to_v_interpolation_info=continuation_info(representative_period),
-            ),
+            period_targets=carry_targets,
+            scalar_targets=scalar_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -192,7 +188,7 @@ def _build_compute_intermediates_per_period(
             certainty_equivalent=certainty_equivalent,
         )
         mapped = _productmap_over_state_action_space(
-            func=scalar,
+            func=compute_intermediates,
             action_names=state_action_space.action_names,
             state_names=state_action_space.state_names,
             state_batch_sizes=state_batch_sizes,

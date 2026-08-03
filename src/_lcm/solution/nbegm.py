@@ -51,7 +51,7 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
-from _lcm.solution.dcegm import _reachable_carry_subset
+from _lcm.solution.dcegm import _carry_subset
 from _lcm.solution.one_asset_egm import (
     _build_one_asset_carry_template,
     _OneAssetEGMPeriodKernel,
@@ -577,8 +577,6 @@ class NBEGM(Solver):
         are deduplicated by that split. The 1-D liquid solve runs once per
         ride-along cell, batched.
         """
-        from _lcm.egm.validation import _reachable_target_names  # noqa: PLC0415
-
         if self.post_decision_function is None:
             msg = (
                 "NBEGM with a ride-along co-state requires `post_decision_function` "
@@ -606,10 +604,7 @@ class NBEGM(Solver):
                 probe_failure=self.probe_failure,
             )
         reachable_targets = frozenset(
-            _reachable_target_names(
-                user_regime=context.user_regimes[context.regime_name],
-                user_regimes=context.user_regimes,
-            )
+            context.solution_reachability.union_targets(source=context.regime_name)
         )
         transition_target_names = tuple(context.transitions)
 
@@ -628,7 +623,6 @@ class NBEGM(Solver):
             plan = _build_nbegm_continuation_plan(
                 context=context,
                 period=period,
-                reachable_targets=reachable_targets,
                 post_decision_name=self.post_decision_function,
                 stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
@@ -866,9 +860,9 @@ class _RideAlongNBEGMPeriodKernel:
             }
         return {
             **states,
-            "next_regime_to_continuation": _reachable_carry_subset(
+            "next_regime_to_continuation": _carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                carry_targets=self.reachable_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **params,
@@ -892,9 +886,9 @@ class _RideAlongNBEGMPeriodKernel:
         params = self._kernel_params(flat_params=flat_params)
         continuation_stacks = compiled_cores["continuation"](
             **states,
-            next_regime_to_continuation=_reachable_carry_subset(
+            next_regime_to_continuation=_carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                carry_targets=self.reachable_targets,
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
             **params,
@@ -2750,7 +2744,6 @@ def _build_nbegm_continuation_plan(
     *,
     context: SolverBuildContext,
     period: int,
-    reachable_targets: frozenset[RegimeName],
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int = 0,
 ) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
@@ -2778,11 +2771,14 @@ def _build_nbegm_continuation_plan(
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
         period_to_regime_v_interp=context.period_to_regime_v_interp,
     )
+    solution_reachability = context.solution_reachability
+    targets = (
+        ()
+        if period == solution_reachability.n_periods - 1
+        else solution_reachability.targets(period=period, source=context.regime_name)
+    )
     carry_targets, scalar_targets = get_egm_continuation_targets(
-        period=period,
-        transitions=context.transitions,
-        reachable_targets=reachable_targets,
-        regimes_to_active_periods=context.regimes_to_active_periods,
+        targets=targets,
         regime_to_v_interpolation_info=v_interpolation_info,
     )
     # A nonlinear certainty equivalent switches the child stochastic-node

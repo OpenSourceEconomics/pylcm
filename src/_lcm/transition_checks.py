@@ -8,9 +8,8 @@ runs. Two families:
   regimes across periods, evaluates the regime transition function on the
   Cartesian product of its accepted grid variables, and verifies finiteness,
   [0, 1] range, sum-to-1, and no probability mass to inactive regimes.
-  (Per-target regime transitions make omitted targets structurally
-  unreachable; state-law coverage of reachable targets is validated at
-  model build.)
+  The construction-time graph supplies the allowed target set; state-law
+  coverage of retained targets is validated at model build.
 - **State transition probability check** keyed on
   `validate_state_transitions_all_periods`. Sweeps every `MarkovTransition`
   state transition (incl. per-target dict entries), evaluates the user
@@ -103,15 +102,26 @@ def _params_callable_for_state_transition(
     merged = {**regime.resolved_fixed_params, **flat_params_for_regime}
 
     if transition.target_regime_name is None:
-        # Coarse law: read any target's (shared-leaf) binding.
+        # Coarse law: prefer any target's shared-leaf granular binding.
         law_name = f"next_{transition.state_name}"
         parts_by_name = {name: tree_path_from_qname(name) for name in merged}
+        granular = {
+            parts[2]: merged[name]
+            for name, parts in parts_by_name.items()
+            if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
+            and parts[1] == law_name
+        }
+        if granular:
+            return MappingProxyType(granular)
+
+        # A law with no temporally retained carrying target keeps its original
+        # template-qualified binding. It may still be checked as a user declaration.
+        prefix = f"{law_name}__"
         return MappingProxyType(
             {
-                parts[2]: merged[name]
-                for name, parts in parts_by_name.items()
-                if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
-                and parts[1] == law_name
+                name.removeprefix(prefix): value
+                for name, value in merged.items()
+                if name.startswith(prefix)
             }
         )
 
@@ -173,12 +183,6 @@ def validate_regime_transitions_all_periods(
         )
 
     for period in range(ages.n_periods - 1):
-        active_regimes_next_period = tuple(
-            regime_name
-            for regime_name, regime in regimes.items()
-            if period + 1 in regime.active_periods
-        )
-
         for regime_name, regime in regimes.items():
             if period not in regime.active_periods:
                 continue
@@ -189,7 +193,11 @@ def validate_regime_transitions_all_periods(
                 _validate_regime_transition_single(
                     regimes=regimes,
                     regime_params=flat_params[regime_name],
-                    active_regimes_next_period=active_regimes_next_period,
+                    active_regimes_next_period=(
+                        regime.solution.reachability.targets(
+                            period=period, source=regime_name
+                        )
+                    ),
                     regime_name=regime_name,
                     period=period,
                     ages=ages,
@@ -215,7 +223,7 @@ def _validate_regime_transition_single(
     """
     regime = regimes[regime_name]
     # Non-None guaranteed: only called for non-terminal regimes
-    regime_transition_func = regime.solution.compute_regime_transition_probs
+    regime_transition_func = regime.solution.validation_regime_transition_probs
 
     state_action_space = regime.solution.state_action_space(
         regime_params=regime_params,
@@ -275,6 +283,7 @@ def _validate_regime_transition_single(
         regime_name=regime_name,
         age=ages.values[period],  # noqa: PD011
         next_age=ages.values[period + 1],  # noqa: PD011
+        period=period,
         state_action_values=MappingProxyType(point),
     )
 
@@ -286,6 +295,7 @@ def _validate_regime_transition_probs(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     next_age: float | ScalarInt | ScalarFloat,
+    period: int | None = None,
     state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
     | None = None,
 ) -> None:
@@ -301,6 +311,7 @@ def _validate_regime_transition_probs(
         regime_name: Name of the source regime (for error messages).
         age: Current age (for error messages).
         next_age: Next age (for error messages).
+        period: Optional source-period index for graph diagnostics.
         state_action_values: Optional immutable mapping of state/action names to arrays,
             included in error messages to help diagnose which inputs cause violations.
 
@@ -326,6 +337,17 @@ def _validate_regime_transition_probs(
             f"function of the '{regime_name}' regime."
         )
 
+    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
+    for r in inactive:
+        if jnp.any(regime_transition_probs[r] > 0):
+            period_detail = "" if period is None else f" in period {period}"
+            raise InvalidRegimeTransitionProbabilitiesError(
+                f"Regime '{r}' is inactive at age {next_age} but has positive "
+                f"transition probability from '{regime_name}' between ages {age} and "
+                f"{next_age}{period_detail}. Either make '{r}' active or ensure its "
+                "probability is 0."
+            )
+
     sum_all = jnp.sum(all_probs, axis=0)
     if not jnp.allclose(sum_all, 1.0):
         detail = _format_sum_violation(
@@ -337,15 +359,6 @@ def _validate_regime_transition_probs(
             f"and {next_age} do not sum to 1.0. {detail}\n"
             f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
-
-    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
-    for r in inactive:
-        if jnp.any(regime_transition_probs[r] > 0):
-            raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{r}' is inactive at age {next_age} but has positive "
-                f"transition probability from '{regime_name}' between ages {age} and "
-                f"{next_age}. Either make '{r}' active or ensure its probability is 0."
-            )
 
 
 def _format_sum_violation(
@@ -445,8 +458,10 @@ def validate_state_transitions_all_periods(  # noqa: C901
             )
             age = ages.values[period]  # noqa: PD011
             for transition in regime.stochastic_state_transitions.values():
-                if _per_target_unreachable_at_next_period(
-                    transition=transition, regimes=regimes, period=period
+                if _state_transition_unused_in_period(
+                    transition=transition,
+                    regime=regime,
+                    period=period,
                 ):
                     continue
                 try:
@@ -467,26 +482,21 @@ def validate_state_transitions_all_periods(  # noqa: C901
                     raise_or_warn(logger=logger, error=error)
 
 
-def _per_target_unreachable_at_next_period(
+def _state_transition_unused_in_period(
     *,
     transition: _StochasticStateTransition,
-    regimes: MappingProxyType[RegimeName, Regime],
+    regime: Regime,
     period: int,
 ) -> bool:
-    """Return True when a per-target transition's target deactivates before reach.
-
-    `solve()` and `simulate()` only dispatch a per-target MarkovTransition
-    for targets in `active_regimes_next_period` at the source's period;
-    targets that deactivate before the source can reach them never fire at
-    runtime. The pre-solve validator mirrors that gate so a per-target
-    function whose output shape only needs to match the (always-zero-
-    weighted) target's outcome grid in principle is not numerically
-    evaluated against the source's state grid.
-    """
+    """Return whether a state transition has no retained edge this period."""
+    period_targets = regime.solution.reachability.targets(
+        period=period, source=regime.name
+    )
+    if not period_targets:
+        return True
     if transition.target_regime_name is None:
         return False
-    target = regimes[transition.target_regime_name]
-    return period + 1 not in target.active_periods
+    return transition.target_regime_name not in period_targets
 
 
 def _validate_state_transition_single(

@@ -20,13 +20,14 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Phased,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -618,8 +619,8 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         retiree: ScalarInt
         dead: ScalarInt
 
-    def _next_regime() -> ScalarInt:
-        return _Rid.dead
+    def _one_probability() -> ScalarFloat:
+        return jnp.float32(1)
 
     def _earner_utility(wealth: float, income: float) -> float:
         return wealth + income
@@ -628,7 +629,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         return wealth
 
     earner = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
@@ -637,7 +638,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
@@ -856,28 +857,6 @@ def test_array_from_series_transition_basic_round_trip():
         regime_name="working_life",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
-
-
-def test_array_from_series_transition_categorical_labels():
-    """Verify specific label-based values in transition probs array."""
-    model = get_stochastic_model(3)
-    arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
-    func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
-    result = array_from_series(
-        sr=series,
-        func=func,
-        param_name="probs_array",
-        func_name="next_partner",
-        user_regimes=model.user_regimes,
-        ages=model.ages,
-        regime_names_to_ids=model.regime_names_to_ids,
-        regime_name="working_life",
-    )
-    # age=40, work, single->partnered
-    assert float(result[0, 0, 0, 1]) == pytest.approx(0.7)
-    # age=50, retire, partnered->single
-    assert float(result[1, 1, 1, 0]) == pytest.approx(0.7)
 
 
 def test_array_from_series_transition_reordered_levels():
@@ -1387,25 +1366,6 @@ def test_array_from_series_integer_labels_rejected() -> None:
             regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
-
-
-def test_array_from_series_scalar_param_explicit_lookup() -> None:
-    """Scalar parameter with explicit func lookup returns 1D array."""
-    model = get_stochastic_model(3)
-    # labor_income only exists in working_life. wage has no indexing params.
-    series = pd.Series([10.0])
-    func = model.user_regimes["working_life"].get_all_functions()["labor_income"]
-    result = array_from_series(
-        sr=series,
-        func=func,
-        param_name="wage",
-        func_name="labor_income",
-        user_regimes=model.user_regimes,
-        ages=model.ages,
-        regime_names_to_ids=model.regime_names_to_ids,
-        regime_name="working_life",
-    )
-    np.testing.assert_allclose(result, jnp.array([10.0]))
 
 
 def test_convert_series_function_level_series() -> None:

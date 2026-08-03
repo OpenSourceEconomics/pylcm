@@ -49,6 +49,13 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import (
+    ModelReachability,
+    PhaseName,
+    PhaseReachability,
+    build_model_reachability,
+    candidate_targets_from_transition,
+)
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
@@ -75,10 +82,9 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
 )
 from _lcm.regime_building.Q_and_F import (
-    get_period_scalar_targets,
-    get_period_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
+    partition_continuation_targets,
 )
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
@@ -129,14 +135,32 @@ from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
-from lcm.transition import (
-    MarkovTransition,
-)
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
 ]
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreparedModelStructure:
+    """Construction-time declarations shared by validation and compilation."""
+
+    representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
+    """Age-normalized user regimes used for phase compilation."""
+
+    phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
+    """Age-normalized phase declarations."""
+
+    grid_schedule: AgeGridSchedule | None
+    """Concrete period grids for age-specialized states."""
+
+    reachability: ModelReachability
+    """Static solution and simulation regime graphs."""
+
+    active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
+    """Periods in which each regime is locally active."""
 
 
 def build_period_v_interpolation_info(
@@ -175,12 +199,73 @@ def build_period_v_interpolation_info(
     return MappingProxyType(result)
 
 
+def prepare_model_structure(
+    *,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    ages: AgeGrid,
+) -> PreparedModelStructure:
+    """Prepare normalized declarations and static phase graphs once."""
+    raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    age_normalization = normalize_age_specialization(
+        user_regimes=user_regimes,
+        phased_specs=raw_phase_specs,
+        ages=ages,
+    )
+    phased_specs = age_normalization.phased_specs
+    transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]] = {
+        "solution": {
+            regime_name: spec.solution.regime_transition
+            for regime_name, spec in phased_specs.items()
+        },
+        "simulation": {
+            regime_name: spec.simulation.regime_transition
+            for regime_name, spec in phased_specs.items()
+        },
+    }
+    try:
+        reachability = build_model_reachability(
+            ages=ages.exact_values,
+            active_by_regime={
+                regime_name: regime.active
+                for regime_name, regime in user_regimes.items()
+            },
+            transitions_by_phase=transitions_by_phase,
+            terminal_regimes={
+                regime_name
+                for regime_name, regime in user_regimes.items()
+                if regime.terminal
+            },
+        )
+    except ValueError as error:
+        raise ModelInitializationError(str(error)) from error
+    active_periods_by_regime = MappingProxyType(
+        {
+            regime_name: tuple(
+                period
+                for period, active_regimes in enumerate(
+                    reachability.solution.active_regimes_by_period
+                )
+                if regime_name in active_regimes
+            )
+            for regime_name in user_regimes
+        }
+    )
+    return PreparedModelStructure(
+        representative_user_regimes=age_normalization.representative_user_regimes,
+        phased_specs=phased_specs,
+        grid_schedule=age_normalization.grid_schedule,
+        reachability=reachability,
+        active_periods_by_regime=active_periods_by_regime,
+    )
+
+
 def process_regimes(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
+    prepared_structure: PreparedModelStructure | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Process finalized regimes into canonical regimes.
 
@@ -200,21 +285,30 @@ def process_regimes(
         The processed canonical regimes.
 
     """
-    # Normalize phases first (local to one regime), then age specialization (needs
-    # the model AgeGrid and each regime's active periods). After normalization every
-    # age-known function/grid is a concrete build-time object: the representative
-    # regimes carry first-active concrete functions and representative-age grids for
-    # all age-invariant machinery; the phase specs carry `PeriodizedUserFunction` and
-    # representative grids; the grid schedule holds every active period's concrete
-    # grid. An age-invariant model normalizes to exactly its input.
-    raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
-    age_normalization = normalize_age_specialization(
+    prepared_structure = prepared_structure or prepare_model_structure(
         user_regimes=user_regimes,
-        phased_specs=raw_phase_specs,
         ages=ages,
     )
-    representative_user_regimes = age_normalization.representative_user_regimes
-    grid_schedule = age_normalization.grid_schedule
+    representative_user_regimes = prepared_structure.representative_user_regimes
+    phased_specs = prepared_structure.phased_specs
+    grid_schedule = prepared_structure.grid_schedule
+    reachability = prepared_structure.reachability
+    regimes_to_active_periods = prepared_structure.active_periods_by_regime
+    all_regime_names = frozenset(user_regimes)
+    state_handoff_errors = _state_handoff_errors(
+        phase_name="solution",
+        phase_reachability=reachability.solution,
+        specs=phased_specs,
+        ages=ages,
+    )
+    state_handoff_errors += _state_handoff_errors(
+        phase_name="simulation",
+        phase_reachability=reachability.simulation,
+        specs=phased_specs,
+        ages=ages,
+    )
+    if state_handoff_errors:
+        raise ModelInitializationError(format_messages(state_handoff_errors))
 
     # DC-EGM regimes must satisfy the EGM model contract before any kernel is built.
     # `Model.__init__` validates earlier (so contract violations beat the generic
@@ -222,7 +316,10 @@ def process_regimes(
     # All three read the representative regimes: the contract is about a state's kind
     # and shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is
     # not a `Grid`, so a type-filtered collection of continuous states would drop it.
-    validate_dcegm_regimes(user_regimes=representative_user_regimes)
+    validate_dcegm_regimes(
+        user_regimes=representative_user_regimes,
+        solution_reachability=reachability.solution,
+    )
     validate_negm_regimes(user_regimes=representative_user_regimes)
     validate_nnbegm_regimes(user_regimes=representative_user_regimes)
 
@@ -236,11 +333,13 @@ def process_regimes(
     # The canonical specs hold every law in target-granular form, resolved per
     # phase: the simulate slice additionally holds every carried-only state
     # and its law of motion, so the canonical mapping carries the law toward
-    # each reachable target that carries the state — including targets reached
+    # each retained target that carries the state — including targets reached
     # through nothing but the carried state.
     specs = canonicalize_phased_regimes(
-        raw_specs=age_normalization.phased_specs,
-        all_regime_names=frozenset(user_regimes),
+        raw_specs=phased_specs,
+        all_regime_names=all_regime_names,
+        solution_reachability=reachability.solution,
+        simulation_reachability=reachability.simulation,
     )
     solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)
@@ -282,12 +381,6 @@ def process_regimes(
             for regime_name in user_regimes
         }
     )
-    regimes_to_active_periods = MappingProxyType(
-        {
-            regime_name: ages.get_periods_where(user_regime.active)
-            for regime_name, user_regime in user_regimes.items()
-        }
-    )
 
     model_has_egm_regime = any(
         user_regime.solver.requires_continuation
@@ -317,6 +410,12 @@ def process_regimes(
                     simulate_nested_transitions[regime_name],
                 ),
                 regime_params_template=regime_to_params_template[regime_name],
+                declaration_param_expansions=_declaration_param_expansions(
+                    source_regime_name=regime_name,
+                    specs=phased_specs,
+                    all_regime_names=all_regime_names,
+                    regime_params_template=regime_to_params_template[regime_name],
+                ),
             )
             for regime_name in user_regimes
         }
@@ -351,6 +450,10 @@ def process_regimes(
             # invariant across ages, so the representative grid answers it exactly.
             # Node *values*, which do vary by age, come from the period's own axes.
             user_regimes=representative_user_regimes,
+            declared_regime_transition=phased_specs[
+                regime_name
+            ].solution.regime_transition,
+            phase_reachability=reachability.solution,
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -375,6 +478,8 @@ def process_regimes(
             spec=spec,
             user_regime=user_regime,
             regime_name=regime_name,
+            solution_reachability=reachability.solution,
+            simulation_reachability=reachability.simulation,
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
@@ -472,11 +577,90 @@ def _period_to_regime_grid_signature(
     )
 
 
+def _state_handoff_errors(
+    *,
+    phase_name: PhaseName,
+    phase_reachability: PhaseReachability,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    ages: AgeGrid,
+) -> list[str]:
+    """Return errors for target states without a valid retained-edge handoff."""
+    phase_slices: dict[RegimeName, RegimePhaseSpec] = {
+        regime_name: getattr(spec, phase_name) for regime_name, spec in specs.items()
+    }
+    error_messages: list[str] = []
+    for period in range(phase_reachability.n_periods - 1):
+        for source in sorted(phase_reachability.active_regimes_by_period[period]):
+            source_slice = phase_slices[source]
+            for target in phase_reachability.targets(period=period, source=source):
+                target_slice = phase_slices[target]
+                for state_name, target_grid in target_slice.grid_states.items():
+                    handoff = _classify_state_handoff(
+                        source_slice=source_slice,
+                        target=target,
+                        target_grid=target_grid,
+                        state_name=state_name,
+                    )
+                    if handoff is not None:
+                        continue
+                    status = phase_reachability.edge_status(
+                        period=period,
+                        source=source,
+                        target=target,
+                    )
+                    error_messages.append(
+                        f"{phase_name} phase, period {period} "
+                        f"(age {ages.exact_values[period]}), source '{source}' -> "
+                        f"period {period + 1} (age {ages.exact_values[period + 1]}), "
+                        f"target '{target}' retains a {status.name} edge. The target "
+                        f"declares stochastic process '{state_name}', but the source "
+                        f"does not carry '{state_name}' and defines no entry law, so "
+                        f"no value exists for the process transition. Declare "
+                        f"'{state_name}' on '{source}', define a target-specific entry "
+                        f"law, or narrow the transition's static target support."
+                    )
+    return error_messages
+
+
+def _classify_state_handoff(
+    *,
+    source_slice: RegimePhaseSpec,
+    target: RegimeName,
+    target_grid: Grid | AgeSpecializedGrid,
+    state_name: StateName,
+) -> Literal["carried", "deterministic", "stochastic", "target_local"] | None:
+    """Classify how one target state obtains its next-period value."""
+    if state_name in source_slice.grid_states:
+        return "carried"
+
+    law = source_slice.state_transitions.get(state_name)
+    if law is not None and (not isinstance(law, Mapping) or target in law):
+        selected_law = (
+            cast(
+                "Mapping[RegimeName, UserFunction | MarkovTransition]",
+                law,
+            )[target]
+            if isinstance(law, Mapping)
+            else law
+        )
+        return (
+            "stochastic"
+            if isinstance(selected_law, MarkovTransition)
+            else "deterministic"
+        )
+
+    if not isinstance(target_grid, _ContinuousStochasticProcess):
+        return "target_local"
+    return None
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    declared_regime_transition: object,
+    phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -502,11 +686,11 @@ def _build_solution_phase(
 
     Args:
         spec: The regime's per-phase specification.
-        user_regime: The finalized user regime, scanned for `Phased`
-            declarations by the policy-replay gate.
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        declared_regime_transition: Solve transition before temporal filtering.
+        phase_reachability: Static graph for the solution phase.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -562,6 +746,7 @@ def _build_solution_phase(
 
     if spec.terminal:
         compute_regime_transition_probs = None
+        validation_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=core.functions,
@@ -581,7 +766,22 @@ def _build_solution_phase(
             is_stochastic=spec.solution.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="solve",
-            next_regime_cells=core.next_regime_cells,
+            next_regime_cells=(
+                core.next_regime_cells
+                if core.next_regime_func is not None
+                or core.next_regime_cells is not None
+                else MappingProxyType({})
+            ),
+        )
+        validation_regime_transition_probs = _build_validation_regime_transition_probs(
+            declared_regime_transition=declared_regime_transition,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            functions=core.functions,
+            grids=all_grids[regime_name],
+            regime_params_template=regime_params_template,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_param_names=flat_param_names,
+            enable_jit=enable_jit,
         )
         co_map_state_names = _co_map_state_names(
             state_names=state_action_space.state_names,
@@ -603,12 +803,8 @@ def _build_solution_phase(
         )
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
-            regimes_to_active_periods=regimes_to_active_periods,
-            # The bundle keys before the state-law split are exactly the
-            # declared-reachable targets: canonicalization expands even a coarse
-            # regime transition into one cell per target, so a stateless target
-            # is present here holding only its `next_regime` cell.
-            reachable_targets=frozenset(nested_transitions),
+            phase_reachability=phase_reachability,
+            source_regime_name=regime_name,
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
@@ -623,9 +819,9 @@ def _build_solution_phase(
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             active_periods=regimes_to_active_periods[regime_name],
-            reachable_targets=frozenset(nested_transitions),
             flat_param_names=flat_param_names,
-            regimes_to_active_periods=regimes_to_active_periods,
+            phase_reachability=phase_reachability,
+            source_regime_name=regime_name,
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
@@ -651,6 +847,7 @@ def _build_solution_phase(
         regime_name=regime_name,
         user_regimes=user_regimes,
         state_action_space=state_action_space,
+        solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         period_to_state_nodes=_period_to_state_nodes(
@@ -735,8 +932,10 @@ def _build_solution_phase(
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
+        reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
+        validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_template=continuation_template,
         _base_state_action_space=state_action_space,
@@ -998,6 +1197,8 @@ def _build_simulation_phase(
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
     regime_name: RegimeName,
+    solution_reachability: PhaseReachability,
+    simulation_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -1163,7 +1364,12 @@ def _build_simulation_phase(
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="simulate",
-            next_regime_cells=core.next_regime_cells,
+            next_regime_cells=(
+                core.next_regime_cells
+                if core.next_regime_func is not None
+                or core.next_regime_cells is not None
+                else MappingProxyType({})
+            ),
         )
         # Q_and_F uses the solve (non-vmapped) regime transition probs since
         # it evaluates on the Cartesian grid, not per-subject. The solve
@@ -1171,12 +1377,8 @@ def _build_simulation_phase(
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
-            regimes_to_active_periods=regimes_to_active_periods,
-            # The bundle keys before the state-law split are exactly the
-            # declared-reachable targets: canonicalization expands even a coarse
-            # regime transition into one cell per target, so a stateless target
-            # is present here holding only its `next_regime` cell.
-            reachable_targets=frozenset(nested_transitions),
+            phase_reachability=solution_reachability,
+            source_regime_name=regime_name,
             functions=functions,
             constraints=constraints,
             transitions=solve_transitions,
@@ -1204,6 +1406,8 @@ def _build_simulation_phase(
 
     next_state = _build_next_state_vmapped(
         active_periods=regimes_to_active_periods[regime_name],
+        phase_reachability=simulation_reachability,
+        source_regime_name=regime_name,
         functions=simulate_functions,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
@@ -1318,6 +1522,7 @@ def _build_simulation_phase(
         constraints=published_simulate_constraints,
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
+        reachability=simulation_reachability,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
@@ -1562,24 +1767,17 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    # Transitions of continuous stochastic processes bypass the stub pipeline
-    # entirely. Build weight and next functions for reachable target regimes
-    # from each target's grid, scoped to the *declared* targets so unreachable
-    # regimes get no spurious entries. Scoping instead to the targets carrying a
-    # non-process law would drop a target whose only states are processes: it
-    # contributes no such law, so it would receive no intrinsic transition and
-    # its expectation would vanish from the continuation.
-    # Scoped to the processes the *source* carries: an intrinsic law is a
-    # transition from this period's value of the process, so a target-only
-    # process has no from-value here to condition on.
+    # Transitions of continuous stochastic processes bypass the stub pipeline.
+    # Build them for the canonical target bundles, including a target whose only
+    # carried state is a process and therefore contributes no explicit state law.
     process_names = variables.process_names
-    reachable_targets = frozenset(nested_transitions)
+    carry_targets = frozenset(nested_transitions)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {
         (user_regime, process): grid
         for user_regime, grids in all_grids.items()
-        if user_regime in reachable_targets
+        if user_regime in carry_targets
         for process in process_names
         if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
     }
@@ -1692,6 +1890,42 @@ def _process_next_regime_cells(
         }
     )
     return None, next_regime_cells
+
+
+def _build_validation_regime_transition_probs(
+    *,
+    declared_regime_transition: object,
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    functions: EconFunctionsMapping,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    regime_params_template: RegimeParamsTemplate,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_param_names: frozenset[str],
+    enable_jit: bool,
+) -> RegimeTransitionFunction:
+    """Build a validation function that retains every declared target cell."""
+    if not isinstance(declared_regime_transition, Mapping):
+        return compute_regime_transition_probs
+
+    _, declared_cells = _process_next_regime_cells(
+        next_regime_cells_by_target=cast(
+            "Mapping[RegimeName, UserFunction | _CoarseTransitionCell]",
+            declared_regime_transition,
+        ),
+        regime_params_template=regime_params_template,
+    )
+    assert declared_cells is not None  # noqa: S101
+    return build_regime_transition_probs_functions(
+        functions=functions,
+        compute_regime_transition_probs=None,
+        grids=grids,
+        regime_names_to_ids=regime_names_to_ids,
+        flat_param_names=flat_param_names,
+        is_stochastic=True,
+        enable_jit=enable_jit,
+        phase="solve",
+        next_regime_cells=declared_cells,
+    )
 
 
 def _extract_phase_transitions(*, phase_slice: RegimePhaseSpec) -> _TransitionBundles:
@@ -1876,6 +2110,7 @@ def _granular_param_expansions(
     *,
     nested_transitions_by_phase: tuple[_TransitionBundles, ...],
     regime_params_template: RegimeParamsTemplate,
+    declaration_param_expansions: Mapping[FunctionName, tuple[str, ...]],
 ) -> MappingProxyType[FunctionName, tuple[str, ...]]:
     """Map each coarse-template law key to its granular qname prefixes.
 
@@ -1885,7 +2120,10 @@ def _granular_param_expansions(
     (mirroring `_extract_template_names_key`) and that carry params at all.
     Canonical flat params materialize one shared leaf per prefix.
     """
-    expansions: dict[FunctionName, set[str]] = {}
+    expansions = {
+        law_name: set(prefixes)
+        for law_name, prefixes in declaration_param_expansions.items()
+    }
     for bundles in nested_transitions_by_phase:
         for target_regime_name, bundle in bundles.items():
             for law_name in bundle:
@@ -1897,6 +2135,38 @@ def _granular_param_expansions(
                     expansions.setdefault(names_key, set()).add(qname)
     return MappingProxyType(
         {law_name: tuple(sorted(v)) for law_name, v in expansions.items()}
+    )
+
+
+def _declaration_param_expansions(
+    *,
+    source_regime_name: RegimeName,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    all_regime_names: frozenset[RegimeName],
+    regime_params_template: RegimeParamsTemplate,
+) -> MappingProxyType[FunctionName, tuple[str, ...]]:
+    """Retain granular parameter names as declaration provenance."""
+    expansions: dict[FunctionName, set[str]] = {}
+    for phase_name in ("solution", "simulation"):
+        source_slice: RegimePhaseSpec = getattr(specs[source_regime_name], phase_name)
+        candidate_targets = candidate_targets_from_transition(
+            transition=source_slice.regime_transition,
+            all_regime_names=all_regime_names,
+        )
+        for state_name, law in source_slice.state_transitions.items():
+            if law is None or isinstance(law, Mapping):
+                continue
+            law_name = f"next_{state_name}"
+            if not regime_params_template.get(law_name):
+                continue
+            for target in candidate_targets:
+                target_slice: RegimePhaseSpec = getattr(specs[target], phase_name)
+                if state_name in target_slice.grid_states:
+                    expansions.setdefault(law_name, set()).add(
+                        qname_from_tree_path((target, law_name))
+                    )
+    return MappingProxyType(
+        {law_name: tuple(sorted(prefixes)) for law_name, prefixes in expansions.items()}
     )
 
 
@@ -2583,7 +2853,8 @@ def _build_period_state_axes(
 def _build_Q_and_F_per_period(
     *,
     active_periods: tuple[int, ...],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
@@ -2591,7 +2862,6 @@ def _build_Q_and_F_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
-    reachable_targets: frozenset[RegimeName],
     co_map_state_names: tuple[StateName, ...] = (),
     certainty_equivalent: CertaintyEquivalent | None = None,
     grid_schedule: AgeGridSchedule | None = None,
@@ -2617,8 +2887,8 @@ def _build_Q_and_F_per_period(
 
     Args:
         active_periods: The source regime's active periods (the periods built).
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active period tuples (for target enumeration).
+        phase_reachability: Static graph for this phase.
+        source_regime_name: Regime whose continuation targets are requested.
         functions: Immutable mapping of internal (possibly periodized) functions.
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition functions.
@@ -2659,16 +2929,13 @@ def _build_Q_and_F_per_period(
         )
 
     def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
-        complete = get_period_targets(
-            period=period,
-            transitions=transitions,
-            regimes_to_active_periods=regimes_to_active_periods,
+        targets = (
+            ()
+            if period == phase_reachability.n_periods - 1
+            else phase_reachability.targets(period=period, source=source_regime_name)
         )
-        scalar = get_period_scalar_targets(
-            period=period,
-            carry_targets=complete,
-            reachable_targets=reachable_targets,
-            regimes_to_active_periods=regimes_to_active_periods,
+        _, scalar_targets = partition_continuation_targets(
+            targets=targets,
             regime_to_v_interpolation_info=continuation_info(period),
         )
         # The explicit user grid signatures of the continuation targets at t+1 —
@@ -2676,7 +2943,7 @@ def _build_Q_and_F_per_period(
         continuation_sig = continuation_grid_signature_from_schedule(
             grid_schedule=grid_schedule,
             target_period=period + 1,
-            target_regimes=complete,
+            target_regimes=targets,
         )
         signature = (
             periodized_tree_signature(functions, period),
@@ -2685,9 +2952,9 @@ def _build_Q_and_F_per_period(
             # Scalar targets ride in the signature, not the target tuple, so
             # periods differing only in which stateless regimes they can reach
             # never share a closure.
-            scalar,
+            scalar_targets,
         )
-        return (complete, signature)
+        return (targets, signature)
 
     configs = group_periods_by_key(active_periods, group_key)
 
@@ -2696,11 +2963,15 @@ def _build_Q_and_F_per_period(
     # closures, so any period in the group is a valid representative.
     built: dict[tuple[tuple[RegimeName, ...], Hashable], QAndFFunction] = {}
     for key, periods in configs.items():
-        period_targets = key[0]
+        targets = key[0]
         representative_period = periods[0]
+        carry_targets, scalar_targets = partition_continuation_targets(
+            targets=targets,
+            regime_to_v_interpolation_info=continuation_info(representative_period),
+        )
         assert_continuation_grids_agree(
             grid_schedule=grid_schedule,
-            target_regimes=period_targets,
+            target_regimes=targets,
             periods=tuple(periods),
         )
         built[key] = get_Q_and_F(
@@ -2713,14 +2984,8 @@ def _build_Q_and_F_per_period(
                 "ConstraintFunctionsMapping",
                 resolve_periodized_nodes(constraints, representative_period),
             ),
-            period_targets=period_targets,
-            scalar_targets=get_period_scalar_targets(
-                period=representative_period,
-                carry_targets=period_targets,
-                reachable_targets=reachable_targets,
-                regimes_to_active_periods=regimes_to_active_periods,
-                regime_to_v_interpolation_info=continuation_info(representative_period),
-            ),
+            period_targets=carry_targets,
+            scalar_targets=scalar_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -2816,6 +3081,8 @@ def _build_pointwise_Q_and_F_per_period(
 def _build_next_state_vmapped(
     *,
     active_periods: tuple[int, ...],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -2833,18 +3100,38 @@ def _build_next_state_vmapped(
     period shares a single function, exactly as an age-invariant model.
     """
     configs = group_periods_by_key(
-        active_periods, lambda period: periodized_tree_signature(functions, period)
+        active_periods,
+        lambda period: (
+            (
+                ()
+                if period == phase_reachability.n_periods - 1
+                else phase_reachability.targets(
+                    period=period, source=source_regime_name
+                )
+            ),
+            periodized_tree_signature(functions, period),
+        ),
     )
 
-    built: dict[Hashable, NextStateSimulationFunction] = {}
-    for signature, periods in configs.items():
+    built: dict[
+        tuple[tuple[RegimeName, ...], Hashable], NextStateSimulationFunction
+    ] = {}
+    for key, periods in configs.items():
+        period_targets, _ = key
         representative_period = periods[0]
+        period_transitions = MappingProxyType(
+            {
+                target: transitions[target]
+                for target in period_targets
+                if target in transitions
+            }
+        )
         next_state = get_next_state_function_for_simulation(
             functions=cast(
                 "EconFunctionsMapping",
                 resolve_periodized_nodes(functions, representative_period),
             ),
-            transitions=transitions,
+            transitions=period_transitions,
             stochastic_transition_names=stochastic_transition_names,
             all_grids=all_grids,
             variables=variables,
@@ -2856,9 +3143,7 @@ def _build_next_state_vmapped(
         next_state_vmapped = with_signature(
             next_state_vmapped, kwargs=sig_args, enforce=False
         )
-        built[signature] = (
-            jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
-        )
+        built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
     return expand_groups_to_periods(configs, built)
 

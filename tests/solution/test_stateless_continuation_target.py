@@ -5,11 +5,6 @@ bequest is a scalar-valued regime, and its value is whatever its utility returns
 not zero. A parent that transitions into it must therefore add that value to its
 continuation, exactly as it would for a stateful target.
 
-A target whose only states are stochastic processes is a different case: it is
-rejected when the model builds, because a process transition needs a from-value
-the source does not have. See
-`tests/regime_building/test_target_only_process_rejected.py`.
-
 The oracle is arithmetic. With `max_c log(c) = log(1) = 0` on a consumption grid
 whose top node is `1.0`, a parent leaving for the stateless regime is worth exactly
 `0 + discount_factor * bequest`, which is checked directly rather than against
@@ -26,6 +21,7 @@ from lcm import (
     MarkovTransition,
     Model,
     Regime,
+    TauchenAR1Process,
     categorical,
 )
 from lcm.typing import ScalarInt
@@ -57,6 +53,10 @@ def _next_regime(wealth, age):
     # is ever sent to an inactive regime.
     leaves = (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
     return jnp.where(leaves, RegimeId.gone, RegimeId.alive)
+
+
+def _enter_shock() -> ScalarInt:
+    return jnp.int32(1)
 
 
 def _solve_with_bequest(bequest: float):
@@ -185,3 +185,67 @@ def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
     poor = np.asarray(_solve_with_an_unreachable_stateless_regime(0.0)[0]["alive"])
     rich = np.asarray(_solve_with_an_unreachable_stateless_regime(1000.0)[0]["alive"])
     np.testing.assert_array_almost_equal(poor, rich, decimal=DECIMAL_PRECISION)
+
+
+def _solve_with_process_only_target(level: float):
+    """Solve a model whose terminal regime's only state is a stochastic process.
+
+    The source supplies an explicit entry law because it does not carry the
+    target's process. Once entered, the process carries its own intrinsic law.
+    """
+    alive = Regime(
+        transition=_next_regime,
+        active=lambda age: age < _LAST_AGE,
+        states={"wealth": _WEALTH_GRID},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        state_transitions={
+            "wealth": _next_wealth,
+            "shock": {"gone": _enter_shock},
+        },
+        functions={"utility": _utility},
+    )
+    retired = Regime(
+        transition=None,
+        states={"shock": TauchenAR1Process(n_points=3, gauss_hermite=False)},
+        functions={"utility": lambda shock: shock + level},
+    )
+    model = Model(
+        regimes={"alive": alive, "gone": retired},
+        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        regime_id_class=RegimeId,
+    )
+    params = {
+        "alive": {
+            "utility": {},
+            "H": {"discount_factor": _DISCOUNT},
+            "next_wealth": {},
+            "next_shock": {},
+            "next_regime": {},
+        },
+        "gone": {
+            "utility": {},
+            "shock": {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+        },
+    }
+    return model.solve(params=params, log_level="debug")
+
+
+def test_a_process_only_regime_carries_its_own_value():
+    """The process-only regime's value varies with the shock, centred on the level."""
+    solution = _solve_with_process_only_target(10.0)
+    retired = np.asarray(solution[0]["gone"]).ravel()
+    # Tauchen nodes are symmetric about the mean, so the middle node is the level.
+    np.testing.assert_array_almost_equal(retired[1], 10.0, decimal=DECIMAL_PRECISION)
+    assert retired[0] < retired[1] < retired[2]
+
+
+def test_the_process_only_level_moves_the_parent():
+    """Shifting the process-only regime's level changes the parent's value.
+
+    A symmetric shock alone cannot show this: its expectation is zero either way, so
+    a dropped continuation is indistinguishable from a correct one. The level shift
+    makes `E[V]` unambiguously nonzero.
+    """
+    poor = np.asarray(_solve_with_process_only_target(0.0)[0]["alive"])
+    rich = np.asarray(_solve_with_process_only_target(10.0)[0]["alive"])
+    assert not np.allclose(poor, rich)

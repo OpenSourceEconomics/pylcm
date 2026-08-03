@@ -57,7 +57,7 @@ def get_Q_and_F(
         period_targets: Carry targets — reachable, active next period, and
             carrying at least one state, so their continuation is read at the
             next states their laws produce.
-        scalar_targets: Reachable targets active next period that carry no state.
+        scalar_targets: Graph targets active next period that carry no state.
             Their value function is rank-zero, so it enters `E[V]` directly,
             weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition functions.
@@ -98,10 +98,11 @@ def get_Q_and_F(
     next_V = {}
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
 
     for target_regime_name in period_targets:
         # Transitions from the current regime to the target regime
-        bundle = transitions[target_regime_name]
+        bundle = transitions.get(target_regime_name, MappingProxyType({}))
 
         # Functions required to calculate the expected continuation values
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
@@ -136,6 +137,7 @@ def get_Q_and_F(
         stochastic_variables = tuple(
             key for key in bundle if key in stochastic_transition_names
         )
+        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
@@ -249,10 +251,13 @@ def get_Q_and_F(
 
             # We then take the weighted average of the next value function at the
             # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
-                next_V_at_stochastic_states_arr,
-                weights=joint_next_stochastic_states_weights,
-            )
+            if next_V_has_stochastic_states[target_regime_name]:
+                next_V_expected_arr = jnp.average(
+                    next_V_at_stochastic_states_arr,
+                    weights=joint_next_stochastic_states_weights,
+                )
+            else:
+                next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
@@ -307,7 +312,7 @@ def get_compute_intermediates(
         constraints: Immutable mapping of constraint names to constraint functions.
         period_targets: Carry targets — reachable, active next period, and
             carrying at least one state.
-        scalar_targets: Reachable stateless targets active next period, whose
+        scalar_targets: Graph stateless targets active next period, whose
             rank-zero value enters `E[V]` weighted only by the regime transition
             probability. Must match what `get_Q_and_F` was built with, or the
             diagnostics disagree with the solve they explain.
@@ -346,9 +351,10 @@ def get_compute_intermediates(
     next_V = {}
 
     next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
 
     for target_regime_name in period_targets:
-        bundle = transitions[target_regime_name]
+        bundle = transitions.get(target_regime_name, MappingProxyType({}))
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=functions,
             transitions=bundle,
@@ -378,6 +384,7 @@ def get_compute_intermediates(
         stochastic_variables = tuple(
             key for key in bundle if key in stochastic_transition_names
         )
+        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=stochastic_variables,
@@ -458,7 +465,11 @@ def get_compute_intermediates(
                         for arg, flat_name in ce_transform_flat_names.items()
                     },
                 )
-            contribution = jnp.average(next_V_stoch, weights=joint)
+            contribution = (
+                jnp.average(next_V_stoch, weights=joint)
+                if next_V_has_stochastic_states[target_regime_name]
+                else jnp.average(next_V_stoch)
+            )
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
         if ce is not None:
@@ -538,85 +549,36 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
-def get_period_targets(
+def partition_continuation_targets(
     *,
-    period: int,
-    transitions: TransitionFunctionsMapping,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-) -> tuple[RegimeName, ...]:
-    """Return the *carry* targets whose continuation is interpolated this period.
+    targets: tuple[RegimeName, ...],
+    regime_to_v_interpolation_info: Mapping[RegimeName, VInterpolationInfo],
+) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
+    """Partition canonical graph targets into stateful and stateless tuples.
 
-    The canonical transition bundles (`transitions` keys) carry exactly the
-    reachable targets with at least one state law; the period filter keeps
-    those active in the next period.
-
-    These are not all of a period's targets. A reachable target that carries no
-    state contributes no bundle, yet its value function is whatever its utility
-    returns — not zero — so it enters `E[V]` as a rank-zero term. Enumerate those
-    with `get_period_scalar_targets` and pass both to `get_Q_and_F`.
+    Membership comes entirely from `targets`. Interpolation metadata classifies how
+    each continuation is read without adding or removing graph edges.
 
     Args:
-        period: The period to enumerate targets for.
-        transitions: Immutable mapping of target regime names to their
-            state transition functions.
-        regimes_to_active_periods: Immutable mapping of regime names to
-            their active period tuples.
+        targets: Canonical graph targets for one source and period.
+        regime_to_v_interpolation_info: Mapping of regime names to interpolation
+            metadata whose state names determine the continuation representation.
 
     Returns:
-        Tuple of this period's carry-target regime names.
+        Tuple of `(carry_targets, scalar_targets)` preserving graph order.
 
     """
-    return tuple(
-        regime_name
-        for regime_name in transitions
-        if period + 1 in regimes_to_active_periods.get(regime_name, ())
+    carry_targets = tuple(
+        target
+        for target in targets
+        if regime_to_v_interpolation_info[target].state_names
     )
-
-
-def get_period_scalar_targets(
-    *,
-    period: int,
-    carry_targets: tuple[RegimeName, ...],
-    reachable_targets: frozenset[RegimeName],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> tuple[RegimeName, ...]:
-    """Return the stateless targets whose rank-zero value enters E[V] this period.
-
-    A target's *kind* follows from whether it carries state, read off its
-    V-interpolation info — never from whether it contributed a transition bundle.
-    A stateless regime has no state law to contribute, so bundle presence would
-    misclassify it as absent rather than as scalar.
-
-    Membership is declared reachability intersected with activity at `period + 1`.
-    Reachability comes from the regime transition, which is its single source of
-    truth: a per-target mapping declares exactly its key set, any coarse form
-    reaches every regime. Transition probabilities may depend on states, actions,
-    and runtime params, so a target carrying zero probability everywhere is not
-    prunable at build time and stays in the set.
-
-    Args:
-        period: The period to enumerate targets for.
-        carry_targets: This period's carry targets, which are excluded here so a
-            target is read exactly once.
-        reachable_targets: The regime's declared-reachable target names.
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active period tuples.
-        regime_to_v_interpolation_info: Immutable mapping of regime names to
-            V-interpolation info, whose `state_names` decide the target's kind.
-
-    Returns:
-        Tuple of this period's scalar-target regime names.
-
-    """
-    return tuple(
-        regime_name
-        for regime_name in regime_to_v_interpolation_info
-        if regime_name in reachable_targets
-        and period + 1 in regimes_to_active_periods.get(regime_name, ())
-        and not regime_to_v_interpolation_info[regime_name].state_names
-        and regime_name not in carry_targets
+    scalar_targets = tuple(
+        target
+        for target in targets
+        if not regime_to_v_interpolation_info[target].state_names
     )
+    return carry_targets, scalar_targets
 
 
 def _get_arg_names_of_Q_and_F(

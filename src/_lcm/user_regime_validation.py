@@ -374,7 +374,7 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
         if not side:
             error_messages.append(
                 f"transition{label}: an empty per-target dict declares no "
-                f"reachable targets — use `transition=None` for a terminal "
+                f"candidate targets — use `transition=None` for a terminal "
                 f"regime.",
             )
         for target_regime_name, cell in side.items():
