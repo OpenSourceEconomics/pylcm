@@ -170,7 +170,7 @@ def test_engine_has_no_period_target_inference_helper() -> None:
     definitions = [
         (path, node.lineno)
         for path in package_root.rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.FunctionDef)
         and node.name in {"get_period_targets", "_active_regimes_at_period"}
     ]
@@ -195,7 +195,7 @@ def test_solver_runtime_does_not_import_regime_declaration_topology() -> None:
     imports = [
         (path, node.lineno, node.module)
         for path in runtime_paths
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom) and node.module in forbidden_modules
     ]
 
