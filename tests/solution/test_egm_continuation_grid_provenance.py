@@ -80,6 +80,12 @@ _WORKING_P90_TOL = 0.15
 # matched. Its witnesses therefore assert that a moving grid costs it no
 # accuracy, against its own baseline rather than the mesh's.
 _RFC_MEDIAN_TOL = 0.06
+# The tail carries the backend deficit twice over. The largest residuals sit on
+# the first retained liquid row and the last retained pension column -- the two
+# edges of the covered interior -- so the 90th percentile is set by how close
+# the mask runs to the uncovered layer, where RFC's rooftop cut is at its
+# coarsest. The median stays near 0.03 at both precisions while this moves.
+_RFC_P90_TOL = 0.35
 _RETIRED_MEDIAN_TOL = 0.01
 _RETIRED_MAX_TOL = 0.05
 
@@ -110,15 +116,27 @@ def _solve_pair(**grid_overrides):
 
 
 def _assert_working_matches_brute(
-    egm, brute, period, *, interior=None, median_tol=_WORKING_MEDIAN_TOL
+    egm,
+    brute,
+    period,
+    *,
+    interior=None,
+    median_tol=_WORKING_MEDIAN_TOL,
+    p90_tol=_WORKING_P90_TOL,
 ):
-    """The working value agrees with brute on the covered pension interior."""
+    """The working value agrees with brute on the covered pension interior.
+
+    Both declared quantiles are asserted, not just the median: the median alone
+    is insensitive to a minority of badly wrong nodes, which is exactly the
+    shape a partial coverage failure takes.
+    """
     sl = (interior or _WORKING_INTERIOR)[period]
     egm_v = np.asarray(egm[period]["working"])[sl]
     brute_v = np.asarray(brute[period]["working"])[sl]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
     assert np.median(rel) < median_tol
+    assert np.quantile(rel, 0.90) < p90_tol
 
 
 def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
@@ -254,7 +272,9 @@ def test_w4_rfc_interior_reads_the_next_period_liquid_grid():
         ),
     )
     for period in (0, 1):
-        _assert_working_matches_brute(egm, brute, period, median_tol=_RFC_MEDIAN_TOL)
+        _assert_working_matches_brute(
+            egm, brute, period, median_tol=_RFC_MEDIAN_TOL, p90_tol=_RFC_P90_TOL
+        )
 
 
 def test_w8_two_asset_interior_reads_the_next_period_pension_grid():
@@ -300,6 +320,7 @@ def test_w9_rfc_interior_reads_the_next_period_pension_grid():
             period,
             interior=_MOVING_INTERIOR,
             median_tol=_RFC_MEDIAN_TOL,
+            p90_tol=_RFC_P90_TOL,
         )
 
 
