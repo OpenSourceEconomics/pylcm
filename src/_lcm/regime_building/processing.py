@@ -104,7 +104,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import Solver
-from lcm.transition import AgeSpecializedGrid, MarkovTransition
+from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
@@ -470,7 +470,6 @@ def _state_handoff_errors(
                     if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
-                        target_grid=target_grid,
                         state_name=state_name,
                     ):
                         continue
@@ -479,17 +478,23 @@ def _state_handoff_errors(
                         source=source,
                         target=target,
                     )
+                    state_kind = (
+                        "stochastic process"
+                        if isinstance(target_grid, _ContinuousStochasticProcess)
+                        else "state"
+                    )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
                         f"(age {_display_age(ages, period)}), source '{source}' -> "
                         f"period {period + 1} "
                         f"(age {_display_age(ages, period + 1)}), "
-                        f"target '{target}' retains a {status.name} edge. The target "
-                        f"declares stochastic process '{state_name}', but the source "
-                        f"does not carry '{state_name}' and defines no entry law, so "
-                        f"no value exists for the process transition. Declare "
-                        f"'{state_name}' on '{source}', define a target-specific entry "
-                        f"law, or narrow the transition's static target support."
+                        f"target '{target}' retains a {status.name} edge. The "
+                        f"target declares {state_kind} '{state_name}', but the "
+                        f"source does not carry '{state_name}' and defines no "
+                        f"entry law, so no next-period value exists. Declare "
+                        f"'{state_name}' on '{source}', define a target-specific "
+                        f"entry law, or narrow the transition's static target "
+                        f"support."
                     )
     return error_messages
 
@@ -503,23 +508,19 @@ def _has_valid_state_handoff(
     *,
     source_slice: RegimePhaseSpec,
     target: RegimeName,
-    target_grid: Grid | AgeSpecializedGrid,
     state_name: StateName,
 ) -> bool:
     """Return whether one target state obtains a valid next-period value.
 
     Every target state on a retained edge must be supplied by one of: a
-    carried/shared state, a deterministic law, a stochastic law, an explicit
-    entry/reset law, or a legitimate target-local non-process state.
+    carried/shared state, a deterministic law, a stochastic law, or an explicit
+    entry/reset law. A target-only state has no implicit initialization value.
     """
     if state_name in source_slice.grid_states:
         return True
 
     law = source_slice.state_transitions.get(state_name)
-    if law is not None and (not isinstance(law, Mapping) or target in law):
-        return True
-
-    return not isinstance(target_grid, _ContinuousStochasticProcess)
+    return law is not None and (not isinstance(law, Mapping) or target in law)
 
 
 def _build_solution_phase(
