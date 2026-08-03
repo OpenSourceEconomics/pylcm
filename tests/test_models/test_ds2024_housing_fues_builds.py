@@ -34,7 +34,7 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
         n_housing=5,
         n_consumption=80,
         n_periods=3,
-        upper_envelope="rfc",
+        envelope="rfc",
     )
     solution = model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="off"
@@ -46,22 +46,20 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
         assert np.isfinite(np.asarray(solution[period]["alive"])[..., 2:-1]).all()
 
 
-def _solve(
-    variant: Literal["dcegm", "brute"], upper_envelope: str
-) -> PeriodToRegimeToVArr:
+def _solve(variant: Literal["dcegm", "brute"], envelope: str) -> PeriodToRegimeToVArr:
     model = build_model(
         variant=variant,
         n_grid=N_GRID,
         n_housing=N_HOUSING,
         n_consumption=N_CONSUMPTION,
         n_periods=N_PERIODS,
-        upper_envelope=upper_envelope,  # ty: ignore[invalid-argument-type]
+        envelope=envelope,  # ty: ignore[invalid-argument-type]
     )
     return model.solve(params=build_params(variant=variant, delta=0.0), log_level="off")
 
 
-@pytest.mark.parametrize("upper_envelope", ["rfc", "fues"])
-def test_ds2024_housing_dcegm_matches_brute_in_bulk(upper_envelope: str):
+@pytest.mark.parametrize("envelope", ["rfc", "fues"])
+def test_ds2024_housing_dcegm_matches_brute_in_bulk(envelope: str):
     """Each discrete-housing DC-EGM backend bulk-agrees with its grid-search twin.
 
     On the liquid interior the mean value difference is sub-unit and the large
@@ -73,7 +71,7 @@ def test_ds2024_housing_dcegm_matches_brute_in_bulk(upper_envelope: str):
     envelope-internal tie-breaking on the durable-corner cells.
     """
     brute = _solve("brute", "rfc")
-    dcegm = _solve("dcegm", upper_envelope)
+    dcegm = _solve("dcegm", envelope)
     differences = []
     for period in sorted(brute):
         if "alive" not in brute[period]:

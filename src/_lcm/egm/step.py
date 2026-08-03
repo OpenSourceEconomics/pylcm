@@ -597,7 +597,7 @@ def _get_egm_step(
     # `False` on a channel the policy-read gate never consumes from them.
     # Masking on that constant would blank every published row, so the gap
     # mask applies only where the verdict is actually computed.
-    mask_gap_rows = solver.upper_envelope == "mss" and not asset_row_mode
+    mask_gap_rows = solver.envelope == "mss" and not asset_row_mode
     pieces = _build_kernel_pieces(
         solver=solver,
         user_regimes=user_regimes,

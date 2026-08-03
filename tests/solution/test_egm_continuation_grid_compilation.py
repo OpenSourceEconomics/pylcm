@@ -13,7 +13,7 @@ import numpy as np
 
 from _lcm.egm.two_asset_g2egm_step import g2egm_step
 from lcm import AgeSpecializedGrid, LinSpacedGrid
-from lcm.solvers import OneAssetEGM, Solver, TwoDimEGM
+from lcm.solvers import EGM, Solver, TwoAssetEGM
 from tests.solution.test_egm_continuation_grid_provenance import (
     _A_GRID,
     _B_GRID,
@@ -87,10 +87,10 @@ def test_an_age_specialized_model_compiles_no_more_cores_than_a_static_one():
     lifecycle has.
     """
     solvers: dict[str, Solver] = {
-        "working": TwoDimEGM(
+        "working": TwoAssetEGM(
             a_grid=_A_GRID, b_grid=_B_GRID, consumption_grid=_CONSUMPTION_GRID
         ),
-        "retired": OneAssetEGM(savings_grid=_SAVINGS_GRID),
+        "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     static = get_model(n_periods=_N_PERIODS, solvers=solvers)
     moving = get_model(
@@ -115,10 +115,10 @@ def test_the_static_model_solves_reproducibly():
     inputs, so any difference at all would be a defect.
     """
     solvers: dict[str, Solver] = {
-        "working": TwoDimEGM(
+        "working": TwoAssetEGM(
             a_grid=_A_GRID, b_grid=_B_GRID, consumption_grid=_CONSUMPTION_GRID
         ),
-        "retired": OneAssetEGM(savings_grid=_SAVINGS_GRID),
+        "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     model = get_model(n_periods=_N_PERIODS, solvers=solvers)
     first = model.solve(params=get_params(), log_level="off")

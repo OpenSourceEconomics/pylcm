@@ -1,7 +1,7 @@
 """Deterministic-lifecycle target resolution and cross-regime params union.
 
 Shared by the endogenous-grid solvers that thread a single deterministic
-continuation target per period (`OneAssetEGM`, `TwoDimEGM`): resolve which
+continuation target per period (`EGM`, `TwoAssetEGM`): resolve which
 target regime each active period continues into, and bind or admit the union
 of the source's and target's flat params in the kernel build.
 """

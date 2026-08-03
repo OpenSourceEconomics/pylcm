@@ -1,10 +1,10 @@
-"""`TwoDimEGM(upper_envelope="rfc")` drives the DS pension RFC lifecycle solve.
+"""`TwoAssetEGM(envelope="rfc")` drives the DS pension RFC lifecycle solve.
 
 The combined-cloud rooftop-cut is selected as the working regime's two-asset upper
-envelope by naming `TwoDimEGM(upper_envelope="rfc")` on it. The engine's backward
+envelope by naming `TwoAssetEGM(envelope="rfc")` on it. The engine's backward
 induction then chains the RFC step across the lifecycle: the working regime uses the
 RFC two-asset step (the retirement-boundary period falls back to the G2EGM retiring
-step), the retired regime the 1-D `OneAssetEGM`, and the dead regime stays terminal.
+step), the retired regime the 1-D `EGM`, and the dead regime stays terminal.
 The solve publishes every period and regime, and the working value tracks the dense
 grid-search brute on the pension interior away from the low-liquid corner (a known RFC
 corner-accuracy gap).
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm.solvers import OneAssetEGM, TwoDimEGM
+from lcm.solvers import EGM, TwoAssetEGM
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _N_PERIODS = 5
@@ -35,13 +35,13 @@ def _rfc_model():
     return get_model(
         n_periods=_N_PERIODS,
         solvers={
-            "working": TwoDimEGM(
+            "working": TwoAssetEGM(
                 a_grid=_A_GRID,
                 b_grid=_B_GRID,
                 consumption_grid=_CONSUMPTION_GRID,
-                upper_envelope="rfc",
+                envelope="rfc",
             ),
-            "retired": OneAssetEGM(savings_grid=_SAVINGS_GRID),
+            "retired": EGM(savings_grid=_SAVINGS_GRID),
         },
     )
 

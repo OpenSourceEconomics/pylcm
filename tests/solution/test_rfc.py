@@ -54,7 +54,7 @@ def _rfc_solver():
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-        upper_envelope="rfc",
+        envelope="rfc",
     )
 
 
@@ -302,7 +302,7 @@ def test_overflow_is_reported_via_n_kept():
 
 
 def test_rfc_backend_is_selected_by_solver_config():
-    """`upper_envelope="rfc"` dispatches to the RFC backend.
+    """`envelope="rfc"` dispatches to the RFC backend.
 
     The backend selected for an `rfc` solver must reproduce the standalone
     RFC kernel on a non-concave candidate set, while `"fues"` stays on FUES.

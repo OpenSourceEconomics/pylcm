@@ -218,8 +218,9 @@ def get_model(
         solvers: Optional mapping of regime name to its `Solver`. A name absent from
             the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
             default model is the dense-grid brute oracle. Pass
-            `{"working": TwoDimEGM(...)}` to drive the working regime by the two-asset
-            G2EGM method, and `{"retired": OneAssetEGM(...)}` for the 1-D retired EGM.
+            `{"working": TwoAssetEGM(...)}` to drive the working regime by the
+            two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
+            consumption--saving problem.
 
     Every grid override defaults to the shared grid, so calling `get_model` without
     them reproduces one common `liquid` support across all three regimes. Passing a

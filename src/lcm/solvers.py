@@ -12,12 +12,15 @@ backward induction:
   consumption-savings problem conditional on that margin (Druedahl 2021,
   Computational Economics 58(3), 747-775,
   [doi:10.1007/s10614-020-10045-x](https://doi.org/10.1007/s10614-020-10045-x)).
-- `OneAssetEGM(...)`: the single-asset endogenous grid method for a regime
-  with one continuous (Euler) state and no discrete kinks — the
-  specialization whose step needs no upper envelope.
-- `TwoDimEGM(...)`: the two-continuous-state endogenous grid method with a
-  selectable upper-envelope refinement (`upper_envelope="g2egm"` or
-  `"rfc"`).
+- `EGM(...)`: the plain endogenous grid method (Carroll 2006; see
+  `docs/credits.md`) for a regime with one continuous (Euler) state and no
+  discrete kinks. Inverting the Euler equation on the post-decision savings
+  grid solves such a period exactly, so this is the specialization whose step
+  needs no upper envelope at all.
+- `TwoAssetEGM(...)`: the two-continuous-state endogenous grid method. Name the
+  regime's two continuous states with `liquid_state=` and `pension_state=`;
+  `envelope=` picks the refinement that resolves the resulting candidate cloud,
+  either the G2EGM mesh (`"g2egm"`) or the rooftop-cut RFC (`"rfc"`).
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
@@ -28,18 +31,18 @@ solver instance (`solver.build_period_kernels(context)`), not on its type.
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
 from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.negm import NEGM
-from _lcm.solution.one_asset_egm import OneAssetEGM
-from _lcm.solution.two_dim_egm import TwoDimEGM
+from _lcm.solution.two_asset_egm import TwoAssetEGM
 
 __all__ = [
     "DCEGM",
+    "EGM",
     "NEGM",
     "GridSearch",
-    "OneAssetEGM",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
-    "TwoDimEGM",
+    "TwoAssetEGM",
 ]

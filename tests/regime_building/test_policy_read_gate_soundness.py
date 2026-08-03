@@ -21,7 +21,7 @@ from lcm.solvers import DCEGM
 
 
 def _solver(
-    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"],
+    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"],
 ) -> DCEGM:
     """A minimal DC-EGM solver differing only in its upper-envelope backend."""
     return DCEGM(
@@ -30,7 +30,7 @@ def _solver(
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=8),
-        upper_envelope=upper_envelope,
+        envelope=envelope,
     )
 
 

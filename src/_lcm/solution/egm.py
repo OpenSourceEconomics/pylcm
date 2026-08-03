@@ -1,6 +1,6 @@
 """The one-asset EGM solver.
 
-`OneAssetEGM` runs the single-asset endogenous grid method for a regime with
+`EGM` runs the single-asset endogenous grid method for a regime with
 one continuous (Euler) state and no discrete kinks — the specialization whose
 step needs no upper envelope. The kernel-building imports are function-local
 so the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -49,7 +49,7 @@ from lcm.typing import (
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class OneAssetEGM(Solver):
+class EGM(Solver):
     """Endogenous-grid solver for a 1-D consumption--saving regime.
 
     A regime with exactly one continuous state (the liquid wealth), one
@@ -85,7 +85,7 @@ class OneAssetEGM(Solver):
         )
         if len(continuous) != 1:
             msg = (
-                f"OneAssetEGM regime '{context.regime_name}' must have exactly one "
+                f"EGM regime '{context.regime_name}' must have exactly one "
                 f"continuous state, but has {len(continuous)}: {list(continuous)}. "
                 f"Use a solver that handles more than one Euler state, or move the "
                 f"extra states to discrete grids."
@@ -98,7 +98,7 @@ class OneAssetEGM(Solver):
             ].continuous_states
             if liquid_state not in target_states:
                 msg = (
-                    f"OneAssetEGM regime '{context.regime_name}' continues into "
+                    f"EGM regime '{context.regime_name}' continues into "
                     f"target regime '{target}', which does not carry the Euler state "
                     f"'{liquid_state}' (its continuous states are "
                     f"{sorted(target_states)}). The Euler inversion reads the "
@@ -130,13 +130,13 @@ class OneAssetEGM(Solver):
         period_kernels: dict[int, PeriodKernel] = {}
         for period, target in period_to_target.items():
             if target not in cores:
-                core = _build_one_asset_core(
+                core = _build_egm_core(
                     savings_grid=savings_grid,
                     target=target,
                     liquid_state=liquid_state,
                 )
                 cores[target] = jax.jit(core) if context.enable_jit else core
-            period_kernels[period] = _OneAssetEGMPeriodKernel(
+            period_kernels[period] = _EGMPeriodKernel(
                 core=cores[target],
                 regime_name=context.regime_name,
                 continuation_target=target,
@@ -158,7 +158,7 @@ class OneAssetEGM(Solver):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _OneAssetEGMPeriodKernel:
+class _EGMPeriodKernel:
     """The 1-D EGM period adapter — wraps the shared `egm_one_asset_step` core.
 
     Closes over the regime name, the period's single deterministic
@@ -199,9 +199,7 @@ class _OneAssetEGMPeriodKernel:
         """Return the single EGM-step core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
 
-    def with_fixed_params(
-        self, *, fixed_flat_params: FlatParams
-    ) -> _OneAssetEGMPeriodKernel:
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _EGMPeriodKernel:
         """Bind the regime's and its targets' fixed params into the core."""
         bound = _union_fixed_params(
             fixed_flat_params=fixed_flat_params,
@@ -266,7 +264,7 @@ class _OneAssetEGMPeriodKernel:
         return KernelResult(V_arr=V_arr, continuation=carry)
 
 
-def _build_one_asset_core(
+def _build_egm_core(
     *, savings_grid: Float1D, target: RegimeName, liquid_state: StateName
 ) -> Callable:
     """Build the jitted-able 1-D EGM core closing over the savings grid.

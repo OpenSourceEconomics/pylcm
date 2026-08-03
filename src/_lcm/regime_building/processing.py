@@ -1586,7 +1586,7 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       therefore not certified crossing-complete for the read.
     - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
     """
-    return solver.upper_envelope in _CROSSING_COMPLETE_ENVELOPES
+    return solver.envelope in _CROSSING_COMPLETE_ENVELOPES
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:

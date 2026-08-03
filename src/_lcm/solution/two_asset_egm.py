@@ -1,6 +1,6 @@
 """The two-dimensional EGM solver (G2EGM / RFC).
 
-`TwoDimEGM` runs the two-continuous-state endogenous grid method with the
+`TwoAssetEGM` runs the two-continuous-state endogenous grid method with the
 selected candidate-refinement step (`"g2egm"` or `"rfc"`). The kernel-building
 imports are function-local so the public `lcm.solvers` façade stays a thin
 re-export that pulls in no numerical engine modules.
@@ -48,7 +48,7 @@ from lcm.typing import (
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class TwoDimEGM(Solver):
+class TwoAssetEGM(Solver):
     """Two-asset G2EGM solver for a regime with two continuous Euler states.
 
     The working phase of the DS pension model couples a liquid state `m` and a
@@ -90,7 +90,7 @@ class TwoDimEGM(Solver):
     threshold: float = 0.25
     """Barycentric extrapolation tolerance for triangle admissibility."""
 
-    upper_envelope: Literal["g2egm", "rfc"] = "g2egm"
+    envelope: Literal["g2egm", "rfc"] = "g2egm"
     """Multidimensional upper-envelope backend.
 
     `"g2egm"` triangulates each KKT segment and takes within- then across-segment
@@ -116,7 +116,7 @@ class TwoDimEGM(Solver):
         ].continuous_states
         if len(own_states) != 2:  # noqa: PLR2004
             msg = (
-                f"TwoDimEGM regime '{context.regime_name}' must have exactly two "
+                f"TwoAssetEGM regime '{context.regime_name}' must have exactly two "
                 f"continuous states, but has {len(own_states)}: "
                 f"{sorted(own_states)}."
             )
@@ -131,7 +131,7 @@ class TwoDimEGM(Solver):
         }
         if missing:
             msg = (
-                f"TwoDimEGM regime '{context.regime_name}' has continuous states "
+                f"TwoAssetEGM regime '{context.regime_name}' has continuous states "
                 f"{sorted(own_states)}, which do not include "
                 + ", ".join(f"{field}='{name}'" for field, name in missing.items())
                 + ". Set the role fields to the regime's own state names."
@@ -139,7 +139,7 @@ class TwoDimEGM(Solver):
             raise RegimeInitializationError(msg)
         if self.liquid_state == self.pension_state:
             msg = (
-                f"TwoDimEGM regime '{context.regime_name}' assigns the same state "
+                f"TwoAssetEGM regime '{context.regime_name}' assigns the same state "
                 f"'{self.liquid_state}' to both the liquid and the pension role."
             )
             raise RegimeInitializationError(msg)
@@ -149,7 +149,7 @@ class TwoDimEGM(Solver):
         declared = tuple(context.state_action_space.state_names)
         if set(declared) != {self.liquid_state, self.pension_state}:
             msg = (
-                f"TwoDimEGM regime '{context.regime_name}' declares states "
+                f"TwoAssetEGM regime '{context.regime_name}' declares states "
                 f"{list(declared)}; the two-asset step supports exactly the two "
                 f"role states '{self.liquid_state}' and '{self.pension_state}' "
                 f"and no others."
@@ -168,7 +168,7 @@ class TwoDimEGM(Solver):
         # iteration order.
         if len(boundary_targets) > 1:
             msg = (
-                f"TwoDimEGM regime '{context.regime_name}' leaves to more than one "
+                f"TwoAssetEGM regime '{context.regime_name}' leaves to more than one "
                 f"target regime ({sorted(boundary_targets)}); the boundary step "
                 f"supports a single continuation target."
             )
@@ -179,7 +179,7 @@ class TwoDimEGM(Solver):
             ].continuous_states
             if len(target_states) != 1:
                 msg = (
-                    f"TwoDimEGM regime '{context.regime_name}' leaves to target "
+                    f"TwoAssetEGM regime '{context.regime_name}' leaves to target "
                     f"regime '{target}', whose continuous states are "
                     f"{sorted(target_states)}. The boundary step pays the pension "
                     f"out as a lump sum into a single continuous state, so the "
@@ -236,7 +236,7 @@ class TwoDimEGM(Solver):
         for period, target in period_to_target.items():
             is_boundary = target != own_name
             if is_boundary not in cores:
-                core = _build_two_dim_core(
+                core = _build_two_asset_core(
                     a_grid=a_grid,
                     b_grid=b_grid,
                     consumption_grid=consumption_grid,
@@ -244,13 +244,13 @@ class TwoDimEGM(Solver):
                     is_boundary=is_boundary,
                     interior_prefix=own_name,
                     boundary_prefix=boundary_prefix,
-                    upper_envelope=self.upper_envelope,
+                    envelope=self.envelope,
                     liquid_state=self.liquid_state,
                     pension_state=self.pension_state,
                     boundary_liquid_state=boundary_liquid_state,
                 )
                 cores[is_boundary] = jax.jit(core) if context.enable_jit else core
-            period_kernels[period] = _TwoDimEGMPeriodKernel(
+            period_kernels[period] = _TwoAssetEGMPeriodKernel(
                 core=cores[is_boundary],
                 regime_name=own_name,
                 continuation_target=target,
@@ -288,7 +288,7 @@ class TwoDimEGM(Solver):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _TwoDimEGMPeriodKernel:
+class _TwoAssetEGMPeriodKernel:
     """The two-asset G2EGM period adapter — wraps one G2EGM-step core.
 
     Closes over the regime name, the period's continuation target, and the
@@ -350,7 +350,7 @@ class _TwoDimEGMPeriodKernel:
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
-    ) -> _TwoDimEGMPeriodKernel:
+    ) -> _TwoAssetEGMPeriodKernel:
         """Bind the regime's and its targets' fixed params into the core."""
         bound = _union_fixed_params(
             fixed_flat_params=fixed_flat_params,
@@ -449,7 +449,7 @@ class _TwoDimEGMPeriodKernel:
         }
 
 
-def _build_two_dim_core(
+def _build_two_asset_core(
     *,
     a_grid: Float1D,
     b_grid: Float1D,
@@ -461,7 +461,7 @@ def _build_two_dim_core(
     liquid_state: StateName,
     pension_state: StateName,
     boundary_liquid_state: StateName,
-    upper_envelope: Literal["g2egm", "rfc"] = "g2egm",
+    envelope: Literal["g2egm", "rfc"] = "g2egm",
 ) -> Callable:
     """Build the jitted-able two-asset core for one branch (interior or boundary).
 
@@ -473,7 +473,7 @@ def _build_two_dim_core(
     qualified by the regime's own name (interior) or the retirement target
     (boundary), since the boundary reads the retired liquid law.
 
-    `upper_envelope` selects the interior step's envelope — the G2EGM mesh or the
+    `envelope` selects the interior step's envelope — the G2EGM mesh or the
     combined-cloud RFC. The boundary (retiring) step is always G2EGM.
 
     Each law's parameters are qualified by the state it moves, under that
@@ -535,7 +535,7 @@ def _build_two_dim_core(
         return_liquid = params[f"{interior_liquid_law}__return_liquid"]
         return_pension = params[f"{interior_pension_law}__return_pension"]
         wage = params[f"{interior_liquid_law}__wage"]
-        if upper_envelope == "rfc":
+        if envelope == "rfc":
             result = rfc_two_asset_step(
                 next_value=next_value_working,
                 m_grid=liquid,

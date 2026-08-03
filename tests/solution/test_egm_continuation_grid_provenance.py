@@ -35,7 +35,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime
-from lcm.solvers import GridSearch, OneAssetEGM, TwoDimEGM
+from lcm.solvers import EGM, GridSearch, TwoAssetEGM
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -84,16 +84,16 @@ _RETIRED_MEDIAN_TOL = 0.01
 _RETIRED_MAX_TOL = 0.05
 
 
-def _two_asset_solvers(*, upper_envelope="g2egm"):
+def _two_asset_solvers(*, envelope="g2egm"):
     """The prime-time solver assignment: G2EGM working, 1-D EGM retired."""
     return {
-        "working": TwoDimEGM(
+        "working": TwoAssetEGM(
             a_grid=_A_GRID,
             b_grid=_B_GRID,
             consumption_grid=_CONSUMPTION_GRID,
-            upper_envelope=upper_envelope,
+            envelope=envelope,
         ),
-        "retired": OneAssetEGM(savings_grid=_SAVINGS_GRID),
+        "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
 
 
@@ -248,7 +248,7 @@ def test_w4_rfc_interior_reads_the_next_period_liquid_grid():
     it is pinned separately rather than assumed to inherit the fix.
     """
     egm, brute = _solve_pair(
-        solvers=_two_asset_solvers(upper_envelope="rfc"),
+        solvers=_two_asset_solvers(envelope="rfc"),
         working_liquid_grid=_moving_liquid_grid(
             start=0.1, stop_at_age=lambda age: 20.0 - 2.0 * float(age), n_points=12
         ),
@@ -285,7 +285,7 @@ def test_w8_two_asset_interior_reads_the_next_period_pension_grid():
 def test_w9_rfc_interior_reads_the_next_period_pension_grid():
     """W9 (temporal, pension axis, RFC). W8 on the rooftop-cut backend."""
     egm, brute = _solve_pair(
-        solvers=_two_asset_solvers(upper_envelope="rfc"),
+        solvers=_two_asset_solvers(envelope="rfc"),
         working_pension_grid=AgeSpecializedGrid(
             build=lambda age: LinSpacedGrid(
                 start=0.0, stop=15.0 + 3.0 * float(age), n_points=10
@@ -303,8 +303,8 @@ def test_w9_rfc_interior_reads_the_next_period_pension_grid():
         )
 
 
-@pytest.mark.parametrize("upper_envelope", ["g2egm", "rfc"])
-def test_the_two_asset_solve_is_finite_on_every_moving_grid(upper_envelope):
+@pytest.mark.parametrize("envelope", ["g2egm", "rfc"])
+def test_the_two_asset_solve_is_finite_on_every_moving_grid(envelope):
     """A moving grid leaves the covered interior finite.
 
     The two-asset envelope always leaves an off-grid top-pension layer where
@@ -315,7 +315,7 @@ def test_the_two_asset_solve_is_finite_on_every_moving_grid(upper_envelope):
     rather than a measurable disagreement.
     """
     solution, _ = _solve_pair(
-        solvers=_two_asset_solvers(upper_envelope=upper_envelope),
+        solvers=_two_asset_solvers(envelope=envelope),
         working_liquid_grid=_moving_liquid_grid(
             start=0.1, stop_at_age=lambda age: 20.0 - 2.0 * float(age), n_points=12
         ),
@@ -408,7 +408,7 @@ def _renamed_one_asset_params():
     }
 
 
-def test_w5_one_asset_egm_does_not_require_the_state_to_be_named_liquid():
+def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
     """W5 (D3, one asset). The kernel's private role vocabulary stays private.
 
     A modeller naming the single continuous state `wealth`, with a law of motion
@@ -416,9 +416,9 @@ def test_w5_one_asset_egm_does_not_require_the_state_to_be_named_liquid():
     kernel's internal liquid role may surface as a requirement on the state's
     name.
     """
-    egm = _renamed_one_asset_model(
-        solver=OneAssetEGM(savings_grid=_SAVINGS_GRID)
-    ).solve(params=_renamed_one_asset_params(), log_level="debug")
+    egm = _renamed_one_asset_model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
+        params=_renamed_one_asset_params(), log_level="debug"
+    )
     brute = _renamed_one_asset_model(solver=GridSearch(), n_consumption=200).solve(
         params=_renamed_one_asset_params(), log_level="debug"
     )
@@ -429,7 +429,7 @@ def test_w5_one_asset_egm_does_not_require_the_state_to_be_named_liquid():
         assert np.max(rel) < _RETIRED_MAX_TOL
 
 
-def _renamed_two_asset_model(*, upper_envelope="g2egm", n_consumption=14):
+def _renamed_two_asset_model(*, envelope="g2egm", n_consumption=14):
     """The DS pension model with `cash` / `fund` in place of `liquid` / `pension`.
 
     Built by renaming the shared model's transition arguments, so the economics
@@ -471,13 +471,13 @@ def _renamed_two_asset_model(*, upper_envelope="g2egm", n_consumption=14):
         },
         functions={"utility": ds.utility_working},
         active=lambda age, ra=retirement_age: age < ra,
-        solver=TwoDimEGM(
+        solver=TwoAssetEGM(
             liquid_state="cash",
             pension_state="fund",
             a_grid=_A_GRID,
             b_grid=_B_GRID,
             consumption_grid=_CONSUMPTION_GRID,
-            upper_envelope=upper_envelope,
+            envelope=envelope,
         ),
     )
     retired = Regime(
@@ -496,7 +496,7 @@ def _renamed_two_asset_model(*, upper_envelope="g2egm", n_consumption=14):
         },
         functions={"utility": ds.utility_retired},
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
-        solver=OneAssetEGM(savings_grid=_SAVINGS_GRID),
+        solver=EGM(savings_grid=_SAVINGS_GRID),
     )
     dead = Regime(
         transition=None,

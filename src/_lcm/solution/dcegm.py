@@ -121,7 +121,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
+    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     `"exact"` is pylcm's own construction and the default. The other four are
