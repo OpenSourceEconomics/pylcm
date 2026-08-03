@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lcm import (
@@ -35,6 +36,19 @@ def _one_probability() -> ScalarFloat:
 
 def _next_target() -> ScalarInt:
     return RegimeId.target
+
+
+_PROCESS_SOLVE_PARAMS = {
+    "discount_factor": 1.0,
+    "source__shock__rho": 0.5,
+    "source__shock__sigma": 0.3,
+    "source__shock__mu": 0.0,
+    "source__shock__n_std": 2.0,
+    "target__shock__rho": 0.5,
+    "target__shock__sigma": 0.3,
+    "target__shock__mu": 0.0,
+    "target__shock__n_std": 2.0,
+}
 
 
 def _source_is_early(age: float) -> bool:
@@ -113,10 +127,113 @@ def test_activity_compatible_target_only_process_is_rejected(
 
 
 def test_process_carried_by_source_and_target_is_accepted() -> None:
-    """A source value supplies the conditioning state for the target process."""
+    """A source value supplies the conditioning state for the target process.
+
+    Beyond construction, `.solve()` must actually receive the target's shared
+    process in its continuation: the source's period-0 value must be finite
+    and reflect the target's nonzero terminal payoff, not silently treat the
+    continuation as zero because the process-only target was dropped from
+    the generated transition DAG.
+    """
     model = _build_overlapping_model(coarse=False, carry_process=True)
 
     assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+
+    solution = model.solve(params=_PROCESS_SOLVE_PARAMS, log_level="debug")
+
+    source_v = solution[0]["source"]
+    assert bool(jnp.all(jnp.isfinite(source_v)))
+    assert not bool(jnp.allclose(source_v, 0.0))
+
+
+def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law() -> (
+    None
+):
+    """Adding an inert non-process law to a target must not change its value.
+
+    Two economically identical models: one where `target` carries only the
+    shared process state, one where `target` also carries an inert
+    non-process state whose entry law makes the old
+    `flat_nested_transitions`-derived route non-empty for `target`. The
+    inert state contributes exactly zero to utility, so `source`'s period-0
+    continuation value must be identical either way — the existence of a
+    continuation target is a property of the reachability graph, not of
+    whether some unrelated state happens to have a law-of-motion entry.
+    """
+    process = TauchenAR1Process(
+        n_points=3, gauss_hermite=False, rho=0.5, sigma=0.3, mu=0.0, n_std=2.0
+    )
+
+    def _process_only_model() -> Model:
+        return Model(
+            regimes={
+                "source": Regime(
+                    transition={"target": MarkovTransition(_one_probability)},
+                    active=_source_is_early,
+                    states={"shock": process},
+                    functions={"utility": _shock_utility},
+                ),
+                "target": Regime(
+                    transition=None,
+                    states={"shock": process},
+                    functions={"utility": _shock_utility},
+                ),
+            },
+            ages=AgeGrid(start=20, stop=22, step="Y"),
+            regime_id_class=RegimeId,
+            enable_jit=False,
+        )
+
+    def _shock_and_inert_utility(shock: ScalarFloat, extra: ScalarFloat) -> ScalarFloat:
+        return shock + jnp.float32(0) * extra
+
+    def _process_and_inert_law_model() -> Model:
+        return Model(
+            regimes={
+                "source": Regime(
+                    transition={"target": MarkovTransition(_one_probability)},
+                    active=_source_is_early,
+                    states={"shock": process},
+                    state_transitions={
+                        "extra": {"target": lambda: jnp.float32(0.0)},
+                    },
+                    functions={"utility": _shock_utility},
+                ),
+                "target": Regime(
+                    transition=None,
+                    states={
+                        "shock": process,
+                        "extra": LinSpacedGrid(start=0, stop=1, n_points=2),
+                    },
+                    functions={"utility": _shock_and_inert_utility},
+                ),
+            },
+            ages=AgeGrid(start=20, stop=22, step="Y"),
+            regime_id_class=RegimeId,
+            enable_jit=False,
+        )
+
+    process_only = _process_only_model()
+    process_and_inert_law = _process_and_inert_law_model()
+
+    assert process_only.reachability.solution.targets(period=0, source="source") == (
+        "target",
+    )
+    assert process_and_inert_law.reachability.solution.targets(
+        period=0, source="source"
+    ) == ("target",)
+
+    solve_params = {"discount_factor": 1.0}
+    v_process_only = process_only.solve(params=solve_params, log_level="debug")
+    v_process_and_inert_law = process_and_inert_law.solve(
+        params=solve_params, log_level="debug"
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(v_process_only[0]["source"]),
+        np.asarray(v_process_and_inert_law[0]["source"]),
+        atol=1e-6,
+    )
 
 
 def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
