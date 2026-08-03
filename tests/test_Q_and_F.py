@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -623,36 +624,39 @@ def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None):
 
 
 # Risk aversion and lottery scale at which the naive
-# `inverse(Σ w · transform(v))` route overflows float64.
+# `inverse(Σ w · transform(v))` route overflows the dtype.
 _FLOAT64_ACTION_CASES = [(8.0, 1e-50), (12.0, 1e-30), (20.0, 1e-20), (50.0, 1e-8)]
+_FLOAT32_ACTION_CASES = [(8.0, 1e-8), (12.0, 1e-5), (20.0, 1e-3)]
 
 
-@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_ACTION_CASES)
-def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
-    x64_enabled: None,
+def _assert_the_even_lottery_wins(
+    *,
     risk_aversion: float,
     scale: float,
-):
-    """The action with the larger certainty equivalent wins however small values are.
+    dtype: Any,
+    rtol: float,
+) -> None:
+    """Assert `Q` ranks two actions over a `(scale, 2 * scale)` regime lottery.
 
-    The two actions face the same two-point lottery `(scale, 2 * scale)`
-    under different regime probabilities. The even lottery has the higher
-    power mean by more than the first action's utility advantage, so it is
-    optimal at every scale.
+    Both actions face the same two-point lottery under different regime
+    probabilities. The even lottery has the higher power mean by more than
+    the skewed action's utility advantage, so it is optimal at every scale.
     """
     values = (scale, 2.0 * scale)
-    skewed = PowerMean().aggregate(
-        values=jnp.asarray(values, dtype=jnp.float64),
-        weights=jnp.asarray((0.9, 0.1), dtype=jnp.float64),
-        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
-    )
-    even = PowerMean().aggregate(
-        values=jnp.asarray(values, dtype=jnp.float64),
-        weights=jnp.asarray((0.5, 0.5), dtype=jnp.float64),
-        params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
-    )
-    assert float(even) > float(skewed) > 0.0
-    utility_advantage = 0.4 * (float(even) - float(skewed))
+
+    def certainty_equivalent(weights: tuple[float, float]) -> float:
+        return float(
+            PowerMean().aggregate(
+                values=jnp.asarray(values, dtype=dtype),
+                weights=jnp.asarray(weights, dtype=dtype),
+                params={"risk_aversion": jnp.asarray(risk_aversion, dtype=dtype)},
+            )
+        )
+
+    skewed = certainty_equivalent((0.9, 0.1))
+    even = certainty_equivalent((0.5, 0.5))
+    assert even > skewed > 0.0
+    utility_advantage = 0.4 * (even - skewed)
 
     Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
     Q_per_action = jax.jit(
@@ -664,18 +668,124 @@ def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
                         regime_prob_low=prob_low,
                         utility_level=utility,
                         risk_aversion=risk_aversion,
-                        dtype=jnp.float64,
+                        dtype=dtype,
                     )
                 )[0]
                 for prob_low, utility in ((0.9, utility_advantage), (0.5, 0.0))
             ]
         )
     )()
-    expected = jnp.asarray([utility_advantage + float(skewed), float(even)])
+    expected = jnp.asarray([utility_advantage + skewed, even], dtype=dtype)
     np.testing.assert_allclose(
-        np.asarray(Q_per_action), np.asarray(expected), rtol=8e-5
+        np.asarray(Q_per_action), np.asarray(expected), rtol=rtol
     )
     assert int(jnp.argmax(Q_per_action)) == 1
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_ACTION_CASES)
+def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
+    x64_enabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The action with the larger certainty equivalent wins however small values are."""
+    _assert_the_even_lottery_wins(
+        risk_aversion=risk_aversion, scale=scale, dtype=jnp.float64, rtol=8e-5
+    )
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT32_ACTION_CASES)
+def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale_float32(
+    x64_disabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The float32 Bellman ranks the same two actions the same way."""
+    _assert_the_even_lottery_wins(
+        risk_aversion=risk_aversion, scale=scale, dtype=jnp.float32, rtol=5e-4
+    )
+
+
+def _tiny_anchor_action_values(
+    *,
+    risky_values: tuple[float, float],
+    risky_prob_low: float,
+    safe_value: float,
+    dtype: Any,
+) -> tuple[float, float]:
+    """Return `Q` for a near-degenerate risky action and a deterministic safe one.
+
+    The risky action puts a near-zero probability on a continuation value far
+    below the other branch; the safe action pays `safe_value` for certain.
+    """
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    risky = Q_and_F(
+        **_two_target_call_kwargs(
+            values=risky_values,
+            regime_prob_low=risky_prob_low,
+            utility_level=0.0,
+            risk_aversion=8.0,
+            dtype=dtype,
+        )
+    )[0]
+    safe = Q_and_F(
+        **_two_target_call_kwargs(
+            values=(safe_value, safe_value),
+            regime_prob_low=0.5,
+            utility_level=0.0,
+            risk_aversion=8.0,
+            dtype=dtype,
+        )
+    )[0]
+    return float(risky), float(safe)
+
+
+def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float64(
+    x64_enabled: None,
+):
+    """A near-zero-probability low branch stays finite and loses to a safe action."""
+    risky, safe = _tiny_anchor_action_values(
+        risky_values=(1e-50, 1.0),
+        risky_prob_low=1e-20,
+        safe_value=1e-40,
+        dtype=jnp.float64,
+    )
+    assert safe > risky
+
+
+def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float32(
+    x64_disabled: None,
+):
+    """The float32 Bellman comparison keeps the safe action too."""
+    risky, safe = _tiny_anchor_action_values(
+        risky_values=(1e-8, 1.0),
+        risky_prob_low=1e-8,
+        safe_value=1e-4,
+        dtype=jnp.float32,
+    )
+    assert safe > risky
+
+
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float64(x64_enabled: None):
+    """The near-degenerate float64 regime lottery evaluates to `7.1969e-48`."""
+    risky, _ = _tiny_anchor_action_values(
+        risky_values=(1e-50, 1.0),
+        risky_prob_low=1e-20,
+        safe_value=1e-40,
+        dtype=jnp.float64,
+    )
+    np.testing.assert_allclose(risky, 7.196856730011521e-48, rtol=1e-12, atol=0.0)
+
+
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float32(x64_disabled: None):
+    """The near-degenerate float32 regime lottery evaluates to `1.3895e-7`."""
+    risky, _ = _tiny_anchor_action_values(
+        risky_values=(1e-8, 1.0),
+        risky_prob_low=1e-8,
+        safe_value=1e-4,
+        dtype=jnp.float32,
+    )
+    np.testing.assert_allclose(risky, 1.3894954943731376e-7, rtol=5e-5, atol=0.0)
 
 
 def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):

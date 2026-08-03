@@ -132,6 +132,26 @@ def test_bequest_scale_scales_the_dead_regime_utility():
     )
 
 
+def _simulated_period0_consumption(
+    *, model_scale: float, risk_aversion: float
+) -> np.ndarray:
+    """Simulate the scale-equivariant model and return period-0 consumption."""
+    model = _make_scale_equivariant_model(model_scale)
+    result = model.simulate(
+        params=_scaled_model_params(risk_aversion),
+        initial_conditions={
+            "age": jnp.full(2, 25.0),
+            "wealth": jnp.array([2.8, 12.0]) * model_scale,
+            "health": jnp.array([_Health.bad, _Health.good]),
+            "regime_id": jnp.full(2, _RegimeId.alive),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+    df = result.to_dataframe(use_labels=False)
+    return df.query("period == 0")["consumption"].to_numpy()
+
+
 @pytest.mark.parametrize("risk_aversion", [2.0, 50.0])
 def test_simulated_consumption_is_equivariant_to_rescaling_the_model(
     x64_enabled: None,  # noqa: ARG001
@@ -139,22 +159,24 @@ def test_simulated_consumption_is_equivariant_to_rescaling_the_model(
 ):
     """Scaling a homogeneous model by `k > 0` scales its simulated choices by `k`."""
     scale = 1e-7
-    params = _scaled_model_params(risk_aversion)
+    np.testing.assert_allclose(
+        _simulated_period0_consumption(model_scale=scale, risk_aversion=risk_aversion)
+        / scale,
+        _simulated_period0_consumption(model_scale=1.0, risk_aversion=risk_aversion),
+        rtol=1e-6,
+    )
 
-    def simulate(model_scale: float) -> np.ndarray:
-        model = _make_scale_equivariant_model(model_scale)
-        result = model.simulate(
-            params=params,
-            initial_conditions={
-                "age": jnp.full(2, 25.0),
-                "wealth": jnp.array([2.8, 12.0]) * model_scale,
-                "health": jnp.array([_Health.bad, _Health.good]),
-                "regime_id": jnp.full(2, _RegimeId.alive),
-            },
-            period_to_regime_to_V_arr=None,
-            log_level="debug",
-        )
-        df = result.to_dataframe(use_labels=False)
-        return df.query("period == 0")["consumption"].to_numpy()
 
-    np.testing.assert_allclose(simulate(scale) / scale, simulate(1.0), rtol=1e-6)
+@pytest.mark.parametrize("risk_aversion", [2.0, 20.0])
+def test_simulated_consumption_is_equivariant_to_rescaling_the_model_float32(
+    x64_disabled: None,  # noqa: ARG001
+    risk_aversion: float,
+):
+    """The float32 simulation is equivariant at scales the naive route overflows."""
+    scale = 1e-3
+    np.testing.assert_allclose(
+        _simulated_period0_consumption(model_scale=scale, risk_aversion=risk_aversion)
+        / scale,
+        _simulated_period0_consumption(model_scale=1.0, risk_aversion=risk_aversion),
+        rtol=1e-3,
+    )
