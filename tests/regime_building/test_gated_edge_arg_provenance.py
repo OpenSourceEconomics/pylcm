@@ -1747,14 +1747,18 @@ def _next_y_identity(y: ContinuousState) -> ContinuousState:
     return y
 
 
-def _entry_x() -> float:
+def _entry_x() -> FloatND:
     """Target-specific ENTRY law for `x`, which `src` does not carry.
 
     A retained edge must give every target state a next-period value; `x` lives
     only on the target, so `src` supplies it explicitly rather than relying on an
     implicit initialization that no longer exists.
+
+    Returns a jax array, not a Python float: the value is fed to
+    `LinSpacedGrid.get_coordinate`, whose `FloatND` hint beartype enforces as an
+    actual `jax.Array`.
     """
-    return 0.0
+    return jnp.asarray(0.0)
 
 
 def _u_src_reads_x_param(
