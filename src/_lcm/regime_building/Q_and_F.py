@@ -402,8 +402,11 @@ def _get_compute_CE(
     # its transform has to be applied before any expectation is taken.
     # `LinearExpectation.aggregate` states the same quantity over the flattened
     # lottery, but reducing per target is materially cheaper.
-    reduces_per_target = certainty_equivalent is None or isinstance(
-        certainty_equivalent, LinearExpectation
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
     )
     ce_flat_param_names = (
         MappingProxyType({})
@@ -447,6 +450,7 @@ def _get_compute_CE(
         )
 
         CE = zero
+        probability_mass = zero
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
         for target_regime_name in period_targets:
@@ -487,7 +491,9 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                CE = CE + active_regime_probs[target_regime_name] * next_V_expected_arr
+                target_probability = active_regime_probs[target_regime_name]
+                CE = CE + target_probability * next_V_expected_arr
+                probability_mass = probability_mass + target_probability
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
@@ -501,11 +507,16 @@ def _get_compute_CE(
                     active_regime_probs[target_regime_name] * node_weights
                 )
 
-        if (
-            certainty_equivalent is not None
-            and not reduces_per_target
-            and lottery_values
-        ):
+        if reduces_per_target:
+            # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
+            # the represented mass to state the same quantity as
+            # `LinearExpectation.aggregate`. Regime-transition validation accepts
+            # any mass within `jnp.allclose` of one, and at the top of that
+            # tolerance the undivided sum reverses the Bellman argmax. Dividing is
+            # exact whenever the mass is exactly one, so a well-formed lottery
+            # keeps its floating-point association.
+            CE = CE / probability_mass
+        elif certainty_equivalent is not None and lottery_values:
             CE = certainty_equivalent.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
