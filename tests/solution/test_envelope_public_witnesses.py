@@ -18,6 +18,11 @@ inputs whose spans or gaps are not representable in the working dtype.
 `strict=True` is deliberate. When the exact kernel is mounted here these cases
 start passing, and strict xfail turns that into a failure until the marker is
 removed — so the fix cannot land while the file still claims the defect exists.
+
+One of the three, the subnormal interpolation fraction, is a defect only where
+the backend flushes subnormal results to zero. XLA:CPU does; CUDA keeps them
+and recovers the exact product, so on a backend that keeps them the case
+carries no marker and states a live requirement.
 """
 
 from fractions import Fraction
@@ -38,6 +43,39 @@ BLOCK_SIZES = (0, 2, 3)
 # float32 arm under a float64 label and place the extremes outside the range
 # they were constructed for.
 DTYPES = (jnp.float32, jnp.float64) if X64_ENABLED else (jnp.float32,)
+
+
+def _subnormals_flush(dtype):
+    """Whether the backend rounds a subnormal result of `dtype` down to zero."""
+    tiny = jnp.asarray(np.finfo(dtype).tiny, dtype)
+    return float(tiny * jnp.asarray(0.5, dtype)) == 0.0
+
+
+def _subnormal_dtype_params():
+    """`DTYPES`, carrying the strict-xfail marker only where the defect bites.
+
+    A materialized interpolation fraction is destructive only where the
+    backend flushes it: XLA:CPU rounds subnormal results to zero, so the
+    fraction vanishes and the outputs collapse to the left endpoint. A backend
+    that keeps subnormals (CUDA) recovers the exact product from the surviving
+    fraction, so there the published triple is a live requirement rather than
+    a recorded defect.
+    """
+    return [
+        pytest.param(
+            dtype,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="the interpolation fraction is materialized in the "
+                "working dtype before it multiplies the endpoint difference, "
+                "so it flushes to zero and the published outputs collapse to "
+                "the left endpoint",
+            ),
+        )
+        if _subnormals_flush(dtype)
+        else dtype
+        for dtype in DTYPES
+    ]
 
 
 def _published_triple(*, grid, value, policy, marginal, x_query, dtype, block):
@@ -109,14 +147,8 @@ def test_a_segment_whose_abscissa_span_overflows_still_publishes_its_owner(
     assert published == (0.25, 0.0, 10.0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the interpolation fraction is materialized in the working dtype "
-    "before it multiplies the endpoint difference, so it flushes to zero and "
-    "the published outputs collapse to the left endpoint",
-)
 @pytest.mark.parametrize("block", BLOCK_SIZES)
-@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("dtype", _subnormal_dtype_params())
 def test_a_subnormal_interpolation_fraction_still_moves_the_outputs(dtype, block):
     """The fraction underflows, but `fraction * span` is a finite normal.
 
