@@ -61,8 +61,9 @@ def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> Fl
     """Per-kind subjective discount factor read off the ride-along `kind` code.
 
     Stands in for a model whose discount factor is a DAG function of a ride-along
-    state (e.g. a preference type) rather than the default flat `H__discount_factor`
-    parameter, so the budget's Euler weight differs across ride-along slices.
+    state (e.g. a preference type) rather than the default flat
+    `koopmans_aggregator__discount_factor` parameter, so the budget's Euler
+    weight differs across ride-along slices.
     """
     return discount_factor_by_kind[kind]
 
@@ -192,7 +193,8 @@ def build_params(
     `base_income` is a length-2 array indexed by the `kind` code (`lo`, `hi`), so
     the budget differs across the ride-along slices. With `per_kind_discount`, the
     discount factor is supplied as a length-2 `discount_factor_by_kind` array under
-    the `discount_factor` DAG function instead of the flat `H__discount_factor`.
+    the `discount_factor` DAG function instead of the flat
+    `koopmans_aggregator__discount_factor`.
     """
     base_income = jnp.array([base_income_lo, base_income_hi])
     alive_budget = {"return_liquid": return_liquid, "income": income}
@@ -205,7 +207,7 @@ def build_params(
             }
         }
         if per_kind_discount
-        else {"H": {"discount_factor": discount_factor}}
+        else {"koopmans_aggregator": {"discount_factor": discount_factor}}
     )
     utility_slot = (
         {"crra_of_kind": {"crra_by_kind": jnp.array([crra_lo, crra_hi])}}

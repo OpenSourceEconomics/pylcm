@@ -41,8 +41,10 @@ from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     FlatParams,
     PeriodToRegimeToSimulationPolicy,
@@ -52,7 +54,6 @@ from _lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
@@ -139,14 +140,22 @@ class SolverBuildContext:
     functions: EconFunctionsMapping
     """The regime's processed functions (params renamed to qualified names)."""
 
+    koopmans_aggregator: EconFunction | None
+    """The regime's processed Koopmans aggregator, or `None` in a terminal regime.
+
+    Processed like every other function, so its parameters carry their qualified
+    names — a solver that reads them off the runtime pool must use this object,
+    not the user-facing `W_linear`.
+    """
+
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of the regime's constraint names to functions."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function, or `None` for terminal regimes."""
@@ -196,7 +205,7 @@ class SolverBuildContext:
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any.
 
     `GridSearch` consumes it via the compiled Q-and-F closures; solvers

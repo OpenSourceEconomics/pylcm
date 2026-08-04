@@ -858,7 +858,7 @@ def _simulation_deterministic_transitions(
     """
     merged, _conflicting = _get_deterministic_transitions(
         transitions=regime.simulation.transitions,
-        stochastic_transition_names=regime.simulation.stochastic_transition_names,
+        transition_laws=regime.simulation.transition_laws,
     )
     return merged
 

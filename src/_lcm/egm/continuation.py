@@ -55,6 +55,8 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_laws import is_stochastic as law_is_stochastic
 from _lcm.typing import (
     ActionName,
     EconFunctionsMapping,
@@ -502,7 +504,7 @@ def build_continuation_plan(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -529,7 +531,7 @@ def build_continuation_plan(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         stateful_targets=stateful_targets,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -1865,7 +1867,7 @@ def _build_child_reads(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     stateful_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -1902,6 +1904,7 @@ def _build_child_reads(
 
         def _is_stochastic(
             name: StateName,
+            target: RegimeName = target,
             target_info: VInterpolationInfo = target_info,
             target_transition_names: frozenset[
                 TransitionFunctionName
@@ -1912,9 +1915,8 @@ def _build_child_reads(
             ):
                 return True
             transition_name = f"next_{name}"
-            return (
-                transition_name in target_transition_names
-                and transition_name in stochastic_transition_names
+            return transition_name in target_transition_names and law_is_stochastic(
+                transition_laws, target, transition_name
             )
 
         stochastic_flags = tuple(_is_stochastic(name) for name in discrete_state_names)
@@ -1957,11 +1959,7 @@ def _build_child_reads(
         weights_func = None
         if weight_keys:
             weights_func = concatenate_functions(
-                functions={
-                    name: func
-                    for name, func in functions_without_post.items()
-                    if name != "H"
-                },
+                functions=dict(functions_without_post),
                 targets=list(weight_keys),
                 return_type="dict",
                 enforce_signature=False,

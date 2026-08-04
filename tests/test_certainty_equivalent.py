@@ -9,10 +9,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import power_inverse, power_transform
 from lcm import (
     AgeGrid,
+    CertaintyEquivalent,
     DiscreteGrid,
-    H_epstein_zin,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -20,12 +22,18 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
+    W_epstein_zin,
     affine_breakpoint,
     categorical,
     fixed_transition,
     piecewise_affine,
 )
-from lcm.exceptions import InvalidNameError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -307,7 +315,7 @@ def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """NBEGM with a certainty equivalent needs `H_epstein_zin` as the regime's `H`.
+    """NBEGM with a certainty equivalent needs `W_epstein_zin` as the regime's `H`.
 
     The Euler inversion and period value read the aggregator's intertemporal
     elasticity; with the default linear `H` the recursion the kernels implement
@@ -319,7 +327,7 @@ def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
         budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
@@ -348,7 +356,8 @@ def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
                 "solver": nbegm,
-                "functions": dict(_NBEGM_FUNCTIONS) | {"H": H_epstein_zin},
+                "functions": dict(_NBEGM_FUNCTIONS),
+                "koopmans_aggregator": W_epstein_zin,
             },
             dead_kwargs={},
         )
@@ -407,8 +416,8 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
             "subsidy": _subsidy,
             "resources": _jump_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -477,8 +486,8 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -552,8 +561,8 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -619,8 +628,8 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -691,8 +700,8 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -825,7 +834,7 @@ def test_stateless_target_is_transformed_before_the_regime_expectation(
     V = model.solve(
         params={
             "alive": {
-                "H": {"discount_factor": discount_factor},
+                "koopmans_aggregator": {"discount_factor": discount_factor},
                 "certainty_equivalent": {"risk_aversion": risk_aversion},
             },
             "dead": {},
@@ -1031,14 +1040,14 @@ def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """N-NB-EGM with a certainty equivalent needs `H_epstein_zin`, like NBEGM.
+    """N-NB-EGM with a certainty equivalent needs `W_epstein_zin`, like NBEGM.
 
     The inner Euler inversion and period value read the aggregator's
     intertemporal elasticity; with the default linear `H` the nested solve
     would run a recursion the regime does not declare, so the combination
     must fail at model build.
     """
-    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
@@ -1359,6 +1368,195 @@ def test_power_mean_aggregate_is_homogeneous_of_degree_one():
     np.testing.assert_allclose(float(scaled), 1e-12 * float(unit), rtol=1e-5)
 
 
+def test_certainty_equivalent_subclass_must_supply_an_aggregation():
+    """Aggregating the continuation lottery is part of the interface, not an extra.
+
+    A subclass that declares only its parameter names cannot be instantiated,
+    so the gap surfaces where the class is written rather than part-way
+    through a solve.
+    """
+
+    class OnlyParamNames(CertaintyEquivalent):
+        @property
+        def param_names(self) -> frozenset[str]:
+            return frozenset()
+
+    with pytest.raises(TypeError, match="aggregate"):
+        OnlyParamNames()
+
+
+@pytest.mark.parametrize("overridden", ["transform", "inverse"])
+def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
+    """`PowerMean` aggregates the power transform; a custom pair needs the base class.
+
+    Its stable aggregation is specific to `v^(1-risk_aversion)`, so accepting
+    other callables would silently ignore them.
+    """
+
+    def g(value: FloatND, theta: FloatND) -> FloatND:
+        return value * theta
+
+    with pytest.raises(RegimeInitializationError, match="QuasiArithmeticMean"):
+        PowerMean(**{overridden: g})
+
+
+def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None):
+    """A zero-valued branch drives the power mean to zero above unit risk aversion.
+
+    With `risk_aversion = 3` the transform `v^-2` sends the zero branch to
+    infinity, so the mean of the transformed lottery is infinite and the
+    certainty equivalent is `inf^(-1/2) = 0`.
+    """
+    got = _aggregate_power_mean((0.0, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float64)
+    np.testing.assert_allclose(got, 0.0, atol=0.0)
+
+
+def test_power_mean_aggregate_is_zero_at_an_underflowed_node(x64_disabled: None):
+    """A float32 branch that underflows to zero yields a zero certainty equivalent."""
+    got = _aggregate_power_mean((1e-50, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float32)
+    np.testing.assert_allclose(got, 0.0, atol=0.0)
+
+
+def test_power_mean_aggregate_is_nan_for_a_zero_mass_lottery():
+    """A lottery carrying no probability mass has no certainty equivalent.
+
+    The linear-expectation path reports the same undefined aggregate, so a
+    state-action point whose regime transition assigns zero probability to
+    every reachable target is caught by the NaN diagnostics either way.
+    """
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.0, 0.0]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    assert jnp.isnan(got)
+
+
+@pytest.mark.parametrize("bad_weight", [jnp.nan, jnp.inf])
+def test_power_mean_aggregate_propagates_a_non_finite_weight(bad_weight: float):
+    """A malformed node weight makes the whole aggregate NaN rather than dropping."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, bad_weight]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    assert jnp.isnan(got)
+
+
+def test_power_mean_aggregate_has_finite_gradients_at_a_dead_zero_valued_node(
+    x64_enabled: None,
+):
+    """A zero-weight branch at value zero leaves every gradient finite.
+
+    A target regime reached with probability zero is ordinary — a survival
+    transition in the last active period, say — so gradient-based estimation
+    must not see NaN because of a branch that carries no mass.
+    """
+    values = jnp.array([1.0, 9.0, 0.0])
+    weights = jnp.array([0.5, 0.5, 0.0])
+
+    def aggregate_over_values(values: FloatND) -> FloatND:
+        return PowerMean().aggregate(
+            values=values,
+            weights=weights,
+            params={"risk_aversion": jnp.asarray(3.0)},
+        )
+
+    def aggregate_over_risk_aversion(risk_aversion: FloatND) -> FloatND:
+        return PowerMean().aggregate(
+            values=values, weights=weights, params={"risk_aversion": risk_aversion}
+        )
+
+    assert jnp.all(jnp.isfinite(jax.grad(aggregate_over_values)(values)))
+    assert jnp.isfinite(
+        jax.grad(aggregate_over_risk_aversion)(jnp.asarray(3.0)),
+    )
+
+
+def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+    """Scaling every weight by a constant leaves the certainty equivalent unchanged."""
+    params = {"risk_aversion": jnp.asarray(3.0)}
+    unit = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]), weights=jnp.array([0.25, 0.75]), params=params
+    )
+    scaled = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]), weights=jnp.array([2.5, 7.5]), params=params
+    )
+    np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
+
+
+@pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0, 1.0 + 1e-6])
+def test_power_mean_aggregate_is_continuous_across_unit_risk_aversion_off_unit_mass(
+    risk_aversion: float,
+):
+    """A lottery whose weights miss unit mass stays continuous in risk aversion."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 0.5 - 1e-4]),
+        params={"risk_aversion": jnp.asarray(risk_aversion)},
+    )
+    np.testing.assert_allclose(float(got), 3.0, rtol=1e-3)
+
+
+def test_power_mean_aggregate_reports_a_bad_param_type_as_invalid_params():
+    """A malformed runtime param points the user at their params, not their regime."""
+    with pytest.raises(InvalidParamsError):
+        PowerMean().aggregate(
+            values=jnp.array([1.0, 9.0]),
+            weights=jnp.array([0.5, 0.5]),
+            params={"risk_aversion": "two"},  # ty: ignore[invalid-argument-type]
+        )
+
+
+def _power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    return value ** (1.0 - risk_aversion)
+
+
+def _power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    return value ** (1.0 / (1.0 - risk_aversion))
+
+
+def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
+    """A hand-written power transform on a `Regime` solves to the `PowerMean` values."""
+    generic_model = get_model(
+        certainty_equivalent=QuasiArithmeticMean(
+            transform=_power_transform, inverse=_power_inverse
+        )
+    )
+    power_model = get_model(certainty_equivalent=PowerMean())
+    params = get_params(risk_aversion=2.0)
+    V_generic = generic_model.solve(params=params, log_level="debug")
+    V_power = power_model.solve(params=params, log_level="debug")
+    for period in V_power:
+        for regime_name in V_power[period]:
+            np.testing.assert_allclose(
+                np.asarray(V_generic[period][regime_name]),
+                np.asarray(V_power[period][regime_name]),
+                rtol=1e-6,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+    """Scaling every weight by a constant leaves the generic mean unchanged."""
+
+    def g(value: FloatND, theta: FloatND) -> FloatND:
+        return value * theta
+
+    def g_inv(value: FloatND, theta: FloatND) -> FloatND:
+        return value / theta
+
+    ce = QuasiArithmeticMean(transform=g, inverse=g_inv)
+    params = {"theta": jnp.asarray(2.0)}
+    unit = ce.aggregate(
+        values=jnp.array([1.0, 3.0]), weights=jnp.array([0.25, 0.75]), params=params
+    )
+    scaled = ce.aggregate(
+        values=jnp.array([1.0, 3.0]), weights=jnp.array([2.5, 7.5]), params=params
+    )
+    np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
+
+
 def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse():
     """A generic quasi-arithmetic mean aggregates as `g⁻¹(Σ w · g(v))`.
 
@@ -1402,7 +1600,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     """Build a two-regime Epstein-Zin model whose value function scales with `scale`.
 
     Every primitive is homogeneous of degree one in `scale` - the grids, the
-    income flow and both utilities - and `H_epstein_zin` and the power mean
+    income flow and both utilities - and `W_epstein_zin` and the power mean
     are themselves homogeneous of degree one. The solved value function of
     the model at `scale` is therefore exactly `scale` times the value
     function at `scale = 1`, and the optimal consumption grid point is
@@ -1436,7 +1634,8 @@ def _make_scale_equivariant_model(scale: float) -> Model:
             )
         },
         constraints={"budget": _budget},
-        functions={"utility": utility_alive, "H": H_epstein_zin},
+        functions={"utility": utility_alive},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
@@ -1455,7 +1654,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
 def _scaled_model_params(risk_aversion: float) -> dict:
     return {
         "alive": {
-            "H": {
+            "koopmans_aggregator": {
                 "discount_factor": 0.9,
                 "intertemporal_elasticity_of_substitution": 2.0,
             },
@@ -1500,7 +1699,8 @@ def _make_mixed_target_model(scale: float) -> Model:
             )
         },
         constraints={"budget": _budget},
-        functions={"utility": utility_alive, "H": H_epstein_zin},
+        functions={"utility": utility_alive},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
@@ -1587,3 +1787,169 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime_float32(
         risk_aversion=risk_aversion,
         rtol=1e-3,
     )
+
+
+def test_linear_expectation_aggregate_is_the_mass_normalized_mean():
+    """`LinearExpectation` aggregates a lottery to its probability-weighted mean."""
+    got = LinearExpectation().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 1.5]),
+        params={},
+    )
+    # Normalized weights are (0.25, 0.75), so the mean is 7.0.
+    np.testing.assert_allclose(float(got), 7.0, rtol=1e-6)
+
+
+def test_linear_expectation_takes_no_runtime_parameters():
+    """The plain expectation has nothing to parameterize."""
+    assert LinearExpectation().param_names == frozenset()
+
+
+def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
+    """The engine's per-target reduction agrees with the reference aggregation.
+
+    A regime declaring `LinearExpectation` is reduced target by target, which
+    is cheaper than flattening the joint lottery. Its `aggregate` states the
+    same quantity the long way round, so solving either way must agree.
+    """
+    fast_model = get_model(certainty_equivalent=LinearExpectation())
+    reference_model = get_model(
+        certainty_equivalent=QuasiArithmeticMean(transform=_identity, inverse=_identity)
+    )
+    params = get_params(risk_aversion=None)
+    V_fast = fast_model.solve(params=params, log_level="debug")
+    V_reference = reference_model.solve(params=params, log_level="debug")
+    for period in V_fast:
+        for regime_name in V_fast[period]:
+            np.testing.assert_allclose(
+                np.asarray(V_fast[period][regime_name]),
+                np.asarray(V_reference[period][regime_name]),
+                rtol=1e-5,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+def _identity(value: FloatND) -> FloatND:
+    return value
+
+
+@pytest.mark.parametrize("risk_aversion", [0.0, 0.5, 2.0, 5.0])
+def test_power_mean_aggregate_matches_its_own_transform_and_inverse(
+    x64_enabled: None,
+    risk_aversion: float,
+):
+    """The anchored form agrees with the pair it is the stable evaluation of.
+
+    `PowerMean.transform` and `PowerMean.inverse` define the mean; `aggregate`
+    evaluates it in a form that survives ranges where applying them directly
+    overflows. Where both are valid they must agree.
+    """
+    values = jnp.array([0.4, 1.0, 3.0, 7.5])
+    weights = jnp.array([0.1, 0.2, 0.3, 0.4])
+    params = {"risk_aversion": jnp.asarray(risk_aversion)}
+    anchored = PowerMean().aggregate(values=values, weights=weights, params=params)
+    naive = QuasiArithmeticMean(
+        transform=power_transform, inverse=power_inverse
+    ).aggregate(values=values, weights=weights, params=params)
+    np.testing.assert_allclose(float(anchored), float(naive), rtol=1e-12)
+
+
+@categorical(ordered=False)
+class _StackedRegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+def _to_retired() -> ScalarInt:
+    return _StackedRegimeId.retired
+
+
+def _to_dead() -> ScalarInt:
+    return _StackedRegimeId.dead
+
+
+def _make_stacked_model(
+    *,
+    model_kwargs: dict[str, Any],
+    working_kwargs: dict[str, Any],
+    retired_kwargs: dict[str, Any],
+) -> Model:
+    """Build a model with two non-terminal regimes and one terminal regime."""
+    base: dict[str, Any] = {
+        "states": {"wealth": _WEALTH},
+        "state_transitions": {"wealth": _next_wealth},
+        "actions": {"consumption": _CONSUMPTION},
+        "constraints": {"budget": _budget},
+        "functions": {"utility": _utility_alive},
+    }
+    working: dict[str, Any] = base | {"transition": _to_retired} | working_kwargs
+    retired: dict[str, Any] = base | {"transition": _to_dead} | retired_kwargs
+    return Model(
+        regimes={
+            "working": Regime(**working),
+            "retired": Regime(**retired),
+            "dead": Regime(
+                transition=None,
+                states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
+                functions={"utility": _utility_dead},
+            ),
+        },
+        ages=AgeGrid(start=40, stop=42, step="Y"),
+        regime_id_class=_StackedRegimeId,
+        **model_kwargs,
+    )
+
+
+def test_default_certainty_equivalent_is_the_linear_expectation():
+    """A regime that declares nothing aggregates the continuation linearly."""
+    model = _make_stacked_model(model_kwargs={}, working_kwargs={}, retired_kwargs={})
+    assert model.user_regimes["working"].certainty_equivalent == LinearExpectation()
+    assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
+
+
+def test_model_level_certainty_equivalent_reaches_every_non_terminal_regime():
+    """One model-level declaration serves all regimes with a continuation."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    assert model.user_regimes["working"].certainty_equivalent == PowerMean()
+    assert model.user_regimes["retired"].certainty_equivalent == PowerMean()
+
+
+def test_model_level_certainty_equivalent_is_withheld_from_terminal_regimes():
+    """A terminal regime has no continuation, so it receives no aggregation."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    assert model.user_regimes["dead"].certainty_equivalent is None
+
+
+def test_regime_level_certainty_equivalents_replace_the_model_level_one():
+    """Declaring one in every regime with a continuation ignores the model level."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={"certainty_equivalent": LinearExpectation()},
+        retired_kwargs={"certainty_equivalent": LinearExpectation()},
+    )
+    assert model.user_regimes["working"].certainty_equivalent == LinearExpectation()
+    assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
+
+
+def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected():
+    """The certainty equivalent is declared once for the model, or once per regime.
+
+    Declaring it in some regimes and leaving others on the model-level value
+    mixes the two, which reads as if the silent regimes had opted out of
+    something they never saw.
+    """
+    with pytest.raises(ModelInitializationError, match="retired"):
+        _make_stacked_model(
+            model_kwargs={},
+            working_kwargs={"certainty_equivalent": PowerMean()},
+            retired_kwargs={},
+        )

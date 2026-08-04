@@ -5,16 +5,22 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors, with_signature
 
-from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
-from _lcm.regime_building.h_dag import _get_build_H_kwargs
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.regime_building.w_dag import _get_build_W_kwargs
+from _lcm.transition_laws import (
+    TransitionLaws,
+    all_stochastic_next_state_names,
+    is_stochastic,
+)
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     QAndFFunction,
     RegimeName,
@@ -38,11 +44,12 @@ def get_Q_and_F(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
@@ -87,17 +94,22 @@ def get_Q_and_F(
             degenerate lottery node weighted only by the regime transition
             probability.
         transitions: Immutable mapping of transition names to transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
             info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
+            regime, or `None`.
         continuation_functions: Function pool the continuation sub-DAG (the state
             transitions and the stochastic weights) is resolved against. Defaults to
             `functions`, which is correct in the solve phase, where both pools are the
@@ -110,9 +122,9 @@ def get_Q_and_F(
             solve phase. The simulate phase must pass the SIMULATE transitions, so that
             the flow sub-DAG is closed under the simulate pool supplied as `functions`.
         flow_stochastic_transition_names: Stochastic names to exclude when merging
-            `flow_transitions`. Defaults to `stochastic_transition_names`. It is a
-            separate argument because a state may be stochastic in one phase and
-            deterministic in the other.
+            `flow_transitions`. Defaults to the stochastic names read off
+            `transition_laws`. It is a separate argument because a state may be
+            stochastic in one phase and deterministic in the other.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -125,7 +137,7 @@ def get_Q_and_F(
     )
     flow_pool = transitions if flow_transitions is None else flow_transitions
     flow_stochastic_names = (
-        stochastic_transition_names
+        all_stochastic_next_state_names(transition_laws)
         if flow_stochastic_transition_names is None
         else flow_stochastic_transition_names
     )
@@ -135,7 +147,8 @@ def get_Q_and_F(
     deterministic_transitions, conflicting_deterministic_transition_names = (
         _get_deterministic_transitions(
             transitions=flow_pool,
-            stochastic_transition_names=flow_stochastic_names,
+            transition_laws=transition_laws,
+            stochastic_names=flow_stochastic_transition_names,
         )
     )
     U_and_F = _get_U_and_F(
@@ -148,7 +161,7 @@ def get_Q_and_F(
         stochastic_transition_names=flow_stochastic_names,
         next_state_names=next_state_names,
     )
-    compute_E_next_V, continuation_deps = _get_compute_E_next_V(
+    compute_CE, continuation_deps = _get_compute_CE(
         # `continuation_pool`, NOT `functions`: the continuation is priced under
         # the perceived (solve-phase) law, helpers included. In the solve phase the
         # two are the same object; only simulate passes them apart.
@@ -156,13 +169,13 @@ def get_Q_and_F(
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
     )
-    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -189,16 +202,16 @@ def get_Q_and_F(
 
         """
         U_arr, F_arr = U_and_F(**states_actions_params)
-        E_next_V, _ = compute_E_next_V(
+        CE, _ = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
-            E_next_V=E_next_V,
-            **_build_H_kwargs(states_actions_params),
+            CE=CE,
+            **_build_W_kwargs(states_actions_params),
         )
 
         # Handle cases when there is only one state.
@@ -216,10 +229,12 @@ def get_compute_intermediates(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    certainty_equivalent: CertaintyEquivalent | None = None,
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
+    co_map_state_names: tuple[StateName, ...],
     next_state_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
@@ -243,23 +258,29 @@ def get_compute_intermediates(
             diagnostics disagree with the solve they explain.
         transitions: Immutable mapping of target regime names to state transition
             functions.
-        stochastic_transition_names: Frozenset of stochastic transition function
-            names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
+        co_map_state_names: Tuple of state names co-mapped with the
+            continuation V in the solve kernel. The diagnostics pass an empty
+            tuple: they are handed the full, un-sliced value arrays and map
+            over every state, so no axis has been sliced off to compensate for.
 
     Returns:
-        Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
+        Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
 
     """
     deterministic_transitions, conflicting_deterministic_transition_names = (
         _get_deterministic_transitions(
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
         )
     )
     U_and_F = _get_U_and_F(
@@ -269,20 +290,21 @@ def get_compute_intermediates(
         conflicting_deterministic_transition_names=(
             conflicting_deterministic_transition_names
         ),
-        stochastic_transition_names=stochastic_transition_names,
+        stochastic_transition_names=all_stochastic_next_state_names(transition_laws),
         next_state_names=next_state_names,
     )
-    compute_E_next_V, continuation_deps = _get_compute_E_next_V(
+    compute_CE, continuation_deps = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
+        co_map_state_names=co_map_state_names,
     )
-    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -305,19 +327,19 @@ def get_compute_intermediates(
     ]:
         """Compute all Q_and_F intermediates."""
         U_arr, F_arr = U_and_F(**states_actions_params)
-        E_next_V, active_regime_probs = compute_E_next_V(
+        CE, active_regime_probs = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
-            E_next_V=E_next_V,
-            **_build_H_kwargs(states_actions_params),
+            CE=CE,
+            **_build_W_kwargs(states_actions_params),
         )
 
-        return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
+        return U_arr, F_arr, CE, Q_arr, active_regime_probs
 
     return compute_intermediates
 
@@ -416,22 +438,22 @@ def partition_continuation_targets(
     return stateful_targets, scalar_targets
 
 
-def _get_compute_E_next_V(
+def _get_compute_CE(
     *,
     functions: EconFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
-    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_state_names: tuple[StateName, ...],
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
 ]:
-    """Build the closure that aggregates next period's value into `E[V']`.
+    """Build the closure that aggregates next period's value into `CE`.
 
     The single continuation-aggregation site of the engine: both the Bellman
     `Q` and the NaN diagnostics call the closure this returns, so they cannot
@@ -461,7 +483,8 @@ def _get_compute_E_next_V(
         scalar_targets: Targets carrying no state, whose rank-zero value enters
             as one degenerate lottery node.
         transitions: Immutable mapping of transition names to transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -471,7 +494,7 @@ def _get_compute_E_next_V(
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
     Returns:
-        Tuple of the closure returning `(E_next_V, active_regime_probs)` and the
+        Tuple of the closure returning `(CE, active_regime_probs)` and the
         dependencies whose arguments must enter the calling closure's signature.
 
     """
@@ -496,13 +519,13 @@ def _get_compute_E_next_V(
             get_next_stochastic_weights_function(
                 functions=functions,
                 transitions=bundle,
-                stochastic_transition_names=stochastic_transition_names,
+                transition_laws=transition_laws,
                 regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
             transitions=bundle,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             regime_name=target_regime_name,
         )
         V_arr_name = "next_V_arr"
@@ -518,7 +541,9 @@ def _get_compute_E_next_V(
             get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         )
         stochastic_variables = tuple(
-            key for key in bundle if key in stochastic_transition_names
+            key
+            for key in bundle
+            if is_stochastic(transition_laws, target_regime_name, key)
         )
         next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
@@ -527,20 +552,32 @@ def _get_compute_E_next_V(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    ce, ce_flat_param_names = resolve_certainty_equivalent(certainty_equivalent)
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    reduces_per_target = certainty_equivalent is None or isinstance(
+        certainty_equivalent, LinearExpectation
+    )
+    ce_flat_param_names = (
+        MappingProxyType({})
+        if certainty_equivalent is None
+        else certainty_equivalent.flat_param_names
+    )
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
     # induction co-map, so their `next_`-prefixed coordinates are not passed to
     # the interpolator (which no longer indexes those axes).
     co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    def compute_E_next_V(
+    def compute_CE(
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
         states_actions_params: Mapping[str, Any],
     ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
-        """Aggregate the continuation lottery into `E[V']` at one state-action point.
+        """Aggregate the continuation lottery into `CE` at one state-action point.
 
         Args:
             next_regime_to_V_arr: Immutable mapping of target regime names to
@@ -564,11 +601,11 @@ def _get_compute_E_next_V(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        E_next_V, lottery_values, lottery_weights = _scalar_target_contribution(
+        CE, lottery_values, lottery_weights = _scalar_target_contribution(
             scalar_targets=scalar_targets,
             next_regime_to_V_arr=next_regime_to_V_arr,
             active_regime_probs=active_regime_probs,
-            as_lottery=ce is not None,
+            as_lottery=not reduces_per_target,
             zero=zero,
         )
         for target_regime_name in period_targets:
@@ -599,7 +636,7 @@ def _get_compute_E_next_V(
                 **extra_kw,
             )
 
-            if ce is None:
+            if reduces_per_target:
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
                 if next_V_has_stochastic_states[target_regime_name]:
@@ -609,10 +646,7 @@ def _get_compute_E_next_V(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                E_next_V = (
-                    E_next_V
-                    + active_regime_probs[target_regime_name] * next_V_expected_arr
-                )
+                CE = CE + active_regime_probs[target_regime_name] * next_V_expected_arr
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
@@ -626,8 +660,12 @@ def _get_compute_E_next_V(
                     active_regime_probs[target_regime_name] * node_weights
                 )
 
-        if ce is not None and lottery_values:
-            E_next_V = ce.aggregate(
+        if (
+            certainty_equivalent is not None
+            and not reduces_per_target
+            and lottery_values
+        ):
+            CE = certainty_equivalent.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
                 # The params template types every certainty-equivalent
@@ -641,14 +679,14 @@ def _get_compute_E_next_V(
                 ),
             )
 
-        return E_next_V, active_regime_probs
+        return CE, active_regime_probs
 
     deps = (
         compute_regime_transition_probs,
         *state_transitions.values(),
         *next_stochastic_states_weights.values(),
     )
-    return compute_E_next_V, deps
+    return compute_CE, deps
 
 
 def _scalar_target_contribution(
@@ -666,7 +704,8 @@ def _scalar_target_contribution(
     contributes exactly one node whose only weight is the probability of going
     there. Under a certainty equivalent that node joins the joint lottery, so it
     is transformed together with every other target's nodes rather than on its
-    own; under the linear expectation it is added straight to `E[V']`.
+    own; under the linear expectation it is added straight to the running
+    certainty equivalent.
 
     Args:
         scalar_targets: Targets active next period that carry no state.
@@ -679,10 +718,11 @@ def _scalar_target_contribution(
         zero: Zero at the shape and dtype of the value being built up.
 
     Returns:
-        Tuple of the seeded `E[V']`, the lottery values, and their weights.
+        Tuple of the seeded certainty equivalent, the lottery values, and
+        their weights.
 
     """
-    E_next_V = zero
+    CE = zero
     values: list[FloatND] = []
     weights: list[FloatND] = []
     for target_regime_name in scalar_targets:
@@ -693,8 +733,8 @@ def _scalar_target_contribution(
             values.append(node)
             weights.append(prob * jnp.ones_like(node))
         else:
-            E_next_V = E_next_V + prob * scalar_V
-    return E_next_V, values, weights
+            CE = CE + prob * scalar_V
+    return CE, values, weights
 
 
 def _as_lottery(
@@ -713,13 +753,20 @@ def _as_lottery(
             states.
 
     Returns:
-        Tuple of the flattened values and their probabilities, which sum to one.
+        Tuple of the flattened values and their probabilities, which sum to
+        one — or to zero for a target whose weights carry no mass at all.
 
     """
     flat_values = jnp.ravel(values)
     if has_stochastic_states:
         flat_weights = jnp.ravel(weights)
-        return flat_values, flat_weights / jnp.sum(flat_weights)
+        weight_sum = jnp.sum(flat_weights)
+        # A target whose joint weights carry no mass contributes no branch. It
+        # must not contribute NaN either: every target's nodes are concatenated
+        # into one lottery, so a NaN here would destroy the certainty
+        # equivalent of the well-specified targets alongside it.
+        safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        return flat_values, flat_weights / safe_weight_sum
     uniform = jnp.full(
         flat_values.shape, 1.0 / flat_values.size, dtype=flat_values.dtype
     )
@@ -750,7 +797,7 @@ def _get_arg_names_of_Q_and_F(
 def _get_joint_weights_function(
     *,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
@@ -761,7 +808,8 @@ def _get_joint_weights_function(
 
     Args:
         transitions: Transitions of the target regime.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         regime_name: Name of the target regime.
 
     Returns:
@@ -772,7 +820,7 @@ def _get_joint_weights_function(
     arg_names = [
         f"weight_{regime_name}__{key}"
         for key in transitions
-        if key in stochastic_transition_names
+        if is_stochastic(transition_laws, regime_name, key)
     ]
 
     @with_signature(args=arg_names)
@@ -789,7 +837,8 @@ def _get_joint_weights_function(
 def _get_deterministic_transitions(
     *,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
+    stochastic_names: frozenset[TransitionFunctionName] | None = None,
 ) -> tuple[
     Mapping[TransitionFunctionName, TransitionFunction],
     frozenset[TransitionFunctionName],
@@ -819,15 +868,32 @@ def _get_deterministic_transitions(
     over-reported as conflicting — harmless, since the conflict set only matters
     for names the decision evaluation actually reads.
 
+    `stochastic_names` overrides the per-target reading of `transition_laws`
+    with a name-level set. The simulate phase needs it: `transition_laws`
+    describes the SOLVE-phase laws, and a state may be stochastic in one phase
+    and deterministic in the other, so asking the solve laws would merge a
+    simulate-stochastic law in as deterministic. `None` keeps the per-target
+    reading, which is correct whenever the two phases coincide.
+
+    Args:
+        transitions: Per-target transition bundles to merge.
+        transition_laws: Per-target description of how each state obtains its
+            value; consulted only when `stochastic_names` is `None`.
+        stochastic_names: Name-level stochastic set to use instead.
+
     Returns:
         Tuple of the immutable merged `next_<state>` mapping and the frozenset of
         conflicting `next_<state>` names.
     """
     merged: dict[TransitionFunctionName, TransitionFunction] = {}
     conflicting: set[TransitionFunctionName] = set()
-    for bundle in transitions.values():
+    for target_regime_name, bundle in transitions.items():
         for name, func in bundle.items():
-            if name in stochastic_transition_names:
+            if (
+                name in stochastic_names
+                if stochastic_names is not None
+                else is_stochastic(transition_laws, target_regime_name, name)
+            ):
                 continue
             if name in merged and _law_sources_differ(merged[name], func):
                 conflicting.add(name)
@@ -981,7 +1047,7 @@ def _get_U_and_F(
             deterministic_transitions=deterministic_transitions,
         ),
         **dict(deterministic_transitions),
-        **{k: v for k, v in functions.items() if k != "H"},
+        **dict(functions),
     }
     return concatenate_functions(
         functions=combined,

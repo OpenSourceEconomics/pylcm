@@ -109,6 +109,11 @@ from _lcm.solution.contract import (
     SolverBuildContext,
 )
 from _lcm.state_action_space import create_state_action_space
+from _lcm.transition_laws import (
+    TransitionLawInfo,
+    TransitionLaws,
+    all_stochastic_next_state_names,
+)
 from _lcm.typing import (
     ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
@@ -490,7 +495,7 @@ def process_regimes(
             # published pool when no specialization is present.
             solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
-            solve_stochastic_transition_names=solution.stochastic_transition_names,
+            solve_transition_laws=solution.transition_laws,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
@@ -626,19 +631,33 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
-                    # An IID draw does not depend on its previous value, so the
-                    # target's entry distribution is the process's own
-                    # unconditional law and there is nothing for the source to
-                    # hand over. Every other state -- including an AR(1)
-                    # process, whose next draw does depend on a previous value
-                    # the source would have to supply -- needs a handoff.
-                    if isinstance(target_grid, _IIDProcess):
-                        continue
                     if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
                         state_name=state_name,
                     ):
+                        continue
+                    # With no handoff, an IID process is still supplied: an IID
+                    # draw does not depend on its previous value, so the
+                    # target's entry distribution is the process's own
+                    # unconditional law and there is nothing for the source to
+                    # hand over. Every other state -- including an AR(1)
+                    # process, whose next draw does depend on a previous value
+                    # the source would have to supply -- has no next-period
+                    # value here.
+                    if isinstance(target_grid, _IIDProcess):
+                        entry_error = _runtime_param_entry_error(
+                            phase_name=phase_name,
+                            phase_reachability=phase_reachability,
+                            ages=ages,
+                            period=period,
+                            source=source,
+                            target=target,
+                            state_name=state_name,
+                            target_grid=target_grid,
+                        )
+                        if entry_error is not None:
+                            error_messages.append(entry_error)
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
@@ -664,6 +683,59 @@ def _state_handoff_errors(
                         f"support."
                     )
     return error_messages
+
+
+def _runtime_param_entry_error(
+    *,
+    phase_name: PhaseName,
+    phase_reachability: PhaseReachability,
+    ages: AgeGrid,
+    period: int,
+    source: RegimeName,
+    target: RegimeName,
+    state_name: StateName,
+    target_grid: _IIDProcess,
+) -> str | None:
+    """Return an error if an entered IID process needs runtime parameters.
+
+    The entry weights are the process's unconditional row, and they are
+    evaluated inside the *source's* Bellman equation, which reads only the
+    source's own parameters. A law supplied at runtime therefore has no value
+    the source can read: restating it under the source would create a second
+    knob for one law, free to disagree with the nodes the target's value
+    function is built on. Entry is available for a law fixed at construction.
+
+    Args:
+        phase_name: Phase whose slices are being checked.
+        phase_reachability: Static graph for this phase.
+        ages: The AgeGrid for the model.
+        period: Period of the source regime.
+        source: Regime being left.
+        target: Regime being entered.
+        state_name: Name of the target's process state.
+        target_grid: The target's grid for `state_name`.
+
+    Returns:
+        The error message, or `None` when the process's law is fully fixed.
+
+    """
+    runtime_params = target_grid.params_to_pass_at_runtime
+    if not runtime_params:
+        return None
+    status = phase_reachability.edge_status(period=period, source=source, target=target)
+    named = ", ".join(f"'{param}'" for param in sorted(runtime_params))
+    return (
+        f"{phase_name} phase, period {period} "
+        f"(age {_display_age(ages, period)}), source '{source}' -> "
+        f"period {period + 1} (age {_display_age(ages, period + 1)}), "
+        f"target '{target}' retains a {status.name} edge. The target declares "
+        f"stochastic process '{state_name}', which the source does not carry, "
+        f"so it is entered at the process's own law. That law is priced in "
+        f"'{source}', which reads only its own parameters, but '{state_name}' "
+        f"passes {named} at runtime. Fix '{state_name}' at construction, "
+        f"declare it on '{source}', or narrow the transition's static target "
+        f"support."
+    )
 
 
 def _display_age(ages: AgeGrid, period: int) -> float:
@@ -760,6 +832,7 @@ def _build_solution_phase(
 
     """
     core = _process_regime_core(
+        koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         state_transitions=spec.solution.state_transitions,
@@ -852,12 +925,13 @@ def _build_solution_phase(
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
-            stochastic_transition_names=core.stochastic_transition_names,
+            transition_laws=core.transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
             co_map_state_names=co_map_state_names,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
             grid_schedule=grid_schedule,
@@ -870,12 +944,13 @@ def _build_solution_phase(
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
-            stochastic_transition_names=core.stochastic_transition_names,
+            transition_laws=core.transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_space,
             grids=all_grids[regime_name],
             enable_jit=enable_jit,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             next_state_names=next_state_names,
             # F4: diagnostics recompute on the SAME period-specific target grid as the
@@ -900,9 +975,10 @@ def _build_solution_phase(
             regime_name=regime_name, grid_schedule=grid_schedule
         ),
         functions=core.functions,
+        koopmans_aggregator=core.koopmans_aggregator,
         constraints=core.constraints,
         transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
+        transition_laws=core.transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -980,7 +1056,7 @@ def _build_solution_phase(
         _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
+        transition_laws=core.transition_laws,
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
@@ -1266,7 +1342,7 @@ def _build_simulation_phase(
     enable_jit: bool,
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
-    solve_stochastic_transition_names: frozenset[TransitionFunctionName],
+    solve_transition_laws: TransitionLaws,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
     solver: Solver,
@@ -1315,8 +1391,8 @@ def _build_simulation_phase(
             stochastic weights, and every helper they read) is resolved against this
             pool rather than the simulate one.
         solve_transitions: Transitions from the solve phase (reused).
-        solve_stochastic_transition_names: Stochastic transition names from solve
-            (reused).
+        solve_transition_laws: Immutable mapping of target regime names to their
+            transition laws, built in the solve phase and reused here.
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
             function, used for Q_and_F in both phases.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
@@ -1335,6 +1411,7 @@ def _build_simulation_phase(
         name: spec.solution.functions[name] for name in carried_only
     }
     core = _process_regime_core(
+        koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         state_transitions=spec.simulation.state_transitions,
@@ -1466,15 +1543,18 @@ def _build_simulation_phase(
             functions=functions,
             constraints=constraints,
             transitions=solve_transitions,
-            stochastic_transition_names=solve_stochastic_transition_names,
+            transition_laws=solve_transition_laws,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
             flow_transitions=core.transitions,
-            flow_stochastic_transition_names=core.stochastic_transition_names,
+            flow_stochastic_transition_names=all_stochastic_next_state_names(
+                core.transition_laws
+            ),
             next_state_names=next_state_names,
             grid_schedule=grid_schedule,
         )
@@ -1498,9 +1578,8 @@ def _build_simulation_phase(
         source_regime_name=regime_name,
         functions=simulate_functions,
         transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
+        transition_laws=core.transition_laws,
         all_grids=all_grids,
-        variables=variables,
         flat_param_names=flat_param_names,
         enable_jit=enable_jit,
     )
@@ -1611,7 +1690,7 @@ def _build_simulation_phase(
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         reachability=simulation_reachability,
-        stochastic_transition_names=core.stochastic_transition_names,
+        transition_laws=core.transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         Q_and_F=pointwise_Q_and_F,
@@ -1727,8 +1806,8 @@ class _CoreResult:
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     next_regime_func: TransitionFunction | None
     """The coarse regime transition function; `None` for terminal regimes and
@@ -1738,11 +1817,16 @@ class _CoreResult:
     """Per-target regime transition probability functions (params renamed),
     or `None` when the regime transition is coarse or absent."""
 
+    koopmans_aggregator: EconFunction | None
+    """The Bellman aggregator with params renamed to qnames; `None` in a
+    terminal regime."""
+
 
 def _process_regime_core(
     *,
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, UserFunction],
+    koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -1761,6 +1845,8 @@ def _process_regime_core(
     Args:
         functions: Phase-resolved regime functions for this build.
         constraints: Phase-resolved constraint functions.
+        koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
+            terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
         nested_transitions: Per-target transition bundles for internal
@@ -2000,19 +2086,91 @@ def _process_regime_core(
 
     transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
 
+    transition_laws = _build_transition_laws(
+        transitions=transitions,
+        processed_functions=processed_functions,
+        all_grids=all_grids,
+        entered_processes=frozenset(entered_process_grids),
+    )
+
     next_regime_func, next_regime_cells = _process_next_regime_cells(
         next_regime_cells_by_target=next_regime_cells_by_target,
         regime_params_template=regime_params_template,
+    )
+
+    processed_koopmans_aggregator = (
+        None
+        if koopmans_aggregator is None
+        else _process_one_function(
+            func=koopmans_aggregator,
+            regime_params_template=regime_params_template,
+            param_key="koopmans_aggregator",
+        )
     )
 
     return _CoreResult(
         functions=phase_functions,
         constraints=processed_constraints,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
+        koopmans_aggregator=processed_koopmans_aggregator,
     )
+
+
+def _build_transition_laws(
+    *,
+    transitions: TransitionFunctionsMapping,
+    processed_functions: Mapping[str, UserFunction],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    entered_processes: frozenset[tuple[RegimeName, ProcessName]],
+) -> TransitionLaws:
+    """Describe every target's transition laws, after synthesis has built them.
+
+    Stochasticity is read off the synthesized functions rather than re-derived
+    from the user's declarations: a law is stochastic exactly when a
+    target-qualified weight function exists for it. Building the description here
+    -- once both explicit and intrinsic laws are in `processed_functions` -- is
+    what lets a process the source does not carry be described at all.
+
+    Args:
+        transitions: Immutable mapping of target regime names to their bundles of
+            unqualified `next_<state>` transition functions.
+        processed_functions: Mapping of qualified function names to functions,
+            carrying the synthesized `weight_<target>__next_<state>` laws.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
+        entered_processes: Frozenset of `(target, process)` pairs entered at the
+            process's own unconditional law.
+
+    Returns:
+        Immutable mapping of target regime names to their transition laws.
+
+    """
+    laws: dict[RegimeName, MappingProxyType[TransitionFunctionName, TransitionLawInfo]]
+    laws = {}
+    for target, bundle in transitions.items():
+        target_laws: dict[TransitionFunctionName, TransitionLawInfo] = {}
+        for next_state_name in bundle:
+            state_name = next_state_name.removeprefix("next_")
+            qualified_name = qname_from_tree_path((target, next_state_name))
+            weight_name = f"weight_{qualified_name}"
+            target_laws[next_state_name] = TransitionLawInfo(
+                target=target,
+                next_state_name=next_state_name,
+                qualified_name=qualified_name,
+                stochastic=weight_name in processed_functions,
+                continuous_process=isinstance(
+                    all_grids.get(target, MappingProxyType({})).get(state_name),
+                    _ContinuousStochasticProcess,
+                ),
+                intrinsic_entry=(target, state_name) in entered_processes,
+                weight_name=(
+                    weight_name if weight_name in processed_functions else None
+                ),
+            )
+        laws[target] = MappingProxyType(target_laws)
+    return MappingProxyType(laws)
 
 
 def _process_next_regime_cells(
@@ -3432,15 +3590,16 @@ def _build_Q_and_F_per_period(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
     continuation_functions: EconFunctionsMapping | None = None,
     flow_transitions: TransitionFunctionsMapping | None = None,
     flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
@@ -3469,11 +3628,14 @@ def _build_Q_and_F_per_period(
         functions: Immutable mapping of internal (possibly periodized) functions.
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function.
         regime_to_v_interpolation_info: Mapping of regime names to representative
             V-interpolation info (the age-invariant fallback).
         flat_param_names: Frozenset of flat parameter names for the regime.
+        koopmans_aggregator: The regime's Bellman aggregator, with params
+            renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
@@ -3551,10 +3713,11 @@ def _build_Q_and_F_per_period(
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
+            koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
             # Resolve the perceived continuation pool at THIS group's representative
             # period (F1) — not a period frozen into the published solve functions.
@@ -3666,9 +3829,8 @@ def _build_next_state_vmapped(
     source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variables: Variables,
     flat_param_names: frozenset[str],
     enable_jit: bool,
 ) -> MappingProxyType[int, NextStateSimulationFunction]:
@@ -3713,9 +3875,8 @@ def _build_next_state_vmapped(
                 resolve_periodized_nodes(functions, representative_period),
             ),
             transitions=period_transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             all_grids=all_grids,
-            variables=variables,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)
         non_vmap = {"period", "age"} | flat_param_names

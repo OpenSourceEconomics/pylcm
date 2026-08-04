@@ -177,8 +177,9 @@ def test_ordinary_carrier_target_only_read_builds() -> None:
     # Building and a finite solve both succeed.
     params = cast("dict", model.get_params_template())
     for regime_params in params.values():
-        if "H" in regime_params and "discount_factor" in regime_params["H"]:
-            regime_params["H"]["discount_factor"] = 0.95
+        aggregator = regime_params.get("koopmans_aggregator")
+        if aggregator is not None and "discount_factor" in aggregator:
+            aggregator["discount_factor"] = 0.95
     solution = model.solve(params=params, log_level="debug")
     working_V = [
         regime_to_V["working"]

@@ -140,6 +140,7 @@ def prune_broadcast_variables(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction,
     ages: AgeGrid | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[
@@ -156,6 +157,9 @@ def prune_broadcast_variables(
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
         broadcast_variables: Per regime, the broadcast state/action names.
+        koopmans_aggregator: The model-level Bellman aggregator, used as a
+            reachability root in every non-terminal regime that declares none
+            of its own.
         ages: The model's `AgeGrid`, used to convert a representative period
             to an age before resolving `AgeSpecializedFunction` markers.
             `None` skips resolution (no marker can appear then).
@@ -192,6 +196,7 @@ def prune_broadcast_variables(
             specs=specs,
             user_regimes=user_regimes,
             broadcast_variables=broadcast_variables,
+            koopmans_aggregator=koopmans_aggregator,
             kept=kept,
             phase_name=phase_name,
             all_regime_names=all_regime_names,
@@ -242,6 +247,7 @@ def _phase_fixed_point(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     phase_name: PhaseName,
     all_regime_names: frozenset[RegimeName],
@@ -277,6 +283,7 @@ def _phase_fixed_point(
             needed = _needed_names(
                 phase_slice=phase_slice,
                 user_regime=user_regime,
+                koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
                 kept=grown,
                 ages=ages,
@@ -384,6 +391,7 @@ def _needed_names(
     *,
     phase_slice: RegimePhaseSpec,
     user_regime: UserRegime,
+    koopmans_aggregator: UserFunction,
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: AgeGrid | None,
@@ -393,7 +401,8 @@ def _needed_names(
 
     Roots:
 
-    - `utility` and `H` (when present)
+    - `utility`
+    - the Koopmans aggregator (non-terminal regimes only)
     - every constraint
     - every derived-categorical function
     - the regime transition (coarse inputs, or every granular cell)
@@ -411,10 +420,16 @@ def _needed_names(
     )
 
     pool: dict[str, UserFunction] = dict(functions)
-    targets = [name for name in ("utility", "H") if name in pool]
+    targets = ["utility"] if "utility" in pool else []
     targets += [name for name in user_regime.derived_categoricals if name in pool]
 
     roots = {f"__constraint_{name}": func for name, func in constraints.items()}
+    if not user_regime.terminal:
+        roots["__koopmans_aggregator"] = (
+            phase_slice.koopmans_aggregator
+            if phase_slice.koopmans_aggregator is not None
+            else koopmans_aggregator
+        )
     roots |= _regime_transition_roots(phase_slice)
     roots |= _law_roots(
         phase_slice=phase_slice, candidate_targets=candidate_targets, kept=kept

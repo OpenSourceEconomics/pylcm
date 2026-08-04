@@ -545,7 +545,7 @@ def build_params(
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "resources": {"base_income": base_income, "premium": premium},
             "income": {"mu": 0.0, "sigma": 1.0},
             "tax": tax_params,

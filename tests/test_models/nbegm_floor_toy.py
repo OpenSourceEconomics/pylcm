@@ -95,7 +95,7 @@ def build_params(
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "coh_floor": {"floor_asset": floor_asset},
             "resources": {"base_income": base_income},
             "alive": {

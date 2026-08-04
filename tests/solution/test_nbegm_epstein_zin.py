@@ -19,12 +19,12 @@ from lcm import (
     NBEGM,
     AgeGrid,
     GridSearch,
-    H_epstein_zin,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
@@ -89,9 +89,9 @@ def _build_model(*, solver: Solver) -> Model:
             "utility": _utility,
             "resources": _resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
         constraints={"feasible": _feasible},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=solver,
     )
@@ -111,7 +111,7 @@ def _build_model(*, solver: Solver) -> Model:
 
 _PARAMS = {
     "alive": {
-        "H": {
+        "koopmans_aggregator": {
             "discount_factor": 0.95,
             "intertemporal_elasticity_of_substitution": 1.5,
         },

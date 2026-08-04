@@ -272,6 +272,9 @@ per-file-ignores."tests/solution/test_egm_interp.py" = [
 per-file-ignores."tests/test_certainty_equivalent.py" = [
   "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
 ]
+per-file-ignores."tests/test_koopmans_aggregation.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
 per-file-ignores."tests/test_compilation_cache.py" = [
   "S603", # subprocess call with test-controlled input
 ]
@@ -302,7 +305,14 @@ per-file-ignores."tests/test_temporal_aggregation.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "_lcm.utils.containers.Unset", "Unset" ]
+extend-immutable-calls = [
+  "_lcm.certainty_equivalent.LinearExpectation",
+  "_lcm.utils.containers.Unset",
+  "lcm.LinearExpectation",
+  "lcm.certainty_equivalent.LinearExpectation",
+  "LinearExpectation",
+  "Unset",
+]
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
