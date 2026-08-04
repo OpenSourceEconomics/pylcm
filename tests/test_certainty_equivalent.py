@@ -292,7 +292,7 @@ def _reference_backward_induction(
 
     Mirrors the engine's computation order on the same grids: interpolate
     each target's V at next wealth, transform, average over health, weight
-    by regime probabilities, invert, aggregate via the EZ `H`. Returns the
+    by regime probabilities, invert, aggregate via the EZ `W`. Returns the
     per-period alive V arrays (shape `(n_wealth, n_health)`) and the
     period-0 argmax consumption (same shape).
     """

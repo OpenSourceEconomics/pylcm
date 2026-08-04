@@ -404,7 +404,7 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_H(utility: FloatND, CE: FloatND) -> FloatND:
+def _epstein_zin_W(utility: FloatND, CE: FloatND) -> FloatND:
     return utility + CE
 
 
@@ -431,7 +431,7 @@ def _build_two_target_closure(
         co_map_state_names=(),
         flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
         functions=MappingProxyType({"utility": _sum_utility}),
-        koopmans_aggregator=_epstein_zin_H,
+        koopmans_aggregator=_epstein_zin_W,
         constraints=MappingProxyType({}),
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),

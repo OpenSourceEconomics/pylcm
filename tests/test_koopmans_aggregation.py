@@ -48,7 +48,7 @@ def test_W_epstein_zin_unit_ies_is_cobb_douglas():
 
 
 def test_default_aggregator_is_W_linear():
-    """A non-terminal regime without an explicit `H` gets `W_linear` at model build."""
+    """A non-terminal regime declaring no aggregator gets `W_linear` at model build."""
     toy = get_toy_model()
     assert toy.user_regimes["alive"].koopmans_aggregator is W_linear
 

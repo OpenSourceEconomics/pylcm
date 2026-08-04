@@ -139,7 +139,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
     pseudo-function name `certainty_equivalent` in the regime's params
     (`{"certainty_equivalent": {"<arg>": ...}}`).
 
-    Combined with a user-supplied Bellman aggregator `H` this expresses
+    Combined with a user-supplied Koopmans aggregator `W` this expresses
     Epstein-Zin and other transformed-expectation recursive preferences.
     The parameters are read from the params template only, not from DAG
     function outputs.
