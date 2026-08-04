@@ -43,6 +43,7 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
+from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.processing import (
     Regime,
     compute_active_periods_by_regime,
@@ -287,11 +288,21 @@ class Model:
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
         )
-        self.user_regimes = finalize_regimes(
+        finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+        )
+        # A process law named in `fixed_params` means exactly what the same
+        # value passed to the process constructor means, so it is bound into
+        # the grid here — before validation, structure preparation, and
+        # entry-law synthesis, all of which ask whether a process's law is
+        # known. What no process could take stays a runtime parameter and
+        # reaches `build_regimes_and_template` unchanged.
+        self.user_regimes, residual_fixed_params = bind_fixed_process_laws(
+            user_regimes=finalized_regimes,
+            fixed_params=self.fixed_params,
         )
         validate_model_inputs(
             n_periods=self.n_periods,
@@ -321,7 +332,7 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
-            fixed_params=self.fixed_params,
+            fixed_params=residual_fixed_params,
             prepared_structure=prepared_structure,
         )
         self.enable_jit = enable_jit
