@@ -15,7 +15,11 @@ from _lcm.simulation.simulate import (
     simulate,
 )
 from _lcm.utils.logging import get_logger
-from lcm import Model
+from lcm import (
+    LinearExpectation,
+    Model,
+    W_linear,
+)
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
@@ -49,7 +53,10 @@ def simulate_inputs():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,
@@ -67,7 +74,10 @@ def simulate_inputs():
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=finalize_regimes(
-                user_regimes=user_regimes, derived_categoricals={}
+                user_regimes=user_regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             regime_names_to_ids=regime_names_to_ids,
         ),
@@ -79,7 +89,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         {
             "working_life": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(1.0),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
                     "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
                     "next_regime__final_age_alive": jnp.asarray(0),

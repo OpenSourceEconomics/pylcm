@@ -50,14 +50,15 @@ automation. Python 3.14+ is required.
   `_lcm.engine.Regime` (compiled function sets).
 - `finalize_regimes` (`src/_lcm/regime_building/finalize.py`): finalizes each user
   `Regime` at model build into the form the model actually runs — model-level
-  `derived_categoricals` merged in, default `H` injected, completeness validated (a
-  `utility` entry, state-transition coverage, state/action overlap, distributed-grid
-  rules). The result is a plain `lcm.regime.Regime`, still user vocabulary, so the
-  params template reads the user's coarseness off it. Internal signatures mark the
-  post-merge form with `FinalizedUserRegime` (defined in `finalize.py`) — an alias the
-  type checker treats as plain `Regime`; it enforces nothing and only documents that
-  finalization has happened. A bare `Regime` validates only local, value-shape
-  properties at construction — completeness may be satisfied only at the model level.
+  `derived_categoricals` merged in, the model-level Koopmans aggregator and certainty
+  equivalent injected, completeness validated (a `utility` entry, state-transition
+  coverage, state/action overlap, distributed-grid rules). The result is a plain
+  `lcm.regime.Regime`, still user vocabulary, so the params template reads the user's
+  coarseness off it. Internal signatures mark the post-merge form with
+  `FinalizedUserRegime` (defined in `finalize.py`) — an alias the type checker treats as
+  plain `Regime`; it enforces nothing and only documents that finalization has happened.
+  A bare `Regime` validates only local, value-shape properties at construction —
+  completeness may be satisfied only at the model level.
 - `canonicalize_regimes` (`src/_lcm/regime_building/canonicalize.py`): the model-level
   canonicalization stage. Rewrites every phase slice's laws into the canonical
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
@@ -100,6 +101,23 @@ automation. Python 3.14+ is required.
     inside a per-target dict) and never nested.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
+
+**Koopmans Aggregation (`src/lcm/koopmans_aggregation.py`)**
+
+- `W_linear(utility, CE, discount_factor)`: the expected-utility aggregator
+  `U + β · CE`, and the model-level default.
+- `W_epstein_zin(utility, CE, discount_factor, intertemporal_elasticity_of_substitution)`:
+  the CES form; pair with `certainty_equivalent=PowerMean()` for the full Epstein-Zin
+  recursion. Both are weighted power means over the same kernel
+  (`_lcm.power_mean.weighted_power_mean`) — the aggregator averages `(utility, CE)` at
+  weights `(1-β, β)` and exponent `1 - 1/ψ`, the certainty equivalent the continuation
+  lottery at exponent `1 - risk_aversion` — so a range one survives the other survives
+  too. The naive `**` form of either loses the value entirely at small inputs and
+  reverses action rankings near its unit-exponent limit.
+- A regime's aggregator lives in the `koopmans_aggregator` slot, not in `functions`; its
+  parameters beyond `utility` and `CE` surface in the params template under the
+  pseudo-function key `koopmans_aggregator`. `Phased(solve=..., simulate=...)` gives the
+  two phases different aggregators.
 
 **Value Function Representation (`src/_lcm/regime_building/V.py`)**
 
@@ -204,6 +222,8 @@ Regime(
         "name": helper_func, ...
     },
     constraints={"name": constraint_func, ...},  # Optional: constraint functions
+    koopmans_aggregator=W_epstein_zin,           # Optional: overrides the model-level one
+    certainty_equivalent=PowerMean(),            # Optional: overrides the model-level one
 )
 
 # Terminal regime (transition=None, no state_transitions)
@@ -242,6 +262,10 @@ Regime(
     Cell params nest under the target in the template
     (`template[regime][target]["next_regime"]`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
+- `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
+  takes the model-level value. Declaring either at the regime level requires declaring
+  it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
+  regimes take neither and declaring one is an error.
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
   model finalizes its regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state
@@ -293,12 +317,20 @@ never both (ambiguity errors); a regime-level `None` masks the model entry (mask
 state also drops its broadcast law; an unbound mask errors). Broadcast laws are not
 merged into terminal regimes.
 
+**Model-level continuation slots:**
+
+`Model(koopmans_aggregator=..., certainty_equivalent=...)` default to `W_linear` and
+`LinearExpectation()`. Unlike the mapping slots above these are single values, so the
+rule is all-or-nothing rather than per-name: declare each here, or in every regime that
+has a continuation, never some of each (a mixed declaration errors). Terminal regimes
+receive neither, and declaring either on one is an error.
+
 Broadcast states and actions are pruned per regime by DAG reachability: a broadcast
-variable survives only where a root computation (utility, `H`, constraints, derived
-categoricals, the regime transition, or a law of motion toward a reachable target that
-keeps the state) transitively reads it, per phase slice, pruned only when dead in both
-phases. Regime-level declarations are never pruned. `model.pruned_variables` records the
-result per regime.
+variable survives only where a root computation (utility, the Koopmans aggregator,
+constraints, derived categoricals, the regime transition, or a law of motion toward a
+reachable target that keeps the state) transitively reads it, per phase slice, pruned
+only when dead in both phases. Regime-level declarations are never pruned.
+`model.pruned_variables` records the result per regime.
 
 `distributed=True` is legal only on model-level states; a sharded state pruned from a
 non-terminal regime is an error (unshard or make the regime use it). `batch_size` stays
@@ -399,7 +431,8 @@ initial_conditions = {
   name)
 - `model.user_regimes` - Immutable mapping of regime names to plain `Regime` objects:
   the regimes as the model runs them, finalized at model build (model-level slots
-  merged, default `H` injected, completeness validated), still in user vocabulary
+  merged, Koopmans aggregator injected, completeness validated), still in user
+  vocabulary
 - `model._regimes` - Immutable mapping of regime names to canonical `Regime` objects
   (`_lcm.engine.Regime`) produced by `process_regimes`. Private — the canonical form is
   engine-internal; user code should read `user_regimes`.
@@ -591,7 +624,7 @@ bare `str` whenever a string slot has a fixed semantic role.
 | `ActionName`             | Names of actions — entries of `action_names`, keys of `regime.actions`.                                                                                 |
 | `StateOrActionName`      | Mixed flat keys covering both states and actions — `flat_grids`, `all_grids[regime]` values, `state_and_discrete_action_names`.                         |
 | `ProcessName`            | Subset of `StateName` for stochastic processes — keys of `_ContinuousStochasticProcess`-typed mappings, process-transition helpers.                     |
-| `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
+| `FunctionName`           | User-supplied function names — `"utility"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                                |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
 
 When a string slot covers more than one of the categories above, prefer a union (e.g.

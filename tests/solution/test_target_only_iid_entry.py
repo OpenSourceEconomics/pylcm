@@ -139,7 +139,11 @@ def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
     got = _source_value(
         model,
         {
-            "source": {"utility": {}, "H": {"discount_factor": 1.0}, "next_regime": {}},
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
             "target": {"utility": {}},
         },
     )
@@ -164,7 +168,11 @@ def test_lognormal_gauss_hermite_entry_weights_an_asymmetric_law() -> None:
     got = _source_value(
         model,
         {
-            "source": {"utility": {}, "H": {"discount_factor": 1.0}, "next_regime": {}},
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
             "target": {"utility": {}},
         },
     )
@@ -186,7 +194,11 @@ def test_a_uniform_law_prices_identically_either_way() -> None:
     got = _source_value(
         model,
         {
-            "source": {"utility": {}, "H": {"discount_factor": 1.0}, "next_regime": {}},
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
             "target": {"utility": {}},
         },
     )
@@ -245,7 +257,7 @@ def test_the_entry_law_decides_the_action() -> None:
         {
             "source": {
                 "utility": {},
-                "H": {"discount_factor": 1.0},
+                "koopmans_aggregator": {"discount_factor": 1.0},
                 "next_wealth": {},
                 "next_regime": {},
             },
@@ -289,7 +301,11 @@ def test_entry_draws_come_from_the_process_law_not_from_its_solver_nodes() -> No
         enable_jit=False,
     )
     params = {
-        "source": {"utility": {}, "H": {"discount_factor": 1.0}, "next_regime": {}},
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "next_regime": {},
+        },
         "target": {"utility": {}},
     }
     n_subjects = 20_000

@@ -47,7 +47,10 @@ _N = 6  # ages 20..25; working ages 20..24, terminal at 25
 _AGES = AgeGrid(start=20, stop=20 + _N - 1, step="Y")
 _CGRID = LinSpacedGrid(start=0.05, stop=25.0, n_points=25)
 _PARAMS = {
-    "alive": {"next_wealth": {"interest_rate": 0.05}, "H": {"discount_factor": 0.95}},
+    "alive": {
+        "next_wealth": {"interest_rate": 0.05},
+        "koopmans_aggregator": {"discount_factor": 0.95},
+    },
     "dead": {},
 }
 

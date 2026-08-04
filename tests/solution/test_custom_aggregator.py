@@ -9,8 +9,10 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearExpectation,
     LinSpacedGrid,
     Model,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -74,12 +76,12 @@ def borrowing_constraint(
 
 def ces_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     ies: float,
 ) -> float:
     rho = 1 - ies
-    return ((1 - discount_factor) * utility**rho + discount_factor * E_next_V**rho) ** (
+    return ((1 - discount_factor) * utility**rho + discount_factor * CE**rho) ** (
         1 / rho
     )
 
@@ -125,8 +127,6 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         "labor_income": labor_income,
         "is_working": is_working,
     }
-    if custom_H is not None:
-        functions["H"] = custom_H
     if with_pref_type:
         functions["discount_factor"] = discount_factor_from_type
 
@@ -152,6 +152,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions=functions,
+        koopmans_aggregator=custom_H,
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
@@ -196,7 +197,7 @@ def test_custom_ces_aggregator_differs_from_default():
     }
     params_ces = {
         "working_life": {
-            "H": {"discount_factor": 0.95, "ies": 0.5},
+            "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
@@ -229,50 +230,63 @@ def test_default_H_injected_for_non_terminal():
         active=lambda age: age < 1,
     )
     finalized = finalize_regimes(
-        user_regimes={"regime": regime}, derived_categoricals={}
+        user_regimes={"regime": regime},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )["regime"]
-    assert "H" in finalized.functions
+    assert finalized.koopmans_aggregator is W_linear
 
 
 def test_default_H_not_injected_for_terminal():
-    """Terminal regimes should not have H injected."""
+    """Terminal regimes have no continuation, so they get no aggregator."""
     r = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )
-    assert "H" not in r.functions
+    finalized = finalize_regimes(
+        user_regimes={"regime": r},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
+    assert finalized.koopmans_aggregator is None
 
 
 def test_custom_H_not_overwritten():
-    """A user-provided H should not be replaced by the default."""
+    """A regime-level aggregator survives finalization."""
 
-    def my_H(utility: float, E_next_V: float) -> float:
-        return utility + E_next_V
+    def my_H(utility: float, CE: float) -> float:
+        return utility + CE
 
     r = UserRegime(
         transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
-        functions={"utility": lambda: 0.0, "H": my_H},
+        functions={"utility": lambda: 0.0},
+        koopmans_aggregator=my_H,
     )
-    assert r.functions["H"] is my_H
+    finalized = finalize_regimes(
+        user_regimes={"regime": r},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
+    assert finalized.koopmans_aggregator is my_H
 
 
 def test_params_template_includes_H():
-    """The params template should include H's parameters."""
+    """The default aggregator's `discount_factor` surfaces in the template."""
     model = _make_model()
     template = model._params_template
-    # Default H has discount_factor parameter
-    assert "H" in template["working_life"]
-    assert "discount_factor" in template["working_life"]["H"]
+    assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
 
 
 def test_params_template_custom_H():
     """Custom H params should appear in the template."""
     model = _make_model(custom_H=ces_H)
     template = model._params_template
-    assert "H" in template["working_life"]
-    assert "discount_factor" in template["working_life"]["H"]
-    assert "ies" in template["working_life"]["H"]
+    assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
+    assert "ies" in template["working_life"]["koopmans_aggregator"]
 
 
 def test_terminal_regime_value_unchanged_by_H():
@@ -289,7 +303,7 @@ def test_terminal_regime_value_unchanged_by_H():
     }
     params_ces = {
         "working_life": {
-            "H": {"discount_factor": 0.95, "ies": 0.5},
+            "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
@@ -313,7 +327,7 @@ def test_terminal_regime_value_unchanged_by_H():
 # ---------------------------------------------------------------------------
 
 
-def test_model_constructs_when_state_reachable_only_via_h_dag():
+def test_model_constructs_when_state_reachable_only_via_w_dag():
     """State reached only via H's DAG deps must pass the usage check.
 
     `pref_type` is used by `discount_factor_from_type`, whose output
@@ -369,12 +383,12 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
 
 def wealth_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     wealth: float,
     wealth_weight: float,
 ) -> float:
-    return utility + discount_factor * E_next_V + wealth_weight * wealth
+    return utility + discount_factor * CE + wealth_weight * wealth
 
 
 def test_h_consumes_continuous_state():
@@ -382,7 +396,7 @@ def test_h_consumes_continuous_state():
 
     Regression guard against a refactor that narrows `_H_accepted_params`
     to reject state names. At the last period where `working_life` is
-    active, `E_next_V = 0` (dead utility is zero), so adding
+    active, `CE = 0` (dead utility is zero), so adding
     `wealth_weight * wealth` to `Q` shifts `V` by exactly that term —
     independent of the argmax.
     """
@@ -395,7 +409,7 @@ def test_h_consumes_continuous_state():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "wealth_weight": 0.0},
+                "koopmans_aggregator": {"discount_factor": 0.95, "wealth_weight": 0.0},
                 **common,
             },
             "dead": {},
@@ -405,7 +419,7 @@ def test_h_consumes_continuous_state():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "wealth_weight": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "wealth_weight": 0.1},
                 **common,
             },
             "dead": {},
@@ -420,12 +434,12 @@ def test_h_consumes_continuous_state():
 
 def consumption_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     consumption: float,
     action_weight: float,
 ) -> float:
-    return utility + discount_factor * E_next_V + action_weight * consumption
+    return utility + discount_factor * CE + action_weight * consumption
 
 
 def test_h_consumes_continuous_action():
@@ -445,7 +459,7 @@ def test_h_consumes_continuous_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "action_weight": 0.0},
+                "koopmans_aggregator": {"discount_factor": 0.95, "action_weight": 0.0},
                 **common,
             },
             "dead": {},
@@ -455,7 +469,7 @@ def test_h_consumes_continuous_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "action_weight": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "action_weight": 0.1},
                 **common,
             },
             "dead": {},
@@ -472,14 +486,12 @@ def test_h_consumes_continuous_action():
 
 def labor_supply_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     labor_supply: DiscreteAction,
     bonus: float,
 ) -> FloatND:
-    return (
-        utility + discount_factor * E_next_V + bonus * labor_supply.astype(jnp.float32)
-    )
+    return utility + discount_factor * CE + bonus * labor_supply.astype(jnp.float32)
 
 
 def test_h_consumes_discrete_action():
@@ -493,7 +505,7 @@ def test_h_consumes_discrete_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "bonus": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "bonus": 0.1},
                 "utility": {"disutility_of_work": 0.5},
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
@@ -517,11 +529,11 @@ def test_h_consumes_discrete_action():
 
 def pref_type_direct_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     pref_type: DiscreteState,
 ) -> FloatND:
-    return utility + discount_factor * E_next_V + 0.1 * pref_type.astype(jnp.float32)
+    return utility + discount_factor * CE + 0.1 * pref_type.astype(jnp.float32)
 
 
 def test_h_consumes_discrete_state():
@@ -554,7 +566,7 @@ def test_h_consumes_discrete_state():
 
 def mixed_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     ies: float,
     wealth: float,
@@ -563,7 +575,7 @@ def mixed_H(
 ) -> FloatND:
     rho = 1 - ies
     u_eff = utility + 1e-3 * wealth
-    v_eff = E_next_V + 1e-3 * consumption
+    v_eff = CE + 1e-3 * consumption
     combined = ((1 - discount_factor) * u_eff**rho + discount_factor * v_eff**rho) ** (
         1 / rho
     )
@@ -583,7 +595,7 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
         params={
             "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
             "working_life": {
-                "H": {"ies": 0.5},
+                "koopmans_aggregator": {"ies": 0.5},
                 "utility": {"disutility_of_work": 0.5},
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },

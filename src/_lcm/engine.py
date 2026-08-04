@@ -329,9 +329,9 @@ class SolutionPhase:
     Productmap-wrapped and fused with on-device reductions inside a single
     `jax.jit`; invoked only in the error path when `validate_V` detects
     NaN. Each closure returns a flat dict of reductions — scalar
-    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
+    `{U_nan,CE_nan,Q_nan,F_feasible}_overall` entries, per-dimension
     `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
-    scalar means — so full-shape U/F/E/Q arrays never materialise in
+    scalar means — so full-shape U/F/CE/Q arrays never materialise in
     host-visible memory.
     """
 
@@ -629,7 +629,7 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

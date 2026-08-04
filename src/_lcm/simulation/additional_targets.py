@@ -62,7 +62,7 @@ def _collect_all_available_targets(
 
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime."""
-    excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    excluded = _get_stochastic_weight_function_names(regime)
     sim = regime.simulation
     return {
         name for name in sim.functions if name not in excluded
@@ -192,7 +192,7 @@ def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
     sim = regime.simulation
     pool: dict[str, UserFunction] = {
-        **{k: v for k, v in sim.functions.items() if k != "H"},
+        **sim.functions,
         **sim.constraints,
     }
     if sim.compute_regime_transition_probs is not None:
