@@ -131,12 +131,39 @@ jobs:
         # this job runs it against the `type-checking` env instead.
         run: pixi run -e type-checking prek run ty --all-files
   run-tests-gpu:
-    name: Run tests on GPU
+    name: Run tests on GPU (${{ matrix.precision }}-bit, ${{ matrix.suite }})
     # Config:
     # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
     # Docs on GPU runners:
     # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
     runs-on: ubuntu-latest-gpu
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - '64'
+          - '32'
+        # `tests/solution` is the DC-EGM battery: a fifth of the suite's files
+        # and four fifths of its GPU wall time. It gets its own job so that no
+        # single process spans the whole suite and so the two halves run at the
+        # same time rather than end to end. A GPU job that has to carry both has
+        # run for hours and been reclaimed before reporting anything.
+        suite:
+          - solution
+          - rest
+        include:
+          - suite: solution
+            pytest_paths: tests/solution
+          - suite: rest
+            pytest_paths: >-
+              tests --ignore=tests/solution
+              --ignore=tests/test_mahler_yum_2024.py
+    # Invoking `pytest` directly rather than the pixi task drops the task's
+    # `env`, so the preallocation setting is restored here. Without it JAX
+    # claims most of the device up front and the Mahler & Yum solve has nothing
+    # left to grow into.
+    env:
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
     steps:
       - name: Check CUDA version
         run: |
@@ -150,62 +177,31 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
-      - name: Run pytest on GPU
+      - name: Run Mahler & Yum on GPU
+        if: matrix.suite == 'rest'
         shell: bash {0}
-        # Invoking `pytest` directly rather than the pixi task drops the task's
-        # `env`, so the preallocation setting is restored here. Without it JAX
-        # claims most of the device up front and the Mahler & Yum solve has
-        # nothing left to grow into.
-        env:
-          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
-        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
-        # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
-        #
-        # The GPU-scale Mahler & Yum module runs first, in its own process: its
+        # The GPU-scale Mahler & Yum module runs in a process of its own: its
         # solve kernels only fit the device when XLA fully fuses the
         # max-over-actions reduction, and compiling them late in a long-lived
-        # process that has run the whole DC-EGM battery has produced an
-        # unfused executable whose scratch arena (half the state-action product)
-        # exceeds device memory. A fresh process pins the fused compile.
-        run: |
-          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py -n0 \
-          && pixi run -e tests-cuda12 pytest tests -n0 \
-            --ignore=tests/test_mahler_yum_2024.py
-  run-tests-gpu-32bit:
-    name: Run tests on GPU (32-bit precision)
-    runs-on: ubuntu-latest-gpu
-    steps:
-      - name: Check CUDA version
-        run: |
-          nvidia-smi
-          nvcc --version || echo "nvcc not found"
-      - uses: actions/checkout@v7
-      - uses: prefix-dev/setup-pixi@v0.10.0
-        with:
-          pixi-version: v0.75.0
-          cache: true
-          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: tests-cuda12
-          frozen: false
-      - name: Run pytest on GPU with 32-bit precision
+        # process that has run a whole battery has produced an unfused
+        # executable whose scratch arena (half the state-action product) exceeds
+        # device memory. A fresh process pins the fused compile.
+        run: >-
+          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py
+          --precision=${{ matrix.precision }} -n0
+      - name: Run pytest on GPU
         shell: bash {0}
-        # Invoking `pytest` directly rather than the pixi task drops the task's
-        # `env`, so the preallocation setting is restored here.
-        env:
-          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
         # starved of host CPU/memory by parallel JAX AOT compiles. CPU jobs keep -n 4.
         #
-        # Mahler & Yum runs first in its own process, for the reason given on the
-        # 64-bit job. Keeping it in the same process as the rest of the suite has
-        # exhausted host memory late in the run, and the OOM takes the runner
-        # agent with it — the job then reports "the hosted runner lost
-        # communication with the server" and uploads no log to explain itself.
-        run: |
-          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py \
-            --precision=32 -n0 \
-          && pixi run -e tests-cuda12 pytest tests --precision=32 -n0 \
-            --ignore=tests/test_mahler_yum_2024.py
+        # `--release-compiled-programs` drops JAX's in-memory compiled-program
+        # cache at every module boundary. A worker's resident memory otherwise
+        # grows with every distinct program it has compiled, and the splitting
+        # above divides that growth without bounding it. A released program is
+        # recompiled from the persistent on-disk cache rather than from cold.
+        run: >-
+          pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
+          --precision=${{ matrix.precision }} -n0 --release-compiled-programs
   run-explanation-notebooks:
     name: Run explanation notebooks on Python 3.14
     runs-on: ubuntu-latest
