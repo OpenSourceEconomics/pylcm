@@ -10,6 +10,7 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseReachability
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -309,8 +310,14 @@ class SolutionPhase:
     stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
+    reachability: PhaseReachability
+    """Construction-time solve graph shared by every canonical regime."""
+
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
+
+    validation_regime_transition_probs: RegimeTransitionFunction | None
+    """Probability function retaining declared cells for runtime validation."""
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
@@ -489,6 +496,9 @@ class SimulationPhase:
 
     stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
+
+    reachability: PhaseReachability
+    """Construction-time simulate graph shared by every canonical regime."""
 
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""

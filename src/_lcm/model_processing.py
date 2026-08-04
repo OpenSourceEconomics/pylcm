@@ -30,6 +30,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
     process_regimes,
 )
@@ -55,6 +56,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -79,6 +81,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            prepared_structure=prepared_structure,
         )
         params_template = create_params_template(regimes)
     else:
@@ -88,6 +91,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            prepared_structure=prepared_structure,
         )
 
     return regimes, params_template
@@ -100,6 +104,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -121,6 +126,7 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
     )
     raw_params_template = create_params_template(raw_regimes)
 
@@ -167,6 +173,7 @@ def validate_model_inputs(
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -222,7 +229,10 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables, ages=ages
+            user_regimes,
+            broadcast_variables=broadcast_variables,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
     )
 
@@ -259,6 +269,7 @@ def _validate_all_variables_used(
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -269,7 +280,7 @@ def _validate_all_variables_used(
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
-    of motion toward a reachable target (which this per-regime check cannot
+    of motion toward a candidate target (which this per-regime check cannot
     see).
 
     Args:
@@ -290,7 +301,11 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         if ages is not None:
-            active_periods = ages.get_periods_where(user_regime.active)
+            active_periods = (
+                ()
+                if active_periods_by_regime is None
+                else active_periods_by_regime.get(regime_name, ())
+            )
             if not active_periods and _regime_has_markers(user_regime):
                 # This regime is about to fail with the precise
                 # "active at no model age" `RegimeInitializationError` once
@@ -456,6 +471,17 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
+                else None
+            ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    solution.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solution.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.validation_regime_transition_probs is not None
                 else None
             ),
         )

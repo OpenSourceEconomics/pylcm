@@ -45,7 +45,7 @@ def _grid_mapping_errors(
     suffix = " or Phased" if allow_phase_variants else ""
     if allow_age_specialized_grid:
         # An age-varying continuous-state grid is a valid state (states only).
-        allowed = allowed | AgeSpecializedGrid  # type: ignore[operator]
+        allowed = allowed | AgeSpecializedGrid
         suffix += " or AgeSpecializedGrid"
     error_messages: list[str] = []
     for k, v in mapping.items():
@@ -372,7 +372,7 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
         if not side:
             error_messages.append(
                 f"transition{label}: an empty per-target dict declares no "
-                f"reachable targets — use `transition=None` for a terminal "
+                f"candidate targets — use `transition=None` for a terminal "
                 f"regime.",
             )
         for target_regime_name, cell in side.items():

@@ -19,15 +19,16 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
-    continuation_grid_signature_from_schedule,
+    continuation_group_key,
+    continuation_info_lookup,
     expand_groups_to_periods,
     group_periods_by_key,
-    periodized_tree_signature,
     resolve_periodized_nodes,
 )
-from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
+from _lcm.regime_building.Q_and_F import get_compute_intermediates
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -48,7 +49,8 @@ def _build_compute_intermediates_per_period(
     *,
     active_periods: tuple[int, ...],
     flat_param_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
@@ -103,47 +105,21 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    def continuation_info(
-        period: int,
-    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-        """All-regime interpolation info for period `t`'s continuation V_{t+1}.
-
-        Mirrors `_build_Q_and_F_per_period.continuation_info` so a NaN diagnostic
-        recomputes intermediates on the *same* period-specific target grid the primary
-        solve used, not the representative grid.
-        """
-        if period_to_regime_v_interp is None:
-            return regime_to_v_interpolation_info
-        per_period = period_to_regime_v_interp.get(
-            period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
-        )
-        return MappingProxyType(
-            {
-                regime_name: per_period.get(regime_name, info)
-                for regime_name, info in regime_to_v_interpolation_info.items()
-            }
-        )
-
-    # Group by (target configuration, per-period policy signature, continuation-grid
-    # signature), mirroring `_build_Q_and_F_per_period`: with no age-specialized node
-    # the signature is constant and the grouping collapses to the target configuration.
-    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
-        complete = get_period_targets(
-            period=period,
-            transitions=transitions,
-            regimes_to_active_periods=regimes_to_active_periods,
-        )
-        cont_sig = continuation_grid_signature_from_schedule(
-            grid_schedule=grid_schedule,
-            target_period=period + 1,
-            target_regimes=complete,
-        )
-        signature = (
-            periodized_tree_signature(functions, period),
-            periodized_tree_signature(constraints, period),
-            cont_sig,
-        )
-        return (complete, signature)
+    # `continuation_info` mirrors `_build_Q_and_F_per_period.continuation_info` so a
+    # NaN diagnostic recomputes intermediates on the *same* period-specific target
+    # grid the primary solve used, not the representative grid. `group_key` mirrors
+    # `_build_Q_and_F_per_period.group_key`'s grouping.
+    continuation_info = continuation_info_lookup(
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    group_key = continuation_group_key(
+        phase_reachability=phase_reachability,
+        source_regime_name=source_regime_name,
+        functions=functions,
+        constraints=constraints,
+        grid_schedule=grid_schedule,
+    )
 
     configs = group_periods_by_key(active_periods, group_key)
 

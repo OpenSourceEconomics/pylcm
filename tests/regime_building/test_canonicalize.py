@@ -22,6 +22,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
+from _lcm.reachability import build_phase_reachability
 from _lcm.regime_building.canonicalize import (
     canonicalize_phased_regimes,
     canonicalize_regimes,
@@ -225,6 +226,41 @@ def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() 
     assert isinstance(canonical, Mapping)
     assert set(canonical) == {"work", "retire", "dead"}
     assert all(cell.underlying is _next_regime for cell in canonical.values())
+
+
+def test_temporal_graph_limits_canonical_transition_bundles() -> None:
+    """Dormant catalog targets do not create canonical transition bundles."""
+    regimes = {
+        "work": _regime(state_transitions={"wealth": _next_wealth}),
+        "retire": _regime(state_transitions={"wealth": _next_wealth}),
+        "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+    }
+    finalized = finalize_regimes(user_regimes=regimes, derived_categoricals={})
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    graph = build_phase_reachability(
+        n_periods=2,
+        active_periods_by_regime={"work": {0}, "retire": {1}, "dead": {1}},
+        candidate_targets_by_source={
+            "work": {"work", "retire", "dead"},
+            "retire": {"work", "retire", "dead"},
+            "dead": set(),
+        },
+        terminal_regimes={"dead"},
+    )
+
+    specs = canonicalize_phased_regimes(
+        raw_specs=raw_specs,
+        all_regime_names=frozenset(regimes),
+        solution_reachability=graph,
+        simulation_reachability=graph,
+    )
+
+    wealth_transitions = specs["work"].solution.state_transitions["wealth"]
+    regime_transition = specs["work"].solution.regime_transition
+    assert isinstance(wealth_transitions, Mapping)
+    assert isinstance(regime_transition, Mapping)
+    assert set(wealth_transitions) == {"retire"}
+    assert set(regime_transition) == {"dead", "retire"}
 
 
 def test_per_target_regime_transition_passes_through() -> None:
