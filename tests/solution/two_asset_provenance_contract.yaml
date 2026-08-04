@@ -1,0 +1,80 @@
+---
+# Accuracy budgets for the two-asset continuation-provenance witnesses.
+#
+# This file is the single source of the numbers. `test_egm_continuation_grid_
+# provenance.py` reads it and asserts against these fields directly, so a budget
+# and the gate that enforces it cannot drift apart.
+#
+# `value_regret` is the relative deviation of a solver's published V from a dense
+# grid-search solve of the same model, node-by-node on the workload's stated
+# interior mask: `|V_egm - V_brute| / |V_brute|`. `median`, `p90` and `max` are
+# the median, the 0.90 quantile, and the maximum over the masked nodes.
+#
+# A budget must satisfy `max >= p90 >= median`, since each statistic dominates
+# the previous one by construction. Budgets are set above the measured values
+# recorded under `measured`, and apply to both required profiles; the
+# measurements are reported per profile because they differ.
+#
+# Node counts are small (9 for retired, 54-81 for working), so `max` is a
+# one-node statistic and moves discontinuously with the mask. It is declared
+# anyway: a single badly wrong node is the shape a coverage failure takes, and a
+# median cannot see it.
+contract_version: 2
+workloads:
+  retired_egm:
+    description: >-
+      The 1-D EGM solver's retired value on the unconstrained liquid interior.
+      Covers W1 (reading the terminal regime on the terminal regime's own grid)
+      and the matched-grid control.
+    budget:
+      median_value_regret: 0.01
+      p90_value_regret: 0.02
+      max_value_regret: 0.03
+    measured:
+      float64: {median: 0.0027, p90: 0.0108, max: 0.0199}
+      float32: {median: 0.0027, p90: 0.0108, max: 0.0199}
+  two_asset_g2egm:
+    description: >-
+      The default two-asset backend (`TwoAssetEGM(envelope="g2egm")`) on the
+      covered pension interior. Covers W2, W3, W7 and W8 -- matched grids, a
+      moving liquid grid, a moving pension grid, and the retirement boundary.
+    budget:
+      median_value_regret: 0.03
+      p90_value_regret: 0.15
+      max_value_regret: 0.25
+    measured:
+      float64: {median: 0.0158, p90: 0.1138, max: 0.2193}
+      float32: {median: 0.0159, p90: 0.1137, max: 0.2193}
+  two_asset_rfc:
+    description: >-
+      The non-default rooftop-cut backend (`TwoAssetEGM(envelope="rfc")`) on the
+      same masks. Covers W4 and W9.
+      These numbers bound a known deficit; they are not an accuracy promise. The
+      rooftop cut misses the G2EGM budget on this benchmark whatever the grids
+      do -- its median is unmoved by a moving grid, but its tail and its worst
+      node are not, and its worst node is roughly a factor of six worse than
+      G2EGM's. What degrades is the cut's selection among candidates, not which
+      grid the candidates were read on: G2EGM stays inside its own budget on the
+      identical configurations, and the retirement-boundary period, where both
+      backends run the same step, is bit-identical between them. Whether the
+      worst node is an intrinsic property of the method or a defect in this
+      implementation is open.
+    budget:
+      median_value_regret: 0.06
+      p90_value_regret: 0.30
+      max_value_regret: 1.40
+    measured:
+      float64: {median: 0.0432, p90: 0.2302, max: 1.3022}
+      float32: {median: 0.0499, p90: 0.2776, max: 1.3025}
+candidate_set:
+  description: >-
+    The one-asset EGM's candidate-set regret against a dense sweep, on the
+    renamed-target model.
+  budget:
+    max_regret: 0.01
+compilation:
+  description: >-
+    A dynamic target grid supplies values, not a compilation signature, so
+    moving nodes must not multiply compiled programs.
+  budget:
+    max_executable_cache_entries: 1
