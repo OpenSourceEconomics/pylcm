@@ -15,11 +15,11 @@ JIT. The solve loop invokes the same adapter for every solver, branching only on
 which optional outputs (`continuation`, `simulation_policy`) are present, never
 on solver type.
 
-This module is an engine leaf. Reaching `lcm.regime` would close an import
-cycle — it imports the `lcm.solvers` façade, which re-exports `Solver` from
-here. `UserRegime` and `VInterpolationInfo` (whose module imports `lcm.regime`)
-are therefore referenced through two-form aliases: precise element types for ty
-under `TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
+This module is an engine leaf. Resolving finalized user-regime or
+`VInterpolationInfo` types at runtime would close an import cycle through the
+`lcm.solvers` façade, which re-exports `Solver` from here. They are therefore
+referenced through two-form aliases: precise element types for ty under
+`TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
 remaining engine types (`StateActionSpace`, `EGMCarry`, `EGMSimPolicy`) live in
 sibling leaves with no path back to `lcm.solvers`, so they import normally and
 beartype checks them precisely. The widened runtime aliases are required because
@@ -39,6 +39,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     ConstraintFunctionsMapping,
@@ -75,18 +76,19 @@ type ContinuationPayload = EGMCarry
 type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
+    from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
-    from lcm.regime import Regime as UserRegime
 
-    UserRegimesMapping: TypeAlias = Mapping[RegimeName, UserRegime]  # noqa: UP040
+    UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
+        RegimeName, FinalizedUserRegime
+    ]
     RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
         RegimeName, VInterpolationInfo
     ]
 else:
-    # `lcm.regime` — reached directly, and transitively through
-    # `_lcm.regime_building.V` — closes a cycle via the `lcm.solvers` façade,
-    # which re-exports `Solver` from this module. ty reads the precise element
-    # types above; the beartype claw checks only the outer container at runtime.
+    # Resolving the element types closes a cycle via the `lcm.solvers` façade,
+    # which re-exports `Solver` from this module. ty reads the precise types
+    # above; the beartype claw checks only the outer container at runtime.
     UserRegimesMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
 
@@ -107,6 +109,9 @@ class SolverBuildContext:
 
     state_action_space: StateActionSpace
     """The regime's state-action space."""
+
+    solution_reachability: PhaseReachability
+    """Static solution graph used to derive solver layouts."""
 
     Q_and_F_functions: MappingProxyType[int, QAndFFunction]
     """Immutable mapping of period to Q-and-F closures."""

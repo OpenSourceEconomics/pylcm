@@ -57,8 +57,15 @@ def _next_regime(age: float):  # noqa: ARG001
 def _normalized(regimes: dict[str, UserRegime], ages: AgeGrid):
     finalized = finalize_regimes(user_regimes=regimes, derived_categoricals={})
     phased = normalize_all_regime_phases(user_regimes=finalized)
+    active_periods_by_regime = {
+        regime_name: tuple(ages.get_periods_where(regime.active))
+        for regime_name, regime in finalized.items()
+    }
     return finalized, normalize_age_specialization(
-        user_regimes=finalized, phased_specs=phased, ages=ages
+        user_regimes=finalized,
+        phased_specs=phased,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
     )
 
 

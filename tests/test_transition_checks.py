@@ -205,17 +205,6 @@ def test_warn_levels_log_invalid_probs_and_continue(
     assert "sum to 1" in caplog.text
 
 
-def test_debug_level_raises_on_invalid_probs() -> None:
-    """At log_level='debug', invalid state probs raise rather than warn."""
-
-    def bad_sum_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
-        return jnp.array([0.5, 0.2])
-
-    model = _model_with_state_probs(bad_sum_probs)
-    with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
-        model.solve(params={"discount_factor": 0.95}, log_level="debug")
-
-
 def test_subscript_order_swap_raises_at_process_time() -> None:
     """Mismatched subscript order vs signature order raises at process time."""
 

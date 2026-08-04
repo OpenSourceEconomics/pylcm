@@ -203,7 +203,7 @@ def build_model(  # noqa: C901
     liquid_max: float = 50.0,
     housing_max: float = 20.0,
     n_periods: int | None = None,
-    upper_envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
     liquid_batch_size: int = 0,
 ) -> Model:
     """Build the DS App.2 housing EGM-FUES discrete-housing model.
@@ -225,7 +225,7 @@ def build_model(  # noqa: C901
         housing_max: Upper bound of the housing-level grid.
         n_periods: Optional shortened horizon for construction tests; `None` uses
             the full lifecycle to `TERMINAL_AGE`.
-        upper_envelope: DC-EGM upper-envelope backend; the Table 3 method is FUES.
+        envelope: DC-EGM upper-envelope backend; the Table 3 method is FUES.
         liquid_batch_size: Optional chunking of the liquid Euler-state grid. A
             positive value splays the per-asset-node solve into
             `ceil(n_grid / liquid_batch_size)` sequential chunks, bounding the
@@ -436,7 +436,7 @@ def build_model(  # noqa: C901
         resources="resources",
         post_decision_function="savings",
         savings_grid=savings_grid,
-        upper_envelope=upper_envelope,
+        envelope=envelope,
         n_constrained_points=32,
     )
     working = UserRegime(

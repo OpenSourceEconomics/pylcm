@@ -33,7 +33,7 @@ flowchart TD
     q0 -->|"1"| qbp{"Declared institutional breakpoints? (asset tests, brackets, notches, floors)"}
     q0 -->|"2"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
 
-    q2d -->|"Yes"| twodim["TwoDimEGM (G2EGM)"]
+    q2d -->|"Yes"| twodim["TwoAssetEGM (G2EGM)"]
     q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| qnest{"Declared breakpoints on the liquid margin?"}
 
     qnest -->|"Yes"| nnbegm["NNBEGM"]
@@ -43,7 +43,7 @@ flowchart TD
     qbp -->|"No"| qdc{"Discrete choice induces non-concavity (secondary kinks)?"}
 
     qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see hardware tree)"]
-    qdc -->|"No — smooth and concave"| egm["OneAssetEGM or GridSearch"]
+    qdc -->|"No — smooth and concave"| egm["EGM or GridSearch"]
 ```
 
 Under the 2-continuous-state nest, `NEGM` and `NNBEGM` differ only in the inner solver:
@@ -71,10 +71,10 @@ flowchart TD
     g1 -->|"Yes"| gs["GridSearch — dense map-reduce usually wins"]
     g1 -->|"No — fine grid, or cliffs"| g2{"Full-row envelope is the memory wall?"}
     g2 -->|"Yes"| gq["Query-side segmented envelope: NBEGM, or DCEGM(upper_envelope='ltm')"]
-    g2 -->|"No"| ge["EGM-family: OneAssetEGM / NEGM / TwoDimEGM / NBEGM"]
+    g2 -->|"No"| ge["EGM-family: EGM / NEGM / TwoAssetEGM / NBEGM"]
 
     c1 -->|"Yes"| cd["DCEGM — FUES / RFC / LTM / MSS all viable on CPU"]
-    c1 -->|"No — smooth"| ce["OneAssetEGM, or GridSearch"]
+    c1 -->|"No — smooth"| ce["EGM, or GridSearch"]
 ```
 
 Two cross-cutting factors:
@@ -94,10 +94,10 @@ Two cross-cutting factors:
 | Solver        | Use when                                                                                                                                              | Key constructor arguments                                                              |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `GridSearch`  | The default. Any regime, especially with a modest continuous-action grid on a GPU.                                                                    | *(none)*                                                                               |
-| `OneAssetEGM` | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`                                                                         |
+| `EGM`         | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`                                                                         |
 | `DCEGM`       | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `upper_envelope` |
 | `NEGM`        | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
-| `TwoDimEGM`   | Two continuous assets whose first-order conditions are genuinely coupled (the G2EGM setting).                                                         | `a_grid`, `b_grid`, `consumption_grid`, `threshold`                                    |
+| `TwoAssetEGM` | Two continuous assets whose first-order conditions are genuinely coupled (the G2EGM setting).                                                         | `a_grid`, `b_grid`, `consumption_grid`, `threshold`                                    |
 | `NNBEGM`      | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
 | `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                            |
 

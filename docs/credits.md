@@ -53,10 +53,17 @@ pylcm's FUES backend is **adapted from**
 kernel. The reference implementation by the method's authors is
 [akshayshanker/FUES](https://github.com/akshayshanker/FUES).
 
+### Single-asset EGM
+
+The `EGM` solver is the plain endogenous grid method above, applied to a regime with one
+continuous (Euler) state and no discrete choice. Inverting the Euler equation on the
+post-decision savings grid solves such a period exactly, so no upper envelope is
+involved — see the Carroll (2006) reference at the top of this file.
+
 ### Multidimensional & nested EGM
 
 pylcm solves models with more than one continuous (Euler) state through its nested-EGM
-(`NEGM`) and two-dimensional (`TwoDimEGM`, G2EGM) solvers, with roof-cut/RFC upper
+(`NEGM`) and two-dimensional (`TwoAssetEGM`, G2EGM) solvers, with roof-cut/RFC upper
 envelopes for the multidimensional case. Those methods are due to:
 
 - Druedahl (2021), "A Guide on Solving Non-convex Consumption-Saving Models,"

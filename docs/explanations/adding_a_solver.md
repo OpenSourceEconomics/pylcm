@@ -5,11 +5,11 @@ title: Adding a Solver
 # Adding a Solver
 
 A regime's `solver` field selects the algorithm that computes its value function during
-backward induction. pylcm ships five solvers (`GridSearch`, `DCEGM`, `NEGM`,
-`OneAssetEGM`, `TwoDimEGM`; see `lcm.solvers`), and the engine is designed so that new
-ones can be added without touching the backward-induction loop. This page specifies the
-contract a solver implements, the lifecycle the engine drives it through, and the
-invariants that keep the generic layer solver-agnostic.
+backward induction. pylcm ships five solvers (`GridSearch`, `DCEGM`, `NEGM`, `EGM`,
+`TwoAssetEGM`; see `lcm.solvers`), and the engine is designed so that new ones can be
+added without touching the backward-induction loop. This page specifies the contract a
+solver implements, the lifecycle the engine drives it through, and the invariants that
+keep the generic layer solver-agnostic.
 
 The single normative source is `src/_lcm/solution/contract.py`. Everything the
 backward-induction loop knows about a solver flows through the types defined there; this
@@ -147,9 +147,9 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
 ## Where the code goes
 
 - One module per solver under `src/_lcm/solution/` (`grid_search.py`, `dcegm.py`,
-  `negm.py`, `one_asset_egm.py`, `two_dim_egm.py` are the pattern). Shared lifecycle
-  helpers live in `src/_lcm/solution/continuation_target.py`; heavy numerical machinery
-  gets its own package (as EGM's does in `src/_lcm/egm/`).
+  `negm.py`, `egm.py`, `two_asset_egm.py` are the pattern). Shared lifecycle helpers
+  live in `src/_lcm/solution/continuation_target.py`; heavy numerical machinery gets its
+  own package (as EGM's does in `src/_lcm/egm/`).
 - Re-export the class from the `lcm.solvers` façade and add it to `__all__` and the
   module docstring there. Keep numerical imports function-local inside
   `build_period_kernels` so the façade stays import-light.

@@ -35,6 +35,9 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
         income=0.0,
         asset_limit=3.0,
         prev_limit=liquid_grid[0] - 1.0,
+        next_limit=liquid_grid[-1] + 1.0,
+        equality_owner="otherwise",
+        side="below",
         coh_slope=coh_slope,
         valid=jnp.ones_like(liquid_grid, dtype=bool),
     )

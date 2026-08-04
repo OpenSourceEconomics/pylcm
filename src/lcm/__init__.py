@@ -144,6 +144,7 @@ from lcm.regime import (  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
     DCEGM,
+    EGM,
     NBEGM,
     NEGM,
     NNBEGM,
@@ -153,10 +154,9 @@ from lcm.solvers import (  # noqa: E402
     FiniteOuterGrid,
     GridSearch,
     LegacyGoldenSection,
-    OneAssetEGM,
     OuterBranchAggregator,
     OuterSearch,
-    TwoDimEGM,
+    TwoAssetEGM,
     UniformObservedFixedCost,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
@@ -184,6 +184,7 @@ jax.tree_util.register_pytree_node(
 
 __all__ = [
     "DCEGM",
+    "EGM",
     "NBEGM",
     "NEGM",
     "NNBEGM",
@@ -209,7 +210,6 @@ __all__ = [
     "Model",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
-    "OneAssetEGM",
     "OuterBranchAggregator",
     "OuterSearch",
     "Phased",
@@ -226,7 +226,7 @@ __all__ = [
     "StateConditioned",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
-    "TwoDimEGM",
+    "TwoAssetEGM",
     "UniformIIDProcess",
     "UniformObservedFixedCost",
     "__version__",

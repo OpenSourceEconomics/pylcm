@@ -168,9 +168,9 @@ def _collect_unique_simulation_callables(
 ]:
     """Walk every regime/period and dedup the simulate functions to compile.
 
-    `argmax_and_max_Q_over_a` dedup keys on `(func_id, active_at_next_period)`
+    `argmax_and_max_Q_over_a` dedup keys on `(func_id, continuation_targets)`
     so two periods that share the same argmax callable but see a different
-    `next_regime_to_V_arr` pytree (different active-regime set at P+1) get
+    `next_regime_to_V_arr` pytree (different graph target set) get
     separate compiled programs whose signature matches what runtime actually
     dispatches.
     """
@@ -184,18 +184,24 @@ def _collect_unique_simulation_callables(
         # `sf.argmax_and_max_Q_over_a` has entries for *every* period
         # (pylcm builds them across the full age grid), but the regime is
         # only dispatched at runtime for periods in `regime.active_periods`.
-        # Inactive-period entries can carry a `complete_targets` set whose
+        # Inactive-period entries can carry a continuation-target set whose
         # shape doesn't match the regime's actual transitions for that
         # period; tracing them would surface `next_<state>` bookkeeping
         # mismatches the lazy path never reaches. Restrict AOT to active
         # periods to mirror runtime.
         for period in regime.active_periods:
             argmax_func = sf.argmax_and_max_Q_over_a[period]
-            active_next = _active_regimes_at_period(regimes=regimes, period=period + 1)
+            continuation_targets = (
+                ()
+                if period == ages.n_periods - 1
+                else regime.solution.reachability.targets(
+                    period=period, source=regime_name
+                )
+            )
             next_regime_to_V_arr = MappingProxyType(
                 {
                     name: _build_zero_V_arr(topology=regime_V_topology[name])
-                    for name in active_next
+                    for name in continuation_targets
                 }
             )
             args = _build_argmax_args(
@@ -207,7 +213,7 @@ def _collect_unique_simulation_callables(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 subject_sharding=subject_sharding,
             )
-            key = ("argmax", _func_dedup_key(func=argmax_func), active_next)
+            key = ("argmax", _func_dedup_key(func=argmax_func), continuation_targets)
             func_keys[(regime_name, "argmax", period)] = key
             if key not in unique:
                 label = (
@@ -322,23 +328,6 @@ def _swap_in_compiled(
         new_regimes[regime_name] = dataclasses.replace(regime, simulation=new_sf)
 
     return MappingProxyType(new_regimes)
-
-
-def _active_regimes_at_period(
-    *,
-    regimes: MappingProxyType[RegimeName, Regime],
-    period: int,
-) -> tuple[RegimeName, ...]:
-    """Tuple of regime names active at `period`, in `regimes` order.
-
-    Returned as a `tuple` so it's hashable and pytree-key-stable. An empty
-    tuple matches the runtime fallback for periods past the last (`{}`).
-    """
-    return tuple(
-        regime_name
-        for regime_name, regime in regimes.items()
-        if period in regime.active_periods
-    )
 
 
 def _build_argmax_args(

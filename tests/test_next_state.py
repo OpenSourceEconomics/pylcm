@@ -13,6 +13,7 @@ from _lcm.regime_building.next_state import (
 from _lcm.regime_building.processing import process_regimes
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
+from tests.conftest import build_prepared_structure
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -22,13 +23,17 @@ def test_get_next_state_function_with_solve_target():
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
+    finalized_user_regimes = finalize_regimes(
+        user_regimes=user_regimes, derived_categoricals={}
+    )
     regimes = process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes=user_regimes, derived_categoricals={}
-        ),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
 
     internal_working = regimes["working_life"]

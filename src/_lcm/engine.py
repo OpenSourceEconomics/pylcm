@@ -11,6 +11,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseReachability
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -345,6 +346,9 @@ class SolutionPhase:
     stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
+    reachability: PhaseReachability
+    """Construction-time solve graph shared by every canonical regime."""
+
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
 
@@ -366,6 +370,8 @@ class SolutionPhase:
     `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel; `None` for a regime that publishes none.
     """
+    validation_regime_transition_probs: RegimeTransitionFunction | None
+    """Probability function retaining declared cells for runtime validation."""
 
     compute_intermediates: MappingProxyType[int, Callable]
     """Immutable mapping of period to intermediate-computation closures.
@@ -592,6 +598,9 @@ class SimulationPhase:
 
     stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
+
+    reachability: PhaseReachability
+    """Construction-time simulate graph shared by every canonical regime."""
 
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
