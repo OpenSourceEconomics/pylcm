@@ -1828,11 +1828,19 @@ def _process_regime_core(
     # Only an IID process can be entered without a handoff, which
     # `_state_handoff_errors` has already enforced.
     #
-    # The condition to extend here is storage: entering a process builds it a
-    # next-state and weight function, and therefore an axis. A process that is
-    # integrated out of the value function rather than stored on one must be
-    # excluded, or entry would reintroduce exactly the axis its treatment
-    # removes -- it needs no entry law for the same reason it needs no handoff.
+    # Two conditions bound this and both must be added here as they become
+    # expressible, because entry builds a next-state and a weight function and
+    # so commits to both an axis and a distribution:
+    #
+    # - **storage.** A process integrated out of the value function rather than
+    #   stored on one must be excluded, or entry reintroduces exactly the axis
+    #   its treatment removes -- it needs no entry law for the same reason it
+    #   needs no handoff.
+    # - **conditioning.** The entry weights below are the unconditional row,
+    #   which is the whole distribution only for a process whose law depends on
+    #   nothing. A process conditioned on another state must not be entered at
+    #   that row: the conditioner is a live state of the target, and entry has
+    #   no reason to ignore it.
     entered_process_grids = {
         key: grid
         for key, grid in target_process_grids.items()
