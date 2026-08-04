@@ -17,7 +17,7 @@ import functools
 import inspect
 import math
 import warnings
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -42,6 +42,7 @@ from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
     _union_free_params,
+    target_period_grid,
 )
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -51,15 +52,15 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
-from _lcm.solution.dcegm import _reachable_carry_subset
-from _lcm.solution.one_asset_egm import (
+from _lcm.solution.dcegm import _carry_subset
+from _lcm.solution.egm import (
     _build_one_asset_carry_template,
-    _OneAssetEGMPeriodKernel,
-    _target_period_liquid_grid,
+    _EGMPeriodKernel,
 )
 from _lcm.typing import (
     FlatParams,
     RegimeName,
+    TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
@@ -434,17 +435,17 @@ class NBEGM(Solver):
                         savings_grid=savings_grid, target=target, case_spec=case_spec
                     )
                 cores[target] = jax.jit(core) if context.enable_jit else core
-            period_kernels[period] = _OneAssetEGMPeriodKernel(
+            period_kernels[period] = _EGMPeriodKernel(
                 core=cores[target],
                 regime_name=context.regime_name,
                 continuation_target=target,
+                liquid_state=liquid_state_name,
                 transition_target_names=tuple(context.transitions),
-                next_liquid_grid=_target_period_liquid_grid(
+                next_liquid_grid=target_period_grid(
                     context=context,
                     period=period,
                     target=target,
-                    liquid_state=liquid_state_name,
-                    fallback=liquid_grid,
+                    target_state_name=liquid_state_name,
                 ),
             )
         return SolutionKernels(
@@ -577,8 +578,6 @@ class NBEGM(Solver):
         are deduplicated by that split. The 1-D liquid solve runs once per
         ride-along cell, batched.
         """
-        from _lcm.egm.validation import _reachable_target_names  # noqa: PLC0415
-
         if self.post_decision_function is None:
             msg = (
                 "NBEGM with a ride-along co-state requires `post_decision_function` "
@@ -605,12 +604,6 @@ class NBEGM(Solver):
                 ),
                 probe_failure=self.probe_failure,
             )
-        reachable_targets = frozenset(
-            _reachable_target_names(
-                user_regime=context.user_regimes[context.regime_name],
-                user_regimes=context.user_regimes,
-            )
-        )
         transition_target_names = tuple(context.transitions)
 
         # The ride-along kernel takes the continuation as a probability-weighted
@@ -628,7 +621,6 @@ class NBEGM(Solver):
             plan = _build_nbegm_continuation_plan(
                 context=context,
                 period=period,
-                reachable_targets=reachable_targets,
                 post_decision_name=self.post_decision_function,
                 stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
@@ -637,12 +629,12 @@ class NBEGM(Solver):
             # it. The signature is empty for an age-invariant model, leaving the
             # grouping exactly as the target split alone would make it.
             key = (
-                *plan.carry_targets,
+                *plan.stateful_targets,
                 "|",
                 *plan.scalar_targets,
                 continuation_grid_signature(
                     period=period,
-                    targets=plan.carry_targets + plan.scalar_targets,
+                    targets=plan.stateful_targets + plan.scalar_targets,
                     period_to_regime_grid_signature=(
                         context.period_to_regime_grid_signature
                     ),
@@ -740,7 +732,7 @@ class NBEGM(Solver):
                 statics=statics_by_key[key],
                 cliff_candidates=cliff_candidates_by_key[key],
                 regime_name=context.regime_name,
-                reachable_targets=reachable_targets,
+                stateful_targets=frozenset(plan.stateful_targets),
                 transition_target_names=transition_target_names,
             )
         return SolutionKernels(
@@ -798,8 +790,8 @@ class _RideAlongNBEGMPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
-    reachable_targets: frozenset[RegimeName]
-    """The carry keys the core reads; the rolling carry is filtered to these."""
+    stateful_targets: frozenset[RegimeName]
+    """Carry keys this period's core reads; the rolling carry is filtered to these."""
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
@@ -866,9 +858,9 @@ class _RideAlongNBEGMPeriodKernel:
             }
         return {
             **states,
-            "next_regime_to_continuation": _reachable_carry_subset(
+            "next_regime_to_continuation": _carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                stateful_targets=self.stateful_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **params,
@@ -892,9 +884,9 @@ class _RideAlongNBEGMPeriodKernel:
         params = self._kernel_params(flat_params=flat_params)
         continuation_stacks = compiled_cores["continuation"](
             **states,
-            next_regime_to_continuation=_reachable_carry_subset(
+            next_regime_to_continuation=_carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                stateful_targets=self.stateful_targets,
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
             **params,
@@ -1650,8 +1642,6 @@ def _fail_if_discrete_action_feeds_continuation(
     """
     import inspect  # noqa: PLC0415
 
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
-
     def _reject(where: str) -> None:
         msg = (
             f"NBEGM's discrete envelope shares one continuation across the "
@@ -1693,24 +1683,47 @@ def _fail_if_discrete_action_feeds_continuation(
             return False
         return action_name in inspect.signature(combined).parameters
 
-    for state_name, law in regime.state_transitions.items():
+    # The branch-indexed continuation reads each branch's own next-state
+    # coordinate, so on the ride-along path every state-law feed is supported.
+    if allow_continuation_feed:
+        return
+
+    for state_name, func in _state_laws(transitions=context.transitions):
         is_liquid = state_name == liquid_state_name
-        candidates = law.values() if isinstance(law, Mapping) else [law]
-        for candidate in candidates:
+        if _law_reads_action(func, cut_budget=is_liquid):
+            where = (
+                f"the law of motion for {state_name!r} off the budget channel"
+                if is_liquid
+                else f"the law of motion for {state_name!r}"
+            )
+            _reject(where)
+
+
+def _state_laws(
+    *, transitions: TransitionFunctionsMapping
+) -> Iterator[tuple[StateName, Callable[..., object]]]:
+    """Yield each canonical state law with the state it evolves.
+
+    Reads the canonical per-target laws rather than a regime's declared
+    `state_transitions`: which targets a regime reaches is the graph's to say,
+    and the canonical form has already broadcast bare laws over exactly those
+    targets. The regime transition and the stochastic weight laws carry no
+    state coordinate, so neither is yielded.
+    """
+    from lcm.transition import MarkovTransition  # noqa: PLC0415
+
+    for target_laws in transitions.values():
+        for law_name, candidate in target_laws.items():
+            if law_name.startswith("weight_"):
+                continue
+            state_name = law_name.removeprefix("next_")
+            if state_name == "regime":
+                continue
             func = (
                 candidate.func if isinstance(candidate, MarkovTransition) else candidate
             )
-            if callable(func) and _law_reads_action(func, cut_budget=is_liquid):
-                if allow_continuation_feed:
-                    # The branch-indexed continuation reads each branch's own
-                    # next-state coordinate, so any state-law feed is supported.
-                    continue
-                where = (
-                    f"the law of motion for {state_name!r} off the budget channel"
-                    if is_liquid
-                    else f"the law of motion for {state_name!r}"
-                )
-                _reject(where)
+            if callable(func):
+                yield state_name, func
 
 
 def _ride_discrete_action(
@@ -2237,7 +2250,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         else:
             return worst
 
-    for target in continuation_plan.carry_targets:
+    for target in continuation_plan.stateful_targets:
         next_state_func = continuation_plan.child_reads[target].next_state_func
         worst = _max_abs_first_derivative(next_state_func)
         if worst is not None and worst > tol:
@@ -2750,7 +2763,6 @@ def _build_nbegm_continuation_plan(
     *,
     context: SolverBuildContext,
     period: int,
-    reachable_targets: frozenset[RegimeName],
     post_decision_name: FunctionName,
     stochastic_node_batch_size: int = 0,
 ) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
@@ -2778,11 +2790,14 @@ def _build_nbegm_continuation_plan(
         regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
         period_to_regime_v_interp=context.period_to_regime_v_interp,
     )
-    carry_targets, scalar_targets = get_egm_continuation_targets(
-        period=period,
-        transitions=context.transitions,
-        reachable_targets=reachable_targets,
-        regimes_to_active_periods=context.regimes_to_active_periods,
+    solution_reachability = context.solution_reachability
+    targets = (
+        ()
+        if period == solution_reachability.n_periods - 1
+        else solution_reachability.targets(period=period, source=context.regime_name)
+    )
+    stateful_targets, scalar_targets = get_egm_continuation_targets(
+        targets=targets,
         regime_to_v_interpolation_info=v_interpolation_info,
     )
     # A nonlinear certainty equivalent switches the child stochastic-node
@@ -2799,7 +2814,7 @@ def _build_nbegm_continuation_plan(
         functions=context.functions,
         transitions=context.transitions,
         stochastic_transition_names=context.stochastic_transition_names,
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
@@ -3128,7 +3143,8 @@ def _nbegm_ride_along_statics(
         ).parameters
     )
     continuation_reads_liquid = transition_probs_read_liquid or any(
-        _next_state_reads_liquid(target) for target in continuation_plan.carry_targets
+        _next_state_reads_liquid(target)
+        for target in continuation_plan.stateful_targets
     )
 
     # The period utility reads the consumption action, the ride-along states it
@@ -3633,7 +3649,7 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
             # carry) is read whole for every slice.
             slice_targets = frozenset(
                 target
-                for target in continuation_plan.carry_targets
+                for target in continuation_plan.stateful_targets
                 if head in continuation_plan.child_reads[target].discrete_state_names
             )
             in_axes = _carry_comap_in_axes(carry=carry, slice_targets=slice_targets)

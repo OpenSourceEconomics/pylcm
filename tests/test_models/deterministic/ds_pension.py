@@ -29,12 +29,24 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 (whether `retirement_income` is received in the first retired period).
 """
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
+from _lcm.grids.continuous import ContinuousGrid
+from lcm import (
+    AgeGrid,
+    AgeSpecializedGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+
+type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
 
 @categorical(ordered=False)
@@ -181,7 +193,13 @@ def get_model(
     n_deposit: int = 8,
     liquid_max: float = 20.0,
     pension_max: float = 15.0,
+    working_liquid_grid: _StateGrid | None = None,
+    working_pension_grid: _StateGrid | None = None,
+    retired_liquid_grid: _StateGrid | None = None,
+    dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
+    laws: dict[str, Callable] | None = None,
+    enable_jit: bool = True,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
 
@@ -190,13 +208,43 @@ def get_model(
     to a small oracle scale; pass larger values for a finer reference solve.
 
     Args:
+        working_liquid_grid: Optional override for the working regime's `liquid`
+            grid. Defaults to the shared grid built from `n_liquid` / `liquid_max`.
+            Pass an `AgeSpecializedGrid` to make the working liquid support move
+            with age.
+        working_pension_grid: Optional override for the working regime's `pension`
+            grid, defaulting to the shared grid built from `n_pension` /
+            `pension_max`.
+        retired_liquid_grid: Optional override for the retired regime's `liquid`
+            grid, defaulting to the shared liquid grid.
+        dead_liquid_grid: Optional override for the terminal regime's `liquid`
+            grid, defaulting to the shared liquid grid.
         solvers: Optional mapping of regime name to its `Solver`. A name absent from
             the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
             default model is the dense-grid brute oracle. Pass
-            `{"working": TwoDimEGM(...)}` to drive the working regime by the two-asset
-            G2EGM method, and `{"retired": OneAssetEGM(...)}` for the 1-D retired EGM.
+            `{"working": TwoAssetEGM(...)}` to drive the working regime by the
+            two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
+            consumption--saving problem.
+        laws: Optional mapping of law-of-motion function name to a replacement.
+            A name absent from the mapping keeps this module's own function. Use
+            it to vary a law's parameter spellings without varying its
+            behaviour.
+        enable_jit: Whether the model JIT-compiles its kernels. Pass `False` to
+            run the same solve eagerly.
+
+    Every grid override defaults to the shared grid, so calling `get_model` without
+    them reproduces one common `liquid` support across all three regimes. Passing a
+    different grid to one regime is what makes continuation-grid provenance
+    observable: a solver that reads `V_{t+1}` on its own grid rather than the
+    target's then disagrees with the dense brute.
+
     """
     solvers = solvers or {}
+    laws = laws or {}
+    liquid_working = laws.get("next_liquid_working", next_liquid_working)
+    liquid_retiring = laws.get("next_liquid_retiring", next_liquid_retiring)
+    pension_working = laws.get("next_pension_working", next_pension_working)
+    liquid_retired = laws.get("next_liquid_retired", next_liquid_retired)
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     retirement_age = ages.exact_values[retirement_period]
     final_age = ages.exact_values[-1]
@@ -209,13 +257,16 @@ def get_model(
             "consumption": consumption_grid,
             "deposit": LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_deposit),
         },
-        states={"liquid": liquid_grid, "pension": pension_grid},
+        states={
+            "liquid": working_liquid_grid or liquid_grid,
+            "pension": working_pension_grid or pension_grid,
+        },
         state_transitions={
             "liquid": {
-                "working": next_liquid_working,
-                "retired": next_liquid_retiring,
+                "working": liquid_working,
+                "retired": liquid_retiring,
             },
-            "pension": {"working": next_pension_working},
+            "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
         transition={
@@ -228,11 +279,11 @@ def get_model(
     )
     retired = Regime(
         actions={"consumption": consumption_grid},
-        states={"liquid": liquid_grid},
+        states={"liquid": retired_liquid_grid or liquid_grid},
         state_transitions={
             "liquid": {
-                "retired": next_liquid_retired,
-                "dead": next_liquid_retired,
+                "retired": liquid_retired,
+                "dead": liquid_retired,
             }
         },
         constraints={"feasible": feasible_retired},
@@ -246,7 +297,7 @@ def get_model(
     )
     dead = Regime(
         transition=None,
-        states={"liquid": liquid_grid},
+        states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
     )
@@ -254,6 +305,7 @@ def get_model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        enable_jit=enable_jit,
     )
 
 

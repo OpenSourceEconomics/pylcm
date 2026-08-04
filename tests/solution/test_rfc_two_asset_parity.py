@@ -41,6 +41,8 @@ def _solve():
         next_value=next_value,
         m_grid=_M_GRID,
         n_grid=_N_GRID,
+        next_m_grid=_M_GRID,
+        next_n_grid=_N_GRID,
         a_grid=jnp.linspace(0.0, 85.0, 18),
         b_grid=_B_GRID,
         consumption_grid=jnp.linspace(0.5, 90.0, 18),

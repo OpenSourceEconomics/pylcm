@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 
 import jax
@@ -8,6 +8,14 @@ import pytest
 from jax import config as jax_config
 from numpy.typing import ArrayLike
 
+from _lcm.regime_building.finalize import FinalizedUserRegime
+from _lcm.regime_building.processing import (
+    PreparedModelStructure,
+    compute_active_periods_by_regime,
+    prepare_model_structure,
+)
+from _lcm.typing import RegimeName
+from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
@@ -32,7 +40,8 @@ def pytest_addoption(parser):
         action="store_true",
         help=(
             "Drop JAX's in-memory compiled-program cache whenever the test "
-            "module changes, bounding a worker's resident memory."
+            "module changes, and periodically within a long module, bounding a "
+            "worker's resident memory and its mapping count."
         ),
     )
 
@@ -128,8 +137,25 @@ def pytest_collection_modifyitems(items):
             item.add_marker(slow)
 
 
+# Tests run within one module before compiled programs are released anyway.
+#
+# A module boundary is not a tight enough bound once a single module is large.
+# `tests/solution/test_envelope_query.py` is 349 tests, so releasing only at its
+# edges means releasing never while it runs: one process reached 62.65 GB
+# anon-RSS by 82% of that file and was OOM-killed, though every test in it uses a
+# handful of grid points. The same retention exhausts `vm.max_map_count` on hosts
+# that set it low, because LLVM holds an `mmap` per compiled program -- so one
+# accumulation shows up as bytes on one machine and as an abort inside
+# `releaseMappedMemory` on another.
+#
+# 64 is a compromise: small enough that the envelope file releases five times
+# instead of never, large enough that an ordinary module still releases only at
+# its boundary and pays nothing extra.
+_TESTS_BETWEEN_RELEASES = 64
+
+
 def pytest_runtest_teardown(item, nextitem):
-    """Release compiled programs at module boundaries, when asked to.
+    """Release compiled programs at module boundaries, and periodically within one.
 
     A worker's resident memory grows with every distinct program it has
     compiled, because JAX holds each one live in an in-memory cache. Across a
@@ -137,14 +163,40 @@ def pytest_runtest_teardown(item, nextitem):
     small runner. Dropping the cache when the module changes bounds it to one
     module's programs. The persistent on-disk cache absorbs most of the cost:
     a program compiled again is a lookup rather than a fresh compile.
+
+    Within a LARGE module that bound is still too loose -- see
+    `_TESTS_BETWEEN_RELEASES` -- so the cache is released every so many tests as
+    well, whether or not the module is about to change.
     """
     if not item.config.getoption("--release-compiled-programs"):
         return
+    session = item.session
+    seen = getattr(session, "_lcm_tests_since_release", 0) + 1
     current = getattr(item, "module", None)
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
-    if upcoming is not None and upcoming is current:
+    if upcoming is not None and upcoming is current and seen < _TESTS_BETWEEN_RELEASES:
+        session._lcm_tests_since_release = seen
         return
+    session._lcm_tests_since_release = 0
     jax.clear_caches()
+
+
+def build_prepared_structure(
+    *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
+) -> PreparedModelStructure:
+    """Build the `PreparedModelStructure` `process_regimes` requires.
+
+    Tests that call `process_regimes` directly (bypassing `Model`) build this
+    the same way `Model.__init__` does, rather than `process_regimes` growing
+    a test-only fallback for constructing one internally.
+    """
+    return prepare_model_structure(
+        user_regimes=user_regimes,
+        ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
+    )
 
 
 @pytest.fixture(scope="session")

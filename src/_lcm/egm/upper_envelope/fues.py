@@ -43,7 +43,7 @@ Both are exact-endogenous-grid-coincidence degeneracies that the fast-scan
 `OpenSourceEconomics/upper-envelope` ancestor forbid coincident abscissae
 outright rather than solving them. A model that can realize exact coincidence
 and needs it handled must select a segment-envelope backend
-(`upper_envelope="mss"`, HARK's exact segment-crossing method), which resolves
+(`envelope="mss"`, HARK's exact segment-crossing method), which resolves
 both by construction:
 
 - Pointwise vs interval dominance at a coincident node
@@ -382,7 +382,7 @@ def _reduce_coincident_groups(
     fix. It is reachable within the class (a log-utility DC-EGM whose savings grid
     aligns two candidates on one endogenous node), so a model that needs exact
     coincident-node correctness must select a segment-envelope backend
-    (`upper_envelope="mss"`, HARK's exact segment-crossing method), which resolves
+    (`envelope="mss"`, HARK's exact segment-crossing method), which resolves
     interval ownership by construction. See
     `test_pointwise_lower_branch_that_owns_an_interval_is_retained` (the pinned
     FUES limitation) and `test_mss_resolves_the_coincident_interval_ownership`

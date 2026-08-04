@@ -1,9 +1,12 @@
 from collections.abc import Callable
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from dags import concatenate_functions
 from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
@@ -19,9 +22,12 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
+    get_compute_intermediates,
+    get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from lcm import AgeGrid
+from _lcm.regime_building.V import VInterpolationInfo
+from lcm import AgeGrid, PowerMean
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -34,6 +40,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
@@ -50,13 +57,17 @@ def test_get_Q_and_F_function():
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
+    finalized_user_regimes = finalize_regimes(
+        user_regimes=user_regimes, derived_categoricals={}
+    )
     regimes = process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes=user_regimes, derived_categoricals={}
-        ),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
 
     raw_params = get_params(n_periods=4)
@@ -508,3 +519,290 @@ def test_partial_state_laws_solve_with_declared_targets():
         dead_V = regime_to_V_arr["dead"]
         assert dead_V.shape == ()
         assert_allclose(dead_V, 0.0, atol=1e-6)
+
+
+def _sum_utility(utility_level: FloatND) -> FloatND:
+    return utility_level
+
+
+def _epstein_zin_H(utility: FloatND, E_next_V: FloatND) -> FloatND:
+    return utility + E_next_V
+
+
+def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, FloatND]:
+    return MappingProxyType(
+        {"low": regime_prob_low, "high": 1.0 - regime_prob_low},
+    )
+
+
+# A target regime without states: its value function array is a scalar, so the
+# interpolator is the identity and each target contributes a single lottery node.
+_STATELESS_V_INFO = VInterpolationInfo(
+    state_names=(),
+    discrete_states=MappingProxyType({}),
+    continuous_states=MappingProxyType({}),
+)
+
+
+def _build_two_target_closure(builder: Callable, *, certainty_equivalent) -> Callable:
+    """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
+    return builder(
+        flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
+        functions=MappingProxyType({"utility": _sum_utility, "H": _epstein_zin_H}),
+        constraints=MappingProxyType({}),
+        period_targets=("low", "high"),
+        transitions=MappingProxyType({}),
+        stochastic_transition_names=frozenset(),
+        compute_regime_transition_probs=concatenate_functions(
+            functions={"regime_transition_probs": _low_and_high_probs},
+            targets="regime_transition_probs",
+            enforce_signature=False,
+            set_annotations=True,
+        ),
+        regime_to_v_interpolation_info=MappingProxyType(
+            {"low": _STATELESS_V_INFO, "high": _STATELESS_V_INFO}
+        ),
+        certainty_equivalent=certainty_equivalent,
+    )
+
+
+def _two_target_call_kwargs(
+    *,
+    values: tuple[float, float],
+    regime_prob_low: float,
+    utility_level: float,
+    risk_aversion: float,
+    dtype,
+) -> dict:
+    return {
+        "next_regime_to_V_arr": MappingProxyType(
+            {
+                "low": jnp.asarray(values[0], dtype=dtype),
+                "high": jnp.asarray(values[1], dtype=dtype),
+            }
+        ),
+        "utility_level": jnp.asarray(utility_level, dtype=dtype),
+        "regime_prob_low": jnp.asarray(regime_prob_low, dtype=dtype),
+        "age": jnp.asarray(25),
+        "period": jnp.asarray(0),
+        "certainty_equivalent__risk_aversion": jnp.asarray(risk_aversion, dtype=dtype),
+    }
+
+
+def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
+    """A `(1e-50, 2e-50)` regime lottery at risk aversion 8 keeps its exact value."""
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    got = jax.jit(
+        lambda: Q_and_F(
+            **_two_target_call_kwargs(
+                values=(1e-50, 2e-50),
+                regime_prob_low=0.5,
+                utility_level=0.0,
+                risk_aversion=8.0,
+                dtype=jnp.float64,
+            )
+        )[0]
+    )()
+    np.testing.assert_allclose(float(got), 1.102862741485982e-50, rtol=5e-5, atol=0.0)
+
+
+def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None):
+    """A `(1e-8, 2e-8)` regime lottery at risk aversion 8 keeps its exact value."""
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    got = jax.jit(
+        lambda: Q_and_F(
+            **_two_target_call_kwargs(
+                values=(1e-8, 2e-8),
+                regime_prob_low=0.5,
+                utility_level=0.0,
+                risk_aversion=8.0,
+                dtype=jnp.float32,
+            )
+        )[0]
+    )()
+    np.testing.assert_allclose(float(got), 1.102862741485982e-8, rtol=5e-5, atol=0.0)
+
+
+# Risk aversion and lottery scale at which the naive
+# `inverse(Σ w · transform(v))` route overflows the dtype.
+_FLOAT64_ACTION_CASES = [(8.0, 1e-50), (12.0, 1e-30), (20.0, 1e-20), (50.0, 1e-8)]
+_FLOAT32_ACTION_CASES = [(8.0, 1e-8), (12.0, 1e-5), (20.0, 1e-3)]
+
+
+def _assert_the_even_lottery_wins(
+    *,
+    risk_aversion: float,
+    scale: float,
+    dtype: Any,
+    rtol: float,
+) -> None:
+    """Assert `Q` ranks two actions over a `(scale, 2 * scale)` regime lottery.
+
+    Both actions face the same two-point lottery under different regime
+    probabilities. The even lottery has the higher power mean by more than
+    the skewed action's utility advantage, so it is optimal at every scale.
+    """
+    values = (scale, 2.0 * scale)
+
+    def certainty_equivalent(weights: tuple[float, float]) -> float:
+        return float(
+            PowerMean().aggregate(
+                values=jnp.asarray(values, dtype=dtype),
+                weights=jnp.asarray(weights, dtype=dtype),
+                params={"risk_aversion": jnp.asarray(risk_aversion, dtype=dtype)},
+            )
+        )
+
+    skewed = certainty_equivalent((0.9, 0.1))
+    even = certainty_equivalent((0.5, 0.5))
+    assert even > skewed > 0.0
+    utility_advantage = 0.4 * (even - skewed)
+
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_per_action = jax.jit(
+        lambda: jnp.asarray(
+            [
+                Q_and_F(
+                    **_two_target_call_kwargs(
+                        values=values,
+                        regime_prob_low=prob_low,
+                        utility_level=utility,
+                        risk_aversion=risk_aversion,
+                        dtype=dtype,
+                    )
+                )[0]
+                for prob_low, utility in ((0.9, utility_advantage), (0.5, 0.0))
+            ]
+        )
+    )()
+    expected = jnp.asarray([utility_advantage + skewed, even], dtype=dtype)
+    np.testing.assert_allclose(
+        np.asarray(Q_per_action), np.asarray(expected), rtol=rtol
+    )
+    assert int(jnp.argmax(Q_per_action)) == 1
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_ACTION_CASES)
+def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
+    x64_enabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The action with the larger certainty equivalent wins however small values are."""
+    _assert_the_even_lottery_wins(
+        risk_aversion=risk_aversion, scale=scale, dtype=jnp.float64, rtol=8e-5
+    )
+
+
+@pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT32_ACTION_CASES)
+def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale_float32(
+    x64_disabled: None,
+    risk_aversion: float,
+    scale: float,
+):
+    """The float32 Bellman ranks the same two actions the same way."""
+    _assert_the_even_lottery_wins(
+        risk_aversion=risk_aversion, scale=scale, dtype=jnp.float32, rtol=5e-4
+    )
+
+
+def _tiny_anchor_action_values(
+    *,
+    risky_values: tuple[float, float],
+    risky_prob_low: float,
+    safe_value: float,
+    dtype: Any,
+) -> tuple[float, float]:
+    """Return `Q` for a near-degenerate risky action and a deterministic safe one.
+
+    The risky action puts a near-zero probability on a continuation value far
+    below the other branch; the safe action pays `safe_value` for certain.
+    """
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    risky = Q_and_F(
+        **_two_target_call_kwargs(
+            values=risky_values,
+            regime_prob_low=risky_prob_low,
+            utility_level=0.0,
+            risk_aversion=8.0,
+            dtype=dtype,
+        )
+    )[0]
+    safe = Q_and_F(
+        **_two_target_call_kwargs(
+            values=(safe_value, safe_value),
+            regime_prob_low=0.5,
+            utility_level=0.0,
+            risk_aversion=8.0,
+            dtype=dtype,
+        )
+    )[0]
+    return float(risky), float(safe)
+
+
+def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float64(
+    x64_enabled: None,
+):
+    """A near-zero-probability low branch stays finite and loses to a safe action."""
+    risky, safe = _tiny_anchor_action_values(
+        risky_values=(1e-50, 1.0),
+        risky_prob_low=1e-20,
+        safe_value=1e-40,
+        dtype=jnp.float64,
+    )
+    assert safe > risky
+
+
+def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float32(
+    x64_disabled: None,
+):
+    """The float32 Bellman comparison keeps the safe action too."""
+    risky, safe = _tiny_anchor_action_values(
+        risky_values=(1e-8, 1.0),
+        risky_prob_low=1e-8,
+        safe_value=1e-4,
+        dtype=jnp.float32,
+    )
+    assert safe > risky
+
+
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float64(x64_enabled: None):
+    """The near-degenerate float64 regime lottery evaluates to `7.1969e-48`."""
+    risky, _ = _tiny_anchor_action_values(
+        risky_values=(1e-50, 1.0),
+        risky_prob_low=1e-20,
+        safe_value=1e-40,
+        dtype=jnp.float64,
+    )
+    np.testing.assert_allclose(risky, 7.196856730011521e-48, rtol=1e-12, atol=0.0)
+
+
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float32(x64_disabled: None):
+    """The near-degenerate float32 regime lottery evaluates to `1.3895e-7`."""
+    risky, _ = _tiny_anchor_action_values(
+        risky_values=(1e-8, 1.0),
+        risky_prob_low=1e-8,
+        safe_value=1e-4,
+        dtype=jnp.float32,
+    )
+    np.testing.assert_allclose(risky, 1.3894954943731376e-7, rtol=5e-5, atol=0.0)
+
+
+def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):
+    """The NaN diagnostics recompute the same `Q` the backward induction used."""
+    call_kwargs = _two_target_call_kwargs(
+        values=(1e-50, 2e-50),
+        regime_prob_low=0.25,
+        utility_level=3e-51,
+        risk_aversion=8.0,
+        dtype=jnp.float64,
+    )
+    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    compute_intermediates = _build_two_target_closure(
+        get_compute_intermediates, certainty_equivalent=PowerMean()
+    )
+    Q_arr = jax.jit(lambda: Q_and_F(**call_kwargs)[0])()
+    diagnostic_Q_arr = jax.jit(lambda: compute_intermediates(**call_kwargs)[3])()
+    np.testing.assert_allclose(
+        np.asarray(diagnostic_Q_arr), np.asarray(Q_arr), rtol=0.0, atol=0.0
+    )

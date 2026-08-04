@@ -30,6 +30,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -269,11 +270,12 @@ def test_dcegm_terminal_bequest_differs_by_pref_type():
 
 
 def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
-    """A terminal discrete state absent from the parent's combo axes is rejected.
+    """A terminal discrete state the parent neither carries nor seeds is rejected.
 
-    The parent has no axis to align the terminal carry's discrete dimension to,
-    so the DC-EGM solve reports the unsupported configuration rather than
-    silently mis-indexing.
+    The target's value function has a `pref_type` axis, but the source has no
+    such state and defines no entry law for it, so no next-period value exists
+    to read. The model reports this when it is built, rather than letting any
+    solver mis-index the continuation.
     """
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
@@ -304,11 +306,9 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         solver=solver,
         active=lambda age, la=last_age: age < la,
     )
-    model = Model(
-        regimes={"retirement": retirement, "dead": _make_dead_regime()},
-        ages=ages,
-        regime_id_class=RegimeId,
-    )
-    params = {k: v for k, v in _get_params().items() if k != "flow_taste"}
-    with pytest.raises(NotImplementedError, match="pref_type"):
-        model.solve(params=params, log_level="debug")
+    with pytest.raises(ModelInitializationError, match="pref_type"):
+        Model(
+            regimes={"retirement": retirement, "dead": _make_dead_regime()},
+            ages=ages,
+            regime_id_class=RegimeId,
+        )

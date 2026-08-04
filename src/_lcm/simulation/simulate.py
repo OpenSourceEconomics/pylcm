@@ -58,7 +58,7 @@ from _lcm.utils.logging import (
     validation_enabled,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError
+from lcm.exceptions import InvalidSimulationInputError, InvalidValueFunctionError
 from lcm.result import SimulationResult
 from lcm.typing import (
     BoolND,
@@ -312,12 +312,6 @@ def _simulate_subject_chunk(
             if period in regime.active_periods
         }
 
-        active_regimes_next_period = tuple(
-            regime_name
-            for regime_name, regime in regimes.items()
-            if period + 1 in regime.active_periods
-        )
-
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
         for regime_name, regime in active_regimes.items():
@@ -337,7 +331,20 @@ def _simulate_subject_chunk(
                     .get(regime_name),
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
-                    active_regimes_next_period=active_regimes_next_period,
+                    decision_targets_next_period=(
+                        ()
+                        if period == ages.n_periods - 1
+                        else regime.solution.reachability.targets(
+                            period=period, source=regime_name
+                        )
+                    ),
+                    realization_targets_next_period=(
+                        ()
+                        if period == ages.n_periods - 1
+                        else regime.simulation.reachability.targets(
+                            period=period, source=regime_name
+                        )
+                    ),
                     key=key,
                     logger=logger,
                     n_subjects=n_subjects,
@@ -415,6 +422,46 @@ def _concatenate_chunk_results(
     return combined
 
 
+def _require_next_period_values(
+    *,
+    next_period_values: Mapping[RegimeName, FloatND],
+    required_targets: tuple[RegimeName, ...],
+    source_regime_name: RegimeName,
+    source_period: int,
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Validate and select the solution-graph continuation values a decision needs.
+
+    Args:
+        next_period_values: The caller-supplied value-function arrays for the
+            target period (`source_period + 1`), keyed by regime name.
+        required_targets: This source's retained *solution*-graph targets —
+            every one must have an entry in `next_period_values`.
+        source_regime_name: The source regime making the decision.
+        source_period: The source period (0-indexed).
+
+    Returns:
+        Immutable mapping of just the required targets to their value arrays.
+
+    Raises:
+        InvalidSimulationInputError: If any required target is missing from
+            `next_period_values`.
+
+    """
+    missing = tuple(sorted(set(required_targets) - next_period_values.keys()))
+    if missing:
+        msg = (
+            f"Missing continuation values for source regime '{source_regime_name}' "
+            f"at period {source_period} (target period {source_period + 1}). "
+            f"Required solution-graph targets: {required_targets}. "
+            f"Missing: {missing}. Supply a solution produced by this model or "
+            f"provide all required arrays."
+        )
+        raise InvalidSimulationInputError(msg)
+    return MappingProxyType(
+        {target: next_period_values[target] for target in required_targets}
+    )
+
+
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
@@ -430,7 +477,8 @@ def _simulate_regime_in_period(
     ],
     flat_params: FlatParams,
     regime_names_to_ids: RegimeNamesToIds,
-    active_regimes_next_period: tuple[RegimeName, ...],
+    decision_targets_next_period: tuple[RegimeName, ...],
+    realization_targets_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     logger: logging.Logger,
     n_subjects: int,
@@ -457,7 +505,15 @@ def _simulate_regime_in_period(
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
-        active_regimes_next_period: Tuple of active regime names in the next period.
+        decision_targets_next_period: This source's retained *solution*-graph
+            targets next period — the continuation values the decision/Q
+            evaluation reads. A caller-supplied `period_to_regime_to_V_arr`
+            missing one of these raises `InvalidSimulationInputError`.
+        realization_targets_next_period: This source's retained
+            *simulation*-graph targets next period — the admissible set for
+            the realized regime draw. May differ from
+            `decision_targets_next_period` under a `Phased` regime
+            transition.
         key: JAX random key for stochastic operations.
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
@@ -488,8 +544,12 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    next_regime_to_V_arr = period_to_regime_to_V_arr.get(
-        period + 1, MappingProxyType({})
+    next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+    next_regime_to_V_arr = _require_next_period_values(
+        next_period_values=next_period_values,
+        required_targets=decision_targets_next_period,
+        source_regime_name=regime_name,
+        source_period=period,
     )
 
     # The Q-function values contain the information of how much value each
@@ -596,7 +656,7 @@ def _simulate_regime_in_period(
             regime_names_to_ids=regime_names_to_ids,
             states_per_regime=states,
             new_subject_regime_ids=new_subject_regime_ids,
-            active_regimes_next_period=active_regimes_next_period,
+            active_regimes_next_period=realization_targets_next_period,
             key=next_regime_key,
             subjects_in_regime=subject_ids_in_regime,
             n_subjects=n_subjects,

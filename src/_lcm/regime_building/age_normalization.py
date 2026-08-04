@@ -36,15 +36,19 @@ from jax import numpy as jnp
 
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_specialization import (
     INVARIANT,
     _describe_trait_mismatch,
     _grid_traits,
     _GridTraits,
     _GridTraitsError,
+    _tree_signature,
 )
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
+from _lcm.regime_building.Q_and_F import partition_continuation_targets
+from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import EconFunction, RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
@@ -203,15 +207,9 @@ def periodized_tree_signature(tree: Mapping[str, object], period: int) -> Hashab
     periodized node nested under one key cannot collide with one under another.
     Mirrors the structure of pylcm's nested transition trees.
     """
-    pairs: list[tuple[str, Hashable]] = []
-    for key in sorted(tree):
-        value = tree[key]
-        if isinstance(value, Mapping):
-            nested = cast("Mapping[str, object]", value)
-            pairs.append((key, periodized_tree_signature(nested, period)))
-        else:
-            pairs.append((key, periodized_node_signature(value, period)))
-    return tuple(pairs)
+    return _tree_signature(
+        tree, leaf_signature=lambda node: periodized_node_signature(node, period)
+    )
 
 
 def continuation_grid_signature_from_schedule(
@@ -317,6 +315,103 @@ def expand_groups_to_periods(
         for period in periods:
             result[period] = built_by_group[group_key]
     return MappingProxyType(result)
+
+
+def continuation_group_key(
+    *,
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    grid_schedule: AgeGridSchedule | None,
+    continuation_info: (
+        Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
+) -> Callable[[int], tuple[tuple[RegimeName, ...], Hashable]]:
+    """Build the per-period grouping key shared by Q_and_F construction and diagnostics.
+
+    Groups by (target configuration, per-period policy signature,
+    continuation-grid signature): with no age-specialized node the policy
+    signature is constant and the grouping collapses to the target
+    configuration alone.
+
+    Args:
+        phase_reachability: Static reachability graph for the phase.
+        source_regime_name: Name of the regime whose periods are grouped.
+        functions: Mapping of function names to functions, for the policy signature.
+        constraints: Mapping of constraint names to functions, for the policy
+            signature.
+        grid_schedule: Age-grid schedule, or `None` when no state is
+            age-specialized.
+        continuation_info: Per-period continuation interpolation info. When given,
+            the stateless/carry partition of the targets enters the signature, so
+            periods that read a target's continuation differently never share one
+            compiled program. Omit only where the caller builds nothing that
+            depends on that partition.
+
+    Returns:
+        A callable mapping a period to its grouping key.
+
+    """
+
+    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
+        complete = (
+            ()
+            if period == phase_reachability.n_periods - 1
+            else phase_reachability.targets(period=period, source=source_regime_name)
+        )
+        continuation_sig = continuation_grid_signature_from_schedule(
+            grid_schedule=grid_schedule,
+            target_period=period + 1,
+            target_regimes=complete,
+        )
+        scalar_targets: tuple[RegimeName, ...] = ()
+        if continuation_info is not None:
+            _, scalar_targets = partition_continuation_targets(
+                targets=complete,
+                regime_to_v_interpolation_info=continuation_info(period),
+            )
+        signature = (
+            periodized_tree_signature(functions, period),
+            periodized_tree_signature(constraints, period),
+            continuation_sig,
+            scalar_targets,
+        )
+        return (complete, signature)
+
+    return group_key
+
+
+def continuation_info_lookup(
+    *,
+    period_to_regime_v_interp: (
+        Mapping[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ),
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]]:
+    """Build the per-period continuation-info lookup shared by solve and diagnostics.
+
+    Uses each target's grid at period `t+1` where age-specialized (from the
+    schedule-built per-period map), falling back to its representative grid
+    otherwise.
+    """
+
+    def continuation_info(
+        period: int,
+    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+        if period_to_regime_v_interp is None:
+            return regime_to_v_interpolation_info
+        per_period = period_to_regime_v_interp.get(
+            period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
+        )
+        return MappingProxyType(
+            {
+                regime_name: per_period.get(regime_name, info)
+                for regime_name, info in regime_to_v_interpolation_info.items()
+            }
+        )
+
+    return continuation_info
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -643,6 +738,7 @@ def normalize_age_specialization(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     phased_specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> AgeNormalizationResult:
     """Resolve every age-specialized marker into concrete model-creation objects.
 
@@ -680,7 +776,7 @@ def normalize_age_specialization(
             rewritten_specs[regime_name] = spec
             continue
 
-        active_periods = ages.get_periods_where(user_regime.active)
+        active_periods = active_periods_by_regime[regime_name]
         if not active_periods:
             msg = (
                 f"Regime '{regime_name}' declares age-specialized objects but is "

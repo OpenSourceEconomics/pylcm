@@ -465,7 +465,7 @@ def build_model(
     n_periods: int | None = None,
     asset_max: float = 40.0,
     n_consumption: int = 30,
-    upper_envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
+    envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
     use_taxes: bool = False,
 ) -> Model:
     """Build the DS App.3 discrete-housing model.
@@ -487,7 +487,7 @@ def build_model(
         asset_max: Upper bound of the financial-asset grid `a in [0, asset_max]`.
         n_consumption: Number of consumption-grid points (brute search and the
             DC-EGM simulation draw).
-        upper_envelope: DC-EGM upper-envelope backend (`"fues"`, `"mss"`, `"ltm"`,
+        envelope: DC-EGM upper-envelope backend (`"fues"`, `"mss"`, `"ltm"`,
             `"rfc"`); the Table 4 methods are FUES/MSS/LTM.
 
     Returns:
@@ -581,7 +581,7 @@ def build_model(
             resources="resources",
             post_decision_function="savings",
             savings_grid=savings_grid,
-            upper_envelope=upper_envelope,
+            envelope=envelope,
             n_constrained_points=32,
         ),
     )

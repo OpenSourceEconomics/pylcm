@@ -47,7 +47,7 @@ def _closed_form_model() -> Model:
     )
     # MSS is the only backend whose rows certify every envelope crossing, so
     # it is the only one that qualifies for the off-grid read.
-    solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope="mss")
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope="mss")
     return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
@@ -125,7 +125,7 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     for a discrete-action regime.)
     """
     n_periods = 3
-    model = dcegm_variants.get_full_model("dcegm", n_periods, upper_envelope="mss")
+    model = dcegm_variants.get_full_model("dcegm", n_periods, envelope="mss")
     params = dcegm_variants.get_full_params(n_periods)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())

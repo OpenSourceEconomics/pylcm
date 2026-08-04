@@ -38,7 +38,9 @@ from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
+    compute_active_periods_by_regime,
     process_regimes,
 )
 from _lcm.typing import (
@@ -63,6 +65,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -87,6 +90,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            prepared_structure=prepared_structure,
         )
         params_template = create_params_template(regimes)
     else:
@@ -96,6 +100,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            prepared_structure=prepared_structure,
         )
 
     return regimes, params_template
@@ -108,6 +113,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -129,6 +135,7 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
     )
     raw_params_template = create_params_template(raw_regimes)
 
@@ -175,6 +182,7 @@ def validate_model_inputs(
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -248,11 +256,12 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables, ages=ages
+            user_regimes,
+            broadcast_variables=broadcast_variables,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
     )
-
-    error_messages.extend(_validate_no_target_only_processes(user_regimes))
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -267,73 +276,6 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
-
-
-def _validate_no_target_only_processes(
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> list[str]:
-    """Validate that every reachable target's processes are carried by its source.
-
-    A stochastic process supplies its own transition, and that transition is a
-    law from *this* period's value of the process. Integrating a target's
-    process out of the continuation therefore needs a from-value, which only a
-    source carrying the same process can supply. When a reachable target
-    declares a process its source does not, no entry law is defined and the
-    target's continuation would be omitted from the source's value silently.
-
-    Only a per-target regime transition is checked. Its key set declares the
-    support exactly, so a violation is certain. A coarse transition decides its
-    target at runtime and its support is unknown at build time, so every regime
-    is merely a candidate and rejecting on candidacy would refuse valid models;
-    that half of the class stays open rather than be closed with false
-    positives.
-
-    Args:
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances.
-
-    Returns:
-        List of error messages, one per offending (source, target, process).
-
-    """
-    processes_per_regime = {
-        name: {
-            state_name
-            for state_name, grid in regime.states.items()
-            if isinstance(grid, _ContinuousStochasticProcess)
-        }
-        for name, regime in user_regimes.items()
-    }
-    error_messages: list[str] = []
-    for source_name, source in user_regimes.items():
-        if source.terminal:
-            continue
-        transition = source.transition
-        if not isinstance(transition, Mapping):
-            # A coarse `transition=func` decides its target at runtime, so its
-            # support is unknown here: every regime is a *candidate*, but most
-            # are never returned. Rejecting on candidacy would refuse working
-            # models: an absorbing regime names every other regime as a
-            # candidate and goes to none of them. Only a per-target transition
-            # declares a support exact enough to validate.
-            continue
-        targets: set[RegimeName] = {str(key) for key in transition}
-        source_processes = processes_per_regime[source_name]
-        for target_name in sorted(targets):
-            error_messages.extend(
-                f"Regime '{source_name}' can transition to regime "
-                f"'{target_name}', which declares the stochastic process "
-                f"'{process}'. A process transition is a law from this "
-                f"period's value of the process, and '{source_name}' does "
-                f"not carry '{process}', so there is no value to condition "
-                f"on and no entry law is defined. Either declare "
-                f"'{process}' on '{source_name}' as well, or give "
-                f"'{target_name}' a non-process state."
-                for process in sorted(
-                    processes_per_regime.get(target_name, set()) - source_processes
-                )
-            )
-    return error_messages
 
 
 def _representative_for_validation(
@@ -358,7 +300,12 @@ def _representative_for_validation(
         return user_regimes
     phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     return normalize_age_specialization(
-        user_regimes=user_regimes, phased_specs=phased_specs, ages=ages
+        user_regimes=user_regimes,
+        phased_specs=phased_specs,
+        ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
     ).representative_user_regimes
 
 
@@ -404,6 +351,7 @@ def _validate_all_variables_used(
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -414,7 +362,7 @@ def _validate_all_variables_used(
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
-    of motion toward a reachable target (which this per-regime check cannot
+    of motion toward a candidate target (which this per-regime check cannot
     see).
 
     Args:
@@ -436,7 +384,11 @@ def _validate_all_variables_used(
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         if ages is not None:
-            active_periods = ages.get_periods_where(user_regime.active)
+            active_periods = (
+                ()
+                if active_periods_by_regime is None
+                else active_periods_by_regime.get(regime_name, ())
+            )
             if not active_periods and _regime_has_markers(user_regime):
                 # This regime is about to fail with the precise
                 # "active at no model age" `RegimeInitializationError` once
@@ -631,6 +583,17 @@ def _partial_fixed_params_into_regimes(
                     ),
                 )
                 if solution.compute_regime_transition_probs is not None
+                else None
+            ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    solution.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solution.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.validation_regime_transition_probs is not None
                 else None
             ),
         )

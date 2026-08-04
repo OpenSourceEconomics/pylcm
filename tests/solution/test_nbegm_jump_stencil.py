@@ -97,6 +97,9 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
         income=income,
         asset_limit=asset_limit,
         prev_limit=2.5,
+        next_limit=grid[-1] + 1.0,
+        equality_owner="otherwise",
+        side="below",
         coh_slope=jnp.ones_like(grid),
         valid=valid,
     )

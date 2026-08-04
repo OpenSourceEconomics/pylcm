@@ -106,7 +106,7 @@ def build_model(  # noqa: C901
     housing_max: float = 50.0,
     housing_min: float = 0.01,
     n_periods: int = 4,
-    upper_envelope: Literal["fues", "mss", "ltm", "rfc"] = "rfc",
+    envelope: Literal["fues", "mss", "ltm", "rfc"] = "rfc",
 ) -> Model:
     """Build the DS-2024 discrete-housing model.
 
@@ -121,7 +121,7 @@ def build_model(  # noqa: C901
         housing_max: Upper bound of the housing-level grid.
         housing_min: Lower bound `b` of the housing levels (and liquid floor).
         n_periods: Number of model periods (the last is the terminal bequest).
-        upper_envelope: DC-EGM upper-envelope backend; the RFC column is `"rfc"`.
+        envelope: DC-EGM upper-envelope backend; the RFC column is `"rfc"`.
 
     Returns:
         The alive discrete-housing regime plus the terminal bequest regime.
@@ -286,7 +286,7 @@ def build_model(  # noqa: C901
         resources="resources",
         post_decision_function="savings",
         savings_grid=savings_grid,
-        upper_envelope=upper_envelope,
+        envelope=envelope,
         n_constrained_points=32,
     )
     alive = UserRegime(

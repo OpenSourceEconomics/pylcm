@@ -53,7 +53,7 @@ from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
-from _lcm.regime_building.Q_and_F import get_period_targets
+from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
@@ -92,35 +92,22 @@ def _is_runtime_process(grid: Grid) -> bool:
 
 def get_egm_continuation_targets(
     *,
-    period: int,
-    transitions: TransitionFunctionsMapping,
-    reachable_targets: frozenset[RegimeName],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    targets: tuple[RegimeName, ...],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
-    """Split next-period-active targets into carry-interpolated and scalar ones.
+    """Split canonical graph targets into carry-interpolated and scalar ones.
 
-    This adapter is the single place where the EGM step derives "which target
-    regimes / which transition functions" from the engine regime's
-    transitions; changes to the transition representation swap this body
-    without touching the kernel.
-
-    - *Carry targets* have state-transition entries; their continuation is
+    - *Carry targets* have states; their continuation is
       interpolated from their `EGMCarry` rows.
-    - *Scalar targets* are stateless (no transition entries, no states; e.g.
+    - *Scalar targets* are stateless (e.g.
       a `dead` regime); their continuation is the constant value of their
-      carry rows and their marginal continuation is zero. Only declared-
-      reachable regimes qualify: a stateless regime the model contains for
-      other regimes' sake has no transition-probability cell here, and the
-      regime transition is the single source of truth for reachability.
+      carry rows and their marginal continuation is zero.
+
+    This function classifies representation only. It does not add, remove, or
+    otherwise infer graph membership.
 
     Args:
-        period: The period the kernel solves.
-        transitions: Immutable mapping of target regime names to their state
-            transition functions.
-        reachable_targets: The regime's declared-reachable target names.
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active period tuples.
+        targets: Canonical graph targets for one source and period.
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info.
 
@@ -128,20 +115,10 @@ def get_egm_continuation_targets(
         Tuple of carry-target names and scalar-target names.
 
     """
-    carry_targets = get_period_targets(
-        period=period,
-        transitions=transitions,
-        regimes_to_active_periods=regimes_to_active_periods,
+    return partition_continuation_targets(
+        targets=targets,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
-    scalar_targets = tuple(
-        name
-        for name in regime_to_v_interpolation_info
-        if name in reachable_targets
-        and period + 1 in regimes_to_active_periods.get(name, ())
-        and not regime_to_v_interpolation_info[name].state_names
-        and name not in carry_targets
-    )
-    return carry_targets, scalar_targets
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -312,7 +289,7 @@ class ContinuationPlan:
     that bound callable, never these statics directly.
     """
 
-    carry_targets: tuple[RegimeName, ...]
+    stateful_targets: tuple[RegimeName, ...]
     """Targets whose continuation is interpolated from their carry rows."""
 
     scalar_targets: tuple[RegimeName, ...]
@@ -410,7 +387,7 @@ def bind_continuation(
             resolved_process_grids=resolved_process_grids,
             risk_aversion=risk_aversion,
         )
-        for target in plan.carry_targets
+        for target in plan.stateful_targets
     }
 
     def continuation(
@@ -433,7 +410,7 @@ def bind_continuation(
             marginal_log_scales: list[ScalarFloat] = []
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
-            for target in plan.carry_targets:
+            for target in plan.stateful_targets:
                 # The reader returns the anchored quint whenever risk_aversion
                 # is set (this branch); ty cannot correlate the union's arity
                 # with the mode.
@@ -492,7 +469,7 @@ def bind_continuation(
             )
         blended_marginal = jnp.asarray(0.0, dtype=dtype)
         blended_value = jnp.asarray(0.0, dtype=dtype)
-        for target in plan.carry_targets:
+        for target in plan.stateful_targets:
             # Linear mode: the reader returns the plain (value, marginal) pair.
             target_value, target_marginal = cast(
                 "tuple[ScalarFloat, ScalarFloat]",
@@ -526,7 +503,7 @@ def build_continuation_plan(
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     post_decision_name: FunctionName,
@@ -553,12 +530,12 @@ def build_continuation_plan(
         functions=functions,
         transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
     return ContinuationPlan(
-        carry_targets=carry_targets,
+        stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         child_reads=child_reads,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1889,7 +1866,7 @@ def _build_child_reads(
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> MappingProxyType[RegimeName, _ChildRead]:
@@ -1909,7 +1886,7 @@ def _build_child_reads(
         {name: func for name, func in functions.items() if name != post_decision_name}
     )
     reads: dict[RegimeName, _ChildRead] = {}
-    for target in carry_targets:
+    for target in stateful_targets:
         target_info = regime_to_v_interpolation_info[target]
         target_regime = user_regimes[target]
         euler_state_name = _get_child_state_name(user_regime=target_regime)
