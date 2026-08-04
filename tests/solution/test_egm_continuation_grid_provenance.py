@@ -87,11 +87,15 @@ _WORKING_P90_TOL = 0.15
 # matched. Its witnesses therefore assert that a moving grid costs it no
 # accuracy, against its own baseline rather than the mesh's.
 _RFC_MEDIAN_TOL = 0.06
-# The tail carries the backend deficit twice over. The largest residuals sit on
-# the first retained liquid row and the last retained pension column -- the two
-# edges of the covered interior -- so the 90th percentile is set by how close
-# the mask runs to the uncovered layer, where RFC's rooftop cut is at its
-# coarsest. The median stays near 0.03 at both precisions while this moves.
+# RFC's tail, unlike its median, is not invariant to a moving grid. On the
+# identical node set the matched-grid p90 is 0.14, and moving the liquid grid
+# takes it to 0.17 at float64 and 0.28 at float32; the median over the same
+# nodes does not move (0.043 matched, 0.035/0.039 moving). G2EGM clears 0.15 on
+# the same configurations, so what degrades is the rooftop cut's selection
+# among candidates, not which grid the candidates were read on. This bound is
+# therefore chosen to sit above the measured maximum -- it is not derived from
+# an invariance the backend has. It bounds a known deficit; it does not certify
+# one.
 _RFC_P90_TOL = 0.35
 _RETIRED_MEDIAN_TOL = 0.01
 _RETIRED_MAX_TOL = 0.05
