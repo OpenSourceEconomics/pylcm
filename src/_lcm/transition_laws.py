@@ -4,13 +4,12 @@ One `TransitionLawInfo` per `(target regime, next-state)` pair, built once after
 explicit and intrinsic transition synthesis and read identically by solve,
 diagnostics, and simulation.
 
-The description is **target-qualified** because the same state name can obtain its
-value differently depending on which regime is entered: a state carried from the
-source toward one target and entered at a process's own law toward another has one
-name and two laws. A single set of stochastic names cannot express that, and
-consulting the source's own variables cannot either -- a process the source does
-not carry is invisible there, which is exactly the case a target-only entry
-creates.
+The description is **target-qualified** because stochasticity belongs to the
+`(target, next-state)` pair, not to the name alone. Consulting the source's own
+variables cannot decide it: a process the source does not carry is invisible
+there, so its entry law reads as deterministic and its weights are built and then
+discarded. Keying on the target instead asks the only question that has an
+answer -- how does *this* target obtain *this* state.
 
 Stochasticity is read off the synthesized functions rather than re-derived from
 the user's declarations: a law is stochastic when a target-qualified weight

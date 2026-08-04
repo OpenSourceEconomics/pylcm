@@ -468,12 +468,20 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
-                    # An IID draw does not depend on its previous value, so the
+                    if _has_valid_state_handoff(
+                        source_slice=source_slice,
+                        target=target,
+                        state_name=state_name,
+                    ):
+                        continue
+                    # With no handoff, an IID process is still supplied: an IID
+                    # draw does not depend on its previous value, so the
                     # target's entry distribution is the process's own
                     # unconditional law and there is nothing for the source to
                     # hand over. Every other state -- including an AR(1)
                     # process, whose next draw does depend on a previous value
-                    # the source would have to supply -- needs a handoff.
+                    # the source would have to supply -- has no next-period
+                    # value here.
                     if isinstance(target_grid, _IIDProcess):
                         entry_error = _runtime_param_entry_error(
                             phase_name=phase_name,
@@ -487,12 +495,6 @@ def _state_handoff_errors(
                         )
                         if entry_error is not None:
                             error_messages.append(entry_error)
-                        continue
-                    if _has_valid_state_handoff(
-                        source_slice=source_slice,
-                        target=target,
-                        state_name=state_name,
-                    ):
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
