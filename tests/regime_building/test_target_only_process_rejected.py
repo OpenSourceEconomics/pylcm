@@ -238,10 +238,9 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     )
 
 
-def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
-    """An entry law can initialize a process that is absent from the source."""
-    process = TauchenAR1Process(n_points=3, gauss_hermite=False)
-    model = Model(
+def _explicit_entry_model(process: TauchenAR1Process) -> Model:
+    """Build a source that enters its target's process at the value `0.0`."""
+    return Model(
         regimes={
             "source": Regime(
                 transition={"target": MarkovTransition(_one_probability)},
@@ -262,7 +261,42 @@ def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
         enable_jit=False,
     )
 
+
+def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
+    """An entry law can initialize a process that is absent from the source.
+
+    The declared value is placed on the target's own nodes, so with the payoff
+    equal to the shock and no discounting the source's value is the entry value
+    itself — here the centre node `0.0` of a symmetric AR(1) support.
+    """
+    model = _explicit_entry_model(
+        TauchenAR1Process(
+            n_points=3, gauss_hermite=False, rho=0.5, sigma=0.3, mu=0.0, n_std=2.0
+        )
+    )
+
     assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+
+    solution = model.solve(
+        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+        log_level="debug",
+    )
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), 0.0, atol=1e-6)
+
+
+def test_explicit_entry_into_a_runtime_parameterized_process_is_rejected() -> None:
+    """An entry law cannot place a value on a support built at runtime.
+
+    The declared value becomes a coordinate on the target's nodes, and those
+    nodes are built inside the source's Bellman equation, which reads only the
+    source's own parameters. The message names the state and the parameters
+    that block it.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"'shock' passes .* at runtime",
+    ):
+        _explicit_entry_model(TauchenAR1Process(n_points=3, gauss_hermite=False))
 
 
 def test_activity_incompatible_target_only_process_is_accepted() -> None:

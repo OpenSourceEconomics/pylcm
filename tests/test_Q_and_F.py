@@ -215,6 +215,7 @@ def test_get_multiply_weights():
                             stochastic=True,
                             continuous_process=False,
                             intrinsic_entry=False,
+                            emits_support_index=False,
                             weight_name=f"weight_test__{name}",
                         )
                         for name in ("next_a", "next_b")
