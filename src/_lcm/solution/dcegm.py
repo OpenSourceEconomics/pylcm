@@ -307,14 +307,16 @@ class DCEGM(Solver):
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
+        assert context.koopmans_aggregator is not None  # noqa: S101
         egm_step, egm_carry_template, egm_stateful_targets = build_egm_step_functions(
             solver=self,
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
             functions=context.functions,
+            koopmans_aggregator=context.koopmans_aggregator,
             constraints=context.constraints,
             transitions=context.transitions,
-            stochastic_transition_names=context.stochastic_transition_names,
+            transition_laws=context.transition_laws,
             compute_regime_transition_probs=context.compute_regime_transition_probs,
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
             period_to_regime_v_interp=context.period_to_regime_v_interp,

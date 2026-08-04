@@ -149,7 +149,7 @@ def build_params(
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "medicaid_eligible": {"medicaid_asset_limit": medicaid_asset_limit},
             "subsidy_medicaid": {"subsidy_high": subsidy_high},
             "subsidy_private": {"subsidy_low": subsidy_low},

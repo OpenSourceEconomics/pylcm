@@ -1424,8 +1424,8 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     # Model-level param is broadcast to all regimes/functions that need it
-    assert result["working_life"]["H__discount_factor"] == 0.95
-    assert result["retirement"]["H__discount_factor"] == 0.95
+    assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
+    assert result["retirement"]["koopmans_aggregator__discount_factor"] == 0.95
 
 
 def test_convert_series_regime_level_series() -> None:
@@ -1472,7 +1472,7 @@ def test_convert_series_mixed_dict() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    assert result["working_life"]["H__discount_factor"] == 0.95
+    assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
     assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert result["working_life"]["next_wealth__interest_rate"] == 0.05

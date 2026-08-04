@@ -25,7 +25,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
 
     Discover parameters from function signatures via `dags.tree`. Parameters
     are function arguments that are not states, actions, regime functions,
-    `next_<state>` outputs, or special variables (`period`, `age`, `E_next_V`).
+    `next_<state>` outputs, or special variables (`period`, `age`, `CE`).
 
     Age specialization is already resolved by `normalize_age_specialization`
     before this runs: the regime passed here carries concrete first-active-age
@@ -63,7 +63,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
-        "E_next_V",
+        "CE",
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
@@ -77,10 +77,10 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         else:
             tree = dt.create_tree_with_input_types({name: func})
 
-        # H is exempt from param-template extraction for state/action names
-        # that appear in its signature: pylcm wires those values through
-        # `states_actions_params` at call time, so they must not surface as
-        # user-facing params in the template.
+        # State and action names appearing in a function's signature are
+        # exempt from param-template extraction: pylcm wires those values
+        # through `states_actions_params` at call time, so they must not
+        # surface as user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
         _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
@@ -118,6 +118,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
+    _add_koopmans_aggregator_params(function_params, user_regime)
     _add_certainty_equivalent_params(function_params, user_regime)
 
     top_level_collisions = set(function_params) & set(per_target_params)
@@ -139,6 +140,51 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
             },
         }
     )
+
+
+def _add_koopmans_aggregator_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+) -> None:
+    """Add the Koopmans aggregator's params under its pseudo-function name in place.
+
+    The aggregator's parameters beyond `utility` and `CE` surface in the
+    template under the reserved key `koopmans_aggregator`; a regime function
+    of that name collides and is rejected. Parameters that are states,
+    actions, or regime functions are wired at call time and never surface.
+    """
+    if user_regime.koopmans_aggregator is None:
+        return
+    if "koopmans_aggregator" in function_params:
+        raise InvalidNameError(
+            "The regime declares `koopmans_aggregator`, whose parameters live "
+            "under the pseudo-function name 'koopmans_aggregator' in the "
+            "params — this conflicts with a regime function of the same name."
+        )
+    aggregator = user_regime.koopmans_aggregator
+    if isinstance(aggregator, Phased):
+        tree = dict(
+            dt.create_tree_with_input_types({"koopmans_aggregator": aggregator.solve})
+        ) | dict(
+            dt.create_tree_with_input_types(
+                {"koopmans_aggregator": aggregator.simulate}
+            )
+        )
+    else:
+        tree = dt.create_tree_with_input_types({"koopmans_aggregator": aggregator})
+    variables = {
+        *set(user_regime.states),
+        *set(user_regime.actions),
+        *user_regime.functions,
+        *(f"next_{name}" for name in user_regime.states),
+        "period",
+        "age",
+        "utility",
+        "CE",
+    }
+    function_params["koopmans_aggregator"] = {
+        k: v for k, v in sorted(tree.items()) if k not in variables
+    }
 
 
 def _add_certainty_equivalent_params(

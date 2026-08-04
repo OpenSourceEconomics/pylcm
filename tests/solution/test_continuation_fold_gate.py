@@ -18,12 +18,12 @@ from _lcm.egm import continuation
 from lcm import (
     NBEGM,
     AgeGrid,
-    H_epstein_zin,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
@@ -78,8 +78,6 @@ def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
         "resources": _resources,
         "savings": _savings,
     }
-    if epstein_zin:
-        functions["H"] = H_epstein_zin
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
@@ -88,6 +86,7 @@ def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
         transition=_next_regime,
         functions=functions,
         constraints={"feasible": _feasible},
+        koopmans_aggregator=W_epstein_zin if epstein_zin else None,
         certainty_equivalent=PowerMean() if epstein_zin else None,
         solver=solver,
     )
@@ -124,7 +123,7 @@ def _linear_params() -> dict:
 def _ez_params() -> dict:
     return {
         "alive": {
-            "H": {
+            "koopmans_aggregator": {
                 "discount_factor": 0.9,
                 "intertemporal_elasticity_of_substitution": 1.5,
             },

@@ -1,8 +1,9 @@
 """NBEGM agreement with brute when the discount factor rides along per cell.
 
 When the discount factor is a DAG function of a ride-along state (here `kind`,
-standing in for a preference type) rather than the flat `H__discount_factor`
-parameter, the case-piece solver must resolve the Euler weight per ride-along
+standing in for a preference type) rather than the flat
+`koopmans_aggregator__discount_factor` parameter, the case-piece solver must
+resolve the Euler weight per ride-along
 slice. Its value function must still reproduce the dense-grid `GridSearch` value
 across the asset interior and through the bracket kink, in every `kind` slice and
 at every working age — with the two slices carrying *different* discount factors.

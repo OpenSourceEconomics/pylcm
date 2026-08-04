@@ -23,6 +23,7 @@ from _lcm.egm.ez_kernel import (
     ez_transform_scalar,
 )
 from _lcm.egm.nbegm_step import _ez_flow_power_structure
+from lcm import W_epstein_zin
 
 # These are float64 specs of the kernel algebra (closed-form identities,
 # finite-difference checks, and float32-versus-float64 comparisons), so the
@@ -138,7 +139,7 @@ def test_period_value_at_unit_eis_is_the_cobb_douglas_limit() -> None:
     """At `rho = 1` the aggregator is the Cobb-Douglas limit `flow^(1-beta) nu^beta`.
 
     The CES exponent `1/(1-rho)` is singular at unit elasticity; the recursion's
-    well-defined limit is the geometric aggregator, matching `H_epstein_zin`.
+    well-defined limit is the geometric aggregator, matching `W_epstein_zin`.
     """
     beta = 0.3
     flow = 2.0
@@ -941,3 +942,26 @@ def test_continuation_is_stable_near_unit_gamma_for_quadrature_roundoff_mass() -
         )
         np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
         np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
+
+
+def test_the_public_aggregator_and_the_nbegm_period_kernel_agree() -> None:
+    """`GridSearch` and NBEGM evaluate one CES aggregator, bit for bit.
+
+    The brute solver reads `W_epstein_zin` while NBEGM reads
+    `ez_period_value`; publishing different cardinal values for the same
+    model would break cross-solver validation, so the public aggregator must
+    be the same computation.
+    """
+    got_public = W_epstein_zin(
+        utility=jnp.asarray(2.0),
+        CE=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        intertemporal_elasticity_of_substitution=jnp.asarray(0.5),
+    )
+    got_kernel = ez_period_value(
+        flow=jnp.asarray(2.0),
+        nu=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_array_equal(np.asarray(got_public), np.asarray(got_kernel))

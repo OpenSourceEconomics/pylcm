@@ -325,7 +325,7 @@ def _build_egm_core(
             liquid_grid=liquid,
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
+            discount_factor=params["koopmans_aggregator__discount_factor"],
             crra=params["utility__crra"],
             return_liquid=params[f"{liquid_law}__{return_param}"],
             income=params[f"{liquid_law}__{income_param}"],

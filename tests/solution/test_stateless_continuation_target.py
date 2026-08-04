@@ -78,7 +78,7 @@ def _solve_with_bequest(bequest: float):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_regime": {},
         },
@@ -162,7 +162,7 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_regime": {"alive": {}, "gone": {}},
         },
@@ -217,7 +217,7 @@ def _solve_with_process_only_target(level: float):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
             "next_regime": {},

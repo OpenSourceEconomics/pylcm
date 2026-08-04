@@ -15,7 +15,7 @@ offending piece. The rules, in the order they are checked:
 - the post-decision function and the resources function exist in
   `Regime.functions` (`inverse_marginal_utility` is optional — when omitted,
   the iEGM path derives a numerical inverse from `utility`)
-- the regime uses the default Bellman aggregator `H`
+- the regime uses the default Koopmans aggregator `W`
 - the post-decision function consumes the continuous action and the
   resources function (not the continuous state directly)
 - no constraint touches the continuous state or action (EGM enforces the
@@ -72,10 +72,10 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.exceptions import GridInitializationError, ModelInitializationError
+from lcm.koopmans_aggregation import W_linear
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.temporal_aggregation import H_linear
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
 
@@ -164,7 +164,9 @@ def _validate_dcegm_regime(
     _fail_if_required_functions_missing(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
-    _fail_if_custom_H(regime_name=regime_name, user_regime=user_regime)
+    _fail_if_custom_koopmans_aggregator(
+        regime_name=regime_name, user_regime=user_regime
+    )
 
     functions = _resolve_solve_functions(user_regime=user_regime)
 
@@ -325,26 +327,32 @@ def _fail_if_required_functions_missing(
         raise ModelInitializationError(msg)
 
 
-def _fail_if_custom_H(*, regime_name: RegimeName, user_regime: UserRegime) -> None:
-    """Require the default Bellman aggregator `H` at solve time.
+def _fail_if_custom_koopmans_aggregator(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> None:
+    """Require the default Koopmans aggregator `W` at solve time.
 
-    The Euler inversion hard-codes `H = utility + discount_factor * E[V']`, so a
-    custom *solve-phase* `H` would silently change the meaning of the solution.
-    A `Phased` `H` whose solve variant is the default aggregator is accepted —
-    DC-EGM never reads the simulate variant, so a naive present-bias regime
-    (`H = Phased(solve=H_linear, simulate=beta_delta_H)`) is admissible: the
-    present bias enters only the simulate-phase re-optimization, outside the
-    Euler inversion.
+    The Euler inversion hard-codes `W = utility + discount_factor * CE`, so a
+    custom *solve-phase* aggregator would silently change the meaning of the
+    solution. A `Phased` aggregator whose solve variant is the default is
+    accepted — DC-EGM never reads the simulate variant, so a naive present-bias
+    regime (`koopmans_aggregator=Phased(solve=W_linear, simulate=beta_delta_W)`)
+    is admissible: the present bias enters only the simulate-phase
+    re-optimization, outside the Euler inversion.
+
+    A regime that declares nothing takes the model-level default, which this
+    check sees as `None` because it runs on the user regime before the model
+    fills the slot.
     """
-    raw_H = user_regime.functions.get("H")
-    solve_H = raw_H.solve if isinstance(raw_H, Phased) else raw_H
-    if solve_H is not H_linear:
+    declared = user_regime.koopmans_aggregator
+    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    if solve_W is not None and solve_W is not W_linear:
         msg = (
-            f"Regime '{regime_name}' defines a custom solve-phase Bellman "
-            "aggregator `H`. The DCEGM solver hard-codes the default aggregator "
-            "`H = utility + discount_factor * E[V']` at solve time; remove the "
-            "custom `H` (a `Phased` `H` whose solve variant is `H_linear` is "
-            "accepted) or use the brute-force solver."
+            f"Regime '{regime_name}' declares a custom solve-phase Koopmans "
+            "aggregator. The DCEGM solver hard-codes the default aggregator "
+            "`W = utility + discount_factor * CE` at solve time; remove the "
+            "custom `koopmans_aggregator` (a `Phased` one whose solve variant "
+            "is `W_linear` is accepted) or use the brute-force solver."
         )
         raise ModelInitializationError(msg)
 

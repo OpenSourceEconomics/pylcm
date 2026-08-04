@@ -140,9 +140,9 @@ def _concatenate_regime_function(
     functions: EconFunctionsMapping,
     target: FunctionName,
 ) -> UserFunction:
-    """Concatenate one regime-function target from the H-free DAG."""
+    """Concatenate one regime-function target from the regime DAG."""
     return concatenate_functions(
-        functions={name: func for name, func in functions.items() if name != "H"},
+        functions=dict(functions),
         targets=target,
         enforce_signature=False,
         set_annotations=True,

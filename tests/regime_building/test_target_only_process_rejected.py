@@ -142,21 +142,33 @@ def test_activity_compatible_target_only_iid_is_entered_at_its_own_law() -> None
     is what makes the two distinguishable.
     """
     model = _target_only_process_model(
-        NormalIIDProcess(n_points=3, gauss_hermite=False),
+        NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.3, n_std=2.0),
     )
 
     assert model.reachability.solution.targets(period=0, source="source") == ("target",)
 
     solution = model.solve(
-        params={
-            "discount_factor": 1.0,
-            "target__shock__mu": 1.0,
-            "target__shock__sigma": 0.3,
-            "target__shock__n_std": 2.0,
-        },
+        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="debug",
     )
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 1.0, atol=1e-6)
+
+
+def test_target_only_iid_whose_law_arrives_at_runtime_is_rejected() -> None:
+    """An entered process must have its law fixed at construction.
+
+    The entry distribution is priced inside the source's Bellman equation,
+    which reads only the source's own parameters, so a law the target
+    parameterizes at runtime has no value the source could read. The message
+    names the state and the parameters that block it.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"'shock' passes 'mu', 'n_std', 'sigma' at runtime",
+    ):
+        _target_only_process_model(
+            NormalIIDProcess(n_points=3, gauss_hermite=False),
+        )
 
 
 def test_process_carried_by_source_and_target_is_accepted() -> None:
