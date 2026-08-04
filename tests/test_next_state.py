@@ -2,7 +2,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 
-from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, categorical
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.next_state import (
@@ -84,11 +83,6 @@ def test_get_next_state_function_with_simulate_target():
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
-    variables = Variables(
-        info=MappingProxyType(
-            {"b": VariableInfo(kind="state", topology="discrete", is_process=False)}
-        )
-    )
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
     )
@@ -98,7 +92,7 @@ def test_get_next_state_function_with_simulate_target():
         transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
-        variables=variables,
+        transition_laws=MappingProxyType({}),
     )
 
     got = got_func(state=jnp.array([1.0, 2.0]))

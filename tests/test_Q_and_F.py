@@ -26,6 +26,7 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.transition_laws import TransitionLawInfo
 from lcm import AgeGrid, PowerMean
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -193,7 +194,24 @@ def test_get_multiply_weights():
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
         transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset({"next_a", "next_b"}),
+        transition_laws=MappingProxyType(
+            {
+                "test": MappingProxyType(
+                    {
+                        name: TransitionLawInfo(
+                            target="test",
+                            next_state_name=name,
+                            qualified_name=f"test__{name}",
+                            stochastic=True,
+                            continuous_process=False,
+                            intrinsic_entry=False,
+                            weight_name=f"weight_test__{name}",
+                        )
+                        for name in ("next_a", "next_b")
+                    }
+                )
+            }
+        ),
     )
 
     a = jnp.array([1, 2])
@@ -421,7 +439,7 @@ def _build_two_target_closure(builder: Callable, *, certainty_equivalent) -> Cal
         constraints=MappingProxyType({}),
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
             functions={"regime_transition_probs": _low_and_high_probs},
             targets="regime_transition_probs",

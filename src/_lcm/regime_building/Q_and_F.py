@@ -12,6 +12,7 @@ from _lcm.regime_building.next_state import (
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.transition_laws import TransitionLaws, is_stochastic
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -36,7 +37,7 @@ def get_Q_and_F(
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     co_map_state_names: tuple[StateName, ...] = (),
@@ -54,7 +55,8 @@ def get_Q_and_F(
         constraints: Immutable mapping of constraint names to internal user functions.
         period_targets: Graph targets whose continuation enters E[V] this period.
         transitions: Immutable mapping of transition names to transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -76,7 +78,7 @@ def get_Q_and_F(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -135,7 +137,7 @@ def get_compute_intermediates(
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None = None,
@@ -156,8 +158,8 @@ def get_compute_intermediates(
         period_targets: Graph targets whose continuation enters E[V] this period.
         transitions: Immutable mapping of target regime names to state transition
             functions.
-        stochastic_transition_names: Frozenset of stochastic transition function
-            names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -174,7 +176,7 @@ def get_compute_intermediates(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -281,7 +283,7 @@ def _get_compute_E_next_V(
     functions: EconFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -310,7 +312,8 @@ def _get_compute_E_next_V(
         functions: Immutable mapping of function names to internal user functions.
         period_targets: Graph targets whose continuation enters E[V] this period.
         transitions: Immutable mapping of transition names to transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -345,13 +348,13 @@ def _get_compute_E_next_V(
             get_next_stochastic_weights_function(
                 functions=functions,
                 transitions=bundle,
-                stochastic_transition_names=stochastic_transition_names,
+                transition_laws=transition_laws,
                 regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
             transitions=bundle,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             regime_name=target_regime_name,
         )
         V_arr_name = "next_V_arr"
@@ -367,7 +370,9 @@ def _get_compute_E_next_V(
             get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         )
         stochastic_variables = tuple(
-            key for key in bundle if key in stochastic_transition_names
+            key
+            for key in bundle
+            if is_stochastic(transition_laws, target_regime_name, key)
         )
         next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
         next_V[target_regime_name] = productmap(
@@ -549,7 +554,7 @@ def _get_arg_names_of_Q_and_F(
 def _get_joint_weights_function(
     *,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
@@ -560,7 +565,8 @@ def _get_joint_weights_function(
 
     Args:
         transitions: Transitions of the target regime.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         regime_name: Name of the target regime.
 
     Returns:
@@ -571,7 +577,7 @@ def _get_joint_weights_function(
     arg_names = [
         f"weight_{regime_name}__{key}"
         for key in transitions
-        if key in stochastic_transition_names
+        if is_stochastic(transition_laws, regime_name, key)
     ]
 
     @with_signature(args=arg_names)

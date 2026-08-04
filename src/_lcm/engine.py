@@ -11,6 +11,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -307,8 +308,8 @@ class SolutionPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
     """Construction-time solve graph shared by every canonical regime."""
@@ -494,8 +495,8 @@ class SimulationPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
     """Construction-time simulate graph shared by every canonical regime."""

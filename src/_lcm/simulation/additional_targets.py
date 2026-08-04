@@ -10,6 +10,7 @@ import numpy as np
 from dags import concatenate_functions, get_ancestors
 
 from _lcm.engine import Regime
+from _lcm.transition_laws import is_stochastic
 from _lcm.typing import FlatRegimeParams, RegimeName
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -74,12 +75,12 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.simulation.stochastic_transition_names
+    transition_laws = regime.simulation.transition_laws
     return {
         f"weight_{target_regime_name}__{transition_name}"
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if transition_name in stochastic_transition_names
+        if is_stochastic(transition_laws, target_regime_name, transition_name)
     }
 
 
