@@ -197,7 +197,7 @@ def _solve_f2_fixture():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "gate_threshold": jnp.asarray(_GATE_THRESHOLD),
                     # The collision: the SOURCE's own `x` grid points, named
                     # exactly like the target's.
@@ -509,7 +509,9 @@ def _solve_f3_fixture():
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "stateless_target": MappingProxyType({}),
             "stateless_fallback": MappingProxyType({}),
         }

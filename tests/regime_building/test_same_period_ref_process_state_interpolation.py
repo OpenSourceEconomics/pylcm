@@ -50,6 +50,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.simulate import simulate
@@ -63,6 +64,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
@@ -142,12 +144,18 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_shock_ref_regimes(), derived_categoricals={}
+                user_regimes=_make_shock_ref_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_shock_ref_regimes(), derived_categoricals={}
+            user_regimes=_make_shock_ref_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
@@ -155,7 +163,9 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
     )
     flat_params = MappingProxyType(
         {
-            "shock_ref": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
+            "shock_ref": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+            ),
             "shock_ref_terminal": MappingProxyType({}),
         }
     )
@@ -258,9 +268,13 @@ def _make_regimes() -> dict[str, Regime]:
 def _flat_params() -> MappingProxyType:
     return MappingProxyType(
         {
-            "shock_ref": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
+            "shock_ref": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+            ),
             "shock_ref_terminal": MappingProxyType({}),
-            "married": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
+            "married": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+            ),
             "married_terminal": MappingProxyType({}),
         }
     )
@@ -270,12 +284,18 @@ def _build_and_solve():
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_regimes(), derived_categoricals={}
+                user_regimes=_make_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_regimes(), derived_categoricals={}
+            user_regimes=_make_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,

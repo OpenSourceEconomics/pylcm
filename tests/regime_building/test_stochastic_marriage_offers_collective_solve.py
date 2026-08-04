@@ -49,12 +49,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -259,12 +261,18 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_offer_regimes(), derived_categoricals={}
+                user_regimes=_make_offer_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_offer_regimes(), derived_categoricals={}
+            user_regimes=_make_offer_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -274,7 +282,9 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
     )
     flat_params = MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
@@ -466,11 +476,19 @@ def test_endogenous_offer_distribution_is_rejected():
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
             {n: jnp.int32(i) for i, n in enumerate(regimes)}
@@ -479,7 +497,9 @@ def test_endogenous_offer_distribution_is_rejected():
     )
     flat_params = MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),

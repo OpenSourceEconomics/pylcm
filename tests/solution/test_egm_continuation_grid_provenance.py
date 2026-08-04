@@ -426,7 +426,7 @@ def _renamed_one_asset_params():
     return {
         "alive": {
             "utility": {"crra": 2.0},
-            "H": {"discount_factor": 0.98},
+            "koopmans_aggregator": {"discount_factor": 0.98},
             "alive": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
             "gone": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
         },
@@ -544,7 +544,7 @@ def _renamed_two_asset_params():
     return {
         "working": {
             "utility": working["utility"],
-            "H": working["H"],
+            "koopmans_aggregator": working["koopmans_aggregator"],
             "working": {
                 "next_cash": working["working"]["next_liquid"],
                 "next_fund": working["working"]["next_pension"],
@@ -557,7 +557,7 @@ def _renamed_two_asset_params():
         },
         "retired": {
             "utility": params["retired"]["utility"],
-            "H": params["retired"]["H"],
+            "koopmans_aggregator": params["retired"]["koopmans_aggregator"],
             "retired": {
                 "next_cash_only": params["retired"]["retired"]["next_liquid"],
                 "next_regime": params["retired"]["retired"]["next_regime"],

@@ -19,12 +19,14 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
@@ -60,12 +62,18 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes={"couple": regime}, derived_categoricals={}
+                user_regimes={"couple": regime},
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes={"couple": regime}, derived_categoricals={}
+            user_regimes={"couple": regime},
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),

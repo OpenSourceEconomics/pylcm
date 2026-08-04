@@ -339,7 +339,9 @@ def _solve_dual_edge(*, edge_order: tuple[str, str]):
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target_a": MappingProxyType({}),
             "target_b": MappingProxyType({}),
             "fallback_a": MappingProxyType({}),

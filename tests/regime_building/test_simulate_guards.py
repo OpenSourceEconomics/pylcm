@@ -388,7 +388,9 @@ def _solve_all_collective():
     )
     flat_params = MappingProxyType(
         {
-            "couple": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "couple": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "couple_terminal": MappingProxyType({}),
         }
     )

@@ -225,7 +225,7 @@ def build_params(
     return {
         "young": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "tax": tax_params,
             "resources": {"base_income": base_income},
             "old": {"next_liquid": budget},
@@ -233,7 +233,7 @@ def build_params(
         },
         "old": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "tax": tax_params,
             "resources": old_resources,
             "dead": {"next_liquid": budget},

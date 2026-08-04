@@ -60,7 +60,7 @@ def _build_model():
 _PARAMS = {
     "alive": {
         "utility": {},
-        "H": {"discount_factor": 0.95},
+        "koopmans_aggregator": {"discount_factor": 0.95},
         "next_wealth": {},
         "next_regime": {},
     },

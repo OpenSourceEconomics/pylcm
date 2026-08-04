@@ -12,7 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, W_linear, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -88,13 +88,12 @@ def test_model_with_uncovered_state_raises() -> None:
         _build_model(work)
 
 
-def test_user_regimes_are_finalized_with_default_h() -> None:
-    """`model.user_regimes` exposes finalized regimes: `H` injected, raw untouched."""
+def test_user_regimes_are_finalized_with_the_model_level_aggregator() -> None:
+    """`model.user_regimes` carries the model-level `H`; the raw regime does not."""
     work = _build_work_regime()
     model = _build_model(work)
-    finalized = model.user_regimes["work"]
-    assert "H" in finalized.functions
-    assert "H" not in work.functions
+    assert model.user_regimes["work"].koopmans_aggregator is W_linear
+    assert work.koopmans_aggregator is None
 
 
 def test_state_action_overlap_raises_at_model_time() -> None:

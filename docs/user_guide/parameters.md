@@ -121,7 +121,7 @@ Typically set at model level:
 params = {"discount_factor": 0.95}
 ```
 
-Not needed if you provide a custom `H` function in your regime's `functions` dict.
+Not needed if you supply a custom `koopmans_aggregator` that takes no `discount_factor`.
 
 ### Shock parameters
 

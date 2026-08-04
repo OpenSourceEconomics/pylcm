@@ -35,6 +35,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
@@ -42,6 +43,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
@@ -121,12 +123,18 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_couple_regimes(), derived_categoricals={}
+                user_regimes=_make_couple_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_couple_regimes(), derived_categoricals={}
+            user_regimes=_make_couple_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -138,7 +146,9 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     _bi_result = solve(
         flat_params=MappingProxyType(
             {
-                "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
+                "couple": MappingProxyType(
+                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                ),
                 "couple_terminal": MappingProxyType({}),
             }
         ),
@@ -252,12 +262,16 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "couple_terminal": couple_terminal},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
             user_regimes={"couple": couple, "couple_terminal": couple_terminal},
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -269,7 +283,9 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     _bi_result = solve(
         flat_params=MappingProxyType(
             {
-                "couple": MappingProxyType({"H__discount_factor": jnp.asarray(0.95)}),
+                "couple": MappingProxyType(
+                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
+                ),
                 "couple_terminal": MappingProxyType({}),
             }
         ),
@@ -368,12 +384,16 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes={"couple": couple, "single_terminal": single_terminal},
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
             ),
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "single_terminal": single_terminal},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(

@@ -205,7 +205,9 @@ def _solve_fixture():
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "ref": MappingProxyType({}),
             "fallback": MappingProxyType({}),
@@ -406,7 +408,7 @@ def _solve_curved_fixture(*, gate_threshold: float):
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "gate_threshold": jnp.asarray(gate_threshold),
                 }
             ),

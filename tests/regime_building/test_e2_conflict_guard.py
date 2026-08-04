@@ -42,10 +42,12 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import DiscreteGrid, LinSpacedGrid, categorical, fixed_transition
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -141,11 +143,19 @@ def _process(regimes: dict[str, Regime]) -> None:
     process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
             {name: jnp.int32(i) for i, name in enumerate(regimes)}

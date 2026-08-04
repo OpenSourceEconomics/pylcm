@@ -246,7 +246,7 @@ def _shift_flat_params(*, target_declares_shift: bool = True):
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "shift": jnp.asarray(_SRC_SHIFT),
                 }
             ),
@@ -497,7 +497,7 @@ def _projector_flat_params():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "shift": jnp.asarray(_PROJ_SRC_SHIFT),
                 }
             ),
@@ -743,7 +743,7 @@ def _ref_grid_flat_params():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     # The collision: the SOURCE's own `x` grid points, named
                     # exactly like the reference regime's.
                     "x__points": jnp.asarray(_SRC_POINTS),
@@ -904,7 +904,9 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
     """
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({"z__points": jnp.asarray(_FALLBACK_POINTS)}),
         }
@@ -1025,7 +1027,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
             "single_f": MappingProxyType({"wage__points": jnp.asarray(_SINGLE_POINTS)}),
             "married": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "wage__points": jnp.asarray(_MARRIED_POINTS),
                 }
             ),
@@ -1176,7 +1178,9 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
     parameter from the source namespace."""
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType(
                 {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
             ),
@@ -1281,7 +1285,9 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
     """
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType(
                 {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
             ),
@@ -1421,7 +1427,9 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
     """
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "refregime": MappingProxyType({}),
             "fallback": MappingProxyType({}),
@@ -1510,7 +1518,7 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "threshold": jnp.asarray(0.1),
                 }
             ),
@@ -1586,7 +1594,9 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
     """
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "refregime": MappingProxyType({}),
             "fallback": MappingProxyType({}),
@@ -1718,7 +1728,9 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
     """
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "refregime": MappingProxyType({}),
             "fallback": MappingProxyType({}),
@@ -1840,7 +1852,7 @@ def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "utility__x": jnp.asarray(0.0),
                     "x": jnp.asarray(0.9),
                 }
@@ -1865,7 +1877,9 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
     keys on membership in `flat_params[source]`, not on the state name alone."""
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
         }
@@ -2047,7 +2061,7 @@ def test_source_param_aliasing_the_engine_params_arg_is_rejected():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     SAME_PERIOD_PARAMS_ARG: jnp.asarray(0.1),
                 }
             ),
@@ -2069,7 +2083,7 @@ def test_source_param_aliasing_the_engine_v_arg_is_rejected():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     SAME_PERIOD_V_ARG: jnp.asarray(0.1),
                 }
             ),
@@ -2089,7 +2103,9 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
     leaf with the engine value mapping."""
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
         }
@@ -2108,7 +2124,7 @@ def test_source_param_near_engine_name_still_solves():
         {
             "src": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "same_period_regime_to_params_user": jnp.asarray(0.1),
                 }
             ),

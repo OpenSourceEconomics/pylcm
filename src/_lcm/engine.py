@@ -12,6 +12,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -343,8 +344,8 @@ class SolutionPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
     """Construction-time solve graph shared by every canonical regime."""
@@ -379,9 +380,9 @@ class SolutionPhase:
     Productmap-wrapped and fused with on-device reductions inside a single
     `jax.jit`; invoked only in the error path when `validate_V` detects
     NaN. Each closure returns a flat dict of reductions — scalar
-    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
+    `{U_nan,CE_nan,Q_nan,F_feasible}_overall` entries, per-dimension
     `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
-    scalar means — so full-shape U/F/E/Q arrays never materialise in
+    scalar means — so full-shape U/F/CE/Q arrays never materialise in
     host-visible memory.
     """
 
@@ -596,8 +597,8 @@ class SimulationPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
     """Construction-time simulate graph shared by every canonical regime."""
@@ -775,7 +776,7 @@ class Regime:
     keeps the default path byte-identical.
     """
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

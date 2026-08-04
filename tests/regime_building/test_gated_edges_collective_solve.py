@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import (
     _fail_if_gated_edge_references_inactive,
@@ -31,6 +32,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -162,12 +164,18 @@ def _solve_consent(*, enable_jit: bool = False):
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_consent_regimes(), derived_categoricals={}
+                user_regimes=_make_consent_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_consent_regimes(), derived_categoricals={}
+            user_regimes=_make_consent_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -182,7 +190,9 @@ def _solve_consent(*, enable_jit: bool = False):
     )
     flat_params = MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
@@ -365,12 +375,18 @@ def _solve_dissolution(*, enable_jit: bool = False):
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_dissolution_regimes(), derived_categoricals={}
+                user_regimes=_make_dissolution_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_dissolution_regimes(), derived_categoricals={}
+            user_regimes=_make_dissolution_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -380,18 +396,24 @@ def _solve_dissolution(*, enable_jit: bool = False):
     )
     flat_params = MappingProxyType(
         {
-            "married": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "married": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "married_ir": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "ir_f__delta_f": jnp.asarray(0.5),
                     "ir_m__delta_m": jnp.asarray(0.2),
                 }
             ),
             "married_terminal": MappingProxyType({}),
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
-            "single_m": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_m": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_m_terminal": MappingProxyType({}),
         }
     )
@@ -459,12 +481,18 @@ def test_raw_ungated_mixed_transition_still_rejected():
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
-                    user_regimes=regimes, derived_categoricals={}
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
             ),
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -531,12 +559,18 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
-                    user_regimes=regimes, derived_categoricals={}
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
             ),
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -576,12 +610,18 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
-                    user_regimes=regimes, derived_categoricals={}
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
             ),
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(

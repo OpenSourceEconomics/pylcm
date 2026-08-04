@@ -40,6 +40,7 @@ import pandas as pd
 import pytest
 
 import lcm.model as model_module
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.simulate import simulate
@@ -47,6 +48,7 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -87,12 +89,18 @@ def _solve_and_process(
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes_dict, derived_categoricals={}
+                user_regimes=regimes_dict,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=regimes_dict, derived_categoricals={}
+            user_regimes=regimes_dict,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
@@ -173,7 +181,9 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     )
     flat_params = MappingProxyType(
         {
-            "couple": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "couple": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "couple_terminal": MappingProxyType({}),
         }
     )
@@ -241,7 +251,9 @@ def test_couple_simulate_with_runtime_validation_enabled():
     )
     flat_params = MappingProxyType(
         {
-            "couple": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "couple": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "couple_terminal": MappingProxyType({}),
         }
     )
@@ -388,7 +400,9 @@ def _solve_consent():
     )
     flat_params = MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
@@ -629,18 +643,24 @@ def _solve_dissolution():
     )
     flat_params = MappingProxyType(
         {
-            "married": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "married": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "married_ir": MappingProxyType(
                 {
-                    "H__discount_factor": jnp.asarray(_BETA),
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
                     "ir_f__delta_f": jnp.asarray(0.5),
                     "ir_m__delta_m": jnp.asarray(0.2),
                 }
             ),
             "married_terminal": MappingProxyType({}),
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
-            "single_m": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_m": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_m_terminal": MappingProxyType({}),
         }
     )
@@ -948,7 +968,9 @@ def _solve_consent_discrete_axis():
     )
     flat_params = MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
@@ -1371,7 +1393,9 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     )
     flat_params = MappingProxyType(
         {
-            "solo": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "solo": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "solo_terminal": MappingProxyType({}),
         }
     )
@@ -1537,7 +1561,9 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "src_exit": MappingProxyType({}),
             "src_fallback": MappingProxyType({}),
         }

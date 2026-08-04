@@ -205,9 +205,12 @@ def assert_the_collective_builders_route_each_role(
         default="transitions",
         override="flow_transitions",
     )
+    # The default is now READ OFF the per-target `transition_laws` rather than
+    # taken from a model-wide frozenset parameter, so the name it is bound to
+    # changed. The role, and the routing form this pins, did not.
     assert_role_default(
         assignment_value(collective, "flow_stochastic_names"),
-        default="stochastic_transition_names",
+        default="solve_stochastic_names",
         override="flow_stochastic_transition_names",
     )
 
@@ -215,7 +218,11 @@ def assert_the_collective_builders_route_each_role(
     assert len(det) == 1
     det_kw = keyword_map(det[0])
     assert_name(det_kw["transitions"], "flow_pool")
-    assert_name(det_kw["stochastic_transition_names"], "flow_stochastic_names")
+    # The merge asks the per-target laws, and is handed the RAW override so that
+    # `None` keeps the per-target reading: the resolved name-level set is the
+    # conservative flow answer and would change what the SOLVE phase merges.
+    assert_name(det_kw["transition_laws"], "transition_laws")
+    assert_name(det_kw["stochastic_names"], "flow_stochastic_transition_names")
 
     u_calls = call_named(collective, "_get_U_and_F")
     assert len(u_calls) == 1  # one comprehension call, executed once per stakeholder

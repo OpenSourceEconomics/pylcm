@@ -108,8 +108,8 @@ def _get_solve_one_combo_asset_rows(
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
         # Validation pins the default Bellman aggregator, whose single
-        # non-(utility, E_next_V) parameter is the discount factor.
-        (discount_factor,) = tuple(pieces.build_H_kwargs(combo_pool).values())
+        # non-(utility, CE) parameter is the discount factor.
+        (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
 
         def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
             return pieces.own_resources_func(

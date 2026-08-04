@@ -41,12 +41,14 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import DiscreteGrid, NormalIIDProcess, categorical
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
@@ -95,7 +97,12 @@ def _true_gate() -> BoolND:
 
 def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
     names = list(regimes)
-    finalized = finalize_regimes(user_regimes=regimes, derived_categoricals={})
+    finalized = finalize_regimes(
+        user_regimes=regimes,
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
+    )
     return {
         "user_regimes": finalized,
         "ages": ages,

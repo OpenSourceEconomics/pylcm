@@ -86,6 +86,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.simulate import simulate
@@ -99,6 +100,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -260,7 +262,9 @@ def _make_regimes() -> dict[str, Regime]:
 def _flat_params() -> MappingProxyType:
     return MappingProxyType(
         {
-            "single_f": MappingProxyType({"H__discount_factor": jnp.asarray(_BETA)}),
+            "single_f": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
             "single_f_terminal": MappingProxyType({}),
             "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
@@ -272,12 +276,18 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_regimes(), derived_categoricals={}
+                user_regimes=_make_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
         user_regimes=finalize_regimes(
-            user_regimes=_make_regimes(), derived_categoricals={}
+            user_regimes=_make_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,

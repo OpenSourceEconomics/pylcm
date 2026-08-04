@@ -38,6 +38,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
@@ -47,6 +48,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, NormalIIDProcess, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.koopmans_aggregation import W_linear
 from lcm.processes import RouwenhorstAR1Process
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
@@ -81,7 +83,9 @@ _REGIME_NAMES_TO_IDS = MappingProxyType(
 )
 _FLAT_PARAMS = MappingProxyType(
     {
-        "period0": MappingProxyType({"H__discount_factor": jnp.asarray(0.9)}),
+        "period0": MappingProxyType(
+            {"koopmans_aggregator__discount_factor": jnp.asarray(0.9)}
+        ),
         "terminal": MappingProxyType({}),
     }
 )
@@ -128,11 +132,19 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,
@@ -291,12 +303,18 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
         processed = process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
-                    user_regimes=regimes, derived_categoricals={}
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
             ),
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
             regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),
@@ -487,12 +505,16 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
             ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -512,11 +534,19 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=enable_jit,
@@ -760,12 +790,16 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
             ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -837,12 +871,16 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
             ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -901,12 +939,16 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=_make_target_local_fold_regimes(shared=False),
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
         user_regimes=finalize_regimes(
             user_regimes=_make_target_local_fold_regimes(shared=False),
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -936,12 +978,16 @@ def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes=_make_target_local_fold_regimes(shared=True),
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
             ),
             user_regimes=finalize_regimes(
                 user_regimes=_make_target_local_fold_regimes(shared=True),
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
             regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -962,7 +1008,9 @@ def test_coarse_self_transition_retains_the_self_continuation():
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
     params = MappingProxyType(
         {
-            "stay": MappingProxyType({"H__discount_factor": jnp.asarray(0.9)}),
+            "stay": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(0.9)}
+            ),
             "done": MappingProxyType({}),
         }
     )
@@ -985,12 +1033,18 @@ def test_coarse_self_transition_retains_the_self_continuation():
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+                user_regimes={"stay": stay, "done": done},
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
         ),
         user_regimes=finalize_regimes(
-            user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+            user_regimes={"stay": stay, "done": done},
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=ages3,
         regime_names_to_ids=ids,
@@ -1045,12 +1099,18 @@ def test_coarse_self_fold_is_rejected():
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
-                    user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+                    user_regimes={"stay": stay, "done": done},
+                    derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages3,
             ),
             user_regimes=finalize_regimes(
-                user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+                user_regimes={"stay": stay, "done": done},
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
             regime_names_to_ids=ids,
@@ -1102,12 +1162,16 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
                 user_regimes=finalize_regimes(
                     user_regimes={"src": src, "stay": stay, "alt": alt},
                     derived_categoricals={},
+                    koopmans_aggregator=W_linear,
+                    certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages3,
             ),
             user_regimes=finalize_regimes(
                 user_regimes={"src": src, "stay": stay, "alt": alt},
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
             regime_names_to_ids=ids,
@@ -1248,11 +1312,19 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=_AGES,
         regime_names_to_ids=MappingProxyType(
             {"src": jnp.int32(0), "folded_B": jnp.int32(1), "dead_C": jnp.int32(2)}
@@ -1261,7 +1333,9 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(discount)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(discount)}
+            ),
             "folded_B": MappingProxyType({}),
             "dead_C": MappingProxyType({}),
         }
@@ -1319,12 +1393,16 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
             user_regimes=finalize_regimes(
                 user_regimes=_make_route_to_folded_target_regimes(),
                 derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
         user_regimes=finalize_regimes(
             user_regimes=_make_route_to_folded_target_regimes(),
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
         regime_names_to_ids=MappingProxyType(
@@ -1416,18 +1494,28 @@ def _simulate_route(
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=regimes, derived_categoricals={}
+                user_regimes=regimes,
+                derived_categoricals={},
+                koopmans_aggregator=W_linear,
+                certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        ),
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,
     )
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType({"H__discount_factor": jnp.asarray(discount)}),
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(discount)}
+            ),
             "folded_B": MappingProxyType({}),
             "dead_C": MappingProxyType({}),
         }

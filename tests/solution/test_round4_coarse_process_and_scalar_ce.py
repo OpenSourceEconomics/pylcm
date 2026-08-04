@@ -44,9 +44,13 @@ _LAST_AGE = 22
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=5.0, n_points=4)
 
 # Equal weights on `(0, 1, 2, 3)`, so the unconditional expectation is the plain
-# mean of the nodes and needs no quadrature to state.
-_UNIFORM_SHOCK = UniformIIDProcess(n_points=4)
+# mean of the nodes and needs no quadrature to state. The law is fixed at
+# construction because an entered process is priced inside the source's Bellman
+# equation, which reads only the source's own parameters.
 _UNIFORM_NODES = (0.0, 1.0, 2.0, 3.0)
+_UNIFORM_SHOCK = UniformIIDProcess(
+    n_points=4, start=_UNIFORM_NODES[0], stop=_UNIFORM_NODES[-1]
+)
 
 
 def _process_params(
@@ -54,7 +58,7 @@ def _process_params(
 ) -> dict[str, float | int]:
     """Return the runtime parameters the process's grid reads."""
     if isinstance(process, UniformIIDProcess):
-        return {"start": _UNIFORM_NODES[0], "stop": _UNIFORM_NODES[-1]}
+        return {}
     return {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
@@ -118,7 +122,7 @@ def _solve_coarse_into_process_only_target(
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_regime": {},
         },
@@ -186,7 +190,7 @@ def _solve_with_entry_law(level: float):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
             "next_regime": {},
@@ -292,7 +296,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": 1.0},
+            "koopmans_aggregator": {"discount_factor": 1.0},
             "next_wealth": {},
             "next_regime": {},
             "certainty_equivalent": {"risk_aversion": risk_aversion},

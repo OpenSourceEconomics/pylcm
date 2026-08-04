@@ -34,7 +34,7 @@ _N_LIQUID = 40
 _PARAMS = {
     "alive": {
         "utility": {"crra": _CRRA},
-        "H": {"discount_factor": 0.95},
+        "koopmans_aggregator": {"discount_factor": 0.95},
         "resources": {"base_income": _BASE_INCOME},
         "alive": {
             "next_liquid": {"return_liquid": 0.03, "income": 1.0},

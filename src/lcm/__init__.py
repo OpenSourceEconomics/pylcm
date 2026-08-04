@@ -102,6 +102,7 @@ from lcm.case_piece import (  # noqa: E402
 )
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
+    LinearExpectation,
     PowerMean,
     QuasiArithmeticMean,
 )
@@ -115,6 +116,7 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.koopmans_aggregation import W_epstein_zin, W_linear  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -161,7 +163,6 @@ from lcm.solvers import (  # noqa: E402
     UniformObservedFixedCost,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
-from lcm.temporal_aggregation import H_epstein_zin, H_linear  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -200,11 +201,10 @@ __all__ = [
     "ExtremeValueTasteShocks",
     "FiniteOuterGrid",
     "GridSearch",
-    "H_epstein_zin",
-    "H_linear",
     "IrregSpacedGrid",
     "LegacyGoldenSection",
     "LinSpacedGrid",
+    "LinearExpectation",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MarkovTransition",
@@ -231,6 +231,8 @@ __all__ = [
     "TwoAssetEGM",
     "UniformIIDProcess",
     "UniformObservedFixedCost",
+    "W_epstein_zin",
+    "W_linear",
     "__version__",
     "affine_breakpoint",
     "boundary",

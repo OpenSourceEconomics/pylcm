@@ -52,9 +52,9 @@ def get_max_Q_over_a(
     The state-action value function $Q$ is defined as:
 
     ```{math}
-    Q(x, a) =  H(U(x, a), \mathbb{E}[V(x', a') | x, a]),
+    Q(x, a) =  W(U(x, a), \mathbb{E}[V(x', a') | x, a]),
     ```
-    with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
+    with $W(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
     Fixing a state, maximizing over all feasible actions,
@@ -423,9 +423,9 @@ def get_argmax_and_max_Q_over_a(
     The state-action value function $Q$ is defined as:
 
     ```{math}
-    Q(x, a) =  H(U(x, a), \mathbb{E}[V(x', a') | x, a]),
+    Q(x, a) =  W(U(x, a), \mathbb{E}[V(x', a') | x, a]),
     ```
-    with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
+    with $W(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
     Fixing a state but choosing the feasible actions that maximize Q, we get the optimal

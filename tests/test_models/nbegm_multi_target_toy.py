@@ -228,7 +228,7 @@ def build_params(
     def living(base_income: FloatND) -> dict:
         return {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
             "resources": {"base_income": base_income},
             "alive_a": {"next_liquid": budget, **regime_age},

@@ -104,7 +104,7 @@ def build_params(
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "net_transfer": {
                 "subsidy_low": subsidy_low,
                 "subsidy_high": subsidy_high,

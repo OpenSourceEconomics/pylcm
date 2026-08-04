@@ -17,17 +17,18 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.certainty_equivalent import PowerMean
+from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
+from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
+from lcm.koopmans_aggregation import W_epstein_zin
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
-from lcm.temporal_aggregation import H_epstein_zin
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -128,7 +129,11 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "argmax of the Pareto-weighted objective, not a smoothed maximum. "
             "See the design doc `pylcm-extension-collective-regimes.md` (v2.1)."
         )
-    if regime.certainty_equivalent is not None:
+    # Presence alone no longer distinguishes a nonlinear certainty equivalent:
+    # every non-terminal regime now carries one, and `LinearExpectation` IS the
+    # expected-utility default -- which is exactly what the collective path
+    # implements. Only a genuinely nonlinear CE is unimplemented here.
+    if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
             "A nonlinear certainty equivalent on a collective "
             "(stakeholder-valued) regime is not yet implemented: the "
@@ -366,7 +371,7 @@ def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
             "Gated edges (E3') on a taste-shock source regime are out of scope "
             "for this slice."
         )
-    if regime.certainty_equivalent is not None:
+    if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
             "Gated edges (E3') on a certainty-equivalent source regime are out "
             "of scope for this slice."
@@ -733,6 +738,7 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
+    error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
@@ -768,6 +774,28 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     ]
 
 
+def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect errors for a regime's Koopmans aggregator declaration.
+
+    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
+      regime function
+    - terminal regimes have no continuation to aggregate
+    """
+    error_messages: list[str] = []
+    if "H" in regime.functions:
+        error_messages.append(
+            "'H' is not a regime function: the Bellman aggregator lives in the "
+            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
+            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+        )
+    if regime.terminal and regime.koopmans_aggregator is not None:
+        error_messages.append(
+            "A terminal regime cannot declare `koopmans_aggregator`: there is "
+            "no continuation value to aggregate."
+        )
+    return error_messages
+
+
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
@@ -779,8 +807,14 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
+
+    `LinearExpectation` is the expected-utility default every solver and every
+    taste-shock regime implements, so only a nonlinear certainty equivalent is
+    subject to the composition rules.
     """
-    if regime.certainty_equivalent is None:
+    if regime.certainty_equivalent is None or isinstance(
+        regime.certainty_equivalent, LinearExpectation
+    ):
         return []
     error_messages: list[str] = []
     if regime.terminal:
@@ -813,14 +847,14 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.functions.get("H") is not H_epstein_zin:
+        if regime.koopmans_aggregator is not W_epstein_zin:
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `H_epstein_zin` "
-                '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
+                "regime's aggregator to be `W_epstein_zin` "
+                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
                 "inversion and period value read its intertemporal "
-                "elasticity. With a different `H` the kernels would solve a "
-                "recursion the regime does not declare."
+                "elasticity. With a different aggregator the kernels would "
+                "solve a recursion the regime does not declare."
             )
     if regime.taste_shocks is not None:
         error_messages.append(
@@ -1383,7 +1417,7 @@ def _fold_scope_errors(
             "reduction over a state axis — the two reductions are not "
             "composed."
         )
-    if regime.certainty_equivalent is not None:
+    if aggregates_nonlinearly(regime.certainty_equivalent):
         error_messages.append(
             f"fold=True on state(s) {sorted(fold_names)} is not supported "
             "together with an explicit `certainty_equivalent`: the fold "
