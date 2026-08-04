@@ -47,7 +47,7 @@ from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import create_regime_params_template
-from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import (
     ModelReachability,
     PhaseName,
@@ -607,6 +607,14 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
+                    # An IID draw does not depend on its previous value, so the
+                    # target's entry distribution is the process's own
+                    # unconditional law and there is nothing for the source to
+                    # hand over. Every other state -- including an AR(1)
+                    # process, whose next draw does depend on a previous value
+                    # the source would have to supply -- needs a handoff.
+                    if isinstance(target_grid, _IIDProcess):
+                        continue
                     if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
@@ -1792,8 +1800,10 @@ def _process_regime_core(
     # retained targets for this source — not to whichever targets happen to
     # have a non-process law bundle — so a target reached solely by carrying
     # a shared process state (no other law) still gets its intrinsic
-    # process transition synthesized.
-    process_names = variables.process_names
+    # process transition synthesized. Read the process names off the target's
+    # own grids rather than the source's variables: an IID process the source
+    # does not carry is entered at its unconditional law, so it needs its
+    # intrinsic transition built here too.
     continuation_targets = phase_reachability.union_targets(source=source_regime_name)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
@@ -1801,20 +1811,58 @@ def _process_regime_core(
         (user_regime, process): grid
         for user_regime, grids in all_grids.items()
         if user_regime in continuation_targets
-        for process in process_names
-        if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
+        for process, grid in grids.items()
+        if isinstance(grid, _ContinuousStochasticProcess)
     }
-    processed_functions |= {
-        f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
-            name=process, grid=grid
-        )
+    # A process the source carries is transitioned from its current value. One
+    # it does not carry is entered at its own law -- unless the source declared
+    # an explicit entry law for it, which is the more specific statement and
+    # wins.
+    carried_processes = set(variables.process_names)
+    target_process_grids = {
+        (user_regime, process): grid
         for (user_regime, process), grid in target_process_grids.items()
-    } | {
-        f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
-            name=process, grid=grid.to_jax()
-        )
-        for (user_regime, process), grid in target_process_grids.items()
+        if process in carried_processes
+        or f"{user_regime}__next_{process}" not in flat_nested_transitions
     }
+    # Only an IID process can be entered without a handoff, which
+    # `_state_handoff_errors` has already enforced.
+    entered_process_grids = {
+        key: grid
+        for key, grid in target_process_grids.items()
+        if key[1] not in carried_processes and isinstance(grid, _IIDProcess)
+    }
+    carried_process_grids = {
+        key: grid
+        for key, grid in target_process_grids.items()
+        if key[1] in carried_processes
+    }
+    processed_functions |= (
+        {
+            f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
+                name=process, grid=grid
+            )
+            for (user_regime, process), grid in carried_process_grids.items()
+        }
+        | {
+            f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
+                name=process, grid=grid.to_jax()
+            )
+            for (user_regime, process), grid in carried_process_grids.items()
+        }
+        | {
+            f"weight_{user_regime}__next_{process}": _get_entry_weights_for_process(
+                name=process, grid=grid
+            )
+            for (user_regime, process), grid in entered_process_grids.items()
+        }
+        | {
+            f"{user_regime}__next_{process}": _get_entry_next_for_process(
+                grid=grid.to_jax()
+            )
+            for (user_regime, process), grid in entered_process_grids.items()
+        }
+    )
 
     process_transition_keys = {
         f"{user_regime}__next_{process}"
@@ -2310,6 +2358,56 @@ def _get_weights_func_for_process(
         )
 
     return weights_func
+
+
+def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
+    """Get the next-index function for a process the source does not carry.
+
+    The target's nodes are the process's own, and no current value selects
+    among them, so the signature is empty.
+    """
+
+    @with_signature(args={}, return_annotation="Int1D")
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        return jnp.arange(grid.shape[0], dtype=jnp.int32)
+
+    return next_func
+
+
+def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunction:
+    """Get the entry weights of an IID process the source does not carry.
+
+    Every row of an IID transition matrix is the same unconditional
+    distribution, so the entry weights are row zero and no current value is
+    needed to choose the row.
+    """
+    if grid.params_to_pass_at_runtime:
+        fixed_params = dict(grid.params)
+        runtime_param_names = {
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
+        }
+
+        @with_signature(
+            args=dict.fromkeys(runtime_param_names, "FloatND"),
+            return_annotation="FloatND",
+            enforce=False,
+        )
+        def entry_weights_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+            process_kw: dict[str, FloatND | IntND] = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            return grid.compute_transition_probs(**process_kw)[0]
+
+        return entry_weights_runtime
+
+    transition_probs = grid.get_transition_probs()
+
+    @with_signature(args={}, return_annotation="FloatND", enforce=False)
+    def entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        return transition_probs[0]
+
+    return entry_weights
 
 
 def _validate_categoricals(
