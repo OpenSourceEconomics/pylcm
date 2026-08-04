@@ -28,6 +28,7 @@ from beartype import beartype
 from dags import concatenate_functions
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.continuation_grids import (
@@ -351,7 +352,7 @@ class NBEGM(Solver):
         # ride-along route above carries the Epstein-Zin kernels. Reject a
         # declared certainty equivalent here rather than silently solving the
         # additive recursion the regime did not declare.
-        if context.certainty_equivalent is not None:
+        if _aggregates_nonlinearly(context.certainty_equivalent):
             msg = (
                 f"Regime {context.regime_name!r} declares a "
                 "`certainty_equivalent` but has no ride-along state, so NBEGM "
@@ -591,7 +592,7 @@ class NBEGM(Solver):
             int(context.grids[name].to_jax().shape[0])
             for name in schedule_spec.ride_along_state_names
         )
-        if context.certainty_equivalent is not None:
+        if _aggregates_nonlinearly(context.certainty_equivalent):
             _fail_if_flow_not_single_power(
                 utility_dag=schedule_spec.utility_dag,
                 consumption_action_name=next(
@@ -666,7 +667,10 @@ class NBEGM(Solver):
                 # the unified jump-and-kink candidate step is additive. Reject
                 # the combination here, at model build, rather than midway
                 # through a traced solve.
-                if context.certainty_equivalent is not None and statics.has_jump:
+                if (
+                    _aggregates_nonlinearly(context.certainty_equivalent)
+                    and statics.has_jump
+                ):
                     msg = (
                         f"Regime {context.regime_name!r} declares a "
                         "`certainty_equivalent` and a current-period jump "
@@ -680,7 +684,7 @@ class NBEGM(Solver):
                 # combining it with a certainty equivalent would compare
                 # candidates under the wrong objective. Reject at model build.
                 if (
-                    context.certainty_equivalent is not None
+                    _aggregates_nonlinearly(context.certainty_equivalent)
                     and statics.continuation_reads_liquid
                 ):
                     msg = (
@@ -714,7 +718,9 @@ class NBEGM(Solver):
                     savings_grid=savings_grid,
                     schedule_spec=schedule_spec,
                     statics=statics,
-                    is_epstein_zin=context.certainty_equivalent is not None,
+                    is_epstein_zin=_aggregates_nonlinearly(
+                        context.certainty_equivalent
+                    ),
                 )
                 continuation_cores[key] = (
                     jax.jit(continuation_core)
@@ -1596,8 +1602,9 @@ class _NBEGMScheduleSpec:
     The ride-along core maps each source to its own per-cell asset preimage."""
     discount_factor_dag: Callable | None = None
     """Composed `discount_factor` as a function of its ride-along state arguments and
-    qualified params, or `None` when the regime uses pylcm's flat `koopmans_aggregator__discount_factor`
-    parameter. When set, the ride-along core resolves the discount factor per cell."""
+    qualified params, or `None` when the regime uses pylcm's flat
+    `koopmans_aggregator__discount_factor` parameter. When set, the ride-along
+    core resolves the discount factor per cell."""
     discrete_action_name: str | None = None
     """Name of a single discrete action the budget shifts, enveloped over per ride
     cell, or `None` when the regime carries no discrete action. Excluded from
@@ -2806,7 +2813,7 @@ def _build_nbegm_continuation_plan(
     # `PowerMean`, takes that single argument); `None` keeps the linear read.
     risk_aversion_param_name = (
         "certainty_equivalent__risk_aversion"
-        if context.certainty_equivalent is not None
+        if _aggregates_nonlinearly(context.certainty_equivalent)
         else None
     )
     return build_continuation_plan(
@@ -3165,7 +3172,8 @@ def _nbegm_ride_along_statics(
     # (e.g. a preference type the budget ignores) are not forwarded to the DAG.
     coh_arg_names = tuple(inspect.signature(schedule_spec.coh_of_liquid_dag).parameters)
     coh_state_names = tuple(name for name in ride_names if name in coh_arg_names)
-    # The discount factor is either pylcm's flat `koopmans_aggregator__discount_factor` param or, when
+    # The discount factor is either pylcm's flat
+    # `koopmans_aggregator__discount_factor` param or, when
     # the regime supplies a `discount_factor` DAG function (e.g. a per-preference-type
     # beta read off a ride-along state), resolved per cell from that function's
     # qualified params and ride-along state arguments.
@@ -3788,11 +3796,12 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         utility_params = {name: kwargs[name] for name in statics.utility_param_names}
         discount_params = {name: kwargs[name] for name in statics.discount_param_names}
         # Epstein-Zin: the aggregator curvature is `rho = 1/psi` where `psi` is the
-        # H param `intertemporal_elasticity_of_substitution`. The step reads the
-        # continuation pair as `(nu, dnu/ds)` and inverts the recursive Euler
-        # equation; `None` keeps the additive expected-utility step.
+        # Koopmans aggregator's `intertemporal_elasticity_of_substitution`. The
+        # step reads the continuation pair as `(nu, dnu/ds)` and inverts the
+        # recursive Euler equation; `None` keeps the additive expected-utility step.
         inverse_eis = (
-            1.0 / kwargs["H__intertemporal_elasticity_of_substitution"]
+            1.0
+            / kwargs["koopmans_aggregator__intertemporal_elasticity_of_substitution"]
             if is_epstein_zin
             else None
         )
@@ -4585,4 +4594,19 @@ def _build_ride_along_carry_template(
             if n_breakpoints
             else None
         ),
+    )
+
+
+def _aggregates_nonlinearly(
+    certainty_equivalent: CertaintyEquivalent | None,
+) -> bool:
+    """Whether the regime aggregates its continuation nonlinearly.
+
+    Every non-terminal regime carries a certainty equivalent, so presence
+    alone does not distinguish the Epstein-Zin kernels from the
+    expected-utility ones: `LinearExpectation` is the expected-utility
+    default and takes the ordinary route.
+    """
+    return certainty_equivalent is not None and not isinstance(
+        certainty_equivalent, LinearExpectation
     )

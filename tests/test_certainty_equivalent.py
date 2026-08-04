@@ -22,12 +22,18 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
+    W_epstein_zin,
     affine_breakpoint,
     categorical,
     fixed_transition,
     piecewise_affine,
 )
-from lcm.exceptions import InvalidNameError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -309,7 +315,7 @@ def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """NBEGM with a certainty equivalent needs `H_epstein_zin` as the regime's `H`.
+    """NBEGM with a certainty equivalent needs `W_epstein_zin` as the regime's `H`.
 
     The Euler inversion and period value read the aggregator's intertemporal
     elasticity; with the default linear `H` the recursion the kernels implement
@@ -321,7 +327,7 @@ def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
         budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
@@ -350,7 +356,8 @@ def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
                 "solver": nbegm,
-                "functions": dict(_NBEGM_FUNCTIONS) | {"H": H_epstein_zin},
+                "functions": dict(_NBEGM_FUNCTIONS),
+                "koopmans_aggregator": W_epstein_zin,
             },
             dead_kwargs={},
         )
@@ -409,8 +416,8 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
             "subsidy": _subsidy,
             "resources": _jump_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -479,8 +486,8 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -554,8 +561,8 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -621,8 +628,8 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -693,8 +700,8 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
             "utility": _u,
             "resources": _ride_resources,
             "savings": _savings,
-            "H": H_epstein_zin,
         },
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -973,14 +980,14 @@ def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """N-NB-EGM with a certainty equivalent needs `H_epstein_zin`, like NBEGM.
+    """N-NB-EGM with a certainty equivalent needs `W_epstein_zin`, like NBEGM.
 
     The inner Euler inversion and period value read the aggregator's
     intertemporal elasticity; with the default linear `H` the nested solve
     would run a recursion the regime does not declare, so the combination
     must fail at model build.
     """
-    with pytest.raises(RegimeInitializationError, match="H_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),

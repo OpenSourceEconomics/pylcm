@@ -23,9 +23,9 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
+from lcm.koopmans_aggregation import W_epstein_zin
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
-from lcm.koopmans_aggregation import W_epstein_zin
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -499,7 +499,9 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     taste-shock regime implements, so only a nonlinear certainty equivalent is
     subject to the composition rules.
     """
-    if regime.certainty_equivalent is None:
+    if regime.certainty_equivalent is None or isinstance(
+        regime.certainty_equivalent, LinearExpectation
+    ):
         return []
     error_messages: list[str] = []
     if regime.terminal:
