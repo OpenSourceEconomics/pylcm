@@ -480,8 +480,8 @@ def _get_compute_CE(
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
                 if next_V_has_stochastic_states[target_regime_name]:
-                    next_V_expected_arr = jnp.average(
-                        next_V_at_stochastic_states_arr,
+                    next_V_expected_arr = _expectation_over_stochastic_nodes(
+                        values=next_V_at_stochastic_states_arr,
                         weights=joint_next_stochastic_states_weights,
                     )
                 else:
@@ -502,7 +502,7 @@ def _get_compute_CE(
                     active_regime_probs[target_regime_name] * node_weights
                 )
 
-        if reduces_per_target:
+        if reduces_per_target and period_targets:
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
             # the represented mass to state the same quantity as
             # `LinearExpectation.aggregate`. Regime-transition validation accepts
@@ -510,6 +510,12 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
+            #
+            # A regime with no target at all carries no continuation, and its
+            # `CE` stays at zero rather than becoming `0 / 0` — matching the
+            # lottery route, which leaves `CE` at zero when it collects no nodes.
+            # A represented mass of zero across targets that do exist is a
+            # massless lottery, and NaN there is the same answer both routes give.
             CE = CE / probability_mass
         elif certainty_equivalent is not None and lottery_values:
             CE = certainty_equivalent.aggregate(
@@ -534,6 +540,20 @@ def _get_compute_CE(
         *next_stochastic_states_weights.values(),
     )
     return compute_CE, deps
+
+
+def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+    """Return the weighted mean of one target's continuation over its nodes.
+
+    Normalized explicitly rather than with `jnp.average`, for the reason
+    `_as_lottery` states: a target whose joint weights carry no mass
+    contributes no branch, and must not contribute NaN either — every target
+    enters the same continuation, so a NaN here would destroy the
+    well-specified targets beside it.
+    """
+    weight_sum = jnp.sum(weights)
+    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    return jnp.sum(values * weights) / safe_weight_sum
 
 
 def _as_lottery(

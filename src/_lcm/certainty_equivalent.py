@@ -199,10 +199,22 @@ class QuasiArithmeticMean(CertaintyEquivalent):
             The certainty equivalent, reduced over the last axis.
 
         """
-        transformed = self.transform(value=values, **_args_for(self.transform, params))
+        # A node carrying no weight must not be able to inject a non-finite
+        # quantity into the reduction. `transform` is arbitrary user code and
+        # may be unbounded at the edge of its domain — `log` at zero is the
+        # ordinary case — and a weight of exactly zero does not cancel an
+        # infinity: `0 * inf` is NaN, which would take the well-specified nodes
+        # down with it. Transforming a stand-in value instead keeps the
+        # reduction finite and changes nothing, the node's weight being zero.
+        live = weights > 0.0
+        safe_values = jnp.where(live, values, jnp.ones_like(values))
+        transformed = self.transform(
+            value=safe_values, **_args_for(self.transform, params)
+        )
         weight_sum = jnp.sum(weights, axis=-1)
         return self.inverse(
-            value=jnp.sum(weights * transformed, axis=-1) / weight_sum,
+            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
+            / weight_sum,
             **_args_for(self.inverse, params),
         )
 
