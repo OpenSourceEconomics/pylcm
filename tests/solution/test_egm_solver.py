@@ -125,7 +125,7 @@ def _params():
     return {
         "saving": {
             "utility": {"crra": _CRRA},
-            "H": {"discount_factor": _DISCOUNT_FACTOR},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
             "saving": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
             "done": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
         },

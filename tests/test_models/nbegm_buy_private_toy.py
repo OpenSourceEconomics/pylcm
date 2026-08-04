@@ -80,7 +80,7 @@ def build_params(
     return {
         "alive": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "resources": {"premium": premium},
             "alive": {
                 "next_liquid": alive_budget,

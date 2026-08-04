@@ -145,7 +145,7 @@ def _params():
     return {
         "alive": {
             "utility": {"crra": _CRRA},
-            "H": {"discount_factor": _DISCOUNT_FACTOR},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
             "alive": {"next_wealth": law, "next_regime": {"last_age": _LAST_AGE}},
             "gone": {"next_estate": law, "next_regime": {"last_age": _LAST_AGE}},
         },

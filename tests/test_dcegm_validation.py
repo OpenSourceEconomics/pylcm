@@ -24,9 +24,9 @@ from lcm import (
 )
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch
-from lcm.temporal_aggregation import H_linear
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -64,7 +64,7 @@ def _utility_with_direct_wealth_dependence(
     return jnp.log(consumption) + 0.01 * wealth
 
 
-def _custom_H(utility: FloatND, continuation: FloatND) -> FloatND:
+def _custom_aggregator(utility: FloatND, continuation: FloatND) -> FloatND:
     return utility + 0.9 * continuation
 
 
@@ -256,9 +256,9 @@ CASES = {
         ),
         "utility",
     ),
-    "custom_bellman_aggregator": (
-        lambda: VALID.replace(functions={**dict(VALID.functions), "H": _custom_H}),
-        "H",
+    "custom_koopmans_aggregator": (
+        lambda: VALID.replace(koopmans_aggregator=_custom_aggregator),
+        "koopmans_aggregator",
     ),
     "second_continuous_action": (
         lambda: VALID.replace(
@@ -364,33 +364,28 @@ def test_passive_continuous_state_constructs():
     assert model.n_periods == N_PERIODS
 
 
-def test_dcegm_phased_H_with_default_solve_variant_constructs():
-    """A `Phased` H whose solve variant is the default aggregator is admitted.
+def test_dcegm_phased_aggregator_with_default_solve_variant_constructs():
+    """A `Phased` aggregator whose solve variant is the default is admitted.
 
-    DC-EGM reads only the solve-phase `H`; the simulate variant is free. A naive
-    present-bias regime declares `H = Phased(solve=H_linear, simulate=...)`, so
-    the solve runs the exact Euler inversion and present bias enters only the
-    simulate-phase re-optimization.
+    DC-EGM reads only the solve-phase aggregator; the simulate variant is free.
+    A naive present-bias regime declares
+    `koopmans_aggregator=Phased(solve=W_linear, simulate=...)`, so the solve runs
+    the exact Euler inversion and present bias enters only the simulate-phase
+    re-optimization.
     """
     regime = VALID.replace(
-        functions={
-            **dict(VALID.functions),
-            "H": Phased(solve=H_linear, simulate=_custom_H),
-        }
+        koopmans_aggregator=Phased(solve=W_linear, simulate=_custom_aggregator)
     )
     model = _build_model(regime)
     assert model.n_periods == N_PERIODS
 
 
-def test_dcegm_phased_H_with_custom_solve_variant_raises():
-    """A `Phased` H whose *solve* variant is custom still violates the contract."""
+def test_dcegm_phased_aggregator_with_custom_solve_variant_raises():
+    """A `Phased` aggregator whose *solve* variant is custom violates the contract."""
     regime = VALID.replace(
-        functions={
-            **dict(VALID.functions),
-            "H": Phased(solve=_custom_H, simulate=H_linear),
-        }
+        koopmans_aggregator=Phased(solve=_custom_aggregator, simulate=W_linear)
     )
-    with pytest.raises(ModelInitializationError, match="solve-phase Bellman"):
+    with pytest.raises(ModelInitializationError, match="solve-phase Koopmans"):
         _build_model(regime)
 
 

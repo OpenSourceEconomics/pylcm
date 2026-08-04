@@ -22,7 +22,7 @@ from tests.test_models.nbegm_common import (
 _PARAMS = {
     "alive": {
         "utility": {"crra": 2.0},
-        "H": {"discount_factor": 0.95},
+        "koopmans_aggregator": {"discount_factor": 0.95},
         "resources": {"base_income": 2.0},
         "alive": {
             "next_liquid": {"return_liquid": 0.03, "income": 1.0},

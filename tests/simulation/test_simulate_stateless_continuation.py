@@ -68,7 +68,7 @@ def _simulate_with_bequest(bequest: float):
     params = {
         "alive": {
             "utility": {},
-            "H": {"discount_factor": _DISCOUNT},
+            "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_regime": {},
         },

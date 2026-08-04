@@ -228,7 +228,12 @@ def convert_series_in_params(
     result: dict[RegimeName, dict[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
         user_regime = user_regimes[regime_name]
-        all_funcs = user_regime.get_all_functions()
+        all_funcs = dict(user_regime.get_all_functions())
+        # The Koopmans aggregator is not a regime function; its params live
+        # under a pseudo-function key of the same name.
+        aggregator = user_regime.get_koopmans_aggregator()
+        if aggregator is not None:
+            all_funcs["koopmans_aggregator"] = aggregator
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
             parts = tree_path_from_qname(func_param)

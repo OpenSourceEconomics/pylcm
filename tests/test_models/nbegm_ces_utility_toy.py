@@ -227,7 +227,7 @@ def build_params(
             "leisure_base": leisure_base,
             "leisure_slope": leisure_slope,
         },
-        "H": {"discount_factor": discount_factor},
+        "koopmans_aggregator": {"discount_factor": discount_factor},
         "subsidy": subsidy_params,
         "alive": {
             "next_liquid": alive_budget,
