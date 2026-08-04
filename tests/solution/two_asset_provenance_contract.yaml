@@ -1,9 +1,10 @@
 ---
 # Accuracy budgets for the two-asset continuation-provenance witnesses.
 #
-# This file is the single source of the numbers. `test_egm_continuation_grid_
-# provenance.py` reads it and asserts against these fields directly, so a budget
-# and the gate that enforces it cannot drift apart.
+# This file is the source the executable gate reads: `test_egm_continuation_grid_
+# provenance.py` asserts against these fields directly, so a budget and the gate
+# enforcing it cannot drift apart. An audit bundle that quotes these numbers is a
+# copy, and must be regenerated from here rather than edited alongside it.
 #
 # `value_regret` is the relative deviation of a solver's published V from a dense
 # grid-search solve of the same model, node-by-node on the workload's stated
@@ -11,7 +12,9 @@
 # the median, the 0.90 quantile, and the maximum over the masked nodes.
 #
 # A budget must satisfy `max >= p90 >= median`, since each statistic dominates
-# the previous one by construction. Budgets are set above the measured values
+# the previous one by construction. Declaring them out of that order does not make
+# the contract impossible to meet, but it lets the tighter clause dominate so the
+# looser one never binds. Budgets are set above the measured values
 # recorded under `measured`, and apply to both required profiles; the
 # measurements are reported per profile because they differ.
 #
