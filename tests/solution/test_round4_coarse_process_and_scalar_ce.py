@@ -5,12 +5,14 @@ zero, no error is raised, and the Bellman argmax can reverse. Neither is
 detectable from a value that merely looks plausible, so each is pinned against
 an arithmetic oracle rather than against another solve.
 
-- **A target-only process, entered coarsely.** A regime whose only state is a
-  stochastic process cannot be priced by a parent that neither carries the
-  process nor says how it is entered: there is no next-period value to read. The
-  build refuses such a model and names the three ways out. What it must never do
-  is accept it and contribute zero, which is indistinguishable from a target
-  worth nothing.
+- **A target-only process, entered coarsely.** Whether a parent can price a
+  target whose only state is a stochastic process depends on the process. An IID
+  process draws independently of its previous value, so its entry distribution is
+  its own unconditional law and the parent needs nothing from the source; it is
+  priced. An AR(1) draw depends on a previous value the source does not have, so
+  there is no next-period value to read and the build refuses, naming the ways
+  out. What neither case may do is accept the model and contribute zero, which is
+  indistinguishable from a target worth nothing.
 - **A tiny-valued lottery under a power-mean certainty equivalent.** With
   `risk_aversion > 1`, `v ** (1 - risk_aversion)` leaves the dtype's range for
   small `v` long before the certainty equivalent does, so an aggregation that
@@ -28,6 +30,8 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
+    TauchenAR1Process,
+    UniformIIDProcess,
     categorical,
 )
 from lcm.certainty_equivalent import PowerMean
@@ -38,6 +42,20 @@ from tests.conftest import DECIMAL_PRECISION
 _DISCOUNT = 0.95
 _LAST_AGE = 22
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=5.0, n_points=4)
+
+# Equal weights on `(0, 1, 2, 3)`, so the unconditional expectation is the plain
+# mean of the nodes and needs no quadrature to state.
+_UNIFORM_SHOCK = UniformIIDProcess(n_points=4)
+_UNIFORM_NODES = (0.0, 1.0, 2.0, 3.0)
+
+
+def _process_params(
+    process: UniformIIDProcess | TauchenAR1Process,
+) -> dict[str, float | int]:
+    """Return the runtime parameters the process's grid reads."""
+    if isinstance(process, UniformIIDProcess):
+        return {"start": _UNIFORM_NODES[0], "stop": _UNIFORM_NODES[-1]}
+    return {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
 @categorical(ordered=False)
@@ -66,14 +84,19 @@ def _enter_shock() -> ScalarInt:
     return jnp.int32(1)
 
 
-def _solve_coarse_into_process_only_target(level: float):
+def _solve_coarse_into_process_only_target(
+    level: float,
+    *,
+    process: UniformIIDProcess | TauchenAR1Process | None = None,
+):
     """Build a coarse-transition model whose target's only state is a process.
 
     The parent carries no `shock` and declares no entry law for it, while its
-    coarse transition leaves the target reachable, so the build has no
-    next-period value to read there. This does not solve; it is the input to the
-    rejection test below.
+    coarse transition leaves the target reachable. Whether that is solvable is
+    the process's business: an IID process supplies its own entry distribution,
+    an AR(1) process cannot without a previous value.
     """
+    process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
         transition=_next_regime,
         active=lambda age: age < _LAST_AGE,
@@ -84,7 +107,7 @@ def _solve_coarse_into_process_only_target(level: float):
     )
     gone = Regime(
         transition=None,
-        states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
+        states={"shock": process},
         functions={"utility": lambda shock: shock + level},
     )
     model = Model(
@@ -99,24 +122,42 @@ def _solve_coarse_into_process_only_target(level: float):
             "next_wealth": {},
             "next_regime": {},
         },
-        "gone": {
-            "utility": {},
-            "shock": {"mu": 0.0, "sigma": 1.0, "n_std": 2},
-        },
+        "gone": {"utility": {}, "shock": _process_params(process)},
     }
     return model.solve(params=params, log_level="debug")
 
 
-def test_a_coarse_transition_into_a_process_only_target_is_refused():
-    """A parent that neither carries the process nor enters it is rejected.
+def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law():
+    """The parent reads `E[shock]` over the process's unconditional law.
 
-    The alternative is to contribute zero for that target, which reads as a
-    regime worth nothing rather than as a model the solver cannot price. The
-    message names the state and every way to resolve it, so the rejection is
-    actionable rather than merely safe.
+    An IID draw does not depend on its previous value, so the source has nothing
+    to hand over and the entry distribution is the process's own. On nodes
+    `(0, 1, 2, 3)` at equal weight that expectation is `1.5`, which no single
+    node equals -- so this distinguishes pricing at the law from pricing at any
+    one node, and from dropping the target and publishing `log(1.0) = 0`.
+    """
+    solution = _solve_coarse_into_process_only_target(0.0)
+    last_living = max(period for period in solution if "alive" in solution[period])
+    got = np.asarray(solution[last_living]["alive"])
+    expected = np.log(1.0) + _DISCOUNT * np.mean(_UNIFORM_NODES)
+    np.testing.assert_array_almost_equal(
+        got, np.full_like(got, expected), decimal=DECIMAL_PRECISION
+    )
+
+
+def test_a_coarse_transition_into_an_ar1_target_is_refused():
+    """An AR(1) target the source cannot seed is rejected, not priced at zero.
+
+    Its next draw depends on a previous value that the source neither carries
+    nor supplies, so no next-period value exists. The message names the state and
+    every way to resolve it, so the rejection is actionable rather than merely
+    safe.
     """
     with pytest.raises(ModelInitializationError) as excinfo:
-        _solve_coarse_into_process_only_target(10.0)
+        _solve_coarse_into_process_only_target(
+            10.0,
+            process=TauchenAR1Process(n_points=3, gauss_hermite=False),
+        )
     message = str(excinfo.value)
     assert "shock" in message
     assert "entry law" in message
