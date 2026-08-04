@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.power_mean import weighted_power_mean
 from lcm import PowerMean, W_epstein_zin, W_linear
 from tests.test_models.taste_shocks_toy import get_model as get_toy_model
 
@@ -254,4 +255,48 @@ def test_W_epstein_zin_accepts_a_batched_ies_of_any_length(x64_enabled: None):
     )
     np.testing.assert_allclose(
         np.asarray(result), [0.1, 0.09422792, 0.10919235], rtol=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    ("discount_factor", "ies"),
+    [
+        (0.96, 0.7),
+        (0.96, 1.0),
+        (0.96, 1.0 + 1e-6),
+        (0.96, 1.0 - 1e-6),
+        (0.96, 8.0),
+        (0.96, 0.125),
+        (0.0, 0.7),
+        (1.0, 0.7),
+    ],
+)
+def test_W_epstein_zin_equals_the_general_power_mean(
+    x64_enabled: None, discount_factor: float, ies: float
+):
+    """`W_epstein_zin` agrees with the general kernel on the same two-point lottery."""
+    utility = jnp.array([0.5, 1.0, 2.0, 1e-30, 3.0])
+    CE = jnp.array([2.0, 1.0, 0.5, 1e-30, 1e-30])
+    beta = jnp.asarray(discount_factor)
+
+    got = W_epstein_zin(
+        utility=utility,
+        CE=CE,
+        discount_factor=beta,
+        intertemporal_elasticity_of_substitution=jnp.asarray(ies),
+    )
+    expected = weighted_power_mean(
+        values=jnp.stack((utility, CE), axis=-1),
+        weights=jnp.stack(
+            (
+                jnp.broadcast_to(1.0 - beta, utility.shape),
+                jnp.broadcast_to(beta, utility.shape),
+            ),
+            axis=-1,
+        ),
+        exponent=1.0 - 1.0 / jnp.asarray(ies),
+    )
+    np.testing.assert_array_equal(jnp.isnan(got), jnp.isnan(expected))
+    np.testing.assert_allclose(
+        np.asarray(got), np.asarray(expected), rtol=1e-14, atol=0.0
     )

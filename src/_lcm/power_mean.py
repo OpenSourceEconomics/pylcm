@@ -9,8 +9,12 @@ exponent:
 - the Koopmans aggregator `W_epstein_zin` averages `(utility, CE)` at
   exponent `1 - 1/psi`, weighted by `(1 - discount_factor, discount_factor)`.
 
-`weighted_power_mean` is the single evaluation both route through, so a
-range that one survives the other survives too.
+`weighted_power_mean` reduces a lottery of any length over its last axis.
+`weighted_power_mean_of_pair` is the same derivation written out for the
+two-node case, which is what the Koopmans aggregator needs: a trailing axis
+of length two reduces poorly, and carrying the pair as two arrays avoids
+materializing that axis at all. The two agree to a few ulps everywhere,
+which `test_W_epstein_zin_equals_the_general_power_mean` pins.
 """
 
 import jax.numpy as jnp
@@ -146,4 +150,82 @@ def weighted_power_mean(
     )
     log_mean_power = anchor + log_moment / safe_exponent
     log_mean_geometric = jnp.sum(normalized_weights * log_v, axis=-1)
+    return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
+
+
+def weighted_power_mean_of_pair(
+    *,
+    first: FloatND,
+    second: FloatND,
+    first_weight: FloatND,
+    second_weight: FloatND,
+    exponent: FloatND,
+) -> FloatND:
+    """Return the weighted power mean of exactly two values, stably.
+
+    The arithmetic is `weighted_power_mean`'s, written out for a two-node
+    lottery so the pair never has to be stacked into a trailing axis of
+    length two. Every guarantee stated there holds here — the anchored log
+    form, the two moment representations, the exact geometric-mean limit at
+    `exponent == 0`, zero weights dropping out exactly, a NaN weight
+    propagating, and a massless pair averaging to NaN.
+
+    Args:
+        first: Nonnegative first value.
+        second: Nonnegative second value, broadcast against `first`.
+        first_weight: Nonnegative weight on `first`.
+        second_weight: Nonnegative weight on `second`.
+        exponent: The power, broadcast against the two values.
+
+    Returns:
+        The weighted power mean of the pair.
+
+    """
+    first_live = first_weight > 0.0
+    second_live = second_weight > 0.0
+    log_first = jnp.log(jnp.where(first_live, first, 1.0))
+    log_second = jnp.log(jnp.where(second_live, second, 1.0))
+    safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
+
+    first_anchorable = first_live & jnp.isfinite(log_first)
+    second_anchorable = second_live & jnp.isfinite(log_second)
+    anchor_high = jnp.maximum(
+        jnp.where(first_anchorable, log_first, -jnp.inf),
+        jnp.where(second_anchorable, log_second, -jnp.inf),
+    )
+    anchor_low = jnp.minimum(
+        jnp.where(first_anchorable, log_first, jnp.inf),
+        jnp.where(second_anchorable, log_second, jnp.inf),
+    )
+    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
+    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
+    anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+
+    masked_first_weight = jnp.where(
+        first_live | jnp.isnan(first_weight), first_weight, 0.0
+    )
+    masked_second_weight = jnp.where(
+        second_live | jnp.isnan(second_weight), second_weight, 0.0
+    )
+    weight_sum = masked_first_weight + masked_second_weight
+    safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
+    normalized_first = masked_first_weight / safe_weight
+    normalized_second = masked_second_weight / safe_weight
+
+    scaled_first = exponent * (log_first - anchor)
+    scaled_second = exponent * (log_second - anchor)
+    deviation_ratio = normalized_first * jnp.expm1(
+        scaled_first
+    ) + normalized_second * jnp.expm1(scaled_second)
+    moment = normalized_first * jnp.exp(scaled_first) + normalized_second * jnp.exp(
+        scaled_second
+    )
+    near_geometric = deviation_ratio > _DEVIATION_RATIO_CROSSOVER
+    log_moment = jnp.where(
+        near_geometric,
+        jnp.log1p(jnp.where(near_geometric, deviation_ratio, 0.0)),
+        jnp.log(jnp.where(near_geometric, 1.0, moment)),
+    )
+    log_mean_power = anchor + log_moment / safe_exponent
+    log_mean_geometric = normalized_first * log_first + normalized_second * log_second
     return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
