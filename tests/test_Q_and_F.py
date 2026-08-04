@@ -9,6 +9,7 @@ import pytest
 from dags import concatenate_functions
 from numpy.testing import assert_allclose, assert_array_equal
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from _lcm.params.processing import (
     create_params_template,
@@ -18,6 +19,7 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
+    _as_lottery,
     _get_deterministic_transitions,
     _get_feasibility,
     _get_joint_weights_function,
@@ -27,7 +29,13 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from lcm import AgeGrid, PowerMean
+from _lcm.transition_laws import TransitionLawInfo
+from lcm import (
+    AgeGrid,
+    LinearExpectation,
+    PowerMean,
+    W_linear,
+)
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -58,7 +66,10 @@ def test_get_Q_and_F_function():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,
@@ -194,7 +205,24 @@ def test_get_multiply_weights():
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
         transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset({"next_a", "next_b"}),
+        transition_laws=MappingProxyType(
+            {
+                "test": MappingProxyType(
+                    {
+                        name: TransitionLawInfo(
+                            target="test",
+                            next_state_name=name,
+                            qualified_name=f"test__{name}",
+                            stochastic=True,
+                            continuous_process=False,
+                            intrinsic_entry=False,
+                            weight_name=f"weight_test__{name}",
+                        )
+                        for name in ("next_a", "next_b")
+                    }
+                )
+            }
+        ),
     )
 
     a = jnp.array([1, 2])
@@ -299,7 +327,7 @@ def test_identical_target_specific_deterministic_laws_are_accepted():
     )
     deterministic_transitions, conflicting = _get_deterministic_transitions(
         transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
     )
     assert conflicting == frozenset()
     U_and_F = _get_U_and_F(
@@ -338,7 +366,7 @@ def test_conflicting_target_specific_deterministic_law_read_by_utility_is_reject
     )
     deterministic_transitions, conflicting = _get_deterministic_transitions(
         transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
     )
     assert conflicting == frozenset({"next_durable"})
     with pytest.raises(ValueError, match="next_durable"):
@@ -375,7 +403,7 @@ def test_conflicting_deterministic_law_not_read_by_decision_is_accepted():
     )
     deterministic_transitions, conflicting = _get_deterministic_transitions(
         transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
     )
     assert conflicting == frozenset({"next_durable"})
     U_and_F = _get_U_and_F(
@@ -525,8 +553,8 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_H(utility: FloatND, E_next_V: FloatND) -> FloatND:
-    return utility + E_next_V
+def _epstein_zin_H(utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + CE
 
 
 def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, FloatND]:
@@ -544,15 +572,19 @@ _STATELESS_V_INFO = VInterpolationInfo(
 )
 
 
-def _build_two_target_closure(builder: Callable, *, certainty_equivalent) -> Callable:
+def _build_two_target_closure(
+    builder: Callable, *, certainty_equivalent: CertaintyEquivalent | None
+) -> Callable:
     """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
     return builder(
+        co_map_state_names=(),
         flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
-        functions=MappingProxyType({"utility": _sum_utility, "H": _epstein_zin_H}),
+        functions=MappingProxyType({"utility": _sum_utility}),
+        koopmans_aggregator=_epstein_zin_H,
         constraints=MappingProxyType({}),
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
             functions={"regime_transition_probs": _low_and_high_probs},
             targets="regime_transition_probs",
@@ -806,3 +838,18 @@ def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):
     np.testing.assert_allclose(
         np.asarray(diagnostic_Q_arr), np.asarray(Q_arr), rtol=0.0, atol=0.0
     )
+
+
+def test_as_lottery_gives_a_degenerate_target_no_mass():
+    """A target whose stochastic weights sum to zero contributes no probability.
+
+    Its nodes must not become NaN: they are concatenated into the joint
+    lottery alongside every other target, so a NaN there would destroy the
+    certainty equivalent of branches that are perfectly well specified.
+    """
+    _, weights = _as_lottery(
+        values=jnp.array([1.0, 2.0]),
+        weights=jnp.array([0.0, 0.0]),
+        has_stochastic_states=True,
+    )
+    assert_array_equal(np.asarray(weights), np.zeros(2))

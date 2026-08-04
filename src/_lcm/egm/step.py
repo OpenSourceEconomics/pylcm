@@ -172,19 +172,20 @@ from _lcm.regime_building.age_normalization import (
     periodized_tree_signature,
     resolve_periodized_nodes,
 )
-from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_building.w_dag import _get_build_W_kwargs
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     EGMStepFunction,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
@@ -207,9 +208,10 @@ def build_egm_step_functions(
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     solution_reachability: PhaseReachability,
@@ -244,7 +246,8 @@ def build_egm_step_functions(
             constraint functions (discrete-only after DC-EGM validation).
         transitions: Immutable mapping of target regime names to their state
             transition functions.
-        stochastic_transition_names: Frozenset of stochastic transition
+        transition_laws: Immutable mapping of target regime names to their
+            transition
             function names.
         compute_regime_transition_probs: Regime transition probability
             function for solve.
@@ -435,7 +438,7 @@ def build_egm_step_functions(
             constraints=group_constraints,
             stateful_targets=stateful_targets,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=group_v_interp,
             flat_param_names=flat_param_names,
@@ -452,9 +455,10 @@ def build_egm_step_functions(
                 solver=solver,
                 user_regimes=user_regimes,
                 functions=group_functions,
+                koopmans_aggregator=koopmans_aggregator,
                 constraints=group_constraints,
                 transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
+                transition_laws=transition_laws,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 stateful_targets=stateful_targets,
                 scalar_targets=scalar_targets,
@@ -559,9 +563,10 @@ def _get_egm_step(
     solver: DCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -602,9 +607,10 @@ def _get_egm_step(
         solver=solver,
         user_regimes=user_regimes,
         functions=functions,
+        koopmans_aggregator=koopmans_aggregator,
         constraints=constraints,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
@@ -860,9 +866,10 @@ def _build_kernel_pieces(
     solver: DCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -883,7 +890,7 @@ def _build_kernel_pieces(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
+        transition_laws=transition_laws,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -924,7 +931,7 @@ def _build_kernel_pieces(
         feasibility_func=_build_feasibility_function(
             functions=functions, constraints=constraints
         ),
-        build_H_kwargs=_get_build_H_kwargs(functions),
+        build_W_kwargs=_get_build_W_kwargs(functions, koopmans_aggregator),
         refine=get_upper_envelope(solver=solver, n_refined=n_pad),
         refine_to_bracket=get_bracket_finder(solver=solver, n_refined=n_pad),
         continuation_plan=continuation_plan,
@@ -950,7 +957,7 @@ def _build_feasibility_function(
         return None
     constraints_func = concatenate_functions(
         functions={
-            **{name: func for name, func in functions.items() if name != "H"},
+            **dict(functions),
             **dict(constraints),
         },
         targets=list(constraints),

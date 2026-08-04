@@ -22,6 +22,7 @@ from _lcm.egm.regime_introspection import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.transition_laws import TransitionLaws, is_stochastic
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -29,7 +30,6 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.functools import get_union_of_args
@@ -46,7 +46,7 @@ def _find_unsupported_feature(
     constraints: ConstraintFunctionsMapping,
     stateful_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -67,7 +67,7 @@ def _find_unsupported_feature(
             user_regimes=user_regimes,
             functions=functions,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             own_discrete_state_names=own_discrete_state_names,
             euler_state_name=solver.continuous_state,
@@ -106,7 +106,7 @@ def _find_unsupported_target_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     own_discrete_state_names: tuple[StateName, ...],
     euler_state_name: StateName,
@@ -128,7 +128,7 @@ def _find_unsupported_target_feature(
             target=target,
             user_regime=user_regimes[target],
             target_info=target_info,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             own_discrete_state_names=own_discrete_state_names,
             euler_state_name=euler_state_name,
             own_passive_state_names=own_passive_state_names,
@@ -185,7 +185,7 @@ def _find_unsupported_terminal_target_feature(
     target: RegimeName,
     user_regime: UserRegime,
     target_info: VInterpolationInfo,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     own_discrete_state_names: tuple[StateName, ...],
     euler_state_name: StateName,
     own_passive_state_names: tuple[StateName, ...],
@@ -221,7 +221,7 @@ def _find_unsupported_terminal_target_feature(
                 "discrete states must be shared with the parent's own discrete "
                 "combo axes."
             )
-        if f"next_{name}" in stochastic_transition_names:
+        if is_stochastic(transition_laws, target, f"next_{name}"):
             return (
                 f"its terminal target regime '{target}' is reached by a "
                 f"stochastic transition into the discrete state '{name}'; a "

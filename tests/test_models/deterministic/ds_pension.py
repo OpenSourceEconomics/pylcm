@@ -334,7 +334,7 @@ def get_params(
     return {
         "working": {
             "utility": {"crra": crra, "work_disutility": work_disutility},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "working": {
                 "next_liquid": {"return_liquid": return_liquid, "wage": wage},
                 "next_pension": {
@@ -355,7 +355,7 @@ def get_params(
         },
         "retired": {
             "utility": {"crra": crra},
-            "H": {"discount_factor": discount_factor},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
             "retired": {
                 "next_liquid": {
                     "retirement_income": retirement_income,

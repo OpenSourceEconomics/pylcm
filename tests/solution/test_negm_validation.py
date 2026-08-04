@@ -27,7 +27,14 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
-from lcm import DiscreteGrid, ExtremeValueTasteShocks, Phased, categorical
+from lcm import (
+    DiscreteGrid,
+    ExtremeValueTasteShocks,
+    LinearExpectation,
+    Phased,
+    W_linear,
+    categorical,
+)
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
@@ -315,7 +322,12 @@ def test_negm_regime_rejects_nonlinear_certainty_equivalent():
     """
     regime = _VALID.replace(certainty_equivalent=PowerMean())
     with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
-        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"alive": regime},
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
@@ -333,7 +345,12 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
         },
     )
     with pytest.raises(ModelInitializationError, match="composed by pylcm"):
-        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"alive": regime},
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
@@ -346,7 +363,12 @@ def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
         },
     )
     with pytest.raises(ModelInitializationError, match="resources_before_outer_cost"):
-        finalize_regimes(user_regimes={"alive": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"alive": regime},
+            derived_categoricals={},
+            koopmans_aggregator=W_linear,
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_finalize_composes_resources_as_base_minus_outer_cost():
@@ -368,7 +390,10 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
     )
 
     finalized = finalize_regimes(
-        user_regimes={"alive": regime}, derived_categoricals={}
+        user_regimes={"alive": regime},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
 
@@ -397,7 +422,10 @@ def test_finalize_composes_resources_with_a_phased_base():
     )
 
     finalized = finalize_regimes(
-        user_regimes={"alive": regime}, derived_categoricals={}
+        user_regimes={"alive": regime},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
 

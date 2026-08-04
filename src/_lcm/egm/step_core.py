@@ -109,7 +109,7 @@ class _EgmKernelPieces:
     feasibility_func: Callable[..., ScalarBool] | None
     """Discrete-feasibility predicate of a combo, or `None`."""
 
-    build_H_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
     """Closure assembling the Bellman aggregator's keyword arguments."""
 
     refine: Callable[
@@ -175,8 +175,8 @@ def _get_solve_one_combo(
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
         # Validation pins the default Bellman aggregator, whose single
-        # non-(utility, E_next_V) parameter is the discount factor.
-        (discount_factor,) = tuple(pieces.build_H_kwargs(combo_pool).values())
+        # non-(utility, CE) parameter is the discount factor.
+        (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
 
         def utility_of_action(action_value: ScalarFloat) -> ScalarFloat:
             return pieces.utility_func(

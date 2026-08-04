@@ -3,7 +3,8 @@
 The validators and the identity transition live behind a leading underscore in
 `_lcm.user_regime_validation` and `_lcm.regime_building.transitions`. This
 module is intentionally thin: the public class definition. A non-terminal
-regime that supplies no `H` gets `lcm.temporal_aggregation.H_linear` at model build.
+regime that declares no `koopmans_aggregator` takes the model-level one at
+model build.
 
 """
 
@@ -176,6 +177,18 @@ class Regime:
     Requires at least one discrete action.
     """
 
+    koopmans_aggregator: UserFunction | Phased | None = None
+    """Combines current-period utility with the certainty equivalent into `Q`.
+
+    Signature `W(utility, CE, ...)`; further arguments are runtime params
+    under the pseudo-function name `koopmans_aggregator`, or outputs of
+    regime functions of the same name. `Phased(solve=..., simulate=...)`
+    gives the two phases different aggregators (a naive/sophisticated
+    beta-delta split, say). `None` means the regime takes the model-level
+    aggregator (`lcm.W_linear` unless the `Model` says otherwise). Terminal
+    regimes have no continuation and take none.
+    """
+
     certainty_equivalent: CertaintyEquivalent | None = None
     """Nonlinear certainty equivalent over the next-period value distribution.
 
@@ -217,7 +230,7 @@ class Regime:
             value = ensure_containers_are_immutable(getattr(self, name))
             object.__setattr__(self, name, value)
 
-        # Completeness (a `utility` entry, default-`H` injection, transition
+        # Completeness (a `utility` entry, aggregator injection, transition
         # coverage) is validated when the model finalizes its regimes
         # — model-level slots may still satisfy it after merging.
         make_immutable("functions")
@@ -232,6 +245,29 @@ class Regime:
         # builds is consumed during model processing.
         normalize_regime_phases(self)
 
+    def get_koopmans_aggregator(
+        self,
+        phase: Literal["solve", "simulate"] = "solve",
+    ) -> UserFunction | None:
+        """Get the Bellman aggregator this phase runs.
+
+        Args:
+            phase: Which variant to use when the declaration is `Phased`.
+
+        Returns:
+            The aggregator, or `None` when the regime declares none (a
+            terminal regime, or one taking the model-level value).
+
+        """
+        if isinstance(self.koopmans_aggregator, Phased):
+            variant = (
+                self.koopmans_aggregator.solve
+                if phase == "solve"
+                else self.koopmans_aggregator.simulate
+            )
+            return cast("UserFunction", variant)
+        return self.koopmans_aggregator
+
     def get_all_functions(
         self,
         phase: Literal["solve", "simulate"] = "solve",
@@ -239,7 +275,7 @@ class Regime:
         """Get all regime functions including utility, constraints, and transitions.
 
         Collect functions from four sources:
-        - `self.functions` (utility, helpers, H)
+        - `self.functions` (utility and helpers)
         - `self.constraints`
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)

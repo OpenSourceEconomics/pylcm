@@ -488,7 +488,7 @@ def ez_period_value(
 
     `V = [(1-beta) flow^(1-rho) + beta nu^(1-rho)]^(1/(1-rho))`, with the
     Cobb-Douglas limit `flow^(1-beta) nu^beta` at unit elasticity (`rho = 1`),
-    matching `H_epstein_zin`. The aggregator is a CES combination of the
+    matching `W_epstein_zin`. The aggregator is a CES combination of the
     current-period flow and the continuation certainty equivalent; it stays
     strictly positive for strictly positive inputs, which the recursion (and
     the power-mean certainty equivalent) require.

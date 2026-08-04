@@ -7,12 +7,14 @@ importing the numerical engine directly.
 
 from _lcm.certainty_equivalent import (
     CertaintyEquivalent,
+    LinearExpectation,
     PowerMean,
     QuasiArithmeticMean,
 )
 
 __all__ = [
     "CertaintyEquivalent",
+    "LinearExpectation",
     "PowerMean",
     "QuasiArithmeticMean",
 ]

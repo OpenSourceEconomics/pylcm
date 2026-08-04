@@ -20,6 +20,7 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
+from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import GridSearch
@@ -422,6 +423,7 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
+    error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
@@ -457,6 +459,28 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     ]
 
 
+def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect errors for a regime's Koopmans aggregator declaration.
+
+    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
+      regime function
+    - terminal regimes have no continuation to aggregate
+    """
+    error_messages: list[str] = []
+    if "H" in regime.functions:
+        error_messages.append(
+            "'H' is not a regime function: the Bellman aggregator lives in the "
+            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
+            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+        )
+    if regime.terminal and regime.koopmans_aggregator is not None:
+        error_messages.append(
+            "A terminal regime cannot declare `koopmans_aggregator`: there is "
+            "no continuation value to aggregate."
+        )
+    return error_messages
+
+
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
@@ -468,6 +492,10 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
+
+    `LinearExpectation` is the expected-utility default every solver and every
+    taste-shock regime implements, so only a nonlinear certainty equivalent is
+    subject to the composition rules.
     """
     if regime.certainty_equivalent is None:
         return []
@@ -477,6 +505,8 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
+    if isinstance(regime.certainty_equivalent, LinearExpectation):
+        return error_messages
     if not isinstance(regime.solver, GridSearch):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
