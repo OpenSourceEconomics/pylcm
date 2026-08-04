@@ -9,6 +9,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearExpectation,
     LinSpacedGrid,
     Model,
     categorical,
@@ -229,7 +230,9 @@ def test_default_H_injected_for_non_terminal():
         active=lambda age: age < 1,
     )
     finalized = finalize_regimes(
-        user_regimes={"regime": regime}, derived_categoricals={}
+        user_regimes={"regime": regime},
+        derived_categoricals={},
+        certainty_equivalent=LinearExpectation(),
     )["regime"]
     assert "H" in finalized.functions
 

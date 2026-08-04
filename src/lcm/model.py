@@ -80,6 +80,7 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
+from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
@@ -195,6 +196,7 @@ class Model:
         states: Mapping[str, object] = MappingProxyType({}),
         state_transitions: Mapping[str, object] = MappingProxyType({}),
         actions: Mapping[str, object] = MappingProxyType({}),
+        certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
     ) -> None:
         """Initialize the Model.
@@ -224,6 +226,12 @@ class Model:
                 `pruned_variables`). `distributed=True` is legal only here.
             state_transitions: Model-level laws of motion; same merge rule.
             actions: Model-level actions; same merge rule and pruning.
+            certainty_equivalent: How every non-terminal regime aggregates its
+                continuation lottery. Unlike the mapping slots above this is a
+                single value, so the rule is all-or-nothing rather than
+                per-name: declare it here, or in every regime that has a
+                continuation, never some of each. Terminal regimes never
+                receive it.
             n_subjects: Expected simulate batch size; if set, the first matching
                 `simulate(...)` call AOT-compiles all simulate functions for
                 batch shape `n_subjects` before backward induction starts.
@@ -270,6 +278,7 @@ class Model:
         self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
+            certainty_equivalent=certainty_equivalent,
         )
         validate_model_inputs(
             n_periods=self.n_periods,

@@ -18,6 +18,7 @@ from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -317,7 +318,11 @@ def test_carried_state_without_law_of_motion_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth, "aime": lambda aime: aime},
     )
     with pytest.raises(RegimeInitializationError, match="state_transitions"):
-        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"regime": regime},
+            derived_categoricals={},
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_carried_state_with_markov_law_is_rejected() -> None:

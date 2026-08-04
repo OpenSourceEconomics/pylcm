@@ -28,6 +28,7 @@ from lcm import (
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
+    ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.solvers import DCEGM
@@ -1132,3 +1133,104 @@ def test_power_mean_aggregate_matches_its_own_transform_and_inverse(
         transform=power_transform, inverse=power_inverse
     ).aggregate(values=values, weights=weights, params=params)
     np.testing.assert_allclose(float(anchored), float(naive), rtol=1e-12)
+
+
+@categorical(ordered=False)
+class _StackedRegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+def _to_retired() -> ScalarInt:
+    return _StackedRegimeId.retired
+
+
+def _to_dead() -> ScalarInt:
+    return _StackedRegimeId.dead
+
+
+def _make_stacked_model(
+    *,
+    model_kwargs: dict[str, Any],
+    working_kwargs: dict[str, Any],
+    retired_kwargs: dict[str, Any],
+) -> Model:
+    """Build a model with two non-terminal regimes and one terminal regime."""
+    base: dict[str, Any] = {
+        "states": {"wealth": _WEALTH},
+        "state_transitions": {"wealth": _next_wealth},
+        "actions": {"consumption": _CONSUMPTION},
+        "constraints": {"budget": _budget},
+        "functions": {"utility": _utility_alive},
+    }
+    working: dict[str, Any] = base | {"transition": _to_retired} | working_kwargs
+    retired: dict[str, Any] = base | {"transition": _to_dead} | retired_kwargs
+    return Model(
+        regimes={
+            "working": Regime(**working),
+            "retired": Regime(**retired),
+            "dead": Regime(
+                transition=None,
+                states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
+                functions={"utility": _utility_dead},
+            ),
+        },
+        ages=AgeGrid(start=40, stop=42, step="Y"),
+        regime_id_class=_StackedRegimeId,
+        **model_kwargs,
+    )
+
+
+def test_default_certainty_equivalent_is_the_linear_expectation():
+    """A regime that declares nothing aggregates the continuation linearly."""
+    model = _make_stacked_model(model_kwargs={}, working_kwargs={}, retired_kwargs={})
+    assert model.user_regimes["working"].certainty_equivalent == LinearExpectation()
+    assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
+
+
+def test_model_level_certainty_equivalent_reaches_every_non_terminal_regime():
+    """One model-level declaration serves all regimes with a continuation."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    assert model.user_regimes["working"].certainty_equivalent == PowerMean()
+    assert model.user_regimes["retired"].certainty_equivalent == PowerMean()
+
+
+def test_model_level_certainty_equivalent_is_withheld_from_terminal_regimes():
+    """A terminal regime has no continuation, so it receives no aggregation."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    assert model.user_regimes["dead"].certainty_equivalent is None
+
+
+def test_regime_level_certainty_equivalents_replace_the_model_level_one():
+    """Declaring one in every regime with a continuation ignores the model level."""
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": PowerMean()},
+        working_kwargs={"certainty_equivalent": LinearExpectation()},
+        retired_kwargs={"certainty_equivalent": LinearExpectation()},
+    )
+    assert model.user_regimes["working"].certainty_equivalent == LinearExpectation()
+    assert model.user_regimes["retired"].certainty_equivalent == LinearExpectation()
+
+
+def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected():
+    """The certainty equivalent is declared once for the model, or once per regime.
+
+    Declaring it in some regimes and leaving others on the model-level value
+    mixes the two, which reads as if the silent regimes had opted out of
+    something they never saw.
+    """
+    with pytest.raises(ModelInitializationError, match="retired"):
+        _make_stacked_model(
+            model_kwargs={},
+            working_kwargs={"certainty_equivalent": PowerMean()},
+            retired_kwargs={},
+        )

@@ -290,7 +290,14 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "_lcm.utils.containers.Unset", "Unset" ]
+extend-immutable-calls = [
+  "_lcm.certainty_equivalent.LinearExpectation",
+  "_lcm.utils.containers.Unset",
+  "lcm.LinearExpectation",
+  "lcm.certainty_equivalent.LinearExpectation",
+  "LinearExpectation",
+  "Unset",
+]
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 

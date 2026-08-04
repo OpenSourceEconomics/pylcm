@@ -2,9 +2,10 @@
 
 `finalize_regimes` turns each user `Regime` into the complete form the model
 runs: model-level `derived_categoricals` are merged in, the default Bellman
-aggregator `H` is injected for non-terminal regimes that supply none, and
-completeness is validated (a `utility` entry, state-transition coverage, no
-state/action overlap, distributed-grid rules). The result is a plain
+aggregator `H` and the model-level certainty equivalent are injected into
+non-terminal regimes that supply none, and completeness is validated (a
+`utility` entry, state-transition coverage, no state/action overlap,
+distributed-grid rules). The result is a plain
 `lcm.regime.Regime`, still in user vocabulary — coarse laws, `Phased`
 containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
@@ -13,6 +14,7 @@ reads the user's coarseness off it.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
@@ -32,6 +34,7 @@ def finalize_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
+    certainty_equivalent: CertaintyEquivalent,
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -44,6 +47,8 @@ def finalize_regimes(
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
         derived_categoricals: Model-level categorical grids to broadcast.
+        certainty_equivalent: Model-level continuation aggregation, given to
+            every non-terminal regime that declares none of its own.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -56,6 +61,7 @@ def finalize_regimes(
             prefixed.
 
     """
+    _fail_if_certainty_equivalent_is_mixed(user_regimes)
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -64,11 +70,24 @@ def finalize_regimes(
             derived_categoricals=derived_categoricals,
         )
         functions = dict(user_regime.functions)
-        # Terminal regimes don't need H since Q = U directly (no CE).
-        if user_regime.transition is not None and "H" not in functions:
-            functions["H"] = H_linear
+        # Terminal regimes have no continuation, so they need neither an
+        # aggregator (Q = U directly) nor a certainty equivalent. Their slot is
+        # carried through untouched so that a declared one still reaches the
+        # completeness check below rather than being silently discarded.
+        if user_regime.terminal:
+            regime_certainty_equivalent = user_regime.certainty_equivalent
+        else:
+            if "H" not in functions:
+                functions["H"] = H_linear
+            regime_certainty_equivalent = (
+                user_regime.certainty_equivalent
+                if user_regime.certainty_equivalent is not None
+                else certainty_equivalent
+            )
         finalized = user_regime.replace(
-            functions=functions, derived_categoricals=merged
+            functions=functions,
+            derived_categoricals=merged,
+            certainty_equivalent=regime_certainty_equivalent,
         )
         error_messages = _validate_completeness(finalized)
         if error_messages:
@@ -101,3 +120,32 @@ def _merge_derived_categoricals(
             raise ModelInitializationError(msg)
         merged[var] = grid
     return merged
+
+
+def _fail_if_certainty_equivalent_is_mixed(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> None:
+    """Reject a model that declares the certainty equivalent at both levels.
+
+    It is declared once for the model, or once in every regime that has a
+    continuation — never some of each. A partial declaration reads as if the
+    silent regimes had opted out of something they never saw, when in fact
+    they are still taking the model-level value.
+    """
+    with_continuation = {
+        name for name, regime in user_regimes.items() if not regime.terminal
+    }
+    declaring = {
+        name
+        for name in with_continuation
+        if user_regimes[name].certainty_equivalent is not None
+    }
+    silent = with_continuation - declaring
+    if declaring and silent:
+        msg = (
+            f"Ambiguous specification for `certainty_equivalent`: declared in "
+            f"regime(s) {sorted(declaring)} but not in {sorted(silent)}, which "
+            f"take the model-level value. Declare it once on the `Model`, or "
+            f"in every regime that has a continuation."
+        )
+        raise ModelInitializationError(msg)

@@ -15,7 +15,10 @@ from _lcm.simulation.simulate import (
     simulate,
 )
 from _lcm.utils.logging import get_logger
-from lcm import Model
+from lcm import (
+    LinearExpectation,
+    Model,
+)
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
@@ -49,7 +52,9 @@ def simulate_inputs():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,
@@ -67,7 +72,9 @@ def simulate_inputs():
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=finalize_regimes(
-                user_regimes=user_regimes, derived_categoricals={}
+                user_regimes=user_regimes,
+                derived_categoricals={},
+                certainty_equivalent=LinearExpectation(),
             ),
             regime_names_to_ids=regime_names_to_ids,
         ),

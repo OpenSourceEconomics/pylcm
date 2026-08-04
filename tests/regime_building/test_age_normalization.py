@@ -23,6 +23,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_all_regime_phases
 from lcm import (
     IrregSpacedGrid,
+    LinearExpectation,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -55,7 +56,11 @@ def _next_regime(age: float):  # noqa: ARG001
 
 
 def _normalized(regimes: dict[str, UserRegime], ages: AgeGrid):
-    finalized = finalize_regimes(user_regimes=regimes, derived_categoricals={})
+    finalized = finalize_regimes(
+        user_regimes=regimes,
+        derived_categoricals={},
+        certainty_equivalent=LinearExpectation(),
+    )
     phased = normalize_all_regime_phases(user_regimes=finalized)
     active_periods_by_regime = {
         regime_name: tuple(ages.get_periods_where(regime.active))

@@ -18,6 +18,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearExpectation,
     LinSpacedGrid,
     Model,
     Phased,
@@ -72,9 +73,11 @@ def _next_regime(period: int) -> FloatND:
 def _finalized_regime(**kwargs: object) -> UserRegime:
     """Finalize a single regime, running the model's completeness validation."""
     regime = UserRegime(**kwargs)  # ty: ignore[invalid-argument-type]
-    return finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})[
-        "regime"
-    ]
+    return finalize_regimes(
+        user_regimes={"regime": regime},
+        derived_categoricals={},
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
 
 
 def _make_clashing_model() -> Model:

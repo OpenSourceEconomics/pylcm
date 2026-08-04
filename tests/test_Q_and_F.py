@@ -28,7 +28,11 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from lcm import AgeGrid, PowerMean
+from lcm import (
+    AgeGrid,
+    LinearExpectation,
+    PowerMean,
+)
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -59,7 +63,9 @@ def test_get_Q_and_F_function():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,
