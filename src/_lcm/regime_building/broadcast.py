@@ -10,7 +10,7 @@ regime by DAG reachability: a broadcast variable survives in a regime only if
 it is a transitive input of that regime's root computations in either phase
 slice. Regime-level declarations are never pruned. The needed-set is a
 cross-regime fixed point: a state unused inside a regime is still required
-when a reachable target keeps it and the law of motion toward that target
+when a candidate target keeps it and the law of motion toward that target
 reads it.
 """
 
@@ -22,6 +22,7 @@ from dags import get_ancestors
 
 from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
@@ -140,6 +141,7 @@ def prune_broadcast_variables(
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
     MappingProxyType[RegimeName, frozenset[StateOrActionName]],
@@ -148,14 +150,19 @@ def prune_broadcast_variables(
 
     A broadcast variable is pruned from a regime when no root computation of
     either phase slice transitively reads it — in that regime or through a
-    law of motion toward a reachable target that keeps it. Pruning drops the
+    law of motion toward a candidate target that keeps it. Pruning drops the
     variable's grid, and for states also the regime's law entry for it.
 
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
         broadcast_variables: Per regime, the broadcast state/action names.
-        ages: The model's `AgeGrid`, used to resolve `AgeSpecializedFunction`
-            markers to a representative age before DAG-reachability walks so a
+        ages: The model's `AgeGrid`, used to convert a representative period
+            to an age before resolving `AgeSpecializedFunction` markers.
+            `None` skips resolution (no marker can appear then).
+        active_periods_by_regime: The canonical per-regime activity mapping
+            (from `compute_active_periods_by_regime`), used to pick each
+            regime's representative active period before resolving
+            `AgeSpecializedFunction` markers to a representative age so a
             broadcast variable read only through a marker is not misread as
             unused. `None` skips resolution (no marker can appear then).
 
@@ -189,6 +196,7 @@ def prune_broadcast_variables(
             phase_name=phase_name,
             all_regime_names=all_regime_names,
             ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
@@ -235,31 +243,28 @@ def _phase_fixed_point(
     user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
-    phase_name: str,
+    phase_name: PhaseName,
     all_regime_names: frozenset[RegimeName],
     ages: AgeGrid | None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
 ) -> dict[RegimeName, frozenset[StateOrActionName]]:
     """Grow the kept-sets to this phase slice's least fixed point.
 
     Per iteration, each regime's needed-set is the DAG ancestry of its root
-    computations plus the laws of motion toward reachable targets that
+    computations plus the laws of motion toward candidate targets that
     currently keep the law's state; a broadcast variable joins the kept-set
     when needed. Monotone in the kept-sets, so iteration terminates. The
     input mapping is left untouched; the grown kept-sets are returned.
     """
-    reachable: dict[RegimeName, frozenset[RegimeName]] = {}
-    for regime_name, spec in specs.items():
-        phase_slice: RegimePhaseSpec = getattr(spec, phase_name)
-        regime_transition = phase_slice.regime_transition
-        if regime_transition is None:
-            reachable[regime_name] = frozenset()
-        elif isinstance(regime_transition, Mapping):
-            reachable[regime_name] = (
-                frozenset(cast("Mapping[RegimeName, object]", regime_transition))
-                & all_regime_names
+    candidates_by_source = {
+        regime_name: frozenset(
+            candidate_targets_from_transition(
+                transition=getattr(spec, phase_name).regime_transition,
+                all_regime_names=all_regime_names,
             )
-        else:
-            reachable[regime_name] = all_regime_names
+        )
+        for regime_name, spec in specs.items()
+    }
 
     grown = dict(kept)
     while True:
@@ -272,13 +277,18 @@ def _phase_fixed_point(
             needed = _needed_names(
                 phase_slice=phase_slice,
                 user_regime=user_regime,
-                reachable_targets=reachable[regime_name],
+                candidate_targets=candidates_by_source[regime_name],
                 kept=grown,
                 ages=ages,
+                active_periods=(
+                    None
+                    if active_periods_by_regime is None
+                    else active_periods_by_regime.get(regime_name, ())
+                ),
             )
             needed |= _state_conditioned_names(
                 user_regime=user_regime,
-                reachable_targets=reachable[regime_name],
+                reachable_targets=candidates_by_source[regime_name] & all_regime_names,
                 user_regimes=user_regimes,
                 candidates=broadcast_variables[regime_name],
                 grown_here=grown[regime_name],
@@ -345,22 +355,23 @@ def _state_conditioned_names(
 def _resolved_at_representative_age(
     mapping: Mapping[str, UserFunction],
     *,
-    user_regime: UserRegime,
     ages: AgeGrid | None,
+    active_periods: tuple[int, ...] | None,
 ) -> Mapping[str, UserFunction]:
     """Resolve `AgeSpecializedFunction` markers in `mapping` at a representative age.
 
     The dependency structure `get_ancestors` needs is age-invariant, so any active
-    age serves. Returns `mapping` unchanged when `ages` is `None` (no marker can
-    appear then) or the regime has no active period (it is about to fail with a
+    period serves. Returns `mapping` unchanged when `ages` is `None` (no marker can
+    appear then) or `active_periods` is empty (the regime is about to fail with a
     more specific error once age normalization runs).
     """
-    if ages is None or not any(
-        isinstance(value, AgeSpecializedFunction) for value in mapping.values()
+    if (
+        ages is None
+        or not active_periods
+        or not any(
+            isinstance(value, AgeSpecializedFunction) for value in mapping.values()
+        )
     ):
-        return mapping
-    active_periods = ages.get_periods_where(user_regime.active)
-    if not active_periods:
         return mapping
     representative_age = float(ages.period_to_age(active_periods[0]))
     return {
@@ -373,9 +384,10 @@ def _needed_names(
     *,
     phase_slice: RegimePhaseSpec,
     user_regime: UserRegime,
-    reachable_targets: frozenset[RegimeName],
+    candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
     ages: AgeGrid | None,
+    active_periods: tuple[int, ...] | None,
 ) -> set[str]:
     """Collect every name this phase slice's root computations read.
 
@@ -385,17 +397,17 @@ def _needed_names(
     - every constraint
     - every derived-categorical function
     - the regime transition (coarse inputs, or every granular cell)
-    - the laws of motion toward reachable targets that keep the law's state
+    - the laws of motion toward candidate targets that keep the law's state
 
-    `functions`/`constraints` are resolved at a representative active age before
+    `functions`/`constraints` are resolved at a representative active period before
     the DAG walk, so `get_ancestors` sees a marked node's real argument names
     instead of `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
     """
     functions = _resolved_at_representative_age(
-        phase_slice.functions, user_regime=user_regime, ages=ages
+        phase_slice.functions, ages=ages, active_periods=active_periods
     )
     constraints = _resolved_at_representative_age(
-        phase_slice.constraints, user_regime=user_regime, ages=ages
+        phase_slice.constraints, ages=ages, active_periods=active_periods
     )
 
     pool: dict[str, UserFunction] = dict(functions)
@@ -405,7 +417,7 @@ def _needed_names(
     roots = {f"__constraint_{name}": func for name, func in constraints.items()}
     roots |= _regime_transition_roots(phase_slice)
     roots |= _law_roots(
-        phase_slice=phase_slice, reachable_targets=reachable_targets, kept=kept
+        phase_slice=phase_slice, candidate_targets=candidate_targets, kept=kept
     )
     pool |= roots
     targets += list(roots)
@@ -437,12 +449,12 @@ def _regime_transition_roots(
 def _law_roots(
     *,
     phase_slice: RegimePhaseSpec,
-    reachable_targets: frozenset[RegimeName],
+    candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
 ) -> dict[str, UserFunction]:
     """Key the laws of motion that rescue a state as pruning roots.
 
-    A law counts only toward a reachable target that currently keeps the
+    A law counts only toward a candidate target that currently keeps the
     law's state — that target needs the handed-over value, so whatever the
     law reads stays alive in this regime.
     """
@@ -451,12 +463,12 @@ def _law_roots(
         laws: dict[RegimeName, object] = (
             dict(cast("Mapping[RegimeName, object]", raw))
             if isinstance(raw, Mapping)
-            else dict.fromkeys(reachable_targets, raw)
+            else dict.fromkeys(candidate_targets, raw)
         )
         for target_regime_name, law in laws.items():
             if (
                 law is not None
-                and target_regime_name in reachable_targets
+                and target_regime_name in candidate_targets
                 and state_name in kept.get(target_regime_name, frozenset())
             ):
                 roots[f"__law_{state_name}_{target_regime_name}"] = cast(

@@ -429,7 +429,7 @@ def test_pointwise_lower_branch_that_owns_an_interval_is_retained():
     `[9.92, ...]`. The exact read at R=9.5 is A's `(V,c)=(4.9375, 8)`. FUES keeps
     only the pointwise node maxima, drops A@10 and B@9, and bridges to B's read —
     so this assertion of the *correct* value is expected to fail on FUES. Use
-    `upper_envelope="mss"` when exact coincident-node correctness is required.
+    `envelope="mss"` when exact coincident-node correctness is required.
     """
     grid = jnp.asarray([9.0, 10.0, 9.0, 10.0, 11.0])
     policy = jnp.asarray([8.0, 8.0, 4.0, 4.0, 4.0])

@@ -1,9 +1,9 @@
-"""`model.solve(solver=TwoDimEGM(...))` drives the DS pension G2EGM solve.
+"""`model.solve(solver=TwoAssetEGM(...))` drives the DS pension G2EGM solve.
 
 The two-asset G2EGM kernel is a prime-time pylcm `Solver`: naming it on the working
 regime makes `model.solve()` reproduce the standalone driver's lifecycle solve through
-the engine's backward induction. The working regime uses `TwoDimEGM`, the retired
-regime the 1-D `OneAssetEGM`, and the dead regime stays terminal. The solved value
+the engine's backward induction. The working regime uses `TwoAssetEGM`, the retired
+regime the 1-D `EGM`, and the dead regime stays terminal. The solved value
 matches the dense grid-search brute on the same covered interior the standalone driver
 matches: the working pension interior (excluding the off-grid top-pension boundary
 layer that thickens backward, and the steep low-liquid rows) and the retired
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm.solvers import OneAssetEGM, TwoDimEGM
+from lcm.solvers import EGM, TwoAssetEGM
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _N_PERIODS = 5
@@ -36,12 +36,12 @@ def _solver_model():
     return get_model(
         n_periods=_N_PERIODS,
         solvers={
-            "working": TwoDimEGM(
+            "working": TwoAssetEGM(
                 a_grid=_A_GRID,
                 b_grid=_B_GRID,
                 consumption_grid=_CONSUMPTION_GRID,
             ),
-            "retired": OneAssetEGM(savings_grid=_SAVINGS_GRID),
+            "retired": EGM(savings_grid=_SAVINGS_GRID),
         },
     )
 

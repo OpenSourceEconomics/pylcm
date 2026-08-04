@@ -150,7 +150,7 @@ class NNBEGM(Solver):
     No outer Euler condition is assumed: adjustment frictions and caps make a
     second Euler inversion unreliable, which is the reason to nest rather than
     to solve two coupled first-order conditions (that case belongs to
-    `TwoDimEGM`).
+    `TwoAssetEGM`).
     """
 
     inner: NBEGM

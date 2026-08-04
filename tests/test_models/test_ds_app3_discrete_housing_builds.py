@@ -75,9 +75,9 @@ def test_dcegm_regime_carries_the_dcegm_solver_on_assets():
     assert solver.continuous_action == "consumption"
 
 
-@pytest.mark.parametrize("upper_envelope", ["fues", "mss", "ltm"])
+@pytest.mark.parametrize("envelope", ["fues", "mss", "ltm"])
 def test_dcegm_accepts_each_table4_upper_envelope(
-    upper_envelope: Literal["fues", "mss", "ltm"],
+    envelope: Literal["fues", "mss", "ltm"],
 ):
     """Each Table 4 upper-envelope backend builds the discrete-housing regime.
 
@@ -90,11 +90,11 @@ def test_dcegm_accepts_each_table4_upper_envelope(
         n_assets=20,
         n_wage_nodes=3,
         n_periods=4,
-        upper_envelope=upper_envelope,
+        envelope=envelope,
     )
     solver = model.user_regimes["working"].solver
     assert isinstance(solver, DCEGM)
-    assert solver.upper_envelope == upper_envelope
+    assert solver.envelope == envelope
 
 
 def test_brute_regime_uses_grid_search():

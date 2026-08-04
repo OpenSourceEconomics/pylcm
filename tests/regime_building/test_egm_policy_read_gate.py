@@ -71,7 +71,7 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     interpolates over (see `test_fues_segment_detection.py`).
     """
     solver = dataclasses.replace(
-        DCEGM_SOLVER, upper_envelope="fues", fues_n_points_to_scan=n_points_to_scan
+        DCEGM_SOLVER, envelope="fues", fues_n_points_to_scan=n_points_to_scan
     )
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
@@ -85,9 +85,7 @@ def test_bounded_scan_setting_leaves_the_mss_backend_disqualified():
     The knob never touches an MSS row, so it neither opens nor closes the gate;
     MSS stays on the grid path because its refinement is not crossing-complete.
     """
-    solver = dataclasses.replace(
-        DCEGM_SOLVER, upper_envelope="mss", fues_n_points_to_scan=8
-    )
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope="mss", fues_n_points_to_scan=8)
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
@@ -171,7 +169,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
 
 
 def _retirement_model_with_backend(backend: str) -> Model:
-    solver = dataclasses.replace(DCEGM_SOLVER, upper_envelope=backend)
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=backend)
     return _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )

@@ -43,6 +43,8 @@ def rfc_two_asset_step(
     next_value: FloatND,
     m_grid: Float1D,
     n_grid: Float1D,
+    next_m_grid: Float1D,
+    next_n_grid: Float1D,
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
@@ -59,8 +61,19 @@ def rfc_two_asset_step(
 ) -> G2EGMResult:
     """Solve one two-asset period by the combined-cloud 2-D RFC upper envelope.
 
+    The read grids and the publish grids are distinct roles, not a
+    convenience. `next_value` is tabulated on the *target's* nodes at
+    `t + 1`; the step publishes its own value on *this* regime's nodes at
+    `t`. They coincide only when the target regime shares this regime's
+    grids and neither is age-specialized.
+
     Args:
-        next_value: Next period's value on the regular `(m, n)` grid.
+        next_value: Next period's value on the regular `(next_m, next_n)`
+            grid, shape `(len(next_m_grid), len(next_n_grid))`.
+        next_m_grid: The target's liquid-state nodes at `t + 1`, which
+            `next_value` is read on.
+        next_n_grid: The target's pension-state nodes at `t + 1`, which
+            `next_value` is read on.
         m_grid: Regular liquid-state grid (ascending, evenly spaced).
         n_grid: Regular pension-state grid (ascending, evenly spaced).
         a_grid: Liquid post-decision grid for `ucon`/`dcon` (should include 0).
@@ -82,8 +95,8 @@ def rfc_two_asset_step(
     """
     clouds = _build_region_clouds(
         next_value=next_value,
-        m_grid=m_grid,
-        n_grid=n_grid,
+        next_m_grid=next_m_grid,
+        next_n_grid=next_n_grid,
         a_grid=a_grid,
         b_grid=b_grid,
         consumption_grid=consumption_grid,
@@ -178,8 +191,8 @@ def rfc_two_asset_step(
 def _build_region_clouds(
     *,
     next_value: FloatND,
-    m_grid: Float1D,
-    n_grid: Float1D,
+    next_m_grid: Float1D,
+    next_n_grid: Float1D,
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
@@ -194,8 +207,8 @@ def _build_region_clouds(
     a_mesh, b_mesh = jnp.meshgrid(a_grid, b_grid, indexing="ij")
     post = post_decision_value_and_grad(
         next_value=next_value,
-        m_grid=m_grid,
-        n_grid=n_grid,
+        m_grid=next_m_grid,
+        n_grid=next_n_grid,
         a=a_mesh,
         b=b_mesh,
         return_liquid=return_liquid,
@@ -225,8 +238,8 @@ def _build_region_clouds(
     a_zero = jnp.zeros_like(b_grid)
     post_zero = post_decision_value_and_grad(
         next_value=next_value,
-        m_grid=m_grid,
-        n_grid=n_grid,
+        m_grid=next_m_grid,
+        n_grid=next_n_grid,
         a=a_zero,
         b=b_grid,
         return_liquid=return_liquid,

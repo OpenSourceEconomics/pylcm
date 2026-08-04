@@ -60,6 +60,8 @@ def g2egm_step(
     next_value: FloatND,
     m_grid: Float1D,
     n_grid: Float1D,
+    next_m_grid: Float1D,
+    next_n_grid: Float1D,
     a_grid: Float1D,
     b_grid: Float1D,
     consumption_grid: Float1D,
@@ -73,10 +75,23 @@ def g2egm_step(
 ) -> G2EGMResult:
     """Solve one period of the two-asset model by the four-segment G2EGM envelope.
 
+    The read grids and the publish grids are distinct roles, not a
+    convenience. `next_value` is tabulated on the *target's* nodes at
+    `t + 1`; the step publishes its own value on *this* regime's nodes at
+    `t`. They coincide only when the target regime shares this regime's
+    grids and neither is age-specialized.
+
     Args:
-        next_value: Next period's value on the regular `(m, n)` grid.
-        m_grid: Regular liquid-state grid (ascending, evenly spaced).
-        n_grid: Regular pension-state grid (ascending, evenly spaced).
+        next_value: Next period's value on the regular `(next_m, next_n)`
+            grid, shape `(len(next_m_grid), len(next_n_grid))`.
+        m_grid: This period's liquid-state grid, which the returned value is
+            published on (ascending, evenly spaced).
+        n_grid: This period's pension-state grid, which the returned value is
+            published on (ascending, evenly spaced).
+        next_m_grid: The target's liquid-state nodes at `t + 1`, which
+            `next_value` is read on.
+        next_n_grid: The target's pension-state nodes at `t + 1`, which
+            `next_value` is read on.
         a_grid: Liquid post-decision grid for `ucon`/`dcon` (should include 0 so the
             objective reads `W(0, b)` accurately at the borrowing-constrained corner).
         b_grid: Pension post-decision grid (shared by all segments).
@@ -97,8 +112,8 @@ def g2egm_step(
     def post_reader(a: FloatND, b: FloatND) -> PostDecision:
         return post_decision_value_and_grad(
             next_value=next_value,
-            m_grid=m_grid,
-            n_grid=n_grid,
+            m_grid=next_m_grid,
+            n_grid=next_n_grid,
             a=a,
             b=b,
             return_liquid=return_liquid,

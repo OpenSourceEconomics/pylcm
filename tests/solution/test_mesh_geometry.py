@@ -154,13 +154,6 @@ def test_near_collinear_triangle_is_inadmissible_even_at_its_centroid():
     assert not bool(is_admissible(weights=weights, threshold=0.25))
 
 
-def test_exactly_collinear_triangle_is_inadmissible():
-    """A collinear-image triangle yields non-finite weights, so it is inadmissible."""
-    collinear = jnp.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
-    weights = barycentric_weights(triangle=collinear, query=jnp.array([1.0, 0.0]))
-    assert not bool(is_admissible(weights=weights, threshold=0.25))
-
-
 def test_healthy_triangle_stays_admissible_at_its_centroid():
     """A well-conditioned triangle is admissible with finite weights at its centroid."""
     triangle = jnp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])

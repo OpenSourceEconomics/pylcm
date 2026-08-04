@@ -30,8 +30,8 @@ The step family, and where the solver dispatches each:
 Shared mechanics: within each case/interval the budget is smooth, so the period
 solves by ordinary 1-D EGM on cash-on-hand; the recovered endogenous state is the
 budget inverse. A case's value is the upper envelope over its candidate branches
-(the Euler interior path, boundary-targeting saves that land exactly on the
-eligible side of a jump, and the hard borrowing corner). Cases are NaN-dead
+(the Euler interior path, boundary-targeting saves that land on either side of a
+jump, and the hard borrowing corner). Cases are NaN-dead
 masked to the region where their predicate is consistent with the recovered
 state and merged by the branch-aware upper envelope; the boundary's
 `equality_owner` fixes which side owns the exact boundary point through the
@@ -39,7 +39,7 @@ strict/non-strict comparison split.
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -1358,8 +1358,9 @@ def nbegm_unified_step(  # noqa: PLR0915
     continuous `coh(liquid)` — recovered by clamping the interval index to the
     case's interval range, which is exactly the affine extension of the case's
     segments. Each case is masked to its liquid range, reads the continuation
-    jump-aware at every jump, and competes a boundary-targeting candidate per jump
-    plus the hard borrowing corner; all merge by the branch-aware upper envelope.
+    jump-aware at every jump, and competes a boundary-targeting candidate on each
+    side of every jump plus the hard borrowing corner; all merge by the
+    branch-aware upper envelope.
     The pure-kink (no jump) and pure-jump (slope-1) budgets are special cases.
 
     Args:
@@ -1467,39 +1468,53 @@ def nbegm_unified_step(  # noqa: PLR0915
             jnp.full_like(liquid_grid, float(case) * case_stride + next_segment)
         )
 
-        # Boundary-targeting at each jump: save to land just inside its eligible
-        # side for the higher continuation, consuming this case's cash-on-hand.
-        for offset, jump_idx in enumerate(jump_positions):
+        # Boundary-targeting at each jump: save to land on either side of it for
+        # whichever continuation pays more, consuming this case's cash-on-hand.
+        n_boundary_branches = 0
+        for jump_idx in jump_positions:
             cliff = breakpoints[jump_idx]
-            # Bound the below-side continuation read to the segment between this
-            # cliff and the breakpoint below it, so close cliffs don't bridge.
+            # Bound each one-sided continuation read to the segment between this
+            # cliff and its neighbour, so close cliffs don't bridge.
             prev_limit = (
                 breakpoints[jump_idx - 1] if jump_idx > 0 else liquid_grid[0] - 1.0
             )
-            kink = _boundary_targeting_coh(
-                liquid_grid=liquid_grid,
-                coh_case_grid=coh_case_grid,
-                next_value=next_value,
-                discount_factor=discount_factor,
-                crra=crra,
-                gross_return=gross_return,
-                income=income,
-                asset_limit=cliff,
-                prev_limit=prev_limit,
-                coh_slope=coh_slopes[case_grid_interval],
-                valid=in_case_range,
+            next_limit = (
+                breakpoints[jump_idx + 1]
+                if jump_idx < n_breakpoints - 1
+                else liquid_grid[-1] + 1.0
             )
-            endog_parts.append(kink[0])
-            value_parts.append(kink[1])
-            policy_parts.append(kink[2])
-            marginal_parts.append(kink[3])
-            segment_parts.append(
-                jnp.where(
-                    jnp.isnan(kink[0]),
-                    jnp.nan,
-                    float(case) * case_stride + next_segment + 1.0 + float(offset),
+            for side in ("below", "above"):
+                kink = _boundary_targeting_coh(
+                    liquid_grid=liquid_grid,
+                    coh_case_grid=coh_case_grid,
+                    next_value=next_value,
+                    discount_factor=discount_factor,
+                    crra=crra,
+                    gross_return=gross_return,
+                    income=income,
+                    asset_limit=cliff,
+                    prev_limit=prev_limit,
+                    next_limit=next_limit,
+                    equality_owner=equality_owner,
+                    side=side,
+                    coh_slope=coh_slopes[case_grid_interval],
+                    valid=in_case_range,
                 )
-            )
+                endog_parts.append(kink[0])
+                value_parts.append(kink[1])
+                policy_parts.append(kink[2])
+                marginal_parts.append(kink[3])
+                segment_parts.append(
+                    jnp.where(
+                        jnp.isnan(kink[0]),
+                        jnp.nan,
+                        float(case) * case_stride
+                        + next_segment
+                        + 1.0
+                        + float(n_boundary_branches),
+                    )
+                )
+                n_boundary_branches += 1
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -1523,32 +1538,62 @@ def _boundary_targeting_coh(
     income: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
     coh_slope: Float1D,
     valid: BoolND,
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
-    """Save to land next-period liquid just inside a cliff's eligible side.
+    """Save to land next-period liquid on one chosen side of a cliff.
 
-    The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink` where
-    `s_kink` lands next-period liquid one ulp below the cliff (the eligible side),
-    paired with that side's continuation so policy and value stay consistent. The
-    below-side continuation limit reads only nodes in `(prev_limit, asset_limit)`,
+    The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink`, where
+    `s_kink` lands next-period liquid on `side` of the cliff, paired with that
+    side's continuation so policy and value stay consistent:
+
+    - `side="below"` targets the cliff from underneath;
+    - `side="above"` targets it from over the top.
+
+    Each branch aims at the nearest liquid its side can actually hold: the exact
+    cliff where that side owns equality, and one ulp past it where the other side
+    does. Which side pays more depends on the direction of the continuation's jump,
+    a property of the model, so both are offered and the envelope decides. Each
+    one-sided continuation reads only nodes between the neighbouring breakpoints,
     so with cliffs close together it does not bridge the neighbouring jump.
     """
-    limit_minus = jnp.nextafter(
-        jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
-        jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
-    )
-    s_kink = (limit_minus - income) / gross_return
-    value_limit_minus = _bounded_limit_below(
-        liquid_grid,
-        next_value,
-        limit=asset_limit,
-        prev_limit=prev_limit,
-        n=liquid_grid.shape[0],
-    )
+    limit_at = jnp.asarray(asset_limit, dtype=liquid_grid.dtype)
+    owns_limit = (side == "above") == (equality_owner == "otherwise")
+    if side == "below":
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_below(
+            liquid_grid,
+            next_value,
+            limit=asset_limit,
+            prev_limit=prev_limit,
+            n=liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    else:
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_above(
+            liquid_grid,
+            next_value,
+            limit=asset_limit,
+            next_limit=next_limit,
+            n=liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    s_kink = (target - income) / gross_return
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
-        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_at_target
     )
     # The targeted saving is fixed to the cliff, so consumption moves with the
     # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
@@ -1584,9 +1629,9 @@ def nbegm_recurring_jump_step(
     The N-cliff generalization of the binary `nbegm_one_asset_step`. Each of the
     N+1 subsidy levels is a case whose budget is smooth; its 1-D EGM reads the
     continuation jump-aware at every cliff (no bridging across a value jump) and
-    competes, per cliff, a boundary-targeting candidate that saves to land
-    next-period liquid just inside the cliff's eligible side for its higher
-    continuation. Each case is masked to its liquid range and all cases merge by the
+    competes, on each side of every cliff, a boundary-targeting candidate that
+    saves to land next-period liquid there for that side's continuation. Each case
+    is masked to its liquid range and all cases merge by the
     branch-aware upper envelope, so the solve is exact through every recurring jump,
     not only at a terminal-adjacent period.
 
@@ -1682,9 +1727,8 @@ def _recurring_jump_case(
     `coh = liquid + subsidy`, so the endogenous liquid recovered from the Euler
     inversion is `consumption + savings - subsidy`. The continuation is read
     jump-aware at every cliff. A jumped continuation is nonconcave, so the case
-    contributes, beyond the Euler path, a boundary-targeting candidate per cliff
-    (save to land just inside its eligible side) and the hard borrowing corner, all
-    over the liquid grid.
+    contributes, beyond the Euler path, a boundary-targeting candidate on each side
+    of every cliff and the hard borrowing corner, all over the liquid grid.
     """
     next_liquid = gross_return * savings_grid + income
     value_next = _jump_aware_interp(
@@ -1711,27 +1755,40 @@ def _recurring_jump_case(
     segment_parts: list[Float1D] = [interior_segment]
 
     n_cliffs = jump_breakpoints.shape[0]
+    n_boundary_branches = 0
     for j in range(n_cliffs):
         cliff = jump_breakpoints[j]
         prev_cliff = jump_breakpoints[j - 1] if j > 0 else liquid_grid[0] - 1.0
-        kink = _boundary_targeting_branch(
-            liquid_grid=liquid_grid,
-            next_value=next_value,
-            discount_factor=discount_factor,
-            crra=crra,
-            gross_return=gross_return,
-            income=income,
-            subsidy=subsidy,
-            asset_limit=cliff,
-            prev_limit=prev_cliff,
+        next_cliff = (
+            jump_breakpoints[j + 1] if j < n_cliffs - 1 else liquid_grid[-1] + 1.0
         )
-        endog_parts.append(kink[0])
-        value_parts.append(kink[1])
-        policy_parts.append(kink[2])
-        marginal_parts.append(kink[3])
-        segment_parts.append(
-            jnp.where(jnp.isnan(kink[0]), jnp.nan, next_segment + float(j))
-        )
+        for side in ("below", "above"):
+            kink = _boundary_targeting_branch(
+                liquid_grid=liquid_grid,
+                next_value=next_value,
+                discount_factor=discount_factor,
+                crra=crra,
+                gross_return=gross_return,
+                income=income,
+                subsidy=subsidy,
+                asset_limit=cliff,
+                prev_limit=prev_cliff,
+                next_limit=next_cliff,
+                equality_owner=equality_owner,
+                side=side,
+            )
+            endog_parts.append(kink[0])
+            value_parts.append(kink[1])
+            policy_parts.append(kink[2])
+            marginal_parts.append(kink[3])
+            segment_parts.append(
+                jnp.where(
+                    jnp.isnan(kink[0]),
+                    jnp.nan,
+                    next_segment + float(n_boundary_branches),
+                )
+            )
+            n_boundary_branches += 1
 
     value_at_income = _jump_aware_interp(
         jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
@@ -1748,7 +1805,7 @@ def _recurring_jump_case(
     policy_parts.append(s0[2])
     marginal_parts.append(s0[3])
     segment_parts.append(
-        jnp.where(jnp.isnan(s0[0]), jnp.nan, next_segment + float(n_cliffs))
+        jnp.where(jnp.isnan(s0[0]), jnp.nan, next_segment + float(n_boundary_branches))
     )
 
     return (
@@ -1943,9 +2000,10 @@ def _case_step(
     branches rather than the bare Euler path:
 
     - the Euler interior path;
-    - the boundary-targeting branch that saves to land just inside the eligible
-      side of the boundary (`next_liquid -> asset_limit` from below) for the higher
-      eligible continuation — a corner the Euler equation never produces;
+    - two boundary-targeting branches, one saving to land on each side of the
+      boundary — a corner the Euler equation never produces. Both are offered
+      because which side pays more depends on the direction of the continuation's
+      jump, which the solver reads rather than assumes;
     - the hard borrowing corner `s = 0`, consuming all cash-on-hand.
 
     The continuation is read kink-aware at `asset_limit`: a query landing in the
@@ -1972,21 +2030,37 @@ def _case_step(
     # so the interior path may carry several monotone segments.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
 
-    # A single jump has no neighbouring cliff below; the sentinel leaves the
-    # below-side continuation stencil unbounded on the left.
-    kink_grid, kink_value, kink_consumption, kink_marginal = _boundary_targeting_branch(
-        liquid_grid=liquid_grid,
-        next_value=next_value,
-        discount_factor=discount_factor,
-        crra=crra,
-        gross_return=gross_return,
-        income=income,
-        subsidy=subsidy,
-        asset_limit=asset_limit,
-        prev_limit=liquid_grid[0] - 1.0,
-    )
+    # A single jump has no neighbouring cliff on either side; the sentinels leave
+    # each one-sided continuation stencil unbounded outward.
+    boundary_branches = {
+        side: _boundary_targeting_branch(
+            liquid_grid=liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            crra=crra,
+            gross_return=gross_return,
+            income=income,
+            subsidy=subsidy,
+            asset_limit=asset_limit,
+            prev_limit=liquid_grid[0] - 1.0,
+            next_limit=liquid_grid[-1] + 1.0,
+            equality_owner=equality_owner,
+            side=side,
+        )
+        for side in ("below", "above")
+    }
+    kink_grid, kink_value, kink_consumption, kink_marginal = boundary_branches["below"]
     kink_segment = jnp.where(
         jnp.isnan(kink_grid), jnp.nan, _next_segment_id(interior_segment)
+    )
+    (
+        above_grid,
+        above_value,
+        above_consumption,
+        above_marginal,
+    ) = boundary_branches["above"]
+    above_segment = jnp.where(
+        jnp.isnan(above_grid), jnp.nan, _next_segment_id(interior_segment, offset=3.0)
     )
 
     # Hard borrowing corner: saving nothing consumes all cash-on-hand and lands
@@ -2009,11 +2083,17 @@ def _case_step(
     )
 
     value, consumption_on_grid, marginal = envelope_at_query(
-        endog_grid=jnp.concatenate([liquid_endog, kink_grid, s0_grid]),
-        policy=jnp.concatenate([consumption, kink_consumption, s0_consumption]),
-        value=jnp.concatenate([value_endog, kink_value, s0_value]),
-        marginal=jnp.concatenate([marginal_endog, kink_marginal, s0_marginal]),
-        segment_id=jnp.concatenate([interior_segment, kink_segment, s0_segment]),
+        endog_grid=jnp.concatenate([liquid_endog, kink_grid, above_grid, s0_grid]),
+        policy=jnp.concatenate(
+            [consumption, kink_consumption, above_consumption, s0_consumption]
+        ),
+        value=jnp.concatenate([value_endog, kink_value, above_value, s0_value]),
+        marginal=jnp.concatenate(
+            [marginal_endog, kink_marginal, above_marginal, s0_marginal]
+        ),
+        segment_id=jnp.concatenate(
+            [interior_segment, kink_segment, above_segment, s0_segment]
+        ),
         x_query=liquid_grid,
     )
     return value, marginal, consumption_on_grid
@@ -2030,34 +2110,64 @@ def _boundary_targeting_branch(
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
-    """Build the save-to-the-boundary candidate as a masked grid-aligned branch.
+    """Build a save-to-the-boundary candidate as a masked grid-aligned branch.
 
-    Saving exactly to the limit lands `next_liquid == asset_limit`, which the
-    otherwise side owns, so it earns the lower continuation. To earn the higher
-    eligible continuation the branch targets the open left limit `asset_limit⁻`
-    (one ulp below), so the reported policy and the eligible-side value it is
-    paired with are mutually consistent rather than a supremum dressed as a
-    maximum. Saving the fixed amount maps current liquid to itself
-    (`endog == liquid`), so the branch is the curve `c = coh - s_kink`. The
-    below-side continuation limit reads only nodes in `(prev_limit, asset_limit)`,
-    so with cliffs close together it does not bridge the neighbouring jump.
+    Landing on a boundary is a corner the Euler equation never produces, and which
+    side of it pays more depends on the direction of the continuation's jump — a
+    property of the model, not one the solver may assume. So each side gets its own
+    branch and the envelope decides between them:
+
+    - `side="below"` targets the boundary from underneath and is paired with the
+      below-side continuation;
+    - `side="above"` targets it from over the top and is paired with the above-side
+      continuation.
+
+    Each branch aims at the nearest liquid its side can actually hold: the exact
+    boundary where that side owns equality, and one ulp past it where the other
+    side does. Policy and continuation are then mutually consistent rather than a
+    supremum dressed as a maximum. Saving the fixed amount maps current liquid to
+    itself (`endog == liquid`), so the branch is the curve `c = coh - s_kink`. Each
+    one-sided continuation reads only nodes between the neighbouring cliffs, so with
+    cliffs close together it does not bridge the neighbouring jump.
     """
-    limit_minus = jnp.nextafter(
-        jnp.asarray(asset_limit, dtype=liquid_grid.dtype),
-        jnp.asarray(-jnp.inf, dtype=liquid_grid.dtype),
-    )
-    s_kink = (limit_minus - income) / gross_return
-    value_limit_minus = _bounded_limit_below(
-        liquid_grid,
-        next_value,
-        limit=asset_limit,
-        prev_limit=prev_limit,
-        n=liquid_grid.shape[0],
-    )
+    limit_at = jnp.asarray(asset_limit, dtype=liquid_grid.dtype)
+    owns_limit = (side == "above") == (equality_owner == "otherwise")
+    if side == "below":
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_below(
+            liquid_grid,
+            next_value,
+            limit=asset_limit,
+            prev_limit=prev_limit,
+            n=liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    else:
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_above(
+            liquid_grid,
+            next_value,
+            limit=asset_limit,
+            next_limit=next_limit,
+            n=liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    s_kink = (target - income) / gross_return
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
-        crra_utility(kink_consumption, crra) + discount_factor * value_limit_minus
+        crra_utility(kink_consumption, crra) + discount_factor * value_at_target
     )
     kink_marginal = kink_consumption ** (-crra)
     kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)

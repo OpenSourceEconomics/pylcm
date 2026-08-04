@@ -34,9 +34,9 @@ N_LOW_NODES = 14
 N_HIGH_NODES = 14
 
 
-@pytest.mark.parametrize("upper_envelope", ["fues"])
+@pytest.mark.parametrize("envelope", ["fues"])
 def test_app3_dcegm_matches_vfi_on_wealth_interior(
-    upper_envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "mss", "ltm", "rfc"],
 ):
     """App.3 DC-EGM matches its VFI twin on the wealth interior, per wage and house.
 
@@ -52,7 +52,7 @@ def test_app3_dcegm_matches_vfi_on_wealth_interior(
         n_wage_nodes=N_WAGE_NODES,
         n_periods=N_PERIODS,
         n_consumption=N_CONSUMPTION,
-        upper_envelope=upper_envelope,
+        envelope=envelope,
     )
     brute_model = build_model(
         variant="brute",
