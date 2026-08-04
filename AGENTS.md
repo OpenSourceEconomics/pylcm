@@ -108,7 +108,12 @@ automation. Python 3.14+ is required.
   `U + β · CE`, and the model-level default.
 - `W_epstein_zin(utility, CE, discount_factor, intertemporal_elasticity_of_substitution)`:
   the CES form; pair with `certainty_equivalent=PowerMean()` for the full Epstein-Zin
-  recursion.
+  recursion. Both are weighted power means over the same kernel
+  (`_lcm.power_mean.weighted_power_mean`) — the aggregator averages `(utility, CE)` at
+  weights `(1-β, β)` and exponent `1 - 1/ψ`, the certainty equivalent the continuation
+  lottery at exponent `1 - risk_aversion` — so a range one survives the other survives
+  too. The naive `**` form of either loses the value entirely at small inputs and
+  reverses action rankings near its unit-exponent limit.
 - A regime's aggregator lives in the `koopmans_aggregator` slot, not in `functions`; its
   parameters beyond `utility` and `CE` surface in the params template under the
   pseudo-function key `koopmans_aggregator`. `Phased(solve=..., simulate=...)` gives the

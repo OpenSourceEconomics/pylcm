@@ -14,18 +14,13 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
+from _lcm.power_mean import weighted_power_mean
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND
 
 # Reserved argument name through which transform callables receive values.
 CE_VALUE_ARG = "value"
-
-# Deviation ratio at which `PowerMean.aggregate` switches from the `log1p`
-# moment representation to the `log` one. Either side of it both are accurate
-# to a couple of ulps: `log1p` degrades only as the ratio approaches `-1` and
-# `log` only as it approaches `0`, so any interior crossover works.
-_DEVIATION_RATIO_CROSSOVER = -0.5
 
 
 class CertaintyEquivalent(ABC):
@@ -285,22 +280,16 @@ class PowerMean(QuasiArithmeticMean):
         weights: FloatND,
         params: Mapping[str, FloatND],
     ) -> FloatND:
-        """Return the weighted power mean `(Σ w · v^(1-ra))^(1/(1-ra))`, stably.
+        """Return the weighted power mean `(Σ w̃ · v^(1-ra))^(1/(1-ra))`, stably.
 
-        `ra` is `risk_aversion`. The naive `inverse(Σ w · transform(v))`
+        `ra` is `risk_aversion` and `w̃` the mass-normalized weights. The
+        evaluation is `weighted_power_mean`, which the Koopmans aggregator
+        `W_epstein_zin` shares: the naive `inverse(Σ w · transform(v))`
         overflows when `risk_aversion > 1` and `v` is near the borrowing
-        constraint: the intermediate `v^(1-ra)` exceeds the dtype's range and
-        the certainty equivalent collapses to zero or infinity. The
-        aggregation evaluates in the anchored log form
-        `log CE = a + log M / (1-ra)`, with `a` the extremal log value and `M`
-        the moment of the anchored, mass-normalized lottery.
-        `M` has two representations — an `expm1`-deviation sum that survives
-        `risk_aversion -> 1` and an `exp` sum that survives a lottery carrying
-        near-zero mass on the anchor — and the aggregation takes whichever one
-        the lottery does not cancel. The result therefore stays finite
-        wherever the mathematical value is, and the geometric-mean limit stays
-        exact arbitrarily close to `risk_aversion = 1`. `risk_aversion = 1` is
-        the weighted geometric mean `exp(E[log v])`.
+        constraint, so the mean is taken in an anchored log form instead. It
+        stays finite wherever the mathematical value is, and the
+        geometric-mean limit stays exact arbitrarily close to
+        `risk_aversion = 1`, where the result is `exp(E[log v])`.
 
         The geometric mean is selected by an exact `risk_aversion == 1` test,
         so at that one point the result carries no dependence on
@@ -325,81 +314,11 @@ class PowerMean(QuasiArithmeticMean):
             The certainty equivalent, reduced over the last axis.
 
         """
-        risk_aversion = params["risk_aversion"]
-        live = weights > 0.0
-        # A node carrying no weight must not be able to inject a non-finite
-        # quantity into the reductions. `log(0)` is `-inf` and its derivative
-        # `1/0` is infinite, and a weight of exactly zero cancels neither —
-        # forward it would take a `jnp.where` in every reduction, and in
-        # reverse mode the masked cotangent would still be `0 * inf`. Replacing
-        # the value itself keeps both directions finite, and leaves the result
-        # unchanged because the node's normalized weight is exactly zero.
-        log_v = jnp.log(jnp.where(live, values, 1.0))
-        exponent = 1.0 - risk_aversion
-        # The `risk_aversion == 1` power branch must not divide by zero.
-        safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
-        # Anchored form: with `a` the extremal log value on the side that
-        # keeps every scaled exponent nonpositive,
-        # `log CE = a + log M / (1-ra)` where `M = sum (w/W) exp((1-ra)(log v - a))`
-        # over the mass-normalized lottery.
-        #
-        # Only a node with a finite log value may anchor. A live node at value
-        # zero has `log v = -inf`, and anchoring there would make its own
-        # `log v - a` the indeterminate `-inf - (-inf)`. Anchored to a finite
-        # node instead, that value's scaled exponent is `+inf` below unit risk
-        # aversion, the moment diverges, and the certainty equivalent goes to
-        # zero — which is what `v^(1-ra) -> inf` gives.
-        anchorable = live & jnp.isfinite(log_v)
-        anchor_high = jnp.max(jnp.where(anchorable, log_v, -jnp.inf), axis=-1)
-        anchor_low = jnp.min(jnp.where(anchorable, log_v, jnp.inf), axis=-1)
-        anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
-        # With no anchorable node the reductions sit at their sentinels; any
-        # finite anchor will do, and zero keeps `centered` well defined.
-        anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
-        anchor = jnp.where(exponent == 0.0, 0.0, anchor)
-        centered = log_v - anchor[..., None]
-        broadcast_live = jnp.broadcast_to(live, centered.shape)
-        broadcast_weights = jnp.broadcast_to(weights, centered.shape)
-        # A NaN weight is deliberately kept rather than masked away: a
-        # malformed lottery must surface as NaN, not silently lose a branch.
-        masked_weights = jnp.where(
-            broadcast_live | jnp.isnan(broadcast_weights), broadcast_weights, 0.0
+        return weighted_power_mean(
+            values=values,
+            weights=weights,
+            exponent=1.0 - params["risk_aversion"],
         )
-        weight_sum = jnp.sum(masked_weights, axis=-1)
-        # A lottery carrying no mass has no certainty equivalent. The linear
-        # path's `jnp.average` reports the same NaN, so either aggregation
-        # reaches the NaN diagnostics on the same model.
-        safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
-        normalized_weights = masked_weights / safe_weight[..., None]
-        scaled = exponent * centered
-        # The moment `M = Σ w̃ exp((1-ra)(log v - a))` has two representations,
-        # each exact where the other cancels. Both reduce the same anchored
-        # lottery, whose terms all lie in `[0, 1]` with the anchor's own term
-        # at exactly its weight — so neither can overflow, and only a value of
-        # exactly zero can send a term to infinity:
-        # - `log1p(Σ w̃ expm1(...))` sums small negatives, so it survives
-        #   `1-ra -> 0`, where `log(M)` would be a rounded `0/0` against the
-        #   exponent and the geometric-mean limit would be lost.
-        # - `log(Σ w̃ exp(...))` sums strict positives, so it survives a wide
-        #   lottery carrying near-zero mass on the anchor, where every other
-        #   `expm1` rounds to `-1`, the deviation ratio rounds to `-1` too,
-        #   and `log1p` would report a mathematically positive moment as zero.
-        deviation_ratio = jnp.sum(normalized_weights * jnp.expm1(scaled), axis=-1)
-        moment = jnp.sum(normalized_weights * jnp.exp(scaled), axis=-1)
-        # `jnp.where` evaluates both branches, so each has to stay finite even
-        # where it is discarded — an infinity in the dead branch would still
-        # reach a gradient.
-        near_geometric = deviation_ratio > _DEVIATION_RATIO_CROSSOVER
-        safe_deviation_ratio = jnp.where(near_geometric, deviation_ratio, 0.0)
-        safe_moment = jnp.where(near_geometric, 1.0, moment)
-        log_moment = jnp.where(
-            near_geometric,
-            jnp.log1p(safe_deviation_ratio),
-            jnp.log(safe_moment),
-        )
-        log_ce_power = anchor + log_moment / safe_exponent
-        log_ce_geometric = jnp.sum(normalized_weights * log_v, axis=-1)
-        return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
 
 
 def _args_for(
