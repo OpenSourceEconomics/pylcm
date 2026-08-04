@@ -1,6 +1,6 @@
 """Construction of `H_kwargs` for the Bellman aggregator.
 
-The default Bellman aggregator `H(utility, E_next_V, discount_factor)` —
+The default Bellman aggregator `H(utility, CE, discount_factor)` —
 and any user-supplied H — may declare parameters that are not
 states/actions/user-params but are outputs of regime functions
 registered under the same name (e.g. a `discount_factor` DAG function
@@ -47,7 +47,7 @@ def get_dag_targets_consumed_by_H(
     H = functions.get("H")
     if H is None:
         return frozenset()
-    H_accepted_params = frozenset(get_union_of_args([H]) - {"utility", "E_next_V"})
+    H_accepted_params = frozenset(get_union_of_args([H]) - {"utility", "CE"})
     return H_accepted_params & set(functions) - {"H", "utility", "feasibility"}
 
 
@@ -75,7 +75,7 @@ def _get_build_H_kwargs(
 
     """
     H = functions["H"]
-    H_accepted_params = frozenset(get_union_of_args([H]) - {"utility", "E_next_V"})
+    H_accepted_params = frozenset(get_union_of_args([H]) - {"utility", "CE"})
     dag_targets = get_dag_targets_consumed_by_H(functions)
     passthrough = H_accepted_params - dag_targets
 

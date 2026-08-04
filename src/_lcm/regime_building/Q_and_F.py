@@ -39,8 +39,8 @@ def get_Q_and_F(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -52,19 +52,20 @@ def get_Q_and_F(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Graph targets whose continuation enters E[V] this period.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
             info.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -72,7 +73,7 @@ def get_Q_and_F(
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    compute_E_next_V, continuation_deps = _get_compute_E_next_V(
+    compute_CE, continuation_deps = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
@@ -109,7 +110,7 @@ def get_Q_and_F(
 
         """
         U_arr, F_arr = U_and_F(**states_actions_params)
-        E_next_V, _ = compute_E_next_V(
+        CE, _ = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
@@ -117,7 +118,7 @@ def get_Q_and_F(
 
         Q_arr = functions["H"](
             utility=U_arr,
-            E_next_V=E_next_V,
+            CE=CE,
             **_build_H_kwargs(states_actions_params),
         )
 
@@ -138,7 +139,7 @@ def get_compute_intermediates(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    certainty_equivalent: CertaintyEquivalent | None = None,
+    certainty_equivalent: CertaintyEquivalent | None,
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -153,7 +154,8 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Graph targets whose continuation enters E[V] this period.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
@@ -166,11 +168,11 @@ def get_compute_intermediates(
             regime, or `None` for the linear expectation.
 
     Returns:
-        Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
+        Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    compute_E_next_V, continuation_deps = _get_compute_E_next_V(
+    compute_CE, continuation_deps = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
@@ -202,7 +204,7 @@ def get_compute_intermediates(
     ]:
         """Compute all Q_and_F intermediates."""
         U_arr, F_arr = U_and_F(**states_actions_params)
-        E_next_V, active_regime_probs = compute_E_next_V(
+        CE, active_regime_probs = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
@@ -210,11 +212,11 @@ def get_compute_intermediates(
 
         Q_arr = functions["H"](
             utility=U_arr,
-            E_next_V=E_next_V,
+            CE=CE,
             **_build_H_kwargs(states_actions_params),
         )
 
-        return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
+        return U_arr, F_arr, CE, Q_arr, active_regime_probs
 
     return compute_intermediates
 
@@ -276,7 +278,7 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
-def _get_compute_E_next_V(
+def _get_compute_CE(
     *,
     functions: EconFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
@@ -290,7 +292,7 @@ def _get_compute_E_next_V(
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
 ]:
-    """Build the closure that aggregates next period's value into `E[V']`.
+    """Build the closure that aggregates next period's value into `CE`.
 
     The single continuation-aggregation site of the engine: both the Bellman
     `Q` and the NaN diagnostics call the closure this returns, so they cannot
@@ -308,7 +310,8 @@ def _get_compute_E_next_V(
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
-        period_targets: Graph targets whose continuation enters E[V] this period.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
@@ -320,7 +323,7 @@ def _get_compute_E_next_V(
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
     Returns:
-        Tuple of the closure returning `(E_next_V, active_regime_probs)` and the
+        Tuple of the closure returning `(CE, active_regime_probs)` and the
         dependencies whose arguments must enter the calling closure's signature.
 
     """
@@ -376,6 +379,9 @@ def _get_compute_E_next_V(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
+    # Lowercase `ce` is the certainty-equivalent *specification* (`None` for the
+    # linear expectation); uppercase `CE` below is the value it produces — the
+    # same convention as `v_interpolation_info` against `V_arr`.
     ce, ce_flat_param_names = resolve_certainty_equivalent(certainty_equivalent)
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
@@ -383,13 +389,13 @@ def _get_compute_E_next_V(
     # the interpolator (which no longer indexes those axes).
     co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    def compute_E_next_V(
+    def compute_CE(
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
         states_actions_params: Mapping[str, Any],
     ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
-        """Aggregate the continuation lottery into `E[V']` at one state-action point.
+        """Aggregate the continuation lottery into `CE` at one state-action point.
 
         Args:
             next_regime_to_V_arr: Immutable mapping of target regime names to
@@ -413,7 +419,7 @@ def _get_compute_E_next_V(
             {r: regime_transition_probs[r] for r in period_targets}
         )
 
-        E_next_V = zero
+        CE = zero
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
         for target_regime_name in period_targets:
@@ -454,10 +460,7 @@ def _get_compute_E_next_V(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                E_next_V = (
-                    E_next_V
-                    + active_regime_probs[target_regime_name] * next_V_expected_arr
-                )
+                CE = CE + active_regime_probs[target_regime_name] * next_V_expected_arr
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
@@ -472,7 +475,7 @@ def _get_compute_E_next_V(
                 )
 
         if ce is not None and lottery_values:
-            E_next_V = ce.aggregate(
+            CE = ce.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
                 # The params template types every certainty-equivalent
@@ -486,14 +489,14 @@ def _get_compute_E_next_V(
                 ),
             )
 
-        return E_next_V, active_regime_probs
+        return CE, active_regime_probs
 
     deps = (
         compute_regime_transition_probs,
         *state_transitions.values(),
         *next_stochastic_states_weights.values(),
     )
-    return compute_E_next_V, deps
+    return compute_CE, deps
 
 
 def _as_lottery(

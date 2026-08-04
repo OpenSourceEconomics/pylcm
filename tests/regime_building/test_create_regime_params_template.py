@@ -95,10 +95,10 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
 
 
 def test_create_params_with_custom_H_no_extra_params():
-    """A custom H with no extra params beyond utility and E_next_V."""
+    """A custom H with no extra params beyond utility and CE."""
 
-    def custom_H(utility: float, E_next_V: float) -> float:
-        return utility + E_next_V
+    def custom_H(utility: float, CE: float) -> float:
+        return utility + CE
 
     regime = MockRegime(
         actions={
@@ -151,8 +151,8 @@ def test_custom_H_shadowing_state_is_allowed():
     call time from the state space.
     """
 
-    def custom_H(utility: float, E_next_V: float, wealth: float) -> float:
-        return utility + wealth * E_next_V
+    def custom_H(utility: float, CE: float, wealth: float) -> float:
+        return utility + wealth * CE
 
     regime = MockRegime(
         actions={"a": None},
@@ -172,13 +172,11 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     both phases.
     """
 
-    def exponential_h(utility: float, E_next_V: float, discount_factor: float) -> float:
-        return utility + discount_factor * E_next_V
+    def exponential_h(utility: float, CE: float, discount_factor: float) -> float:
+        return utility + discount_factor * CE
 
-    def beta_delta_h(
-        utility: float, E_next_V: float, beta: float, delta: float
-    ) -> float:
-        return utility + beta * delta * E_next_V
+    def beta_delta_h(utility: float, CE: float, beta: float, delta: float) -> float:
+        return utility + beta * delta * CE
 
     regime = MockRegime(
         actions={"a": None},

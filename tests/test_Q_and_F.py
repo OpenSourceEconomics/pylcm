@@ -394,8 +394,8 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_H(utility: FloatND, E_next_V: FloatND) -> FloatND:
-    return utility + E_next_V
+def _epstein_zin_H(utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + CE
 
 
 def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, FloatND]:

@@ -64,7 +64,7 @@ def finalize_regimes(
             derived_categoricals=derived_categoricals,
         )
         functions = dict(user_regime.functions)
-        # Terminal regimes don't need H since Q = U directly (no E_next_V).
+        # Terminal regimes don't need H since Q = U directly (no CE).
         if user_regime.transition is not None and "H" not in functions:
             functions["H"] = H_linear
         finalized = user_regime.replace(

@@ -60,7 +60,7 @@ def _build_compute_intermediates_per_period(
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
-    certainty_equivalent: CertaintyEquivalent | None = None,
+    certainty_equivalent: CertaintyEquivalent | None,
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -174,7 +174,7 @@ def _wrap_with_reduction(
 
     Args:
         func: Productmap'd closure returning
-            `(U_arr, F_arr, E_next_V, Q_arr, regime_probs)`. `regime_probs`
+            `(U_arr, F_arr, CE, Q_arr, regime_probs)`. `regime_probs`
             is a mapping of target regime names to per-point probability
             arrays.
         variable_names: Tuple of state + action names in the order that
@@ -184,8 +184,8 @@ def _wrap_with_reduction(
     Returns:
         Callable taking the same kwargs as `func` and returning a dict with
         `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
-        {`U_nan`, `E_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
-        a dict of per-target scalar means. The `{U,E,Q}_nan_*` fractions
+        {`U_nan`, `CE_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
+        a dict of per-target scalar means. The `{U,CE,Q}_nan_*` fractions
         are conditional on feasibility (numerator restricted to feasible
         cells, denominator is the feasible-cell count); `F_feasible_*`
         is the plain mean over all cells.
@@ -198,7 +198,7 @@ def _wrap_with_reduction(
     def reduced(
         **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
     ) -> dict[str, Any]:
-        U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
+        U_arr, F_arr, CE, Q_arr, regime_probs = func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells
         # contribute to numerators. Infeasible cells are zeroed out because
@@ -206,7 +206,7 @@ def _wrap_with_reduction(
         # propagates to V_arr — reporting it would conflate causes.
         nan_arrays: dict[str, FloatND] = {
             "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
-            "E_nan": jnp.isnan(E_next_V).astype(float) * F_float,
+            "CE_nan": jnp.isnan(CE).astype(float) * F_float,
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
         }
 

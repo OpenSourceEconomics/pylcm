@@ -25,7 +25,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
 
     Discover parameters from function signatures via `dags.tree`. Parameters
     are function arguments that are not states, actions, regime functions,
-    `next_<state>` outputs, or special variables (`period`, `age`, `E_next_V`).
+    `next_<state>` outputs, or special variables (`period`, `age`, `CE`).
 
     Age specialization is already resolved by `normalize_age_specialization`
     before this runs: the regime passed here carries concrete first-active-age
@@ -57,7 +57,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         *(f"next_{name}" for name in user_regime.states),
         "period",
         "age",
-        "E_next_V",
+        "CE",
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}

@@ -96,7 +96,7 @@ def test_claw_checks_lcm_regime() -> None:
     with pytest.raises(BeartypeCallHintViolation):
         H_linear(
             utility=np.array([1.0]),  # ty: ignore[invalid-argument-type]
-            E_next_V=jnp.array([1.0]),
+            CE=jnp.array([1.0]),
             discount_factor=jnp.array([0.95]),
         )
 

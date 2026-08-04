@@ -74,12 +74,12 @@ def borrowing_constraint(
 
 def ces_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     ies: float,
 ) -> float:
     rho = 1 - ies
-    return ((1 - discount_factor) * utility**rho + discount_factor * E_next_V**rho) ** (
+    return ((1 - discount_factor) * utility**rho + discount_factor * CE**rho) ** (
         1 / rho
     )
 
@@ -246,8 +246,8 @@ def test_default_H_not_injected_for_terminal():
 def test_custom_H_not_overwritten():
     """A user-provided H should not be replaced by the default."""
 
-    def my_H(utility: float, E_next_V: float) -> float:
-        return utility + E_next_V
+    def my_H(utility: float, CE: float) -> float:
+        return utility + CE
 
     r = UserRegime(
         transition=lambda: {"a": 1.0},
@@ -369,12 +369,12 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
 
 def wealth_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     wealth: float,
     wealth_weight: float,
 ) -> float:
-    return utility + discount_factor * E_next_V + wealth_weight * wealth
+    return utility + discount_factor * CE + wealth_weight * wealth
 
 
 def test_h_consumes_continuous_state():
@@ -382,7 +382,7 @@ def test_h_consumes_continuous_state():
 
     Regression guard against a refactor that narrows `_H_accepted_params`
     to reject state names. At the last period where `working_life` is
-    active, `E_next_V = 0` (dead utility is zero), so adding
+    active, `CE = 0` (dead utility is zero), so adding
     `wealth_weight * wealth` to `Q` shifts `V` by exactly that term —
     independent of the argmax.
     """
@@ -420,12 +420,12 @@ def test_h_consumes_continuous_state():
 
 def consumption_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     consumption: float,
     action_weight: float,
 ) -> float:
-    return utility + discount_factor * E_next_V + action_weight * consumption
+    return utility + discount_factor * CE + action_weight * consumption
 
 
 def test_h_consumes_continuous_action():
@@ -472,14 +472,12 @@ def test_h_consumes_continuous_action():
 
 def labor_supply_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     labor_supply: DiscreteAction,
     bonus: float,
 ) -> FloatND:
-    return (
-        utility + discount_factor * E_next_V + bonus * labor_supply.astype(jnp.float32)
-    )
+    return utility + discount_factor * CE + bonus * labor_supply.astype(jnp.float32)
 
 
 def test_h_consumes_discrete_action():
@@ -517,11 +515,11 @@ def test_h_consumes_discrete_action():
 
 def pref_type_direct_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     pref_type: DiscreteState,
 ) -> FloatND:
-    return utility + discount_factor * E_next_V + 0.1 * pref_type.astype(jnp.float32)
+    return utility + discount_factor * CE + 0.1 * pref_type.astype(jnp.float32)
 
 
 def test_h_consumes_discrete_state():
@@ -554,7 +552,7 @@ def test_h_consumes_discrete_state():
 
 def mixed_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
     ies: float,
     wealth: float,
@@ -563,7 +561,7 @@ def mixed_H(
 ) -> FloatND:
     rho = 1 - ies
     u_eff = utility + 1e-3 * wealth
-    v_eff = E_next_V + 1e-3 * consumption
+    v_eff = CE + 1e-3 * consumption
     combined = ((1 - discount_factor) * u_eff**rho + discount_factor * v_eff**rho) ** (
         1 / rho
     )

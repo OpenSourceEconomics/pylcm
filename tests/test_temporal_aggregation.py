@@ -11,7 +11,7 @@ def test_H_linear_is_discounted_sum():
     """`H_linear(u, ce, beta) == u + beta * ce`."""
     result = H_linear(
         utility=jnp.asarray(2.0),
-        E_next_V=jnp.asarray(3.0),
+        CE=jnp.asarray(3.0),
         discount_factor=jnp.asarray(0.9),
     )
     np.testing.assert_allclose(result, 2.0 + 0.9 * 3.0, rtol=1e-6)
@@ -24,7 +24,7 @@ def test_H_epstein_zin_is_ces_in_utility_and_continuation():
     expected = ((1.0 - beta) * utility**rho + beta * ce**rho) ** (1.0 / rho)
     result = H_epstein_zin(
         utility=jnp.asarray(utility),
-        E_next_V=jnp.asarray(ce),
+        CE=jnp.asarray(ce),
         discount_factor=jnp.asarray(beta),
         intertemporal_elasticity_of_substitution=jnp.asarray(ies),
     )
@@ -36,7 +36,7 @@ def test_H_epstein_zin_unit_ies_is_cobb_douglas():
     utility, ce, beta = 2.0, 3.0, 0.9
     result = H_epstein_zin(
         utility=jnp.asarray(utility),
-        E_next_V=jnp.asarray(ce),
+        CE=jnp.asarray(ce),
         discount_factor=jnp.asarray(beta),
         intertemporal_elasticity_of_substitution=jnp.asarray(1.0),
     )

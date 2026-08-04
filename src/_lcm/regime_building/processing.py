@@ -2236,8 +2236,8 @@ def _build_Q_and_F_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None

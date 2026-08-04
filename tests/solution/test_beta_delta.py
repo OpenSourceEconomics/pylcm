@@ -58,19 +58,19 @@ def borrowing_constraint(
 
 def exponential_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
 ) -> float:
-    return utility + discount_factor * E_next_V
+    return utility + discount_factor * CE
 
 
 def beta_delta_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     beta: float,
     delta: float,
 ) -> float:
-    return utility + beta * delta * E_next_V
+    return utility + beta * delta * CE
 
 
 WEALTH_START = 0.5
