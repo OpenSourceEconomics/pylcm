@@ -147,6 +147,10 @@ def _build_compute_intermediates_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             certainty_equivalent=certainty_equivalent,
+            # The diagnostics are handed the full value arrays and map over
+            # every state, so none of the solve kernel's co-mapped axes have
+            # been sliced off here.
+            co_map_state_names=(),
         )
         mapped = _productmap_over_state_action_space(
             func=scalar,

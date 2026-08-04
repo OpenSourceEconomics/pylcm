@@ -22,7 +22,11 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exceptions import InvalidNameError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    RegimeInitializationError,
+)
 from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
@@ -641,6 +645,178 @@ def test_power_mean_aggregate_is_homogeneous_of_degree_one():
         values=jnp.array([1e-12, 4e-12]), weights=weights, params=params
     )
     np.testing.assert_allclose(float(scaled), 1e-12 * float(unit), rtol=1e-5)
+
+
+@pytest.mark.parametrize("overridden", ["transform", "inverse"])
+def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
+    """`PowerMean` aggregates the power transform; a custom pair needs the base class.
+
+    Its stable aggregation is specific to `v^(1-risk_aversion)`, so accepting
+    other callables would silently ignore them.
+    """
+
+    def g(value: FloatND, theta: FloatND) -> FloatND:
+        return value * theta
+
+    with pytest.raises(RegimeInitializationError, match="QuasiArithmeticMean"):
+        PowerMean(**{overridden: g})
+
+
+def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None):
+    """A zero-valued branch drives the power mean to zero above unit risk aversion.
+
+    With `risk_aversion = 3` the transform `v^-2` sends the zero branch to
+    infinity, so the mean of the transformed lottery is infinite and the
+    certainty equivalent is `inf^(-1/2) = 0`.
+    """
+    got = _aggregate_power_mean((0.0, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float64)
+    np.testing.assert_allclose(got, 0.0, atol=0.0)
+
+
+def test_power_mean_aggregate_is_zero_at_an_underflowed_node(x64_disabled: None):
+    """A float32 branch that underflows to zero yields a zero certainty equivalent."""
+    got = _aggregate_power_mean((1e-50, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float32)
+    np.testing.assert_allclose(got, 0.0, atol=0.0)
+
+
+def test_power_mean_aggregate_is_nan_for_a_zero_mass_lottery():
+    """A lottery carrying no probability mass has no certainty equivalent.
+
+    The linear-expectation path reports the same undefined aggregate, so a
+    state-action point whose regime transition assigns zero probability to
+    every reachable target is caught by the NaN diagnostics either way.
+    """
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.0, 0.0]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    assert jnp.isnan(got)
+
+
+@pytest.mark.parametrize("bad_weight", [jnp.nan, jnp.inf])
+def test_power_mean_aggregate_propagates_a_non_finite_weight(bad_weight: float):
+    """A malformed node weight makes the whole aggregate NaN rather than dropping."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, bad_weight]),
+        params={"risk_aversion": jnp.asarray(3.0)},
+    )
+    assert jnp.isnan(got)
+
+
+def test_power_mean_aggregate_has_finite_gradients_at_a_dead_zero_valued_node(
+    x64_enabled: None,
+):
+    """A zero-weight branch at value zero leaves every gradient finite.
+
+    A target regime reached with probability zero is ordinary — a survival
+    transition in the last active period, say — so gradient-based estimation
+    must not see NaN because of a branch that carries no mass.
+    """
+    values = jnp.array([1.0, 9.0, 0.0])
+    weights = jnp.array([0.5, 0.5, 0.0])
+
+    def aggregate_over_values(values: FloatND) -> FloatND:
+        return PowerMean().aggregate(
+            values=values,
+            weights=weights,
+            params={"risk_aversion": jnp.asarray(3.0)},
+        )
+
+    def aggregate_over_risk_aversion(risk_aversion: FloatND) -> FloatND:
+        return PowerMean().aggregate(
+            values=values, weights=weights, params={"risk_aversion": risk_aversion}
+        )
+
+    assert jnp.all(jnp.isfinite(jax.grad(aggregate_over_values)(values)))
+    assert jnp.isfinite(
+        jax.grad(aggregate_over_risk_aversion)(jnp.asarray(3.0)),
+    )
+
+
+def test_power_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+    """Scaling every weight by a constant leaves the certainty equivalent unchanged."""
+    params = {"risk_aversion": jnp.asarray(3.0)}
+    unit = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]), weights=jnp.array([0.25, 0.75]), params=params
+    )
+    scaled = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]), weights=jnp.array([2.5, 7.5]), params=params
+    )
+    np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
+
+
+@pytest.mark.parametrize("risk_aversion", [1.0 - 1e-6, 1.0, 1.0 + 1e-6])
+def test_power_mean_aggregate_is_continuous_across_unit_risk_aversion_off_unit_mass(
+    risk_aversion: float,
+):
+    """A lottery whose weights miss unit mass stays continuous in risk aversion."""
+    got = PowerMean().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 0.5 - 1e-4]),
+        params={"risk_aversion": jnp.asarray(risk_aversion)},
+    )
+    np.testing.assert_allclose(float(got), 3.0, rtol=1e-3)
+
+
+def test_power_mean_aggregate_reports_a_bad_param_type_as_invalid_params():
+    """A malformed runtime param points the user at their params, not their regime."""
+    with pytest.raises(InvalidParamsError):
+        PowerMean().aggregate(
+            values=jnp.array([1.0, 9.0]),
+            weights=jnp.array([0.5, 0.5]),
+            params={"risk_aversion": "two"},  # ty: ignore[invalid-argument-type]
+        )
+
+
+def _power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    return value ** (1.0 - risk_aversion)
+
+
+def _power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
+    return value ** (1.0 / (1.0 - risk_aversion))
+
+
+def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
+    """A hand-written power transform on a `Regime` solves to the `PowerMean` values."""
+    generic_model = get_model(
+        certainty_equivalent=QuasiArithmeticMean(
+            transform=_power_transform, inverse=_power_inverse
+        )
+    )
+    power_model = get_model(certainty_equivalent=PowerMean())
+    params = get_params(risk_aversion=2.0)
+    V_generic = generic_model.solve(params=params, log_level="debug")
+    V_power = power_model.solve(params=params, log_level="debug")
+    for period in V_power:
+        for regime_name in V_power[period]:
+            np.testing.assert_allclose(
+                np.asarray(V_generic[period][regime_name]),
+                np.asarray(V_power[period][regime_name]),
+                rtol=1e-6,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery():
+    """Scaling every weight by a constant leaves the generic mean unchanged."""
+
+    def g(value: FloatND, theta: FloatND) -> FloatND:
+        return value * theta
+
+    def g_inv(value: FloatND, theta: FloatND) -> FloatND:
+        return value / theta
+
+    ce = QuasiArithmeticMean(transform=g, inverse=g_inv)
+    params = {"theta": jnp.asarray(2.0)}
+    unit = ce.aggregate(
+        values=jnp.array([1.0, 3.0]), weights=jnp.array([0.25, 0.75]), params=params
+    )
+    scaled = ce.aggregate(
+        values=jnp.array([1.0, 3.0]), weights=jnp.array([2.5, 7.5]), params=params
+    )
+    np.testing.assert_allclose(float(scaled), float(unit), rtol=1e-12)
 
 
 def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse():

@@ -140,6 +140,7 @@ def get_compute_intermediates(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
+    co_map_state_names: tuple[StateName, ...],
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -166,6 +167,10 @@ def get_compute_intermediates(
             V-interpolation info.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
+        co_map_state_names: Tuple of state names co-mapped with the
+            continuation V in the solve kernel. The diagnostics pass an empty
+            tuple: they are handed the full, un-sliced value arrays and map
+            over every state, so no axis has been sliced off to compensate for.
 
     Returns:
         Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
@@ -180,6 +185,7 @@ def get_compute_intermediates(
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
+        co_map_state_names=co_map_state_names,
     )
     _build_H_kwargs = _get_build_H_kwargs(functions)
 
@@ -287,7 +293,7 @@ def _get_compute_CE(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
-    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_state_names: tuple[StateName, ...],
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
@@ -515,13 +521,20 @@ def _as_lottery(
             states.
 
     Returns:
-        Tuple of the flattened values and their probabilities, which sum to one.
+        Tuple of the flattened values and their probabilities, which sum to
+        one — or to zero for a target whose weights carry no mass at all.
 
     """
     flat_values = jnp.ravel(values)
     if has_stochastic_states:
         flat_weights = jnp.ravel(weights)
-        return flat_values, flat_weights / jnp.sum(flat_weights)
+        weight_sum = jnp.sum(flat_weights)
+        # A target whose joint weights carry no mass contributes no branch. It
+        # must not contribute NaN either: every target's nodes are concatenated
+        # into one lottery, so a NaN here would destroy the certainty
+        # equivalent of the well-specified targets alongside it.
+        safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        return flat_values, flat_weights / safe_weight_sum
     uniform = jnp.full(
         flat_values.shape, 1.0 / flat_values.size, dtype=flat_values.dtype
     )
