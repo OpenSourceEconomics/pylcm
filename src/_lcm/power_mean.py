@@ -113,7 +113,12 @@ def weighted_power_mean(
     # on the same model.
     safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
     normalized_weights = masked_weights / safe_weight[..., None]
-    scaled = exponent * centered
+    # `exponent` broadcasts against the reduced shape, so it needs the lottery
+    # axis inserted before it multiplies `centered`. Without it, ordinary
+    # broadcasting aligns the exponent's trailing dimension with the lottery
+    # nodes: same length and every node silently gets the wrong exponent,
+    # different length and the multiply raises.
+    scaled = jnp.expand_dims(exponent, axis=-1) * centered
     # The moment `M = Σ w̃ exp(p (log v - a))` has two representations, each
     # exact where the other cancels. Both reduce the same anchored lottery,
     # whose terms all lie in `[0, 1]` with the anchor's own term at exactly

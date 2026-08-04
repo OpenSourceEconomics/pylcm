@@ -397,8 +397,11 @@ def _get_compute_CE(
     # its transform has to be applied before any expectation is taken.
     # `LinearExpectation.aggregate` states the same quantity over the flattened
     # lottery, but reducing per target is materially cheaper.
-    reduces_per_target = certainty_equivalent is None or isinstance(
-        certainty_equivalent, LinearExpectation
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
     )
     ce_flat_param_names = (
         MappingProxyType({})

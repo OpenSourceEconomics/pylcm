@@ -1,6 +1,7 @@
 """Tests for nonlinear certainty equivalents over the continuation value."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from typing import Any
 
@@ -1236,3 +1237,65 @@ def test_declaring_a_certainty_equivalent_in_only_some_regimes_is_rejected():
             working_kwargs={"certainty_equivalent": PowerMean()},
             retired_kwargs={},
         )
+
+
+def test_power_mean_applies_a_batched_risk_aversion_per_row(x64_enabled: None):
+    """A per-row risk aversion governs its own row, not a lottery node."""
+    values = jnp.array([[1.0, 4.0], [1.0, 4.0]])
+    weights = jnp.array([0.5, 0.5])
+    batched = PowerMean().aggregate(
+        values=values,
+        weights=weights,
+        params={"risk_aversion": jnp.array([0.0, 3.0])},
+    )
+    per_row = [
+        float(
+            PowerMean().aggregate(
+                values=values[i],
+                weights=weights,
+                params={"risk_aversion": jnp.asarray(ra)},
+            )
+        )
+        for i, ra in enumerate((0.0, 3.0))
+    ]
+    np.testing.assert_allclose(np.asarray(batched), per_row, rtol=1e-12)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _HalvedLinearExpectation(LinearExpectation):
+    """A `LinearExpectation` subclass that deliberately halves the aggregate."""
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        return 0.5 * jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+
+
+def test_linear_expectation_subclass_aggregate_is_honoured(x64_enabled: None):
+    """A subclass that overrides `aggregate` is used, not bypassed.
+
+    The engine reduces each target regime on its own for the shipped
+    `LinearExpectation`, whose `aggregate` states the same quantity. That
+    shortcut must not extend to a subclass whose `aggregate` states something
+    else.
+    """
+    plain = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": LinearExpectation()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    halved = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": _HalvedLinearExpectation()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    params = {"discount_factor": 0.95}
+    V_plain = plain.solve(params=params, log_level="off")
+    V_halved = halved.solve(params=params, log_level="off")
+    assert not np.allclose(
+        np.asarray(V_plain[0]["working"]), np.asarray(V_halved[0]["working"])
+    )

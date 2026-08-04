@@ -213,3 +213,45 @@ def test_W_epstein_zin_is_the_power_mean_of_utility_and_continuation(
         params={"risk_aversion": jnp.asarray(1.0 / ies)},
     )
     np.testing.assert_allclose(float(aggregated), float(as_power_mean), rtol=1e-12)
+
+
+def test_W_epstein_zin_applies_a_batched_ies_pointwise(x64_enabled: None):
+    """A per-state IES applies to its own state, not to a lottery node.
+
+    `psi` is a state/action-batched quantity: it broadcasts over the aggregated
+    points, and each point's own `psi` governs it.
+    """
+    utility = jnp.array([0.1, 0.1])
+    ce = jnp.array([0.1, 0.05])
+    result = W_epstein_zin(
+        utility=utility,
+        CE=ce,
+        discount_factor=jnp.asarray(0.1),
+        intertemporal_elasticity_of_substitution=jnp.array([0.125, 0.25]),
+    )
+    pointwise = [
+        float(
+            W_epstein_zin(
+                utility=utility[i],
+                CE=ce[i],
+                discount_factor=jnp.asarray(0.1),
+                intertemporal_elasticity_of_substitution=jnp.asarray(psi),
+            )
+        )
+        for i, psi in enumerate((0.125, 0.25))
+    ]
+    np.testing.assert_allclose(np.asarray(result), pointwise, rtol=1e-12)
+    assert int(jnp.argmax(result)) == 0
+
+
+def test_W_epstein_zin_accepts_a_batched_ies_of_any_length(x64_enabled: None):
+    """A batched IES whose length differs from the two aggregated values works."""
+    result = W_epstein_zin(
+        utility=jnp.array([0.1, 0.1, 0.1]),
+        CE=jnp.array([0.1, 0.05, 0.2]),
+        discount_factor=jnp.asarray(0.1),
+        intertemporal_elasticity_of_substitution=jnp.array([0.5, 2.0, 4.0]),
+    )
+    np.testing.assert_allclose(
+        np.asarray(result), [0.1, 0.09422792, 0.10919235], rtol=1e-6
+    )
