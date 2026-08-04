@@ -86,9 +86,15 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     PyLCMError,
 )
+from lcm.koopmans_aggregation import W_linear
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
-from lcm.typing import UserFacingParamsTemplate, UserInitialConditions, UserParams
+from lcm.typing import (
+    UserFacingParamsTemplate,
+    UserFunction,
+    UserInitialConditions,
+    UserParams,
+)
 
 
 class Model:
@@ -113,7 +119,7 @@ class Model:
 
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """The finalized regimes: plain `lcm.regime.Regime` instances, complete
-    (default `H` injected, completeness validated), with model-level slots
+    (Koopmans aggregator injected, completeness validated), with model-level slots
     merged in and broadcast variables pruned, still in user vocabulary."""
 
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
@@ -196,6 +202,7 @@ class Model:
         states: Mapping[str, object] = MappingProxyType({}),
         state_transitions: Mapping[str, object] = MappingProxyType({}),
         actions: Mapping[str, object] = MappingProxyType({}),
+        koopmans_aggregator: UserFunction = W_linear,
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
     ) -> None:
@@ -226,6 +233,10 @@ class Model:
                 `pruned_variables`). `distributed=True` is legal only here.
             state_transitions: Model-level laws of motion; same merge rule.
             actions: Model-level actions; same merge rule and pruning.
+            koopmans_aggregator: How every non-terminal regime combines current
+                utility with the certainty equivalent into `Q`. Same
+                all-or-nothing rule as `certainty_equivalent` below; terminal
+                regimes never receive it.
             certainty_equivalent: How every non-terminal regime aggregates its
                 continuation lottery. Unlike the mapping slots above this is a
                 single value, so the rule is all-or-nothing rather than
@@ -272,12 +283,14 @@ class Model:
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
+            koopmans_aggregator=koopmans_aggregator,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
         )
         self.user_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
+            koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
         )
         validate_model_inputs(

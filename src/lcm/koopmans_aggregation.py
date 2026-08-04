@@ -1,24 +1,25 @@
 """Built-in Koopmans aggregators.
 
-A regime's `H` combines current period utility with the certainty-equivalent
-continuation value into the state-action value; its functional form is where
-time preference enters. These are the two standard specifications; pass them
-via `functions={"H": ...}` (a regime without an explicit `H` gets `H_linear`).
+A regime's Koopmans aggregator `W` combines current period utility with the
+certainty-equivalent continuation value into the state-action value; its
+functional form is where time preference enters. These are the two standard
+specifications; pass one via `koopmans_aggregator=...` on the `Regime` or the
+`Model` (the model-level default is `W_linear`).
 """
 
 import jax.numpy as jnp
 
 from lcm.typing import FloatND
 
-__all__ = ["H_epstein_zin", "H_linear"]
+__all__ = ["W_epstein_zin", "W_linear"]
 
 
-def H_linear(utility: FloatND, CE: FloatND, discount_factor: FloatND) -> FloatND:
-    """Aggregate as `U + β · CE` — the expected-utility form, and the default `H`."""
+def W_linear(utility: FloatND, CE: FloatND, discount_factor: FloatND) -> FloatND:
+    """Aggregate as `U + β · CE` — expected utility, and the default aggregator."""
     return utility + discount_factor * CE
 
 
-def H_epstein_zin(
+def W_epstein_zin(
     utility: FloatND,
     CE: FloatND,
     discount_factor: FloatND,

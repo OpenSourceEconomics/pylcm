@@ -24,7 +24,7 @@ def test_create_params_without_processes(binary_category_class):
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"c": "no_annotation_found"},
             "next_b": {},
             "next_regime": {},
@@ -107,11 +107,12 @@ def test_create_params_with_custom_H_no_extra_params():
         states={
             "b": None,
         },
-        functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
+        functions={"utility": lambda a, b, c: None},  # noqa: ARG005
+        koopmans_aggregator=custom_H,
     )
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
-        {"H": {}, "utility": {"c": "no_annotation_found"}}
+        {"koopmans_aggregator": {}, "utility": {"c": "no_annotation_found"}}
     )
 
 
@@ -119,7 +120,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     """H params matching a state name are excluded from the template.
 
     pylcm wires state/action values through `states_actions_params` and
-    filters into `H_kwargs` via the signature-derived `_H_accepted_params`.
+    filters into `W_kwargs` via the signature-derived `_H_accepted_params`.
     Names that match a state are therefore sourced from state values at
     runtime, not from the user-facing params dict, so they do not appear
     in the template.
@@ -134,7 +135,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {},
+            "koopmans_aggregator": {},
             "utility": {},
             "next_discount_factor": {},
             "next_regime": {},
@@ -157,10 +158,13 @@ def test_custom_H_shadowing_state_is_allowed():
     regime = MockRegime(
         actions={"a": None},
         states={"wealth": None},
-        functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
+        functions={"utility": lambda a, wealth: None},  # noqa: ARG005
+        koopmans_aggregator=custom_H,
     )
     got = create_regime_params_template(regime)
-    assert got == ensure_containers_are_immutable({"H": {}, "utility": {}})
+    assert got == ensure_containers_are_immutable(
+        {"koopmans_aggregator": {}, "utility": {}}
+    )
 
 
 def test_solve_simulate_pair_template_contains_union_of_params() -> None:
@@ -181,13 +185,11 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     regime = MockRegime(
         actions={"a": None},
         states={"b": None},
-        functions={
-            "utility": lambda a, b: None,  # noqa: ARG005
-            "H": Phased(solve=exponential_h, simulate=beta_delta_h),
-        },
+        functions={"utility": lambda a, b: None},  # noqa: ARG005
+        koopmans_aggregator=Phased(solve=exponential_h, simulate=beta_delta_h),
     )
     got = create_regime_params_template(regime)
-    assert set(got["H"]) == {"discount_factor", "beta", "delta"}
+    assert set(got["koopmans_aggregator"]) == {"discount_factor", "beta", "delta"}
 
 
 def test_regular_function_taking_state_as_argument_no_error(binary_category_class):
@@ -206,7 +208,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"risk_aversion": "no_annotation_found"},
             "next_wealth": {},
             "next_regime": {},
@@ -245,7 +247,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {},
             "next_wealth": {},
             "next_aime": {},

@@ -33,6 +33,7 @@ from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
@@ -60,6 +61,7 @@ def _build_compute_intermediates_per_period(
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
+    koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
@@ -92,6 +94,8 @@ def _build_compute_intermediates_per_period(
         grids: Immutable mapping of state/action names to grid specs; used
             for per-state batch sizes.
         enable_jit: Whether to JIT-compile the fused closure.
+        koopmans_aggregator: The regime's Bellman aggregator, with params
+            renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
 
@@ -146,6 +150,7 @@ def _build_compute_intermediates_per_period(
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
+            koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
             # The diagnostics are handed the full value arrays and map over
             # every state, so none of the solve kernel's co-mapped axes have

@@ -24,6 +24,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Phased,
+    W_linear,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -321,6 +322,7 @@ def test_carried_state_without_law_of_motion_is_rejected() -> None:
         finalize_regimes(
             user_regimes={"regime": regime},
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -489,7 +491,7 @@ def _build_phased_law_model(*, phased_law: bool) -> Model:
 
 def _solve_params(model: Model) -> dict:
     params = cast("dict", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     return params
 
 

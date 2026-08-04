@@ -16,7 +16,7 @@ from _lcm.solution.backward_induction import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import LinearExpectation, fixed_transition
+from lcm import LinearExpectation, W_linear, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -567,6 +567,7 @@ def test_distributed_action_grid_raises_at_regime_init():
         finalize_regimes(
             user_regimes={"regime": regime},
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
             certainty_equivalent=LinearExpectation(),
         )
 

@@ -18,6 +18,7 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -176,6 +177,7 @@ def _finalize(regime: UserRegime) -> UserRegime:
     return finalize_regimes(
         user_regimes={"regime": regime},
         derived_categoricals={},
+        koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )["regime"]
 

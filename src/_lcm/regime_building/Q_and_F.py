@@ -6,15 +6,16 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     QAndFFunction,
     RegimeName,
@@ -39,6 +40,7 @@ def get_Q_and_F(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
 ) -> QAndFFunction:
@@ -60,6 +62,8 @@ def get_Q_and_F(
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
             info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
@@ -83,7 +87,7 @@ def get_Q_and_F(
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
     )
-    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -116,10 +120,10 @@ def get_Q_and_F(
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
             CE=CE,
-            **_build_H_kwargs(states_actions_params),
+            **_build_W_kwargs(states_actions_params),
         )
 
         # Handle cases when there is only one state.
@@ -139,6 +143,7 @@ def get_compute_intermediates(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...],
 ) -> Callable:
@@ -165,6 +170,8 @@ def get_compute_intermediates(
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the
@@ -187,7 +194,7 @@ def get_compute_intermediates(
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
     )
-    _build_H_kwargs = _get_build_H_kwargs(functions)
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -216,10 +223,10 @@ def get_compute_intermediates(
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
             CE=CE,
-            **_build_H_kwargs(states_actions_params),
+            **_build_W_kwargs(states_actions_params),
         )
 
         return U_arr, F_arr, CE, Q_arr, active_regime_probs
@@ -636,7 +643,7 @@ def _get_U_and_F(
     """
     combined = {
         "feasibility": _get_feasibility(functions=functions, constraints=constraints),
-        **{k: v for k, v in functions.items() if k != "H"},
+        **functions,
     }
     return concatenate_functions(
         functions=combined,

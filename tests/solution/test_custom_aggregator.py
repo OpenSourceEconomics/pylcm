@@ -12,6 +12,7 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -126,8 +127,6 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         "labor_income": labor_income,
         "is_working": is_working,
     }
-    if custom_H is not None:
-        functions["H"] = custom_H
     if with_pref_type:
         functions["discount_factor"] = discount_factor_from_type
 
@@ -153,6 +152,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions=functions,
+        koopmans_aggregator=custom_H,
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
@@ -197,7 +197,7 @@ def test_custom_ces_aggregator_differs_from_default():
     }
     params_ces = {
         "working_life": {
-            "H": {"discount_factor": 0.95, "ies": 0.5},
+            "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
@@ -232,22 +232,29 @@ def test_default_H_injected_for_non_terminal():
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
         derived_categoricals={},
+        koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )["regime"]
-    assert "H" in finalized.functions
+    assert finalized.koopmans_aggregator is W_linear
 
 
 def test_default_H_not_injected_for_terminal():
-    """Terminal regimes should not have H injected."""
+    """Terminal regimes have no continuation, so they get no aggregator."""
     r = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
     )
-    assert "H" not in r.functions
+    finalized = finalize_regimes(
+        user_regimes={"regime": r},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
+    assert finalized.koopmans_aggregator is None
 
 
 def test_custom_H_not_overwritten():
-    """A user-provided H should not be replaced by the default."""
+    """A regime-level aggregator survives finalization."""
 
     def my_H(utility: float, CE: float) -> float:
         return utility + CE
@@ -255,27 +262,31 @@ def test_custom_H_not_overwritten():
     r = UserRegime(
         transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
-        functions={"utility": lambda: 0.0, "H": my_H},
+        functions={"utility": lambda: 0.0},
+        koopmans_aggregator=my_H,
     )
-    assert r.functions["H"] is my_H
+    finalized = finalize_regimes(
+        user_regimes={"regime": r},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
+    assert finalized.koopmans_aggregator is my_H
 
 
 def test_params_template_includes_H():
-    """The params template should include H's parameters."""
+    """The default aggregator's `discount_factor` surfaces in the template."""
     model = _make_model()
     template = model._params_template
-    # Default H has discount_factor parameter
-    assert "H" in template["working_life"]
-    assert "discount_factor" in template["working_life"]["H"]
+    assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
 
 
 def test_params_template_custom_H():
     """Custom H params should appear in the template."""
     model = _make_model(custom_H=ces_H)
     template = model._params_template
-    assert "H" in template["working_life"]
-    assert "discount_factor" in template["working_life"]["H"]
-    assert "ies" in template["working_life"]["H"]
+    assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
+    assert "ies" in template["working_life"]["koopmans_aggregator"]
 
 
 def test_terminal_regime_value_unchanged_by_H():
@@ -292,7 +303,7 @@ def test_terminal_regime_value_unchanged_by_H():
     }
     params_ces = {
         "working_life": {
-            "H": {"discount_factor": 0.95, "ies": 0.5},
+            "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
@@ -316,7 +327,7 @@ def test_terminal_regime_value_unchanged_by_H():
 # ---------------------------------------------------------------------------
 
 
-def test_model_constructs_when_state_reachable_only_via_h_dag():
+def test_model_constructs_when_state_reachable_only_via_w_dag():
     """State reached only via H's DAG deps must pass the usage check.
 
     `pref_type` is used by `discount_factor_from_type`, whose output
@@ -398,7 +409,7 @@ def test_h_consumes_continuous_state():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "wealth_weight": 0.0},
+                "koopmans_aggregator": {"discount_factor": 0.95, "wealth_weight": 0.0},
                 **common,
             },
             "dead": {},
@@ -408,7 +419,7 @@ def test_h_consumes_continuous_state():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "wealth_weight": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "wealth_weight": 0.1},
                 **common,
             },
             "dead": {},
@@ -448,7 +459,7 @@ def test_h_consumes_continuous_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "action_weight": 0.0},
+                "koopmans_aggregator": {"discount_factor": 0.95, "action_weight": 0.0},
                 **common,
             },
             "dead": {},
@@ -458,7 +469,7 @@ def test_h_consumes_continuous_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "action_weight": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "action_weight": 0.1},
                 **common,
             },
             "dead": {},
@@ -494,7 +505,7 @@ def test_h_consumes_discrete_action():
         log_level="debug",
         params={
             "working_life": {
-                "H": {"discount_factor": 0.95, "bonus": 0.1},
+                "koopmans_aggregator": {"discount_factor": 0.95, "bonus": 0.1},
                 "utility": {"disutility_of_work": 0.5},
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
@@ -584,7 +595,7 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
         params={
             "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
             "working_life": {
-                "H": {"ies": 0.5},
+                "koopmans_aggregator": {"ies": 0.5},
                 "utility": {"disutility_of_work": 0.5},
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },

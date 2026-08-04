@@ -423,6 +423,7 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
+    error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
@@ -456,6 +457,28 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
         "to the corresponding state grid. Offending actions: "
         f"{offending_actions}.",
     ]
+
+
+def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect errors for a regime's Koopmans aggregator declaration.
+
+    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
+      regime function
+    - terminal regimes have no continuation to aggregate
+    """
+    error_messages: list[str] = []
+    if "H" in regime.functions:
+        error_messages.append(
+            "'H' is not a regime function: the Bellman aggregator lives in the "
+            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
+            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+        )
+    if regime.terminal and regime.koopmans_aggregator is not None:
+        error_messages.append(
+            "A terminal regime cannot declare `koopmans_aggregator`: there is "
+            "no continuation value to aggregate."
+        )
+    return error_messages
 
 
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:

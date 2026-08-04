@@ -9,6 +9,7 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -139,6 +140,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
         finalize_regimes(
             user_regimes={"regime": regime},
             derived_categoricals={},
+            koopmans_aggregator=W_linear,
             certainty_equivalent=LinearExpectation(),
         )
 

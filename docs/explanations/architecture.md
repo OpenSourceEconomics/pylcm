@@ -217,10 +217,11 @@ The file name `engine.py` reflects what's inside: the engine's view of a model.
 ## Build pipeline: `model_processing.py` and `regime_building/`
 
 A user `Regime` is finalized at model build — model-level slots merged, broadcast
-variables pruned, default `H` injected, completeness validated — into the plain,
-complete `Regime`s exposed as `model.user_regimes`. The params template reads this
-user-vocabulary form, while `process_regimes` internally splits each regime into
-canonical per-phase slices and compiles the engine `Regime`.
+variables pruned, the Koopmans aggregator and certainty equivalent injected,
+completeness validated — into the plain, complete `Regime`s exposed as
+`model.user_regimes`. The params template reads this user-vocabulary form, while
+`process_regimes` internally splits each regime into canonical per-phase slices and
+compiles the engine `Regime`.
 
 ```
 _lcm/model_processing.py  ← top-level pipeline:
@@ -253,7 +254,7 @@ _lcm/regime_building/
 ├── argmax.py             ← argmax helpers over action grids
 ├── max_Q_over_a.py       ← argmax / max over action grids
 ├── V.py                  ← value-function interpolation info
-├── h_dag.py              ← user-DAG resolution for H (Bellman aggregator)
+├── w_dag.py              ← user-DAG resolution for the Koopmans aggregator
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
 ├── ndimage.py            ← map-coordinates wrapper for continuous interp

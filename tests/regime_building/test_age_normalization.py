@@ -28,6 +28,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Phased,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -59,6 +60,7 @@ def _normalized(regimes: dict[str, UserRegime], ages: AgeGrid):
     finalized = finalize_regimes(
         user_regimes=regimes,
         derived_categoricals={},
+        koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )
     phased = normalize_all_regime_phases(user_regimes=finalized)

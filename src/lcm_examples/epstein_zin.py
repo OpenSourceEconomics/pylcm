@@ -5,7 +5,7 @@ Ziebarth (2025, JPE 133(6), doi:10.1086/734781) - savings, a two-state
 health Markov chain, and health-dependent survival into a terminal `dead`
 regime - with the recursion swapped to Epstein-Zin:
 
-- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.temporal_aggregation.H_epstein_zin`,
+- `V = ((1 - b) * c^r + b * CE^r)^(1/r)` via `lcm.koopmans_aggregation.W_epstein_zin`,
 - `CE = (E[V'^(1-g)])^(1/(1-g))` via `PowerMean`.
 
 Utility is consumption itself, so values stay in (positive) consumption
@@ -25,7 +25,7 @@ default test configuration:
   uninsurable expense risk (in the spirit of the paper's medical spending)
   that gives risk aversion a precautionary-saving channel.
 - `bequest_scale` prices the bequest in consumption-equivalent units.
-  `H_epstein_zin` is a weighted power *mean*, so the alive value sits at
+  `W_epstein_zin` is a weighted power *mean*, so the alive value sits at
   the scale of per-period consumption; an unscaled `sqrt(wealth)` exceeds
   it at moderate wealth, making death the good branch of the certainty
   equivalent. Scale the bequest below the alive value to keep death bad.
@@ -40,11 +40,11 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     DiscreteGrid,
-    H_epstein_zin,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     Regime,
+    W_epstein_zin,
     categorical,
 )
 from lcm.typing import (
@@ -173,7 +173,8 @@ def get_model(
         },
         actions={"consumption": consumption_grid},
         constraints={"budget_constraint": budget_constraint},
-        functions={"utility": utility_alive, "H": H_epstein_zin},
+        functions={"utility": utility_alive},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=certainty_equivalent,
         active=lambda age, la=last_age: age < la,
     )
@@ -221,7 +222,7 @@ def get_params(
     """
     params: dict = {
         "alive": {
-            "H": {
+            "koopmans_aggregator": {
                 "discount_factor": discount_factor,
                 "intertemporal_elasticity_of_substitution": (
                     intertemporal_elasticity_of_substitution

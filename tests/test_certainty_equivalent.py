@@ -14,7 +14,6 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     DiscreteGrid,
-    H_epstein_zin,
     LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
@@ -23,6 +22,7 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
+    W_epstein_zin,
     categorical,
 )
 from lcm.exceptions import (
@@ -883,7 +883,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     """Build a two-regime Epstein-Zin model whose value function scales with `scale`.
 
     Every primitive is homogeneous of degree one in `scale` - the grids, the
-    income flow and both utilities - and `H_epstein_zin` and the power mean
+    income flow and both utilities - and `W_epstein_zin` and the power mean
     are themselves homogeneous of degree one. The solved value function of
     the model at `scale` is therefore exactly `scale` times the value
     function at `scale = 1`, and the optimal consumption grid point is
@@ -917,7 +917,8 @@ def _make_scale_equivariant_model(scale: float) -> Model:
             )
         },
         constraints={"budget": _budget},
-        functions={"utility": utility_alive, "H": H_epstein_zin},
+        functions={"utility": utility_alive},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
@@ -936,7 +937,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
 def _scaled_model_params(risk_aversion: float) -> dict:
     return {
         "alive": {
-            "H": {
+            "koopmans_aggregator": {
                 "discount_factor": 0.9,
                 "intertemporal_elasticity_of_substitution": 2.0,
             },
@@ -981,7 +982,8 @@ def _make_mixed_target_model(scale: float) -> Model:
             )
         },
         constraints={"budget": _budget},
-        functions={"utility": utility_alive, "H": H_epstein_zin},
+        functions={"utility": utility_alive},
+        koopmans_aggregator=W_epstein_zin,
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )

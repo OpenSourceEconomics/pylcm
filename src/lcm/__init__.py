@@ -80,6 +80,7 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.koopmans_aggregation import W_epstein_zin, W_linear  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -108,7 +109,6 @@ from lcm.regime import (  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import DCEGM, GridSearch  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
-from lcm.temporal_aggregation import H_epstein_zin, H_linear  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -139,8 +139,6 @@ __all__ = [
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
     "GridSearch",
-    "H_epstein_zin",
-    "H_linear",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LinearExpectation",
@@ -164,6 +162,8 @@ __all__ = [
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
+    "W_epstein_zin",
+    "W_linear",
     "__version__",
     "categorical",
     "fixed_transition",

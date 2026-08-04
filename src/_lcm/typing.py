@@ -78,7 +78,7 @@ type Params = Mapping[
 
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are canonical-dtype JAX arrays or
+# "koopmans_aggregator__discount_factor"). Values are canonical-dtype JAX arrays or
 # canonical-narrow container leaves.
 type FlatRegimeParams = MappingProxyType[
     str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf

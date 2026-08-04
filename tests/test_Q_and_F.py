@@ -32,6 +32,7 @@ from lcm import (
     AgeGrid,
     LinearExpectation,
     PowerMean,
+    W_linear,
 )
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -65,6 +66,7 @@ def test_get_Q_and_F_function():
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
         derived_categoricals={},
+        koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
@@ -428,7 +430,8 @@ def _build_two_target_closure(
     return builder(
         co_map_state_names=(),
         flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
-        functions=MappingProxyType({"utility": _sum_utility, "H": _epstein_zin_H}),
+        functions=MappingProxyType({"utility": _sum_utility}),
+        koopmans_aggregator=_epstein_zin_H,
         constraints=MappingProxyType({}),
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),

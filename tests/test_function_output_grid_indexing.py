@@ -22,6 +22,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
+    W_linear,
     categorical,
     fixed_transition,
 )
@@ -76,6 +77,7 @@ def _finalized_regime(**kwargs: object) -> UserRegime:
     return finalize_regimes(
         user_regimes={"regime": regime},
         derived_categoricals={},
+        koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )["regime"]
 
