@@ -1510,6 +1510,14 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
+                    # An IID draw does not depend on its previous value, so the
+                    # target's entry distribution is the process's own
+                    # unconditional law and there is nothing for the source to
+                    # hand over. Every other state -- including an AR(1)
+                    # process, whose next draw does depend on a previous value
+                    # the source would have to supply -- needs a handoff.
+                    if isinstance(target_grid, _IIDProcess):
+                        continue
                     if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
@@ -3018,7 +3026,10 @@ def _process_regime_core(
     # retained targets for this source — not to whichever targets happen to
     # have a non-process law bundle — so a target reached solely by carrying
     # a shared process state (no other law) still gets its intrinsic
-    # process transition synthesized.
+    # process transition synthesized. Read the process names off the target's
+    # own grids rather than the source's variables: an IID process the source
+    # does not carry is entered at its unconditional law, so it needs its
+    # intrinsic transition built here too.
     continuation_targets = phase_reachability.union_targets(source=source_regime_name)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
@@ -3026,30 +3037,94 @@ def _process_regime_core(
         (user_regime, process): grid
         for user_regime, grids in all_grids.items()
         if user_regime in continuation_targets
-        for process in process_names
-        if isinstance(grid := grids.get(process), _ContinuousStochasticProcess)
-        # A folded process on a COARSE candidate gets no continuation transition:
-        # its stored V has no such axis, and building one would trip the
-        # structural persistence guard on a candidate whose support is unknown
-        # (fold-round4 F2). The ambiguous persisting case was already rejected
-        # above; this skips the benign non-persisting one (e.g. a source that
-        # folds its own shock and is not active next period).
+        for process, grid in grids.items()
+        if isinstance(grid, _ContinuousStochasticProcess)
+        # A folded process gets no continuation transition when the SOURCE does
+        # not carry it, or on a coarse candidate. Its stored V has no such axis,
+        # and building the edge trips `_fail_if_folded_state_persists`, which is
+        # STRUCTURAL -- it inspects built `next_<process>` edges, not transition
+        # probability. This has to be decided here, not only at entry: now that
+        # the process names come off the TARGET's own grids, a folded
+        # target-only process is visible to synthesis for the first time, and
+        # the source's variables used to hide it.
+        #
+        # The `process not in process_names` half is what keeps the guard armed.
+        # A folded process the source DOES carry can genuinely persist, and the
+        # guard needs its edge as evidence; a target-only one cannot persist,
+        # because there is no prior-period axis to carry. Excluding folded
+        # processes outright disarms the guard -- measured: it silences
+        # test_fold_on_persisting_shock_is_rejected_at_model_processing and
+        # test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected.
+        # The coarse half is fold-round4 F2, unchanged.
         if not (
-            user_regime in coarse_candidate_targets and getattr(grid, "fold", False)
+            getattr(grid, "fold", False)
+            and (
+                process not in process_names or user_regime in coarse_candidate_targets
+            )
         )
     }
     _validate_all_conditioned_processes(all_grids=all_grids)
-    processed_functions |= {
-        f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
-            name=process, grid=grid, grids=all_grids[user_regime]
-        )
+    # A process the source carries is transitioned from its current value. One
+    # it does not carry is entered at its own law -- unless the source declared
+    # an explicit entry law for it, which is the more specific statement and
+    # wins.
+    carried_processes = set(variables.process_names)
+    target_process_grids = {
+        (user_regime, process): grid
         for (user_regime, process), grid in target_process_grids.items()
-    } | {
-        f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
-            name=process, grid=grid.to_jax()
-        )
-        for (user_regime, process), grid in target_process_grids.items()
+        if process in carried_processes
+        or f"{user_regime}__next_{process}" not in flat_nested_transitions
     }
+    # Only an IID process can be entered without a handoff, which
+    # `_state_handoff_errors` has already enforced.
+    #
+    # The condition to extend here is storage: entering a process builds it a
+    # next-state and weight function, and therefore an axis. A process that is
+    # integrated out of the value function rather than stored on one must be
+    # excluded, or entry would reintroduce exactly the axis its treatment
+    # removes -- it needs no entry law for the same reason it needs no handoff.
+    entered_process_grids = {
+        key: grid
+        for key, grid in target_process_grids.items()
+        if key[1] not in carried_processes and isinstance(grid, _IIDProcess)
+    }
+    carried_process_grids = {
+        key: grid
+        for key, grid in target_process_grids.items()
+        if key[1] in carried_processes
+    }
+    processed_functions |= (
+        {
+            f"weight_{user_regime}__next_{process}": _get_weights_func_for_process(
+                # A state-conditioned process resolves `state_conditioned.on`
+                # against the regime's own grids; without them the lookup finds
+                # nothing and the build fails with a misleading "must name a
+                # DiscreteGrid" error.
+                name=process,
+                grid=grid,
+                grids=all_grids[user_regime],
+            )
+            for (user_regime, process), grid in carried_process_grids.items()
+        }
+        | {
+            f"{user_regime}__next_{process}": _get_stochastic_next_function_for_process(
+                name=process, grid=grid.to_jax()
+            )
+            for (user_regime, process), grid in carried_process_grids.items()
+        }
+        | {
+            f"weight_{user_regime}__next_{process}": _get_entry_weights_for_process(
+                name=process, grid=grid
+            )
+            for (user_regime, process), grid in entered_process_grids.items()
+        }
+        | {
+            f"{user_regime}__next_{process}": _get_entry_next_for_process(
+                grid=grid.to_jax()
+            )
+            for (user_regime, process), grid in entered_process_grids.items()
+        }
+    )
 
     process_transition_keys = {
         f"{user_regime}__next_{process}"
@@ -3886,6 +3961,56 @@ def _get_weights_func_for_process(
         )
 
     return weights_func
+
+
+def _get_entry_next_for_process(*, grid: Float1D) -> UserFunction:
+    """Get the next-index function for a process the source does not carry.
+
+    The target's nodes are the process's own, and no current value selects
+    among them, so the signature is empty.
+    """
+
+    @with_signature(args={}, return_annotation="Int1D")
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        return jnp.arange(grid.shape[0], dtype=jnp.int32)
+
+    return next_func
+
+
+def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunction:
+    """Get the entry weights of an IID process the source does not carry.
+
+    Every row of an IID transition matrix is the same unconditional
+    distribution, so the entry weights are row zero and no current value is
+    needed to choose the row.
+    """
+    if grid.params_to_pass_at_runtime:
+        fixed_params = dict(grid.params)
+        runtime_param_names = {
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
+        }
+
+        @with_signature(
+            args=dict.fromkeys(runtime_param_names, "FloatND"),
+            return_annotation="FloatND",
+            enforce=False,
+        )
+        def entry_weights_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+            process_kw: dict[str, FloatND | IntND] = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            return grid.compute_transition_probs(**process_kw)[0]
+
+        return entry_weights_runtime
+
+    transition_probs = grid.get_transition_probs()
+
+    @with_signature(args={}, return_annotation="FloatND", enforce=False)
+    def entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        return transition_probs[0]
+
+    return entry_weights
 
 
 def _validate_categoricals(

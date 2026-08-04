@@ -110,6 +110,19 @@ def _log_mrs(aggregator, utility, continuation):
     return jnp.log(d_utility) - jnp.log(d_continuation)
 
 
+def _flow_curvature_of_mrs(aggregator, utility, continuation):
+    """`d/dU log MRS`, which is `A'(U) / A(U)` once the MRS factors.
+
+    Where factorization holds this is independent of the continuation, so it is
+    a property of the aggregator's flow side alone.
+    """
+    return float(
+        jax.grad(_log_mrs, argnums=1)(
+            aggregator, jnp.asarray(utility), jnp.asarray(continuation)
+        )
+    )
+
+
 def _separability_defect(aggregator, utility, continuation):
     """The cross partial that vanishes exactly when the FOC separates."""
     cross = jax.grad(jax.grad(_log_mrs, argnums=1), argnums=2)
@@ -232,3 +245,77 @@ def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(nu, dnu_ds
         flow_exponent=-_INVERSE_EIS,
     )
     np.testing.assert_allclose(got, float(expected), rtol=1e-6)
+
+
+def _convex_flow_side(utility, continuation):
+    """A factoring aggregator whose flow-side factor `A` increases.
+
+    Additively separable, so it factors and admits an endogenous-grid step. But
+    its `A(U) = 2U / beta` grows with the flow, and `g = A(q(c)) q_c(c)` then
+    increases in the action for an ordinary concave flow — the opposite of what
+    a bracketed root find assumes.
+    """
+    return utility**2 + _DISCOUNT_FACTOR * continuation
+
+
+@pytest.mark.parametrize(
+    "aggregator",
+    [pytest.param(_linear, id="H_linear"), pytest.param(_epstein_zin, id="H_ez")],
+)
+@pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
+def test_shipped_aggregators_also_admit_numeric_inversion(
+    aggregator, utility, continuation
+):
+    """Both shipped aggregators have a non-increasing flow-side factor.
+
+    With `g = A(q(c)) q_c(c)`, the derivative is
+    `g' = A'(q) q_c^2 + A(q) q_cc`. A strictly increasing, strictly concave flow
+    makes the second term negative, so `A' <= 0` is what makes `g` strictly
+    decreasing and its root unique on a bracket. `H_linear` has a constant `A`;
+    Epstein-Zin has `A(U) = (1-beta) U^(-rho)` with `rho > 0`.
+    """
+    assert _flow_curvature_of_mrs(aggregator, utility, continuation) <= 0.0
+
+
+@pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
+def test_factorization_alone_does_not_license_numeric_inversion(utility, continuation):
+    """An aggregator can factor and still forbid a bracketed root find.
+
+    This is why admissibility and invertibility are two gates rather than one:
+    the first decides whether an endogenous-grid step exists at all, the second
+    whether its action may be recovered numerically instead of from a declared
+    closed form.
+    """
+    assert abs(_separability_defect(_convex_flow_side, utility, continuation)) < (
+        _SEPARABLE_ATOL
+    )
+    assert _flow_curvature_of_mrs(_convex_flow_side, utility, continuation) > 0.0
+
+
+def test_the_flow_side_curvature_predicts_the_direction_of_g():
+    """`d/dU log MRS` has the sign of `g`'s slope for a concave flow.
+
+    Checked directly rather than inferred: `g` is sampled across a bracket for
+    an aggregator on each side of the criterion, with the same concave flow.
+    The flow is `c**0.75` -- strictly increasing, strictly concave, and strictly
+    positive, which Epstein-Zin requires of both its arguments. The exponent is
+    deliberately above one half: at exactly one half, `q q_c` is constant, so
+    the convex-flow-side aggregator's `g` is flat rather than increasing and the
+    case would be a knife edge rather than a discriminator.
+    """
+    actions = jnp.linspace(0.2, 4.0, 40)
+
+    def g_values(aggregator):
+        return jnp.asarray(
+            [
+                jnp.exp(_log_mrs(aggregator, c**0.75, jnp.asarray(1.0)))
+                * 0.75
+                * c ** (-0.25)
+                for c in actions
+            ]
+        )
+
+    decreasing = np.diff(np.asarray(g_values(_epstein_zin)))
+    increasing = np.diff(np.asarray(g_values(_convex_flow_side)))
+    assert (decreasing < 0).all()
+    assert (increasing > 0).all()

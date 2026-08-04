@@ -1,11 +1,14 @@
-"""The declared accuracy budgets are internally satisfiable.
+"""Every declared accuracy budget can bind.
 
 `median <= p90 <= max` holds for any sample, because each statistic dominates
-the previous one by construction. A contract declaring budgets that violate that
-ordering is therefore unsatisfiable: no implementation, correct or not, can meet
-a `max` budget below its own `p90` budget without making the looser one dead
-letter. Such a contract reports its own inconsistency rather than the code's
-accuracy, so it is checked here rather than trusted.
+the previous one by construction. A budget that declares them out of that order
+is not impossible to meet -- a sample inside the tighter bound satisfies both --
+but the tighter clause dominates, so the looser one can never bind. The contract
+then states a promise it never enforces, and the unenforced clause reads as
+though it were the operative one.
+
+Ordering is therefore checked here rather than trusted: it is what makes each
+declared statistic a real constraint instead of decoration.
 
 Every workload must also declare all three statistics. A budget that names only
 a median cannot see a minority of badly wrong nodes, which is the shape a
@@ -28,8 +31,8 @@ def test_every_workload_declares_all_three_statistics(workload):
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
-def test_declared_budgets_are_ordered_and_therefore_satisfiable(workload):
-    """`median <= p90 <= max` in every declared budget."""
+def test_every_declared_budget_can_bind(workload):
+    """`median <= p90 <= max`, so no declared statistic is dominated away."""
     budget = _CONTRACT["workloads"][workload]["budget"]
     assert (
         budget["median_value_regret"]
