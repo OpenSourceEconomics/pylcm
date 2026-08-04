@@ -288,7 +288,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     """
     # Template for a non-terminal regime with functions that have parameters
     alive_template = {
-        "H": {"discount_factor": "float"},
+        "koopmans_aggregator": {"discount_factor": "float"},
         "utility": {"beta_mean": "float", "beta_std": "float"},
         "cons_util": {"sigma": "float", "bb": "float", "kappa": "float"},
         "next_health": {"probs_array": "float"},
@@ -335,7 +335,7 @@ def test_process_params_via_regular_params():
     params_template = _as_template(
         {
             "working_life": {
-                "H": {"discount_factor": "float"},
+                "koopmans_aggregator": {"discount_factor": "float"},
                 "utility": {"param": "float"},
                 "adjustment_cost": {"start": "float", "stop": "float"},
             },

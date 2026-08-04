@@ -23,7 +23,7 @@ from lcm.typing import (
     ScalarInt,
 )
 
-_PARAMS = {"alive": {"H": {"discount_factor": 0.95}}, "dead": {}}
+_PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.95}}, "dead": {}}
 _N_PERIODS = 3
 
 

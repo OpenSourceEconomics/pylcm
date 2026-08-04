@@ -712,9 +712,8 @@ def _build_coh_shift_function(
 
         return zero_shifts
 
-    non_h_functions = {name: func for name, func in functions.items() if name != "H"}
     cost_func = concatenate_functions(
-        functions=non_h_functions,
+        functions=dict(functions),
         targets=outer_cost_name,
         enforce_signature=False,
         set_annotations=True,

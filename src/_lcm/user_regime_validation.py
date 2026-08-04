@@ -21,10 +21,11 @@ from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
+from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
-from lcm.temporal_aggregation import H_epstein_zin
+from lcm.koopmans_aggregation import W_epstein_zin
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -424,6 +425,7 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
+    error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
@@ -459,6 +461,28 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     ]
 
 
+def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect errors for a regime's Koopmans aggregator declaration.
+
+    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
+      regime function
+    - terminal regimes have no continuation to aggregate
+    """
+    error_messages: list[str] = []
+    if "H" in regime.functions:
+        error_messages.append(
+            "'H' is not a regime function: the Bellman aggregator lives in the "
+            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
+            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+        )
+    if regime.terminal and regime.koopmans_aggregator is not None:
+        error_messages.append(
+            "A terminal regime cannot declare `koopmans_aggregator`: there is "
+            "no continuation value to aggregate."
+        )
+    return error_messages
+
+
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
@@ -470,6 +494,10 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
+
+    `LinearExpectation` is the expected-utility default every solver and every
+    taste-shock regime implements, so only a nonlinear certainty equivalent is
+    subject to the composition rules.
     """
     if regime.certainty_equivalent is None:
         return []
@@ -504,14 +532,14 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.functions.get("H") is not H_epstein_zin:
+        if regime.koopmans_aggregator is not W_epstein_zin:
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `H_epstein_zin` "
-                '(`functions={"H": lcm.H_epstein_zin, ...}`): the Euler '
+                "regime's aggregator to be `W_epstein_zin` "
+                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
                 "inversion and period value read its intertemporal "
-                "elasticity. With a different `H` the kernels would solve a "
-                "recursion the regime does not declare."
+                "elasticity. With a different aggregator the kernels would "
+                "solve a recursion the regime does not declare."
             )
     if regime.taste_shocks is not None:
         error_messages.append(

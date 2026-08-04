@@ -34,7 +34,7 @@ one conditional problem each, and a read is faithful only where the rows
 carry the coordinates and branch topology they are interpolated over. Kept on
 the grid-argmax path:
 - regimes with any `Phased` declaration — a phase-variant utility, budget,
-  transition, or state domain (not only `H`, e.g. naive present bias) makes
+  transition, or state domain (not only `W`, e.g. naive present bias) makes
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
 - regimes whose upper-envelope backend does not certify every crossing —

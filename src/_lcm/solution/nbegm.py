@@ -1505,7 +1505,7 @@ def _build_nbegm_core(
             next_marginal=next_marginal,
             liquid_grid=liquid,
             savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
+            discount_factor=params["koopmans_aggregator__discount_factor"],
             crra=params["utility__crra"],
             return_liquid=params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],
@@ -1596,7 +1596,7 @@ class _NBEGMScheduleSpec:
     The ride-along core maps each source to its own per-cell asset preimage."""
     discount_factor_dag: Callable | None = None
     """Composed `discount_factor` as a function of its ride-along state arguments and
-    qualified params, or `None` when the regime uses pylcm's flat `H__discount_factor`
+    qualified params, or `None` when the regime uses pylcm's flat `koopmans_aggregator__discount_factor`
     parameter. When set, the ride-along core resolves the discount factor per cell."""
     discrete_action_name: str | None = None
     """Name of a single discrete action the budget shifts, enveloped over per ride
@@ -2410,7 +2410,7 @@ def _collect_nbegm_schedule_spec(
     utility_dag = concatenate_functions(dict(context.functions), targets="utility")
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
     # beta indexed by a ride-along state) exposes it as a target; absent that, the
-    # default flat `H__discount_factor` param drives discounting.
+    # default flat `koopmans_aggregator__discount_factor` param drives discounting.
     discount_factor_dag = (
         concatenate_functions(dict(context.functions), targets="discount_factor")
         if "discount_factor" in context.functions
@@ -2735,7 +2735,7 @@ def _build_nbegm_continuous_core(
             next_marginal=next_marginal,
             liquid=liquid,
             savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
+            discount_factor=params["koopmans_aggregator__discount_factor"],
             crra=params["utility__crra"],
             return_liquid=params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],
@@ -2813,7 +2813,7 @@ def _build_nbegm_continuation_plan(
         user_regimes=context.user_regimes,
         functions=context.functions,
         transitions=context.transitions,
-        stochastic_transition_names=context.stochastic_transition_names,
+        transition_laws=context.transition_laws,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -3165,7 +3165,7 @@ def _nbegm_ride_along_statics(
     # (e.g. a preference type the budget ignores) are not forwarded to the DAG.
     coh_arg_names = tuple(inspect.signature(schedule_spec.coh_of_liquid_dag).parameters)
     coh_state_names = tuple(name for name in ride_names if name in coh_arg_names)
-    # The discount factor is either pylcm's flat `H__discount_factor` param or, when
+    # The discount factor is either pylcm's flat `koopmans_aggregator__discount_factor` param or, when
     # the regime supplies a `discount_factor` DAG function (e.g. a per-preference-type
     # beta read off a ride-along state), resolved per cell from that function's
     # qualified params and ride-along state arguments.
@@ -3811,7 +3811,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             )
             cell = dict(zip(ride_names, ride_values, strict=True))
             cell_discount_factor = (
-                kwargs["H__discount_factor"]
+                kwargs["koopmans_aggregator__discount_factor"]
                 if discount_factor_dag is None
                 else discount_factor_dag(
                     **{name: cell[name] for name in statics.discount_state_names},
@@ -4316,7 +4316,7 @@ def _build_nbegm_schedule_discrete_core(
                 next_marginal=next_marginal,
                 liquid=liquid,
                 savings_grid=savings_grid,
-                discount_factor=params["H__discount_factor"],
+                discount_factor=params["koopmans_aggregator__discount_factor"],
                 crra=params["utility__crra"],
                 return_liquid=params[f"{target}__next_liquid__return_liquid"],
                 income=params[f"{target}__next_liquid__income"],
@@ -4400,7 +4400,7 @@ def _build_nbegm_discrete_core(
             next_marginal=next_marginal,
             liquid_grid=liquid,
             savings_grid=savings_grid,
-            discount_factor=params["H__discount_factor"],
+            discount_factor=params["koopmans_aggregator__discount_factor"],
             crra=params["utility__crra"],
             gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],

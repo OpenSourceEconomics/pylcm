@@ -4,7 +4,7 @@
 and once on the V handed to `simulate.py`. On NaN it invokes the
 diagnostic-intermediates closure (built during regime canonicalization in
 `regime_building/diagnostics.py`) to pinpoint which intermediate
-(`U`, `F`, `E[V]`, `Q`) produced the NaN, then raises an
+(`U`, `F`, `CE`, `Q`) produced the NaN, then raises an
 `InvalidValueFunctionError` enriched with that breakdown.
 
 """
@@ -39,7 +39,7 @@ def validate_V(
 
     When `compute_intermediates` is provided, NaN detection triggers a
     diagnostic run of the (already productmapped + JIT-compiled) closure to
-    pinpoint which intermediate (U, F, E[V], Q) contains NaN.
+    pinpoint which intermediate (U, F, CE, Q) contains NaN.
 
     Args:
         V_arr: The value function array to validate.
@@ -74,7 +74,7 @@ def validate_V(
     exc = InvalidValueFunctionError(
         f"Value function at age {age}{regime_part}: {fraction_hint} values "
         f"are NaN.\n\n"
-        "NaN propagates through Q = U + beta * E[V]. Common causes:\n"
+        "NaN propagates through Q = U + beta * CE. Common causes:\n"
         "- A missing feasibility constraint (e.g. negative leisure passed "
         "to a fractional exponent).\n"
         "- A regime parameter is NaN.\n"
@@ -208,7 +208,7 @@ def _summarize_diagnostics(
 
     for key_out, key_in in [
         ("U_nan_fraction", "U_nan"),
-        ("E_nan_fraction", "E_nan"),
+        ("CE_nan_fraction", "CE_nan"),
         ("Q_nan_fraction", "Q_nan"),
         ("F_feasible_fraction", "F_feasible"),
     ]:
@@ -243,12 +243,12 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
     ]
 
     u_frac = summary.get("U_nan_fraction", {}).get("overall", 0)
-    e_frac = summary.get("E_nan_fraction", {}).get("overall", 0)
+    ce_frac = summary.get("CE_nan_fraction", {}).get("overall", 0)
     f_feas = summary.get("F_feasible_fraction", {}).get("overall", 0)
     lines.append(f"  F: {f_feas:.4f} feasible")
     lines.append(
         f"  Among feasible state-action pairs:  "
-        f"U: {u_frac:.4f} NaN  |  E[V]: {e_frac:.4f} NaN"
+        f"U: {u_frac:.4f} NaN  |  CE: {ce_frac:.4f} NaN"
     )
 
     probs = summary.get("regime_probs", {})
@@ -256,7 +256,7 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
         prob_parts = [f"{t}: {p:.4f}" for t, p in probs.items()]
         lines.append(f"  Regime probs: {' | '.join(prob_parts)}")
 
-    for label, key in (("U", "U_nan_fraction"), ("E[V]", "E_nan_fraction")):
+    for label, key in (("U", "U_nan_fraction"), ("CE", "CE_nan_fraction")):
         info = summary.get(key, {})
         frac = info.get("overall", 0)
         by_dim = info.get("by_dim", {})

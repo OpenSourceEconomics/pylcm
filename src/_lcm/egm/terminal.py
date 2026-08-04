@@ -117,7 +117,7 @@ def get_terminal_wealth_carry_producer(
 
     """
     utility_func = concatenate_functions(
-        functions={name: func for name, func in functions.items() if name != "H"},
+        functions=dict(functions),
         targets="utility",
         enforce_signature=False,
         set_annotations=True,

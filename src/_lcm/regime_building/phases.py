@@ -99,6 +99,11 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
         user_regime=user_regime
     )
+    aggregator = user_regime.koopmans_aggregator
+    if isinstance(aggregator, Phased):
+        solve_aggregator, simulate_aggregator = aggregator.solve, aggregator.simulate
+    else:
+        solve_aggregator = simulate_aggregator = aggregator
     terminal = user_regime.transition is None
     terminal_errors = (
         [
@@ -126,6 +131,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         grid_states: dict[StateName, Grid | AgeSpecializedGrid],
         state_transitions: dict[StateName, _PhaseStateTransition],
         regime_transition: _PhaseRegimeTransition,
+        koopmans_aggregator: UserFunction | None,
     ) -> RegimePhaseSpec:
         return RegimePhaseSpec(
             functions=MappingProxyType(functions),
@@ -136,6 +142,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             ),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
+            koopmans_aggregator=koopmans_aggregator,
             regime_transition=regime_transition,
             # A per-target dict is stochastic by construction (each cell is a
             # MarkovTransition-wrapped probability function).
@@ -150,12 +157,14 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grid_states=solve_grid_states,
             state_transitions=solve_state_transitions,
             regime_transition=solve_transition,
+            koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
         ),
         simulation=_phase_spec(
             functions=simulate_functions,
             grid_states=simulate_grid_states,
             state_transitions=simulate_state_transitions,
             regime_transition=simulate_transition,
+            koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
         ),
     )
 
@@ -240,6 +249,9 @@ class RegimePhaseSpec:
     state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
     """Phase-resolved laws of motion, restricted to this phase's grid states
     plus target-only entries."""
+
+    koopmans_aggregator: UserFunction | None
+    """Phase-resolved Bellman aggregator; `None` for terminal regimes."""
 
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.

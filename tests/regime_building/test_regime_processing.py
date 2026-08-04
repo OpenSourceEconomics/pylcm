@@ -18,7 +18,12 @@ from _lcm.regime_building.processing import (
     process_regimes,
 )
 from _lcm.variables import from_regime, get_grids
-from lcm import Phased, categorical
+from lcm import (
+    LinearExpectation,
+    Phased,
+    W_linear,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -116,7 +121,10 @@ def test_process_regimes():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,
@@ -221,7 +229,10 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     finalized_user_regimes = finalize_regimes(
-        user_regimes={"early": early, "late": late}, derived_categoricals={}
+        user_regimes={"early": early, "late": late},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )
     return process_regimes(
         user_regimes=finalized_user_regimes,
@@ -462,7 +473,10 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         "functions": {"utility": utility},
     }
     real = finalize_regimes(
-        user_regimes={"regime": UserRegime(**kwargs)}, derived_categoricals={}
+        user_regimes={"regime": UserRegime(**kwargs)},
+        derived_categoricals={},
+        koopmans_aggregator=W_linear,
+        certainty_equivalent=LinearExpectation(),
     )["regime"]
     mock = MockRegime(**kwargs)
     assert set(mock.get_all_functions()) == set(real.get_all_functions())

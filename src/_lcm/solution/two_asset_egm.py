@@ -569,7 +569,7 @@ def _build_two_asset_core(
             a_grid=a_grid,
             b_grid=b_grid,
             consumption_grid=consumption_grid,
-            discount_factor=params["H__discount_factor"],
+            discount_factor=params["koopmans_aggregator__discount_factor"],
             crra=params["utility__crra"],
             match_rate=params[f"{boundary_liquid_law}__{law_params['match_rate']}"],
             return_liquid=params[
@@ -594,7 +594,7 @@ def _build_two_asset_core(
         next_value_working: FloatND,
         **params: FloatND,
     ) -> FloatND:
-        discount_factor = params["H__discount_factor"]
+        discount_factor = params["koopmans_aggregator__discount_factor"]
         crra = params["utility__crra"]
         match_rate = params[f"{interior_pension_law}__{law_params['match_rate']}"]
         return_liquid = params[f"{interior_liquid_law}__{law_params['return_liquid']}"]

@@ -58,19 +58,19 @@ def borrowing_constraint(
 
 def exponential_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     discount_factor: float,
 ) -> float:
-    return utility + discount_factor * E_next_V
+    return utility + discount_factor * CE
 
 
 def beta_delta_H(
     utility: float,
-    E_next_V: float,
+    CE: float,
     beta: float,
     delta: float,
 ) -> float:
-    return utility + beta * delta * E_next_V
+    return utility + beta * delta * CE
 
 
 WEALTH_START = 0.5
@@ -98,10 +98,8 @@ def _make_model(*, H_func=beta_delta_H):
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
-        functions={
-            "utility": utility,
-            "H": H_func,
-        },
+        functions={"utility": utility},
+        koopmans_aggregator=H_func,
         active=lambda age: age <= 1,
     )
 
@@ -190,7 +188,11 @@ def test_beta_delta_consumption(label, beta, delta):
         # Params are the union of both variants' params
         params = {
             "working": {
-                "H": {"discount_factor": delta, "beta": beta, "delta": delta},
+                "koopmans_aggregator": {
+                    "discount_factor": delta,
+                    "beta": beta,
+                    "delta": delta,
+                },
             },
         }
         result = model.simulate(
@@ -202,11 +204,13 @@ def test_beta_delta_consumption(label, beta, delta):
     elif label == "naive":
         model = _make_model()
         # Solve with exponential discounting (beta=1)
-        solve_params = {"working": {"H": {"beta": 1.0, "delta": delta}}}
+        solve_params = {
+            "working": {"koopmans_aggregator": {"beta": 1.0, "delta": delta}}
+        }
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=solve_params)
 
         # Simulate with present-biased params
-        sim_params = {"working": {"H": h_params}}
+        sim_params = {"working": {"koopmans_aggregator": h_params}}
         result = model.simulate(
             log_level="debug",
             params=sim_params,
@@ -217,7 +221,7 @@ def test_beta_delta_consumption(label, beta, delta):
         model = _make_model()
         result = model.simulate(
             log_level="debug",
-            params={"working": {"H": h_params}},
+            params={"working": {"koopmans_aggregator": h_params}},
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,
         )

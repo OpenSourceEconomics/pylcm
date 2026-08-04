@@ -12,6 +12,7 @@ from dags import concatenate_functions, get_ancestors
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.regime_building.Q_and_F import _get_deterministic_transitions
+from _lcm.transition_laws import is_stochastic
 from _lcm.typing import FlatRegimeParams, RegimeName
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -64,8 +65,8 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime.
 
-    Internal machinery is excluded: the Bellman aggregator `H`, the
-    stochastic weight functions, and the budget mask synthesized for DC-EGM
+    Internal machinery is excluded: the stochastic weight functions and the
+    budget mask synthesized for DC-EGM
     regimes (an implementation detail of the simulate-phase argmax, not a
     user-declared constraint). A regime that solves from a continuation also
     excludes `inverse_marginal_utility` — its `marginal_continuation` argument
@@ -79,7 +80,7 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     reuses those internal names inherits the exemption; one that introduces
     differently-named internal machinery extends this exclusion set here.
     """
-    excluded = {"H", DCEGM_BUDGET_CONSTRAINT_NAME} | (
+    excluded = {DCEGM_BUDGET_CONSTRAINT_NAME} | (
         _get_stochastic_weight_function_names(regime)
     )
     if regime.solution.solves_from_continuation:
@@ -96,12 +97,12 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.simulation.stochastic_transition_names
+    transition_laws = regime.simulation.transition_laws
     return {
         f"weight_{target_regime_name}__{transition_name}"
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if transition_name in stochastic_transition_names
+        if is_stochastic(transition_laws, target_regime_name, transition_name)
     }
 
 
@@ -221,11 +222,11 @@ def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     sim = regime.simulation
     deterministic_transitions, _conflicting = _get_deterministic_transitions(
         transitions=sim.transitions,
-        stochastic_transition_names=sim.stochastic_transition_names,
+        transition_laws=sim.transition_laws,
     )
     pool: dict[str, UserFunction] = {
         **dict(deterministic_transitions),
-        **{k: v for k, v in sim.functions.items() if k != "H"},
+        **sim.functions,
         **sim.constraints,
     }
     if sim.compute_regime_transition_probs is not None:
