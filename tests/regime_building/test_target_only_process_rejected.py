@@ -93,39 +93,70 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
     )
 
 
-@pytest.mark.parametrize(
-    "process",
-    [
-        TauchenAR1Process(n_points=3, gauss_hermite=False),
-        NormalIIDProcess(n_points=3, gauss_hermite=False),
-    ],
-    ids=["ar1", "iid"],
-)
-def test_activity_compatible_target_only_process_is_rejected(
+def _target_only_process_model(
     process: TauchenAR1Process | NormalIIDProcess,
-) -> None:
-    """A retained edge cannot introduce a stochastic process without a value."""
+) -> Model:
+    """Build a source whose declared target's only state is `process`."""
+    return Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": process},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+
+
+def test_activity_compatible_target_only_ar1_is_rejected() -> None:
+    """A retained edge cannot introduce an AR(1) process without a value.
+
+    Its next draw is conditioned on a previous value that the source neither
+    carries nor supplies, so no next-period value exists.
+    """
     with pytest.raises(
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        Model(
-            regimes={
-                "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=_source_is_early,
-                    functions={"utility": _zero_utility},
-                ),
-                "target": Regime(
-                    transition=None,
-                    states={"shock": process},
-                    functions={"utility": _shock_utility},
-                ),
-            },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
-            regime_id_class=RegimeId,
-            enable_jit=False,
+        _target_only_process_model(
+            TauchenAR1Process(n_points=3, gauss_hermite=False),
         )
+
+
+def test_activity_compatible_target_only_iid_is_entered_at_its_own_law() -> None:
+    """A target-only IID process is priced at its unconditional mean.
+
+    An IID draw does not depend on its previous value, so the source has
+    nothing to hand over and needs nothing: the entry distribution is the
+    process's own. With the target's payoff equal to the shock and no
+    discounting, the source's value is that distribution's mean, which is `mu`.
+    A dropped continuation would publish `0.0` instead, so the nonzero `mu`
+    is what makes the two distinguishable.
+    """
+    model = _target_only_process_model(
+        NormalIIDProcess(n_points=3, gauss_hermite=False),
+    )
+
+    assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+
+    solution = model.solve(
+        params={
+            "discount_factor": 1.0,
+            "target__shock__mu": 1.0,
+            "target__shock__sigma": 0.3,
+            "target__shock__n_std": 2.0,
+        },
+        log_level="debug",
+    )
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), 1.0, atol=1e-6)
 
 
 def test_process_carried_by_source_and_target_is_accepted() -> None:

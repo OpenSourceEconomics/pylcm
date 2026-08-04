@@ -3759,11 +3759,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
     discount_factor_dag = schedule_spec.discount_factor_dag
-    # The continuous action solving the Euler equation is bracketed numerically when
-    # the regime supplies no analytic inverse: a small floor up to a generous
-    # multiple of the savings grid's top node (the resources scale). The clamped
-    # near-zero-marginal corner whose root exceeds the bracket lands far to the right
-    # and is discarded by the upper envelope.
+    # This route composes period utility from the DAG, so the Euler equation has no
+    # closed form to invert and its root is always bracketed numerically: a small
+    # floor up to a generous multiple of the savings grid's top node (the resources
+    # scale). The clamped near-zero-marginal corner whose root exceeds the bracket
+    # lands far to the right and is discarded by the upper envelope.
     action_upper = savings_grid[-1] * 1000.0 + 1000.0
     action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
     import inspect  # noqa: PLC0415
