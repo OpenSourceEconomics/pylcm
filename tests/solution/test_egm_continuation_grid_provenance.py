@@ -27,9 +27,12 @@ reaching a liquid-first kernel is a layout question rather than a grid one, and
 it is asserted against an exact affine oracle rather than against brute force.
 """
 
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import yaml
 from dags import rename_arguments
 
 from _lcm.egm.two_asset_post_decision import post_decision_value_and_grad
@@ -78,23 +81,17 @@ _MOVING_INTERIOR = {2: np.s_[3:, :7], 1: np.s_[3:, :7], 0: np.s_[3:, :6]}
 # comparable. Above them the two agree to well under a percent.
 _RENAMED_UNCONSTRAINED = np.s_[5:]
 
-# The agreement the matched-grid configuration achieves. A kernel reading its
-# continuation off the wrong grid misses these by a wide margin.
-_WORKING_MEDIAN_TOL = 0.03
-_WORKING_P90_TOL = 0.15
-# The rooftop-cut backend is less accurate than the G2EGM mesh on this model
-# whatever the grids do: it misses the G2EGM bound even when every grid is
-# matched. Its witnesses therefore assert that a moving grid costs it no
-# accuracy, against its own baseline rather than the mesh's.
-_RFC_MEDIAN_TOL = 0.06
-# The tail carries the backend deficit twice over. The largest residuals sit on
-# the first retained liquid row and the last retained pension column -- the two
-# edges of the covered interior -- so the 90th percentile is set by how close
-# the mask runs to the uncovered layer, where RFC's rooftop cut is at its
-# coarsest. The median stays near 0.03 at both precisions while this moves.
-_RFC_P90_TOL = 0.35
-_RETIRED_MEDIAN_TOL = 0.01
-_RETIRED_MAX_TOL = 0.05
+# The declared budgets, read from the contract rather than restated here: a
+# threshold and the gate enforcing it are then the same artifact, so neither can
+# drift from the other.
+_CONTRACT = yaml.safe_load(
+    (Path(__file__).parent / "two_asset_provenance_contract.yaml").read_text(
+        encoding="utf-8"
+    )
+)
+_RETIRED_BUDGET = _CONTRACT["workloads"]["retired_egm"]["budget"]
+_G2EGM_BUDGET = _CONTRACT["workloads"]["two_asset_g2egm"]["budget"]
+_RFC_BUDGET = _CONTRACT["workloads"]["two_asset_rfc"]["budget"]
 
 
 def _two_asset_solvers(*, envelope="g2egm"):
@@ -122,28 +119,33 @@ def _solve_pair(**grid_overrides):
     return egm, brute
 
 
+def _assert_within_budget(rel, budget):
+    """Every declared statistic of the regret sample is inside its budget.
+
+    All three are asserted, never a subset. A median is insensitive to a
+    minority of badly wrong nodes and a p90 to a single one, which are exactly
+    the shapes a partial coverage failure takes.
+    """
+    assert np.median(rel) < budget["median_value_regret"]
+    assert np.quantile(rel, 0.90) < budget["p90_value_regret"]
+    assert np.max(rel) < budget["max_value_regret"]
+
+
 def _assert_working_matches_brute(
     egm,
     brute,
     period,
     *,
     interior=None,
-    median_tol=_WORKING_MEDIAN_TOL,
-    p90_tol=_WORKING_P90_TOL,
+    budget=None,
 ):
-    """The working value agrees with brute on the covered pension interior.
-
-    Both declared quantiles are asserted, not just the median: the median alone
-    is insensitive to a minority of badly wrong nodes, which is exactly the
-    shape a partial coverage failure takes.
-    """
+    """The working value agrees with brute on the covered pension interior."""
     sl = (interior or _WORKING_INTERIOR)[period]
     egm_v = np.asarray(egm[period]["working"])[sl]
     brute_v = np.asarray(brute[period]["working"])[sl]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    assert np.median(rel) < median_tol
-    assert np.quantile(rel, 0.90) < p90_tol
+    _assert_within_budget(rel, budget or _G2EGM_BUDGET)
 
 
 def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
@@ -152,8 +154,7 @@ def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
     brute_v = np.asarray(brute[period]["retired"])[_RETIRED_INTERIOR]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    assert np.median(rel) < _RETIRED_MEDIAN_TOL
-    assert np.max(rel) < _RETIRED_MAX_TOL
+    _assert_within_budget(rel, _RETIRED_BUDGET)
 
 
 def _moving_liquid_grid(*, start, stop_at_age, n_points):
@@ -279,9 +280,7 @@ def test_w4_rfc_interior_reads_the_next_period_liquid_grid():
         ),
     )
     for period in (0, 1):
-        _assert_working_matches_brute(
-            egm, brute, period, median_tol=_RFC_MEDIAN_TOL, p90_tol=_RFC_P90_TOL
-        )
+        _assert_working_matches_brute(egm, brute, period, budget=_RFC_BUDGET)
 
 
 def test_w8_two_asset_interior_reads_the_next_period_pension_grid():
@@ -326,8 +325,7 @@ def test_w9_rfc_interior_reads_the_next_period_pension_grid():
             brute,
             period,
             interior=_MOVING_INTERIOR,
-            median_tol=_RFC_MEDIAN_TOL,
-            p90_tol=_RFC_P90_TOL,
+            budget=_RFC_BUDGET,
         )
 
 
@@ -454,7 +452,7 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
         egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]
         brute_v = np.asarray(brute[period]["alive"])[_RENAMED_UNCONSTRAINED]
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        assert np.max(rel) < _RETIRED_MAX_TOL
+        _assert_within_budget(rel, _RETIRED_BUDGET)
 
 
 def _renamed_two_asset_model(*, envelope="g2egm", n_consumption=14):
@@ -594,4 +592,4 @@ def test_w6_two_asset_egm_takes_the_regimes_own_state_names():
         brute_v = np.asarray(brute[period]["working"])[sl]
         assert np.isfinite(egm_v).all()
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        assert np.median(rel) < _WORKING_MEDIAN_TOL
+        _assert_within_budget(rel, _G2EGM_BUDGET)
