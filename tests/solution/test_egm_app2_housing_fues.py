@@ -60,9 +60,9 @@ CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.82
 
 
-@pytest.mark.parametrize("upper_envelope", ["fues"])
+@pytest.mark.parametrize("envelope", ["fues"])
 def test_app2_fues_matches_vfi_on_liquid_interior(
-    upper_envelope: Literal["fues", "mss", "ltm", "rfc"],
+    envelope: Literal["fues", "mss", "ltm", "rfc"],
 ):
     """App.2 EGM-FUES agrees with its VFI twin on the liquid interior in bulk.
 
@@ -84,7 +84,7 @@ def test_app2_fues_matches_vfi_on_liquid_interior(
         n_housing=N_HOUSING,
         n_periods=N_PERIODS,
         n_consumption=N_CONSUMPTION,
-        upper_envelope=upper_envelope,
+        envelope=envelope,
     )
     brute_model = build_model(
         variant="brute",

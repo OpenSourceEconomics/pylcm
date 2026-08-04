@@ -40,6 +40,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -159,6 +160,12 @@ def _make_consent_regimes() -> dict[str, Regime]:
 def _solve_consent(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_consent_regimes(), derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_consent_regimes(), derived_categoricals={}
         ),
@@ -356,6 +363,12 @@ def _solve_dissolution(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, stop=3, step="Y")
     names = list(_make_dissolution_regimes())
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_dissolution_regimes(), derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_dissolution_regimes(), derived_categoricals={}
         ),
@@ -444,6 +457,12 @@ def test_raw_ungated_mixed_transition_still_rejected():
     ages = AgeGrid(start=0, stop=2, step="Y")
     with pytest.raises(NotImplementedError, match="stakeholders"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=regimes, derived_categoricals={}
+                ),
+                ages=ages,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=regimes, derived_categoricals={}
             ),
@@ -510,6 +529,12 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
     ages = AgeGrid(start=0, stop=2, step="Y")
     with pytest.raises(ModelInitializationError, match="no_such_regime"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=regimes, derived_categoricals={}
+                ),
+                ages=ages,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=regimes, derived_categoricals={}
             ),
@@ -549,6 +574,12 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
     ages = AgeGrid(start=0, stop=2, step="Y")
     with pytest.raises(ModelInitializationError, match="not_a_stakeholder"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=regimes, derived_categoricals={}
+                ),
+                ages=ages,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=regimes, derived_categoricals={}
             ),

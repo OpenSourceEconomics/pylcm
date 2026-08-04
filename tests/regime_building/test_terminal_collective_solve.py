@@ -27,6 +27,7 @@ from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.ages import AgeGrid
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -57,6 +58,12 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes={"couple": regime}, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes={"couple": regime}, derived_categoricals={}
         ),

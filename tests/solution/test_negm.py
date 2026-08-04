@@ -26,7 +26,15 @@ from _lcm.solution.negm import (
     _with_no_adjustment_outer_function,
 )
 from _lcm.typing import EconFunction, EconFunctionsMapping
-from lcm import DCEGM, NEGM, LinSpacedGrid, NormalIIDProcess
+from lcm import (
+    DCEGM,
+    NEGM,
+    AgeGrid,
+    GridSearch,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models import negm_kinked_toy
@@ -118,6 +126,50 @@ def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
     alive = model._regimes["alive"]
     assert DCEGM_BUDGET_CONSTRAINT_NAME in alive.simulation.constraints
     assert DCEGM_BUDGET_CONSTRAINT_NAME not in alive.solution.constraints
+
+
+def test_negm_configuration_does_not_change_reachability() -> None:
+    """Nested EGM and grid search expose equal lifecycle graphs and hashes."""
+
+    def next_wealth(
+        wealth: ContinuousState, liquid_savings: FloatND
+    ) -> ContinuousState:
+        return negm_kinked_toy.next_wealth(liquid_savings) + 0.0 * wealth
+
+    final_age_alive = 20 + (negm_kinked_toy.N_PERIODS - 2) * 5
+    alive = negm_kinked_toy.build_alive_regime().replace(
+        state_transitions={
+            **negm_kinked_toy.build_alive_regime().state_transitions,
+            "wealth": next_wealth,
+        }
+    )
+    ages = AgeGrid(
+        start=20,
+        stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5,
+        step="5Y",
+    )
+    negm_model = Model(
+        regimes={"alive": alive, "dead": negm_kinked_toy.build_dead_regime()},
+        regime_id_class=negm_kinked_toy.RegimeId,
+        ages=ages,
+        fixed_params={"final_age_alive": final_age_alive},
+    )
+    grid_search_model = Model(
+        regimes={
+            "alive": alive.replace(solver=GridSearch()),
+            "dead": negm_kinked_toy.build_dead_regime(),
+        },
+        regime_id_class=negm_kinked_toy.RegimeId,
+        ages=ages,
+        fixed_params={"final_age_alive": final_age_alive},
+    )
+
+    assert negm_model.reachability == grid_search_model.reachability
+    assert hash(negm_model.reachability) == hash(grid_search_model.reachability)
+    assert (
+        negm_model._regimes["alive"].solution.reachability
+        is negm_model.reachability.solution
+    )
 
 
 def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:

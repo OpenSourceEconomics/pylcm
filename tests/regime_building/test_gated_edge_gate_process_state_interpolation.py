@@ -108,6 +108,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -269,6 +270,12 @@ def _flat_params() -> MappingProxyType:
 
 def _build_solve_and_simulate(*, n_subjects: int, seed: int):
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_regimes(), derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_regimes(), derived_categoricals={}
         ),

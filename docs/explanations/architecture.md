@@ -58,6 +58,7 @@ _lcm/
 ├── jaxtyping_patch.py     ← bootstrap patch run before any jaxtyping type
 ├── model_processing.py    ← Model.__init__ build pipeline
 ├── pandas_utils.py        ← pd.Series ↔ JAX array bridge
+├── reachability.py        ← construction-time solve/simulate regime graphs
 ├── state_action_space.py  ← state / action space validators
 ├── transition_checks.py   ← pre-solve regime + state transition prob checks
 ├── typing.py              ← engine-side type aliases and protocols
@@ -280,6 +281,35 @@ The numerical checks fired at solve / simulate time live outside `regime_buildin
   the diagnostic-intermediates closure built in `regime_building/diagnostics.py` to
   pinpoint which intermediate (`U`, `F`, `E[V]`, `Q`) produced the NaN.
 
+## Reachability: `_lcm/reachability.py`
+
+`build_model_reachability` builds the model's static solve and simulate graphs once, at
+model construction, from the single canonical `active_periods_by_regime` mapping
+(`regime_building.processing.compute_active_periods_by_regime`) and the declared regime
+transitions. There is no runtime topology pass — the graph never changes after
+construction, and no runtime probability value narrows or widens it.
+
+Every retained edge is `EdgeStatus.CONDITIONAL`; there is no `TRUE` status, because no
+declaration form (not even a per-target dict with one key) proves unconditional positive
+probability independently of state, action, and free runtime parameters. A coarse (bare
+callable / bare `MarkovTransition`) regime transition is therefore conservative: it
+retains an edge to every regime active in the next period, and every such edge's state
+handoff is checked at model build — a carried state, a deterministic/stochastic law, or
+an explicit target-local/entry law must supply each target state's next-period value. A
+per-target dict narrows support to its declared key set instead.
+
+The solve and simulate phases build independent graphs (`ModelReachability.solution` /
+`.simulation`), because a regime transition's `Phased` sides can differ between them —
+so the two graphs may retain different edges for the same source period.
+
+Solver and simulation runtime code (`_lcm/solution/`, `_lcm/simulation/`) consume this
+graph — `PhaseReachability.targets`, `.union_targets`, `.edge_status`, ... — but never
+infers reachability itself: no runtime module calls an activity predicate, inspects a
+declared transition's raw mapping keys, or derives continuation-target membership from
+state-law-bundle keys. `regime_building/processing.py` and `diagnostics.py` read the
+graph to decide which targets a period's `Q_and_F` (or diagnostic) closure needs to
+build; they do not re-derive it.
+
 ## Solve and simulate
 
 ```
@@ -425,8 +455,10 @@ If you're reading the codebase for the first time, the path of least confusion i
 1. **`_lcm/regime_building/processing.py`** for per-regime canonicalisation — the
    longest single file and the heart of the build.
 1. **`_lcm/engine.py`** for the canonical dataclasses the DP machinery consumes.
+1. **`_lcm/reachability.py`** for the static solve/simulate graphs solve and simulate
+   consume but never infer.
 1. **`_lcm/solution/backward_induction.py`** and **`_lcm/simulation/simulate.py`** for
    the actual DP and sampling.
 
-By the time you reach (6), the canonical form should feel familiar and the JAX-traced
+By the time you reach (7), the canonical form should feel familiar and the JAX-traced
 code becomes easy to read.

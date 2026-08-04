@@ -35,6 +35,15 @@ class InvalidInitialConditionsError(PyLCMError):
     """Raised when the initial conditions (states or regimes) are invalid."""
 
 
+class InvalidSimulationInputError(PyLCMError):
+    """Raised when a caller-supplied `period_to_regime_to_V_arr` is incomplete.
+
+    Every solution-graph continuation target for the current
+    `(period, source regime)` decision must have a value-function array
+    present; a missing one is a simulation-input error, not a solver defect.
+    """
+
+
 class InvalidParamsError(PyLCMError):
     """Raised when the params structure does not match the params template."""
 

@@ -52,6 +52,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -118,6 +119,12 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     """Kernel-level: finalize -> process -> backward induction, two periods."""
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_couple_regimes(), derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_couple_regimes(), derived_categoricals={}
         ),
@@ -241,6 +248,13 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes={"couple": couple, "couple_terminal": couple_terminal},
+                derived_categoricals={},
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes={"couple": couple, "couple_terminal": couple_terminal},
             derived_categoricals={},
@@ -350,6 +364,13 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
 
     with pytest.raises(NotImplementedError, match="identical `stakeholders`"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"couple": couple, "single_terminal": single_terminal},
+                    derived_categoricals={},
+                ),
+                ages=ages,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "single_terminal": single_terminal},
                 derived_categoricals={},

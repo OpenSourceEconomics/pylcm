@@ -50,6 +50,7 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -94,13 +95,17 @@ def _true_gate() -> BoolND:
 
 def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
     names = list(regimes)
+    finalized = finalize_regimes(user_regimes=regimes, derived_categoricals={})
     return {
-        "user_regimes": finalize_regimes(user_regimes=regimes, derived_categoricals={}),
+        "user_regimes": finalized,
         "ages": ages,
         "regime_names_to_ids": MappingProxyType(
             {name: jnp.int32(i) for i, name in enumerate(names)}
         ),
         "enable_jit": False,
+        "prepared_structure": build_prepared_structure(
+            user_regimes=finalized, ages=ages
+        ),
     }
 
 

@@ -64,6 +64,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 # --------------------------------------------------------------------------------------
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
@@ -256,6 +257,12 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, stop=2, step="Y")
     regime_names = list(_make_offer_regimes())
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_offer_regimes(), derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_offer_regimes(), derived_categoricals={}
         ),
@@ -457,6 +464,12 @@ def test_endogenous_offer_distribution_is_rejected():
     ages = AgeGrid(start=0, stop=2, step="Y")
     # Build succeeds — the ill-formed argument is not caught until solve.
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=ages,
         regime_names_to_ids=MappingProxyType(

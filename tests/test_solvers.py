@@ -88,7 +88,7 @@ def test_dcegm_config_constructs():
     """A `DCEGM` config with valid fields constructs and exposes its defaults."""
     cfg = _valid_dcegm()
     assert cfg.continuous_state == "wealth"
-    assert cfg.upper_envelope == "exact"
+    assert cfg.envelope == "exact"
     assert cfg.envelope_max_runs == 24
 
 

@@ -57,6 +57,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -84,6 +85,12 @@ def _solve_and_process(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes_dict, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=regimes_dict, derived_categoricals={}
         ),

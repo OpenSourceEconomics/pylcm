@@ -66,6 +66,7 @@ from lcm.ages import AgeGrid
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -139,6 +140,12 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
         {"shock_ref": jnp.int32(0), "shock_ref_terminal": jnp.int32(1)}
     )
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_shock_ref_regimes(), derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_shock_ref_regimes(), derived_categoricals={}
         ),
@@ -261,6 +268,12 @@ def _flat_params() -> MappingProxyType:
 
 def _build_and_solve():
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_regimes(), derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_regimes(), derived_categoricals={}
         ),

@@ -59,6 +59,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -176,6 +177,12 @@ def _solve_and_simulate():
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes_dict, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=regimes_dict, derived_categoricals={}
         ),

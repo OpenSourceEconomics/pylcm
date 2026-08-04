@@ -61,6 +61,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -253,6 +254,16 @@ def _solve_ir_model(
             {"H__discount_factor": jnp.asarray(0.95)}
         )
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_ir_regimes(
+                    married_first=married_first,
+                    with_value_constraints=with_value_constraints,
+                ),
+                derived_categoricals={},
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_ir_regimes(
                 married_first=married_first,
@@ -446,6 +457,18 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes={
+                    "single_f": single_f,
+                    "single_f_terminal": single_f_terminal,
+                    "married": married,
+                    "married_terminal": married_terminal,
+                },
+                derived_categoricals={},
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes={
                 "single_f": single_f,
@@ -558,6 +581,13 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes={"couple": couple, "couple_terminal": couple_terminal},
+                derived_categoricals={},
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(
             user_regimes={"couple": couple, "couple_terminal": couple_terminal},
             derived_categoricals={},
@@ -681,6 +711,12 @@ def _married_with_refs(refs: dict[str, SamePeriodRef]) -> Regime:
 def _process_ir_variant(regimes: dict[str, Regime]) -> None:
     ages = AgeGrid(start=0, stop=2, step="Y")
     process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -861,6 +897,12 @@ def test_same_period_ref_requires_reference_active_in_same_periods():
     ages = AgeGrid(start=0, stop=3, step="Y")
     with pytest.raises(ModelInitializationError, match="active"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=regimes, derived_categoricals={}
+                ),
+                ages=ages,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=regimes, derived_categoricals={}
             ),

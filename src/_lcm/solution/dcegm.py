@@ -121,7 +121,7 @@ class DCEGM(Solver):
     error compounds across periods.
     """
 
-    upper_envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
+    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
     """Upper-envelope refinement backend removing dominated Euler candidates.
 
     `"exact"` is pylcm's own construction and the default. The other four are
@@ -307,7 +307,7 @@ class DCEGM(Solver):
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
-        egm_step, egm_carry_template, egm_reachable_targets = build_egm_step_functions(
+        egm_step, egm_carry_template, egm_stateful_targets = build_egm_step_functions(
             solver=self,
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
@@ -319,7 +319,7 @@ class DCEGM(Solver):
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
             period_to_regime_v_interp=context.period_to_regime_v_interp,
             period_to_regime_grid_signature=context.period_to_regime_grid_signature,
-            regimes_to_active_periods=context.regimes_to_active_periods,
+            solution_reachability=context.solution_reachability,
             flat_param_names=context.flat_param_names,
             regime_to_flat_param_names=context.regime_to_flat_param_names,
             state_action_space=context.state_action_space,
@@ -338,7 +338,7 @@ class DCEGM(Solver):
                 period: _DCEGMPeriodKernel(
                     core=core,
                     regime_name=context.regime_name,
-                    reachable_targets=egm_reachable_targets,
+                    stateful_targets=egm_stateful_targets,
                     transition_target_names=tuple(context.transitions),
                 )
                 for period, core in egm_step.items()
@@ -354,7 +354,7 @@ class DCEGM(Solver):
 class _DCEGMPeriodKernel:
     """The DC-EGM period adapter — wraps one EGM-step core.
 
-    Closes over the regime name, its reachable carry targets, and the names of
+    Closes over the regime name, its carry targets, and the names of
     its transition targets (to union their params). Calling it inverts the Euler
     equation on the savings grid and returns a `KernelResult` carrying the value
     function, the continuation a parent interpolates, and the published off-grid
@@ -367,7 +367,7 @@ class _DCEGMPeriodKernel:
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
 
-    reachable_targets: frozenset[RegimeName]
+    stateful_targets: frozenset[RegimeName]
     """The carry keys the EGM core reads; the rolling carry is filtered to these."""
 
     transition_target_names: tuple[RegimeName, ...]
@@ -412,9 +412,9 @@ class _DCEGMPeriodKernel:
         """Build the core's lowering arguments: states, carries, EGM params."""
         return {
             **dict(state_action_space.states),
-            "next_regime_to_continuation": _reachable_carry_subset(
+            "next_regime_to_continuation": _carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                stateful_targets=self.stateful_targets,
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **self._egm_kernel_params(flat_params=flat_params),
@@ -437,9 +437,9 @@ class _DCEGMPeriodKernel:
         V_arr, egm_carry, sim_policy = compiled_cores["main"](
             **state_action_space.states,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=_reachable_carry_subset(
+            next_regime_to_continuation=_carry_subset(
                 next_regime_to_continuation=next_regime_to_continuation,
-                reachable_targets=self.reachable_targets,
+                stateful_targets=self.stateful_targets,
             ),
             **self._egm_kernel_params(flat_params=flat_params),
             period=jnp.int32(period),
@@ -472,28 +472,28 @@ class _DCEGMPeriodKernel:
         return params
 
 
-def _reachable_carry_subset(
+def _carry_subset(
     *,
     next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-    reachable_targets: frozenset[RegimeName],
+    stateful_targets: frozenset[RegimeName],
 ) -> MappingProxyType[RegimeName, EGMCarry]:
     """Return the carries a regime's EGM core actually reads.
 
     Each core only ever indexes `next_regime_to_continuation[target]` for its
-    reachable targets, so the full all-regimes mapping is needlessly large.
-    Filtering to the reachable subset keeps the core's carry pytree input
+    carry targets, so the full all-regimes mapping is needlessly large.
+    Filtering to that subset keeps the core's carry pytree input
     minimal — only this subset is passed per call rather than every regime's
     carry at once.
 
     Iterates the source mapping's key order (stable across rolls) so the
     filtered pytree structure matches between lowering and call. Membership is
-    tested defensively; reachable targets are always carry-producing.
+    tested defensively because a target need not publish a carry in every model.
     """
     return MappingProxyType(
         {
             name: next_regime_to_continuation[name]
             for name in next_regime_to_continuation
-            if name in reachable_targets
+            if name in stateful_targets
         }
     )
 

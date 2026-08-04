@@ -51,6 +51,7 @@ from lcm.processes import RouwenhorstAR1Process
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -125,6 +126,12 @@ def _make_regimes(
 
 def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -282,6 +289,12 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
 
     def _solve_one(regimes: dict[str, Regime]) -> FloatND:
         processed = process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=regimes, derived_categoricals={}
+                ),
+                ages=_AGES,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=regimes, derived_categoricals={}
             ),
@@ -470,6 +483,13 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
     )
     with pytest.raises(ModelInitializationError, match="structurally persists"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"period0": period0, "terminal": terminal},
+                    derived_categoricals={},
+                ),
+                ages=_AGES,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
@@ -490,6 +510,12 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
     other test in this module pins only `enable_jit=False`.
     """
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -730,6 +756,13 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
     )
     with pytest.raises(ModelInitializationError, match="structurally persists"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"period0": period0, "terminal": terminal},
+                    derived_categoricals={},
+                ),
+                ages=_AGES,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
@@ -800,6 +833,13 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
     )
     with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"period0": period0, "terminal": terminal},
+                    derived_categoricals={},
+                ),
+                ages=_AGES,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
@@ -857,6 +897,13 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
     stored value.
     """
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_target_local_fold_regimes(shared=False),
+                derived_categoricals={},
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_target_local_fold_regimes(shared=False),
             derived_categoricals={},
@@ -885,6 +932,13 @@ def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
     ambiguous topology must still be rejected (round-4 behaviour preserved)."""
     with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes=_make_target_local_fold_regimes(shared=True),
+                    derived_categoricals={},
+                ),
+                ages=_AGES,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes=_make_target_local_fold_regimes(shared=True),
                 derived_categoricals={},
@@ -929,6 +983,12 @@ def test_coarse_self_transition_retains_the_self_continuation():
         functions={"utility": lambda: 0.0},
     )
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+            ),
+            ages=ages3,
+        ),
         user_regimes=finalize_regimes(
             user_regimes={"stay": stay, "done": done}, derived_categoricals={}
         ),
@@ -983,6 +1043,12 @@ def test_coarse_self_fold_is_rejected():
     )
     with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"stay": stay, "done": done}, derived_categoricals={}
+                ),
+                ages=ages3,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"stay": stay, "done": done}, derived_categoricals={}
             ),
@@ -1032,6 +1098,13 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
     )
     with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
+            prepared_structure=build_prepared_structure(
+                user_regimes=finalize_regimes(
+                    user_regimes={"src": src, "stay": stay, "alt": alt},
+                    derived_categoricals={},
+                ),
+                ages=ages3,
+            ),
             user_regimes=finalize_regimes(
                 user_regimes={"src": src, "stay": stay, "alt": alt},
                 derived_categoricals={},
@@ -1173,6 +1246,12 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
 
 def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxyType:
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=_AGES,
         regime_names_to_ids=MappingProxyType(
@@ -1236,6 +1315,13 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
     worthless, so the general non-folded empty-bundle hole stays deferred.
     """
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=_make_route_to_folded_target_regimes(),
+                derived_categoricals={},
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(
             user_regimes=_make_route_to_folded_target_regimes(),
             derived_categoricals={},
@@ -1328,6 +1414,12 @@ def _simulate_route(
         {"src": jnp.int32(0), "folded_B": jnp.int32(1), "dead_C": jnp.int32(2)}
     )
     processed = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=_AGES,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,

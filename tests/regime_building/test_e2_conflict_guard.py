@@ -55,6 +55,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -138,6 +139,12 @@ def _terminal_collective() -> Regime:
 def _process(regimes: dict[str, Regime]) -> None:
     ages = AgeGrid(start=0, stop=1, step="Y")
     process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalize_regimes(
+                user_regimes=regimes, derived_categoricals={}
+            ),
+            ages=ages,
+        ),
         user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={}),
         ages=ages,
         regime_names_to_ids=MappingProxyType(

@@ -132,6 +132,8 @@ def _working_first_period_euler_error(*, n_liquid):
             next_value=next_value,
             m_grid=m_grid,
             n_grid=n_grid,
+            next_m_grid=m_grid,
+            next_n_grid=n_grid,
             a_grid=a_grid,
             b_grid=b_grid,
             consumption_grid=consumption_grid,

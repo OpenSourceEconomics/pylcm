@@ -41,10 +41,9 @@ offending piece. The rules, in the order they are checked:
   relies on)
 - grid hygiene: the Euler grid is not distributed (`batch_size` is honored),
   and the savings grid covers the Euler grid's upper region
-- every declared-reachable non-terminal target regime also uses DC-EGM with
-  the same Euler state (reachability is read off the regime transition: a
-  granular per-target mapping declares its key set, any coarse form reaches
-  every regime; brute-force regimes may target DC-EGM regimes)
+- every non-terminal target retained in the canonical solution graph also
+  uses DC-EGM with the same Euler state (brute-force regimes may target DC-EGM
+  regimes)
 - numeric spot checks on small grid samples, outside jit: consumption
   recovery `post_decision ≈ resources - action`, resources non-decreasing in
   the Euler state, and `inverse_marginal_utility` consistent with
@@ -64,6 +63,7 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseReachability
 from _lcm.typing import (
     ActionName,
     FunctionName,
@@ -92,12 +92,15 @@ _CONTINUITY_SHRINK_FACTOR = 0.4
 def validate_dcegm_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    solution_reachability: PhaseReachability | None = None,
 ) -> None:
     """Validate the DC-EGM contract for every regime with a `DCEGM` solver.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        solution_reachability: Static solution graph. When omitted, run only
+            regime-local checks.
 
     Raises:
         ModelInitializationError: If any regime with `solver=DCEGM(...)`
@@ -110,6 +113,7 @@ def validate_dcegm_regimes(
                 regime_name=regime_name,
                 user_regime=user_regime,
                 user_regimes=user_regimes,
+                solution_reachability=solution_reachability,
             )
 
 
@@ -148,6 +152,7 @@ def _validate_dcegm_regime(
     regime_name: RegimeName,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
+    solution_reachability: PhaseReachability | None,
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
     solver = cast("DCEGM", user_regime.solver)
@@ -202,12 +207,13 @@ def _validate_dcegm_regime(
     _fail_if_grid_hygiene_violated(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
-    _fail_if_target_regime_incompatible(
-        regime_name=regime_name,
-        user_regime=user_regime,
-        user_regimes=user_regimes,
-        solver=solver,
-    )
+    if solution_reachability is not None:
+        _fail_if_target_regime_incompatible(
+            regime_name=regime_name,
+            user_regimes=user_regimes,
+            solution_reachability=solution_reachability,
+            solver=solver,
+        )
     try:
         _fail_if_numeric_spot_checks_fail(
             regime_name=regime_name,
@@ -844,18 +850,16 @@ def _fail_if_grid_hygiene_violated(
 def _fail_if_target_regime_incompatible(
     *,
     regime_name: RegimeName,
-    user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
+    solution_reachability: PhaseReachability,
     solver: DCEGM,
 ) -> None:
-    """Reachable non-terminal targets must be DCEGM regimes with the same state.
+    """Retained non-terminal targets must be DCEGM regimes with the same state.
 
     Terminal targets are always allowed, and brute-force regimes may target
     DC-EGM regimes (they only consume the target's value-function array).
     """
-    for target_name in sorted(
-        _reachable_target_names(user_regime=user_regime, user_regimes=user_regimes)
-    ):
+    for target_name in solution_reachability.union_targets(source=regime_name):
         target = user_regimes[target_name]
         if target.terminal:
             continue
@@ -1339,28 +1343,6 @@ def _combo_contexts(
         {name: sample[min(j, sample.shape[0] - 1)] for name, sample in samples.items()}
         for j in range(n_contexts)
     ]
-
-
-def _reachable_target_names(
-    *,
-    user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> set[RegimeName]:
-    """Regimes a regime can transition into, read off the declared reachability.
-
-    The regime transition is the single source of truth for reachability:
-
-    - a granular per-target mapping declares exactly its key set — omitted
-      regimes are structurally unreachable,
-    - any coarse form (bare callable or `MarkovTransition`) reaches every
-      regime.
-    """
-    transition = user_regime.transition
-    if isinstance(transition, Phased):
-        transition = transition.solve
-    if isinstance(transition, Mapping):
-        return set(cast("Mapping[RegimeName, object]", transition).keys())
-    return set(user_regimes)
 
 
 def _resolve_solve_functions(

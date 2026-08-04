@@ -44,7 +44,7 @@ def _find_unsupported_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -61,7 +61,7 @@ def _find_unsupported_feature(
     Returns `None` when the configuration is fully supported.
     """
     message: str | None = None
-    for target in carry_targets:
+    for target in stateful_targets:
         message = _find_unsupported_target_feature(
             target=target,
             user_regimes=user_regimes,
@@ -82,7 +82,7 @@ def _find_unsupported_feature(
             solver=solver,
             functions=functions,
             constraints=constraints,
-            carry_targets=carry_targets,
+            stateful_targets=stateful_targets,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -296,7 +296,7 @@ def _find_unsupported_function_args(
     solver: DCEGM,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    carry_targets: tuple[RegimeName, ...],
+    stateful_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -337,7 +337,7 @@ def _find_unsupported_function_args(
     # Intrinsic process-weight functions are evaluated per combo at the
     # savings-node stage, mirroring the savings-stage independence the
     # validation requires of every other stochastic weight function.
-    for target in carry_targets:
+    for target in stateful_targets:
         target_process_states = _get_process_state_names(
             v_interpolation_info=regime_to_v_interpolation_info[target]
         )
