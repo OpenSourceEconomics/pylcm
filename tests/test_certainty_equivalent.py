@@ -9,10 +9,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import power_inverse, power_transform
 from lcm import (
     AgeGrid,
+    CertaintyEquivalent,
     DiscreteGrid,
     H_epstein_zin,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -647,6 +650,23 @@ def test_power_mean_aggregate_is_homogeneous_of_degree_one():
     np.testing.assert_allclose(float(scaled), 1e-12 * float(unit), rtol=1e-5)
 
 
+def test_certainty_equivalent_subclass_must_supply_an_aggregation():
+    """Aggregating the continuation lottery is part of the interface, not an extra.
+
+    A subclass that declares only its parameter names cannot be instantiated,
+    so the gap surfaces where the class is written rather than part-way
+    through a solve.
+    """
+
+    class OnlyParamNames(CertaintyEquivalent):
+        @property
+        def param_names(self) -> frozenset[str]:
+            return frozenset()
+
+    with pytest.raises(TypeError, match="aggregate"):
+        OnlyParamNames()
+
+
 @pytest.mark.parametrize("overridden", ["transform", "inverse"])
 def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
     """`PowerMean` aggregates the power transform; a custom pair needs the base class.
@@ -1047,3 +1067,68 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime_float32(
         risk_aversion=risk_aversion,
         rtol=1e-3,
     )
+
+
+def test_linear_expectation_aggregate_is_the_mass_normalized_mean():
+    """`LinearExpectation` aggregates a lottery to its probability-weighted mean."""
+    got = LinearExpectation().aggregate(
+        values=jnp.array([1.0, 9.0]),
+        weights=jnp.array([0.5, 1.5]),
+        params={},
+    )
+    # Normalized weights are (0.25, 0.75), so the mean is 7.0.
+    np.testing.assert_allclose(float(got), 7.0, rtol=1e-6)
+
+
+def test_linear_expectation_takes_no_runtime_parameters():
+    """The plain expectation has nothing to parameterize."""
+    assert LinearExpectation().param_names == frozenset()
+
+
+def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
+    """The engine's per-target reduction agrees with the reference aggregation.
+
+    A regime declaring `LinearExpectation` is reduced target by target, which
+    is cheaper than flattening the joint lottery. Its `aggregate` states the
+    same quantity the long way round, so solving either way must agree.
+    """
+    fast_model = get_model(certainty_equivalent=LinearExpectation())
+    reference_model = get_model(
+        certainty_equivalent=QuasiArithmeticMean(transform=_identity, inverse=_identity)
+    )
+    params = get_params(risk_aversion=None)
+    V_fast = fast_model.solve(params=params, log_level="debug")
+    V_reference = reference_model.solve(params=params, log_level="debug")
+    for period in V_fast:
+        for regime_name in V_fast[period]:
+            np.testing.assert_allclose(
+                np.asarray(V_fast[period][regime_name]),
+                np.asarray(V_reference[period][regime_name]),
+                rtol=1e-5,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+def _identity(value: FloatND) -> FloatND:
+    return value
+
+
+@pytest.mark.parametrize("risk_aversion", [0.0, 0.5, 2.0, 5.0])
+def test_power_mean_aggregate_matches_its_own_transform_and_inverse(
+    x64_enabled: None,
+    risk_aversion: float,
+):
+    """The anchored form agrees with the pair it is the stable evaluation of.
+
+    `PowerMean.transform` and `PowerMean.inverse` define the mean; `aggregate`
+    evaluates it in a form that survives ranges where applying them directly
+    overflows. Where both are valid they must agree.
+    """
+    values = jnp.array([0.4, 1.0, 3.0, 7.5])
+    weights = jnp.array([0.1, 0.2, 0.3, 0.4])
+    params = {"risk_aversion": jnp.asarray(risk_aversion)}
+    anchored = PowerMean().aggregate(values=values, weights=weights, params=params)
+    naive = QuasiArithmeticMean(
+        transform=power_transform, inverse=power_inverse
+    ).aggregate(values=values, weights=weights, params=params)
+    np.testing.assert_allclose(float(anchored), float(naive), rtol=1e-12)

@@ -32,16 +32,102 @@ class CertaintyEquivalent(ABC):
     """Base class for certainty-equivalent specifications.
 
     Declared on a non-terminal `Regime` via `certainty_equivalent=...`. The
-    engine dispatches on the concrete subclass; `QuasiArithmeticMean` is
-    the shipped implementation. When the field is `None` (the default), the
-    continuation is aggregated as the linear expectation `E[V']`. Only
-    `GridSearch` supports a nonlinear certainty equivalent.
+    shipped implementations are `LinearExpectation` — expected utility, and
+    what a regime that declares nothing gets — and `QuasiArithmeticMean` with
+    its `PowerMean` specialization.
+
+    `aggregate` reduces the whole joint continuation lottery in one piece,
+    because a transform has to be applied before any expectation is taken.
+    `LinearExpectation` needs no transform, so the engine reduces each target
+    regime on its own instead and never materializes the joint lottery; its
+    `aggregate` states the same quantity and serves as the reference that
+    route is tested against. Only `GridSearch` supports a nonlinear certainty
+    equivalent.
     """
 
     @property
     @abstractmethod
     def param_names(self) -> frozenset[str]:
         """Names of the certainty equivalent's runtime parameters."""
+
+    @abstractmethod
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce the continuation lottery over its last axis.
+
+        The whole lottery — every stochastic node of every reachable target
+        regime, weighted by that target's regime-transition probability —
+        arrives flattened, so a transform is applied before every expectation
+        and inverted exactly once.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative weights over `values`.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+
+    @property
+    def flat_param_names(self) -> MappingProxyType[str, str]:
+        """Immutable mapping of each runtime parameter to its flat params name.
+
+        The parameters live under the pseudo-function name
+        `certainty_equivalent` in the regime's flat params, so the Q-and-F
+        closure can assemble `aggregate`'s `params` straight from
+        `states_actions_params`.
+        """
+        return MappingProxyType(
+            {arg: f"certainty_equivalent__{arg}" for arg in self.param_names}
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class LinearExpectation(CertaintyEquivalent):
+    """Certainty equivalent of expected utility: the plain expectation `E[V']`.
+
+    The engine recognizes this specification and reduces each target regime on
+    its own rather than flattening the joint lottery, which is cheaper by
+    roughly a factor of two on any lottery past a couple of nodes. `aggregate`
+    below states the same quantity over the flattened lottery; it is the
+    reference the engine's route is tested against, not the route it takes.
+    """
+
+    @property
+    def param_names(self) -> frozenset[str]:
+        """The plain expectation has no runtime parameters."""
+        return frozenset()
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        """Return the probability-weighted mean of the lottery.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative weights over `values`, normalized by their
+                sum; a lottery carrying no mass aggregates to NaN.
+            params: Unused — the plain expectation has no parameters.
+
+        Returns:
+            The expectation, reduced over the last axis.
+
+        """
+        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
 
 
 @beartype(conf=REGIME_CONF)
@@ -164,7 +250,17 @@ class PowerMean(QuasiArithmeticMean):
     """
 
     transform: Callable[..., FloatND] = power_transform
+    """`g` — fixed to the power transform; see `inverse`."""
+
     inverse: Callable[..., FloatND] = power_inverse
+    """`g⁻¹` — fixed to the power inverse.
+
+    The pair defines the mean, and `aggregate` evaluates it by a route that
+    survives ranges where applying them directly overflows. They are therefore
+    the reference the anchored form is tested against rather than the code path
+    it takes, and neither may be replaced: swapping one would leave `aggregate`
+    computing something else entirely.
+    """
 
     def __post_init__(self) -> None:
         for name, expected in (
@@ -304,44 +400,6 @@ class PowerMean(QuasiArithmeticMean):
         log_ce_power = anchor + log_moment / safe_exponent
         log_ce_geometric = jnp.sum(normalized_weights * log_v, axis=-1)
         return jnp.exp(jnp.where(exponent == 0.0, log_ce_geometric, log_ce_power))
-
-
-def resolve_certainty_equivalent(
-    certainty_equivalent: CertaintyEquivalent | None,
-) -> tuple[
-    QuasiArithmeticMean | None,
-    MappingProxyType[str, str],
-]:
-    """Narrow the certainty equivalent and map its args to flat param names.
-
-    The runtime parameters live under the pseudo-function name
-    `certainty_equivalent` in the regime's flat params
-    (`certainty_equivalent__<arg>`); the returned mapping lets the Q-and-F
-    closure assemble `aggregate`'s `params` from `states_actions_params`.
-
-    Returns:
-        Tuple of the narrowed quasi-arithmetic-mean CE (or `None`) and its
-        arg-to-flat-name mapping.
-
-    """
-    if certainty_equivalent is None:
-        return None, MappingProxyType({})
-    if not isinstance(certainty_equivalent, QuasiArithmeticMean):
-        msg = (
-            "Only `QuasiArithmeticMean` certainty equivalents are "
-            f"supported, got {type(certainty_equivalent).__name__}."
-        )
-        raise NotImplementedError(msg)
-
-    return (
-        certainty_equivalent,
-        MappingProxyType(
-            {
-                arg: f"certainty_equivalent__{arg}"
-                for arg in certainty_equivalent.param_names
-            }
-        ),
-    )
 
 
 def _args_for(

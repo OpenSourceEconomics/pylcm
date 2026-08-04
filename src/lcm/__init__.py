@@ -66,6 +66,7 @@ from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
+    LinearExpectation,
     PowerMean,
     QuasiArithmeticMean,
 )
@@ -142,6 +143,7 @@ __all__ = [
     "H_linear",
     "IrregSpacedGrid",
     "LinSpacedGrid",
+    "LinearExpectation",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MarkovTransition",

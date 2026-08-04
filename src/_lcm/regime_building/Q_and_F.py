@@ -5,7 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
-from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.h_dag import _get_build_H_kwargs
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -385,10 +385,19 @@ def _get_compute_CE(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    # Lowercase `ce` is the certainty-equivalent *specification* (`None` for the
-    # linear expectation); uppercase `CE` below is the value it produces — the
-    # same convention as `v_interpolation_info` against `V_arr`.
-    ce, ce_flat_param_names = resolve_certainty_equivalent(certainty_equivalent)
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    reduces_per_target = certainty_equivalent is None or isinstance(
+        certainty_equivalent, LinearExpectation
+    )
+    ce_flat_param_names = (
+        MappingProxyType({})
+        if certainty_equivalent is None
+        else certainty_equivalent.flat_param_names
+    )
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
     # induction co-map, so their `next_`-prefixed coordinates are not passed to
@@ -456,7 +465,7 @@ def _get_compute_CE(
                 **extra_kw,
             )
 
-            if ce is None:
+            if reduces_per_target:
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
                 if next_V_has_stochastic_states[target_regime_name]:
@@ -480,8 +489,12 @@ def _get_compute_CE(
                     active_regime_probs[target_regime_name] * node_weights
                 )
 
-        if ce is not None and lottery_values:
-            CE = ce.aggregate(
+        if (
+            certainty_equivalent is not None
+            and not reduces_per_target
+            and lottery_values
+        ):
+            CE = certainty_equivalent.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
                 # The params template types every certainty-equivalent
