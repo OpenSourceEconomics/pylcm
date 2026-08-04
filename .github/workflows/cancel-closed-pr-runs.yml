@@ -1,0 +1,97 @@
+---
+name: Cancel runs of closed PRs
+# GitHub does not cancel a PR's queued/in-progress runs when the PR is closed, and
+# `main.yml`'s concurrency group only supersedes a run when a NEWER run appears on the
+# same head ref -- closing a PR is not a new run, so it never fires. Orphaned runs then
+# sit in the self-hosted GPU queue and block every later PR behind them.
+#
+# Scope: PRs closed WITHOUT merging. A merged PR's runs are left to finish -- see the
+# job-level `if` below.
+on:
+  # `pull_request_target` (not `pull_request`) so the token is writable for fork PRs
+  # too. This is only safe because nothing here checks out or executes PR code: the job
+  # reads the head ref as an env var and calls the REST API. Do NOT add a checkout step.
+  pull_request_target:
+    types:
+      - closed
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+jobs:
+  cancel:
+    name: Cancel orphaned runs for this PR's head ref
+    # `closed` also fires on merge; merged PRs are deliberately left alone so their runs
+    # finish. Be aware of the cost: a `benchmark-pr` run sits in concurrency group
+    # `gpu-benchmarks-<head_ref>` while the post-merge `benchmark-main` run sits in
+    # `gpu-benchmarks-main`, so merging does NOT supersede it. With
+    # `timeout-minutes: 14400` (10 days) and a "wait for GPU to be free" spin loop, such
+    # a run can hold the benchmark runner for a long time -- cancel it by hand if so.
+    if: github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Cancel queued and in-progress runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SELF_RUN_ID: ${{ github.run_id }}
+          # Read via `$ENV` in jq and `-f` in gh, never interpolated into a shell word
+          # or a URL: a branch name is attacker-controlled on a fork PR.
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |-
+          set -euo pipefail
+
+          # A head ref can back more than one PR (e.g. a stack branch retargeted from
+          # one base to another). Cancelling then would kill a LIVE PR's runs, so bail
+          # if any other open PR still points at this exact head repo + ref.
+          # `--paginate` applies --jq per page, so sum rather than reading one number.
+          still_open=$(gh api "repos/${REPO}/pulls" -X GET \
+            -f state=open -f per_page=100 --paginate \
+            --jq '[.[] | select(.head.ref == $ENV.HEAD_REF
+                   and .head.repo.full_name == $ENV.HEAD_REPO)] | length' \
+            | awk '{s += $1} END {print s + 0}')
+          if [ "${still_open}" -gt 0 ]; then
+            echo "::notice::${HEAD_REF} still backs ${still_open} open PR(s); skipping."
+            exit 0
+          fi
+
+          # `-f` so gh URL-encodes the branch name. `branch=` filters on head_branch;
+          # `event=pull_request` keeps pushes to main out of scope even if a branch
+          # name ever collided (and excludes this reaper's own run by construction).
+          mapfile -t runs < <(gh api "repos/${REPO}/actions/runs" -X GET \
+            -f branch="${HEAD_REF}" -f event=pull_request -f per_page=100 \
+            --jq '.workflow_runs[]
+                  | select(.status == "queued" or .status == "in_progress"
+                           or .status == "waiting" or .status == "requested"
+                           or .status == "pending")
+                  | .id')
+          if [ "${#runs[@]}" -eq 0 ]; then
+            echo "::notice::No active runs for ${HEAD_REF}."
+            exit 0
+          fi
+          for run_id in "${runs[@]}"; do
+            [ "${run_id}" = "${SELF_RUN_ID}" ] && continue
+            echo "Cancelling run ${run_id} (${HEAD_REF})"
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/cancel" >/dev/null \
+              || echo "::warning::cancel call failed for ${run_id}"
+          done
+
+          # A long-running self-hosted job can ignore the ordinary cancel -- observed on
+          # the GPU runner, where the graceful cancel never took and the queue stayed
+          # blocked. Give each run a bounded grace period, then force it.
+          for run_id in "${runs[@]}"; do
+            [ "${run_id}" = "${SELF_RUN_ID}" ] && continue
+            status=unknown
+            for _ in $(seq 1 12); do
+              status=$(gh api "repos/${REPO}/actions/runs/${run_id}" --jq .status)
+              [ "${status}" = "completed" ] && break
+              sleep 10
+            done
+            if [ "${status}" != "completed" ]; then
+              echo "::warning::run ${run_id} ignored cancel after 120s; forcing"
+              gh api -X POST "repos/${REPO}/actions/runs/${run_id}/force-cancel" \
+                >/dev/null || echo "::warning::force-cancel failed for ${run_id}"
+            fi
+          done
