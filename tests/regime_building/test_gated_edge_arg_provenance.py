@@ -1747,6 +1747,16 @@ def _next_y_identity(y: ContinuousState) -> ContinuousState:
     return y
 
 
+def _entry_x() -> float:
+    """Target-specific ENTRY law for `x`, which `src` does not carry.
+
+    A retained edge must give every target state a next-period value; `x` lives
+    only on the target, so `src` supplies it explicitly rather than relying on an
+    implicit initialization that no longer exists.
+    """
+    return 0.0
+
+
 def _u_src_reads_x_param(
     y: ContinuousState, work: DiscreteAction, x: FloatND
 ) -> FloatND:
@@ -1777,7 +1787,7 @@ def _make_gate_param_aliases_target_state_regimes(
         transition={"target": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity},
+        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
         actions={"work": DiscreteGrid(Work)},
         functions={
             "utility": _u_src_reads_x_param
@@ -1891,7 +1901,7 @@ def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
         transition={"target": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity},
+        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src_no_param},
         gated_edges={
@@ -1940,7 +1950,7 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
         transition={"target": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity},
+        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src_reads_v_arg_param},
         gated_edges={
@@ -1994,7 +2004,7 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
         transition={"target": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity},
+        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src_no_param},
         gated_edges={
@@ -2114,7 +2124,7 @@ def test_source_param_near_engine_name_still_solves():
         transition={"target": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity},
+        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src_no_param},
         gated_edges={
