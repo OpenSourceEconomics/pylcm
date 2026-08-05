@@ -232,11 +232,15 @@ _lcm/regime_building/
 │                            `None` masking) + DAG-reachability pruning of
 │                            broadcast states and actions
 ├── finalize.py           ← finalize_regimes: derived-categorical merge,
-│                            default-H injection, completeness validation;
-│                            output stays a plain lcm.regime.Regime
+│                            Koopmans-aggregator and certainty-equivalent
+│                            injection, completeness validation; output
+│                            stays a plain lcm.regime.Regime
 ├── phases.py             ← normalize_regime_phases: expand every regime
 │                            slot into per-phase RegimePhaseSpec slices
 │                            (the Phased grammar boundary)
+├── age_normalization.py  ← model-level normalization of age specialization
+├── age_specialization.py ← per-age-specialized node resolution and
+│                            grid-shape validation
 ├── canonicalize.py       ← canonicalize_regimes: rewrite every phase
 │                            slice's laws and regime transition into the
 │                            canonical target-granular form over exactly
@@ -250,11 +254,16 @@ _lcm/regime_building/
 │                            stochastic state transitions (raises
 │                            InvalidStateTransitionProbabilitiesError on
 │                            subscript-order mismatches)
-├── Q_and_F.py            ← build (Q, F) closure for solve / simulate
+├── Q_and_F.py            ← build (Q, F) closure for solve / simulate;
+│                            also resolves the utility/feasibility DAG,
+│                            whose two targets share one upstream chain
 ├── argmax.py             ← argmax helpers over action grids
 ├── max_Q_over_a.py       ← argmax / max over action grids
 ├── V.py                  ← value-function interpolation info
-├── w_dag.py              ← user-DAG resolution for the Koopmans aggregator
+├── w_dag.py              ← user-DAG resolution for the Koopmans
+│                            aggregator's *extra* params — those beyond
+│                            utility and CE, which the Bellman step wires
+│                            directly
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
 ├── ndimage.py            ← map-coordinates wrapper for continuous interp
