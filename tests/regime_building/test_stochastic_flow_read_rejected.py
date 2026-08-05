@@ -99,7 +99,7 @@ def _build_and_solve(*, live_functions, law: Any) -> None:
         regime_id_class=RegimeId,
         description="stochastic flow-read rejection",
     )
-    model.solve(params=PARAMS, log_level="off")
+    model.solve(params=PARAMS, log_level="debug")
 
 
 def test_utility_reading_a_stochastic_next_state_is_rejected():
