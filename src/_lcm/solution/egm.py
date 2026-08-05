@@ -11,6 +11,7 @@ import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -35,12 +36,15 @@ from _lcm.solution.contract import (
     SolverBuildContext,
 )
 from _lcm.typing import (
+    EconFunction,
+    EconFunctionsMapping,
     FlatParams,
     RegimeName,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
+    ActionName,
     Float1D,
     FloatND,
     StateName,
@@ -91,7 +95,19 @@ class EGM(Solver):
         the correspondence is determined, whatever the two regimes call it.
         Every message reports the regimes' own state names, never the solver's
         internal role vocabulary.
+
+        The regime must also keep the default Koopmans aggregator: the Euler
+        inversion the step runs is the one that aggregator implies.
         """
+        from _lcm.egm.preferences import (  # noqa: PLC0415
+            fail_if_custom_koopmans_aggregator,
+        )
+
+        fail_if_custom_koopmans_aggregator(
+            regime_name=context.regime_name,
+            user_regime=context.user_regimes[context.regime_name],
+            solver_name="EGM",
+        )
         continuous = tuple(
             context.regime_to_v_interpolation_info[
                 context.regime_name
@@ -136,6 +152,10 @@ class EGM(Solver):
             )
         )
         liquid_grid = context.grids[liquid_state].to_jax()
+        # The regime's single continuous action fills the consumption role, the
+        # same positional reading as the liquid state above. It is the argument
+        # the regime's felicity, its marginal, and its inverse are functions of.
+        consumption_action = next(iter(context.state_action_space.continuous_actions))
 
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
@@ -159,6 +179,11 @@ class EGM(Solver):
                     target_state=target_state,
                     return_param=self.return_param,
                     income_param=self.income_param,
+                    functions=context.functions,
+                    koopmans_aggregator=cast(
+                        "EconFunction", context.koopmans_aggregator
+                    ),
+                    consumption_action=consumption_action,
                 )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
@@ -296,6 +321,9 @@ def _build_egm_core(
     target_state: StateName,
     return_param: str,
     income_param: str,
+    functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
+    consumption_action: ActionName,
 ) -> Callable:
     """Build the jitted-able 1-D EGM core closing over the savings grid.
 
@@ -307,9 +335,29 @@ def _build_egm_core(
     (`{target}__next_{target_state}__...`) — that is the namespace the params
     template writes them under — so the role keyword stays private and the
     modeller's vocabulary reaches the template unchanged.
+
+    Preferences and the discount factor come from the regime itself: the
+    felicity trio is bound out of `functions` at each call, and beta is read
+    off the aggregator's own signature.
     """
     liquid_law = f"{target}__next_{target_state}"
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_discount_factor_reader,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(savings_grid),
+    )
+    read_discount_factor = get_discount_factor_reader(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
 
     def core(
         *,
@@ -325,8 +373,8 @@ def _build_egm_core(
             liquid_grid=liquid,
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
-            discount_factor=params["koopmans_aggregator__discount_factor"],
-            crra=params["utility__crra"],
+            discount_factor=read_discount_factor(params),
+            preferences=build_preferences(params),
             return_liquid=params[f"{liquid_law}__{return_param}"],
             income=params[f"{liquid_law}__{income_param}"],
         )
