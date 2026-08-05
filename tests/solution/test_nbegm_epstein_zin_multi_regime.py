@@ -19,6 +19,7 @@ import numpy as np
 from lcm import (
     NBEGM,
     AgeGrid,
+    CESAggregator,
     GridSearch,
     LinSpacedGrid,
     MarkovTransition,
@@ -26,7 +27,6 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
@@ -105,7 +105,7 @@ def _build_model(*, solver: Solver) -> Model:
             "savings": _savings,
         },
         constraints={"feasible": _feasible},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=solver,
     )

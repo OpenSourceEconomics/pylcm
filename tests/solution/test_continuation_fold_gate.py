@@ -18,12 +18,12 @@ from _lcm.egm import continuation
 from lcm import (
     NBEGM,
     AgeGrid,
+    CESAggregator,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
@@ -86,7 +86,7 @@ def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
         transition=_next_regime,
         functions=functions,
         constraints={"feasible": _feasible},
-        koopmans_aggregator=W_epstein_zin if epstein_zin else None,
+        koopmans_aggregator=CESAggregator() if epstein_zin else None,
         certainty_equivalent=PowerMean() if epstein_zin else None,
         solver=solver,
     )

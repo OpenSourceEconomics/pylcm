@@ -24,13 +24,13 @@ from lcm import (
     NBEGM,
     NNBEGM,
     AgeGrid,
+    CESAggregator,
     GridSearch,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     PowerMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
@@ -173,7 +173,7 @@ def _build_model(*, variant: str) -> Model:
             "credited": _credited,
         },
         constraints=constraints,
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=_build_solver(variant=variant),
     )

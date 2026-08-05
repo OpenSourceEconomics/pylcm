@@ -26,7 +26,7 @@ import pytest
 
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.regime_building.finalize import finalize_regimes
-from lcm import LinearExpectation, W_linear
+from lcm import LinearAggregator, LinearExpectation
 from tests.test_models.ds_housing_keeper import (
     HOUSING_GRID,
     LIQUID_ASSETS_GRID,
@@ -47,7 +47,7 @@ def _finalized_keeper_regimes() -> MappingProxyType:
     return finalize_regimes(
         user_regimes={"keeper": build_working_regime(), "dead": dead},
         derived_categoricals=MappingProxyType({}),
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
 

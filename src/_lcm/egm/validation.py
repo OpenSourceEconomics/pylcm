@@ -72,7 +72,7 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.exceptions import GridInitializationError, ModelInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
@@ -336,8 +336,9 @@ def _fail_if_custom_koopmans_aggregator(
     custom *solve-phase* aggregator would silently change the meaning of the
     solution. A `Phased` aggregator whose solve variant is the default is
     accepted — DC-EGM never reads the simulate variant, so a naive present-bias
-    regime (`koopmans_aggregator=Phased(solve=W_linear, simulate=beta_delta_W)`)
-    is admissible: the present bias enters only the simulate-phase
+    regime (`koopmans_aggregator=Phased(solve=LinearAggregator(),
+    simulate=beta_delta_W)`) is admissible: the present bias enters only the
+    simulate-phase
     re-optimization, outside the Euler inversion.
 
     A regime that declares nothing takes the model-level default, which this
@@ -346,13 +347,13 @@ def _fail_if_custom_koopmans_aggregator(
     """
     declared = user_regime.koopmans_aggregator
     solve_W = declared.solve if isinstance(declared, Phased) else declared
-    if solve_W is not None and solve_W is not W_linear:
+    if solve_W is not None and not isinstance(solve_W, LinearAggregator):
         msg = (
             f"Regime '{regime_name}' declares a custom solve-phase Koopmans "
             "aggregator. The DCEGM solver hard-codes the default aggregator "
             "`W = utility + discount_factor * CE` at solve time; remove the "
             "custom `koopmans_aggregator` (a `Phased` one whose solve variant "
-            "is `W_linear` is accepted) or use the brute-force solver."
+            "is `LinearAggregator()` is accepted) or use the brute-force solver."
         )
         raise ModelInitializationError(msg)
 

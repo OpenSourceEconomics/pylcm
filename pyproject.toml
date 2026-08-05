@@ -309,7 +309,10 @@ extend-immutable-calls = [
   "_lcm.certainty_equivalent.LinearExpectation",
   "_lcm.utils.containers.Unset",
   "lcm.LinearExpectation",
+  "lcm.LinearAggregator",
   "lcm.certainty_equivalent.LinearExpectation",
+  "lcm.koopmans_aggregation.LinearAggregator",
+  "LinearAggregator",
   "LinearExpectation",
   "Unset",
 ]
@@ -333,8 +336,7 @@ expand_tables = [
 collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
-src.exclude = [ "docs/**/*.ipynb" ]
-src.include = [ "src/", "tests/" ]
+src.include = [ "docs/", "src/", "tests/" ]
 # ty resolves third-party imports from this pixi env (the ty-pre-commit hook runs
 # `uv check --no-project`, so uv neither creates a `.venv` nor resolves deps). Run
 # `pixi install` once.

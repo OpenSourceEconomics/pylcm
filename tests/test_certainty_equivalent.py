@@ -14,6 +14,7 @@ from _lcm.certainty_equivalent import power_inverse, power_transform
 from lcm import (
     AgeGrid,
     CertaintyEquivalent,
+    CESAggregator,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
@@ -23,7 +24,6 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
-    W_epstein_zin,
     affine_breakpoint,
     categorical,
     fixed_transition,
@@ -316,10 +316,10 @@ def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """NBEGM with a certainty equivalent needs `W_epstein_zin` as the regime's `H`.
+    """NBEGM with a certainty equivalent needs a `CESAggregator` aggregator.
 
     The Euler inversion and period value read the aggregator's intertemporal
-    elasticity; with the default linear `H` the recursion the kernels implement
+    elasticity; with the default `LinearAggregator` the recursion the kernels implement
     is not the recursion the regime declares, so the combination must fail at
     model build.
     """
@@ -328,7 +328,7 @@ def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
         budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="CESAggregator"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
@@ -358,7 +358,7 @@ def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
                 "certainty_equivalent": PowerMean(),
                 "solver": nbegm,
                 "functions": dict(_NBEGM_FUNCTIONS),
-                "koopmans_aggregator": W_epstein_zin,
+                "koopmans_aggregator": CESAggregator(),
             },
             dead_kwargs={},
         )
@@ -418,7 +418,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
             "resources": _jump_resources,
             "savings": _savings,
         },
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -488,7 +488,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
             "resources": _ride_resources,
             "savings": _savings,
         },
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -563,7 +563,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
             "resources": _ride_resources,
             "savings": _savings,
         },
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -630,7 +630,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
             "resources": _ride_resources,
             "savings": _savings,
         },
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -702,7 +702,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
             "resources": _ride_resources,
             "savings": _savings,
         },
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
@@ -981,14 +981,14 @@ def test_nnbegm_rejects_a_non_power_mean_certainty_equivalent():
 
 
 def test_nnbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
-    """N-NB-EGM with a certainty equivalent needs `W_epstein_zin`, like NBEGM.
+    """N-NB-EGM with a certainty equivalent needs a `CESAggregator`, like NBEGM.
 
     The inner Euler inversion and period value read the aggregator's
-    intertemporal elasticity; with the default linear `H` the nested solve
+    intertemporal elasticity; with the default `LinearAggregator` the nested solve
     would run a recursion the regime does not declare, so the combination
     must fail at model build.
     """
-    with pytest.raises(RegimeInitializationError, match="W_epstein_zin"):
+    with pytest.raises(RegimeInitializationError, match="CESAggregator"):
         _make_model(
             alive_kwargs={
                 "certainty_equivalent": PowerMean(),
@@ -1541,7 +1541,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     """Build a two-regime Epstein-Zin model whose value function scales with `scale`.
 
     Every primitive is homogeneous of degree one in `scale` - the grids, the
-    income flow and both utilities - and `W_epstein_zin` and the power mean
+    income flow and both utilities - and `CESAggregator` and the power mean
     are themselves homogeneous of degree one. The solved value function of
     the model at `scale` is therefore exactly `scale` times the value
     function at `scale = 1`, and the optimal consumption grid point is
@@ -1576,7 +1576,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         },
         constraints={"budget": _budget},
         functions={"utility": utility_alive},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
@@ -1641,7 +1641,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         },
         constraints={"budget": _budget},
         functions={"utility": utility_alive},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )

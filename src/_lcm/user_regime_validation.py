@@ -23,7 +23,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
-from lcm.koopmans_aggregation import W_epstein_zin
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -548,11 +548,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.koopmans_aggregator is not W_epstein_zin:
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `W_epstein_zin` "
-                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
                 "inversion and period value read its intertemporal "
                 "elasticity. With a different aggregator the kernels would "
                 "solve a recursion the regime does not declare."

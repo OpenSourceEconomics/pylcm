@@ -30,9 +30,9 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     DiscreteGrid,
     ExtremeValueTasteShocks,
+    LinearAggregator,
     LinearExpectation,
     Phased,
-    W_linear,
     categorical,
 )
 from lcm.certainty_equivalent import PowerMean
@@ -325,7 +325,7 @@ def test_negm_regime_rejects_nonlinear_certainty_equivalent():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -348,7 +348,7 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -366,7 +366,7 @@ def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -392,7 +392,7 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
@@ -424,7 +424,7 @@ def test_finalize_composes_resources_with_a_phased_base():
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
