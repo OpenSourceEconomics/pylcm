@@ -112,7 +112,7 @@ def test_validation_vmaps_over_action_combos():
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
 
     df = result.to_dataframe()

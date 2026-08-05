@@ -1167,8 +1167,15 @@ def _make_stacked_model(
         "constraints": {"budget": _budget},
         "functions": {"utility": _utility_alive},
     }
-    working: dict[str, Any] = base | {"transition": _to_retired} | working_kwargs
-    retired: dict[str, Any] = base | {"transition": _to_dead} | retired_kwargs
+    # Staggered activity so each edge lands on a regime that is active in the
+    # next period, and no non-terminal regime survives into the last one:
+    # working (40) -> retired (41) -> dead (42).
+    working: dict[str, Any] = (
+        base | {"transition": _to_retired, "active": lambda age: age < 41}
+    ) | working_kwargs
+    retired: dict[str, Any] = (
+        base | {"transition": _to_dead, "active": lambda age: 41 <= age < 42}
+    ) | retired_kwargs
     return Model(
         regimes={
             "working": Regime(**working),
@@ -1294,8 +1301,8 @@ def test_linear_expectation_subclass_aggregate_is_honoured(x64_enabled: None):
         retired_kwargs={},
     )
     params = {"discount_factor": 0.95}
-    V_plain = plain.solve(params=params, log_level="off")
-    V_halved = halved.solve(params=params, log_level="off")
+    V_plain = plain.solve(params=params, log_level="debug")
+    V_halved = halved.solve(params=params, log_level="debug")
     assert not np.allclose(
         np.asarray(V_plain[0]["working"]), np.asarray(V_halved[0]["working"])
     )

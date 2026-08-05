@@ -122,16 +122,16 @@ def test_under_specified_signature_merging_distinct_grids_is_rejected():
         signature=lambda _age: "constant",
     )
     with pytest.raises(RegimeInitializationError, match="resolved nodes"):
-        _model(under_specified).solve(params=_PARAMS, log_level="off")
+        _model(under_specified).solve(params=_PARAMS, log_level="debug")
 
 
 def test_age_invariant_grid_reproduces_plain_solve():
     """An age-invariant `AgeSpecializedGrid` equals the plain fixed-grid solve."""
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
-    v_plain = _model(grid).solve(params=_PARAMS, log_level="off")
+    v_plain = _model(grid).solve(params=_PARAMS, log_level="debug")
     v_asg = _model(
         AgeSpecializedGrid(build=lambda _age: grid, signature=lambda _age: 0)
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v_plain[period]:
             continue
@@ -166,7 +166,7 @@ def test_moving_floor_no_nan_poisoning():
     (`-inf` may still appear at negative-wealth nodes where no positive consumption is
     affordable — that is legitimate infeasibility, not poisoning.)
     """
-    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="off")
+    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v[period]:
             continue
@@ -177,7 +177,7 @@ def test_moving_floor_no_nan_poisoning():
 
 def test_moving_floor_value_monotone_in_wealth():
     """V is nondecreasing in wealth at every working age (economic sanity)."""
-    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="off")
+    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
         if "alive" not in v[period]:
             continue
@@ -193,12 +193,12 @@ def test_moving_floor_value_monotone_in_wealth():
 def test_moving_floor_simulates_positive_consumption():
     """Forward simulation runs and gives finite, positive consumption for alive rows."""
     model = _model(_moving_floor_grid())
-    v = model.solve(params=_PARAMS, log_level="off")
+    v = model.solve(params=_PARAMS, log_level="debug")
     n = 200
     result = model.simulate(
         params=_PARAMS,
         period_to_regime_to_V_arr=v,
-        log_level="off",
+        log_level="debug",
         seed=1,
         initial_conditions={
             "wealth": jnp.linspace(1.0, 10.0, n),
@@ -220,7 +220,7 @@ def test_non_shape_invariant_grid_is_rejected():
         signature=int,
     )
     with pytest.raises(RegimeInitializationError, match="shape-invariant"):
-        _model(bad).solve(params=_PARAMS, log_level="off")
+        _model(bad).solve(params=_PARAMS, log_level="debug")
 
 
 def test_weak_type_change_across_ages_is_rejected():
@@ -263,7 +263,7 @@ def test_weak_type_change_across_ages_is_rejected():
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match=r"weak_type"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_every_grid_trait_is_described():
@@ -318,7 +318,7 @@ def test_validation_rejects_actual_node_count_change_without_n_points():
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match=r"n_points|node shape"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_validation_rejects_node_dtype_change():
@@ -344,7 +344,7 @@ def test_validation_rejects_node_dtype_change():
         signature=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match="dtype"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
@@ -362,7 +362,7 @@ def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
 
     grid = AgeSpecializedGrid(build=lambda _age: _LyingGrid(), signature=lambda _age: 0)
     with pytest.raises(RegimeInitializationError, match="declares n_points"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_grid_mode_switch_across_ages_is_rejected():
@@ -381,7 +381,7 @@ def test_grid_mode_switch_across_ages_is_rejected():
 
     grid = AgeSpecializedGrid(build=build, signature=lambda age: age == 20)
     with pytest.raises(RegimeInitializationError, match="supplied at runtime"):
-        _model(grid).solve(params=_PARAMS, log_level="off")
+        _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
 def test_age_specialized_grid_on_never_active_regime_is_rejected():
@@ -426,5 +426,5 @@ def test_builder_undefined_outside_active_ages_still_solves():
         return LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
 
     grid = AgeSpecializedGrid(build=build, signature=lambda _age: 0)
-    v = _model(grid).solve(params=_PARAMS, log_level="off")
+    v = _model(grid).solve(params=_PARAMS, log_level="debug")
     assert any("alive" in v[period] for period in range(_N))
