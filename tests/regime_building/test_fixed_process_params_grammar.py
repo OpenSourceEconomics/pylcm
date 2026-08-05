@@ -161,7 +161,11 @@ def test_a_law_left_to_runtime_still_cannot_be_entered() -> None:
     source has no value to read. The message names the state and the parameters
     that block it.
     """
-    with pytest.raises(
-        ModelInitializationError, match="passes 'mu', 'sigma', 'n_std' at runtime"
-    ):
+    with pytest.raises(ModelInitializationError) as excinfo:
         _entered_process_model({})
+
+    message = str(excinfo.value)
+    assert "stochastic process 'shock'" in message
+    assert "at runtime" in message
+    for param_name in _LAW:
+        assert f"'{param_name}'" in message
