@@ -486,6 +486,7 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
+            solve_functions=solution.functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -623,6 +624,29 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
+                    # A process the source does not carry has to be placed on
+                    # the target's support from inside the source's Bellman
+                    # equation -- as the process's own unconditional weights
+                    # without an entry law, and as a coordinate on its nodes
+                    # with one. Either way that support is built where only the
+                    # source's parameters are readable, so a law the target
+                    # parameterizes at runtime cannot be entered at all.
+                    if isinstance(
+                        target_grid, _ContinuousStochasticProcess
+                    ) and state_name not in set(source_slice.grid_states):
+                        entry_error = _runtime_param_entry_error(
+                            phase_name=phase_name,
+                            phase_reachability=phase_reachability,
+                            ages=ages,
+                            period=period,
+                            source=source,
+                            target=target,
+                            state_name=state_name,
+                            target_grid=target_grid,
+                        )
+                        if entry_error is not None:
+                            error_messages.append(entry_error)
+                            continue
                     if _has_valid_state_handoff(
                         source_slice=source_slice,
                         target=target,
@@ -638,18 +662,6 @@ def _state_handoff_errors(
                     # the source would have to supply -- has no next-period
                     # value here.
                     if isinstance(target_grid, _IIDProcess):
-                        entry_error = _runtime_param_entry_error(
-                            phase_name=phase_name,
-                            phase_reachability=phase_reachability,
-                            ages=ages,
-                            period=period,
-                            source=source,
-                            target=target,
-                            state_name=state_name,
-                            target_grid=target_grid,
-                        )
-                        if entry_error is not None:
-                            error_messages.append(entry_error)
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
@@ -686,16 +698,18 @@ def _runtime_param_entry_error(
     source: RegimeName,
     target: RegimeName,
     state_name: StateName,
-    target_grid: _IIDProcess,
+    target_grid: _ContinuousStochasticProcess,
 ) -> str | None:
-    """Return an error if an entered IID process needs runtime parameters.
+    """Return an error if an entered process needs runtime parameters.
 
-    The entry weights are the process's unconditional row, and they are
-    evaluated inside the *source's* Bellman equation, which reads only the
-    source's own parameters. A law supplied at runtime therefore has no value
-    the source can read: restating it under the source would create a second
-    knob for one law, free to disagree with the nodes the target's value
-    function is built on. Entry is available for a law fixed at construction.
+    Entering a process means placing the next value on the target's support
+    from inside the *source's* Bellman equation, which reads only the source's
+    own parameters — as the process's unconditional weights without an entry
+    law, and as a coordinate on its nodes with one. A law supplied at runtime
+    therefore has no value the source can read: restating it under the source
+    would create a second knob for one law, free to disagree with the nodes the
+    target's value function is built on. Entry is available for a law fixed at
+    construction, whether through the process constructor or `fixed_params`.
 
     Args:
         phase_name: Phase whose slices are being checked.
@@ -722,11 +736,12 @@ def _runtime_param_entry_error(
         f"period {period + 1} (age {_display_age(ages, period + 1)}), "
         f"target '{target}' retains a {status.name} edge. The target declares "
         f"stochastic process '{state_name}', which the source does not carry, "
-        f"so it is entered at the process's own law. That law is priced in "
-        f"'{source}', which reads only its own parameters, but '{state_name}' "
-        f"passes {named} at runtime. Fix '{state_name}' at construction, "
-        f"declare it on '{source}', or narrow the transition's static target "
-        f"support."
+        f"so entering it means placing the next value on that process's own "
+        f"support. That support is built in '{source}', which reads only its "
+        f"own parameters, but '{state_name}' passes {named} at runtime. Fix "
+        f"'{state_name}' at construction — in the process itself or through "
+        f"`Model(fixed_params=...)` — declare it on '{source}', or narrow the "
+        f"transition's static target support."
     )
 
 
@@ -834,6 +849,7 @@ def _build_solution_phase(
         variables=variables,
         phase_reachability=phase_reachability,
         source_regime_name=regime_name,
+        phase_name="solution",
     )
 
     flat_param_names = _engine_flat_param_names(
@@ -1321,6 +1337,7 @@ def _build_simulation_phase(
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
+    solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_transition_laws: TransitionLaws,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
@@ -1366,6 +1383,10 @@ def _build_simulation_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
+        solve_functions: The solve phase's published functions, read for the
+            weight laws the decision functions need but the simulation phase
+            does not build — a declared entry law into a process is split into
+            node indices plus weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
         solve_transition_laws: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
@@ -1397,6 +1418,7 @@ def _build_simulation_phase(
         variables=variables,
         phase_reachability=simulation_reachability,
         source_regime_name=regime_name,
+        phase_name="simulation",
     )
     functions = core.functions
     constraints = core.constraints
@@ -1484,11 +1506,22 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
+        # The decision functions evaluate the solve representation, so any
+        # weight law the solve phase built and this phase did not — the split
+        # of a declared entry law into a process — is supplied from there.
+        decision_functions_pool = MappingProxyType(
+            {
+                name: func
+                for name, func in solve_functions.items()
+                if name.startswith("weight_") and name not in functions
+            }
+            | dict(functions)
+        )
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
-            functions=functions,
+            functions=decision_functions_pool,
             constraints=constraints,
             transitions=solve_transitions,
             transition_laws=solve_transition_laws,
@@ -1776,6 +1809,7 @@ def _process_regime_core(
     variables: Variables,
     phase_reachability: PhaseReachability,
     source_regime_name: RegimeName,
+    phase_name: PhaseName,
 ) -> _CoreResult:
     """Process one phase's regime functions and transitions.
 
@@ -1799,6 +1833,11 @@ def _process_regime_core(
             of which targets need a continuation built.
         source_regime_name: This regime's name, used to read its retained
             targets from `phase_reachability`.
+        phase_name: Phase being built. Only the solution phase reads a target's
+            value function, so only there does a declared entry law into a
+            process have to be split into node indices plus weights; simulation
+            stores the process's physical value and takes the declared one
+            directly.
 
     Returns:
         Core processing result with functions, constraints, transitions, stochastic
@@ -1915,11 +1954,23 @@ def _process_regime_core(
     # an explicit entry law for it, which is the more specific statement and
     # wins.
     carried_processes = set(variables.process_names)
-    target_process_grids = {
+    explicit_entry_process_grids = {
         (user_regime, process): grid
         for (user_regime, process), grid in target_process_grids.items()
-        if process in carried_processes
-        or f"{user_regime}__next_{process}" not in flat_nested_transitions
+        if process not in carried_processes
+        and f"{user_regime}__next_{process}" in flat_nested_transitions
+    }
+    # Only the solution phase indexes the target's value function, so only there
+    # is the declared physical value split into node indices plus weights.
+    # Simulation stores the process's physical value, so the declared law is
+    # exactly what the state should take and passes through untouched.
+    split_entry_process_grids = (
+        explicit_entry_process_grids if phase_name == "solution" else {}
+    )
+    target_process_grids = {
+        key: grid
+        for key, grid in target_process_grids.items()
+        if key not in explicit_entry_process_grids
     }
     # Only an IID process can be entered without a handoff, which
     # `_state_handoff_errors` has already enforced.
@@ -1978,11 +2029,31 @@ def _process_regime_core(
             )
             for (user_regime, process), grid in entered_process_grids.items()
         }
+        # A declared entry law names a physical value, but the target holds its
+        # value function on the process's nodes, so the law is split in two: the
+        # axis is the node vector, and the weights place the declared value on
+        # it. Every law for a process state therefore reaches the engine in one
+        # representation -- support indices plus weights.
+        | {
+            f"weight_{user_regime}__next_{process}": (
+                _get_explicit_entry_weights_for_process(
+                    grid=grid,
+                    entry_law=processed_functions[f"{user_regime}__next_{process}"],
+                )
+            )
+            for (user_regime, process), grid in split_entry_process_grids.items()
+        }
+        | {
+            f"{user_regime}__next_{process}": _get_entry_next_for_process(
+                grid=grid.to_jax()
+            )
+            for (user_regime, process), grid in split_entry_process_grids.items()
+        }
     )
 
     process_transition_keys = {
         f"{user_regime}__next_{process}"
-        for user_regime, process in target_process_grids
+        for user_regime, process in (*target_process_grids, *split_entry_process_grids)
     }
     internal_transition = {
         func_name: processed_functions[func_name]
@@ -2010,6 +2081,14 @@ def _process_regime_core(
         processed_functions=processed_functions,
         all_grids=all_grids,
         entered_processes=frozenset(entered_process_grids),
+        support_index_processes=frozenset(
+            (
+                *carried_process_grids,
+                *entered_process_grids,
+                *split_entry_process_grids,
+            )
+        ),
+        phase_name=phase_name,
     )
 
     next_regime_func, next_regime_cells = _process_next_regime_cells(
@@ -2044,6 +2123,8 @@ def _build_transition_laws(
     processed_functions: Mapping[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     entered_processes: frozenset[tuple[RegimeName, ProcessName]],
+    support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
+    phase_name: PhaseName,
 ) -> TransitionLaws:
     """Describe every target's transition laws, after synthesis has built them.
 
@@ -2061,9 +2142,19 @@ def _build_transition_laws(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         entered_processes: Frozenset of `(target, process)` pairs entered at the
             process's own unconditional law.
+        support_index_processes: Frozenset of `(target, process)` pairs whose
+            synthesized law emits node indices in this phase.
+        phase_name: Phase being described. The solution phase indexes a target's
+            value function, so every process law it holds must emit node
+            indices; simulation stores physical process values instead.
 
     Returns:
         Immutable mapping of target regime names to their transition laws.
+
+    Raises:
+        ModelInitializationError: If a law leads into a continuous stochastic
+            process without emitting node indices, which no value-function axis
+            can be indexed by.
 
     """
     laws: dict[RegimeName, MappingProxyType[TransitionFunctionName, TransitionLawInfo]]
@@ -2074,16 +2165,32 @@ def _build_transition_laws(
             state_name = next_state_name.removeprefix("next_")
             qualified_name = qname_from_tree_path((target, next_state_name))
             weight_name = f"weight_{qualified_name}"
+            continuous_process = isinstance(
+                all_grids.get(target, MappingProxyType({})).get(state_name),
+                _ContinuousStochasticProcess,
+            )
+            emits_support_index = (target, state_name) in support_index_processes
+            if (
+                phase_name == "solution"
+                and continuous_process
+                and not emits_support_index
+            ):
+                msg = (
+                    f"The law '{qualified_name}' leads into stochastic process "
+                    f"'{state_name}' of regime '{target}', whose value function "
+                    f"is stored on that process's nodes, but it was not "
+                    f"synthesized to emit node indices. A law reaching a process "
+                    f"must be placed on its support before it can index one."
+                )
+                raise ModelInitializationError(msg)
             target_laws[next_state_name] = TransitionLawInfo(
                 target=target,
                 next_state_name=next_state_name,
                 qualified_name=qualified_name,
                 stochastic=weight_name in processed_functions,
-                continuous_process=isinstance(
-                    all_grids.get(target, MappingProxyType({})).get(state_name),
-                    _ContinuousStochasticProcess,
-                ),
+                continuous_process=continuous_process,
                 intrinsic_entry=(target, state_name) in entered_processes,
+                emits_support_index=emits_support_index,
                 weight_name=(
                     weight_name if weight_name in processed_functions else None
                 ),
@@ -2841,6 +2948,52 @@ def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunct
         return transition_probs[0]
 
     return entry_weights
+
+
+def _get_explicit_entry_weights_for_process(
+    *, grid: _ContinuousStochasticProcess, entry_law: UserFunction
+) -> UserFunction:
+    """Get the weights that place a declared entry value on a process's nodes.
+
+    A declared entry law names a physical value, but a discretized process holds
+    its value function only at its nodes, so the value enters as the lottery
+    over adjacent nodes whose mean coordinate it is — the hat weights of linear
+    interpolation. On a node the weights are one-hot, so naming a support point
+    reads that point alone; off the support the continuation is the linear
+    interpolation of the target's value function, which is the only reading its
+    nodes support. A value outside the support enters at the nearest node,
+    since the process has no representation beyond its own range.
+
+    Args:
+        grid: The target's process grid, whose law is fixed at construction —
+            `_state_handoff_errors` rejects entry into a runtime-parameterized
+            one, because the source cannot read the target's parameters.
+        entry_law: The source's declared law for this state, returning a
+            physical value.
+
+    Returns:
+        Callable with the entry law's own arguments, returning one weight per
+        node.
+
+    """
+    gridpoints = grid.to_jax()
+    n_points = gridpoints.shape[0]
+    arg_names = {
+        name: annotation
+        for name, annotation in get_annotations(entry_law).items()
+        if name != "return"
+    }
+
+    @with_signature(args=arg_names, return_annotation="FloatND", enforce=False)
+    def explicit_entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        value = entry_law(**kwargs)
+        coordinate = jnp.clip(
+            get_irreg_coordinate(value=value, points=gridpoints), 0.0, n_points - 1
+        )
+        distance = jnp.abs(jnp.arange(n_points, dtype=gridpoints.dtype) - coordinate)
+        return jnp.clip(1.0 - distance, 0.0, 1.0)
+
+    return explicit_entry_weights
 
 
 def _validate_categoricals(

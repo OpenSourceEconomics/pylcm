@@ -12,9 +12,7 @@ at exponent `1 - 1/psi`, the other the continuation lottery at exponent
 `1 - risk_aversion` — so both route through one stable evaluation.
 """
 
-import jax.numpy as jnp
-
-from _lcm.power_mean import weighted_power_mean
+from _lcm.power_mean import weighted_power_mean_of_pair
 from lcm.typing import FloatND
 
 __all__ = ["W_epstein_zin", "W_linear"]
@@ -52,12 +50,10 @@ def W_epstein_zin(
         The aggregated state-action value, in the same units as its inputs.
 
     """
-    utility, CE = jnp.broadcast_arrays(utility, CE)
-    weight_utility, weight_CE = jnp.broadcast_arrays(
-        1.0 - discount_factor, discount_factor
-    )
-    return weighted_power_mean(
-        values=jnp.stack((utility, CE), axis=-1),
-        weights=jnp.stack((weight_utility, weight_CE), axis=-1),
+    return weighted_power_mean_of_pair(
+        first=utility,
+        second=CE,
+        first_weight=1.0 - discount_factor,
+        second_weight=discount_factor,
         exponent=1.0 - 1.0 / intertemporal_elasticity_of_substitution,
     )
