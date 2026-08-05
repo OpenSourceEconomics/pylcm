@@ -11,8 +11,12 @@ uniform law, or on a symmetric law with a linear payoff, the weighted and
 unweighted means coincide and a test cannot tell them apart -- the uniform case
 is kept below as the negative control rather than as evidence.
 
-Oracles come from `numpy.polynomial.hermite.hermgauss`, which shares no code with
-the grid construction under test.
+The four families below discretize in the two ways pylcm offers -- Gauss-Hermite
+quadrature and CDF binning over an equally spaced grid -- so a law that is priced
+correctly under one scheme is not assumed to be priced correctly under the other.
+
+Oracles come from `numpy.polynomial.hermite.hermgauss` and `scipy.stats.norm`,
+neither of which shares code with the grid construction under test.
 """
 
 import math
@@ -21,6 +25,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.stats import norm
 
 from _lcm.grids import Grid
 from lcm import (
@@ -30,6 +35,7 @@ from lcm import (
     MarkovTransition,
     Model,
     NormalIIDProcess,
+    NormalMixtureIIDProcess,
     Regime,
     UniformIIDProcess,
     categorical,
@@ -77,6 +83,31 @@ def _gauss_hermite(n_points: int) -> tuple[np.ndarray, np.ndarray]:
     """
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(n_points)
     return math.sqrt(2.0) * raw_nodes, raw_weights / math.sqrt(math.pi)
+
+
+def _equally_spaced(
+    *, mu: float, sigma: float, n_std: float, n_points: int
+) -> np.ndarray:
+    """Return `n_points` equally spaced nodes spanning `mu +/- n_std * sigma`."""
+    return np.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points)
+
+
+def _bin_probabilities(
+    *, nodes: np.ndarray, cdf: Callable[[np.ndarray], np.ndarray]
+) -> np.ndarray:
+    """Return the probability each equally spaced node carries under `cdf`.
+
+    Every node owns the interval between the midpoints to its neighbours, and
+    the two outer nodes additionally absorb the tail beyond the grid, so the
+    probabilities sum to one whatever the law puts outside `nodes`.
+    """
+    step = nodes[1] - nodes[0]
+    upper = cdf(nodes + 0.5 * step)
+    lower = cdf(nodes - 0.5 * step)
+    probabilities = upper - lower
+    probabilities[0] = upper[0]
+    probabilities[-1] = 1.0 - lower[-1]
+    return probabilities
 
 
 def _build_model(
@@ -162,6 +193,92 @@ def test_lognormal_gauss_hermite_entry_weights_an_asymmetric_law() -> None:
     model = _build_model(
         process=LogNormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0),
         target_utility=_shock_utility,
+        coarse=False,
+        enable_jit=False,
+    )
+    got = _source_value(
+        model,
+        {
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
+            "target": {"utility": {}},
+        },
+    )
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_binned_normal_entry_weights_a_nonlinear_payoff() -> None:
+    """A CDF-binned normal is priced at its bin probabilities, not uniformly.
+
+    The grid is equally spaced, so the nodes carry no information about the
+    law: only the probabilities do. Squaring the payoff and shifting the mean
+    off centre keeps the weighted and unweighted answers apart.
+    """
+    nodes = _equally_spaced(mu=-0.2, sigma=0.8, n_std=2.5, n_points=5)
+    weights = _bin_probabilities(
+        nodes=nodes,
+        cdf=lambda x: norm.cdf(x, loc=-0.2, scale=0.8),
+    )
+    expected = float(np.dot(nodes**2, weights))
+
+    model = _build_model(
+        process=NormalIIDProcess(
+            n_points=5, gauss_hermite=False, mu=-0.2, sigma=0.8, n_std=2.5
+        ),
+        target_utility=_squared_shock_utility,
+        coarse=False,
+        enable_jit=False,
+    )
+    got = _source_value(
+        model,
+        {
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
+            "target": {"utility": {}},
+        },
+    )
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_normal_mixture_entry_weights_a_bimodal_law() -> None:
+    """A two-component mixture is priced at the mixture's own bin probabilities.
+
+    A mixture puts most of its mass on one component, so its probabilities are
+    strongly asymmetric across an equally spaced grid -- the shape furthest
+    from the uniform weights that ignoring the law would supply.
+    """
+    p1, mu1, sigma1, mu2, sigma2 = 0.8, -0.5, 0.3, 1.5, 0.7
+    mean = p1 * mu1 + (1 - p1) * mu2
+    std = math.sqrt(
+        p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean**2
+    )
+    nodes = _equally_spaced(mu=mean, sigma=std, n_std=2.5, n_points=7)
+    weights = _bin_probabilities(
+        nodes=nodes,
+        cdf=lambda x: (
+            p1 * norm.cdf(x, loc=mu1, scale=sigma1)
+            + (1 - p1) * norm.cdf(x, loc=mu2, scale=sigma2)
+        ),
+    )
+    expected = float(np.dot(nodes**2, weights))
+
+    model = _build_model(
+        process=NormalMixtureIIDProcess(
+            n_points=7,
+            n_std=2.5,
+            p1=p1,
+            mu1=mu1,
+            sigma1=sigma1,
+            mu2=mu2,
+            sigma2=sigma2,
+        ),
+        target_utility=_squared_shock_utility,
         coarse=False,
         enable_jit=False,
     )

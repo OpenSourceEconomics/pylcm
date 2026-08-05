@@ -65,6 +65,7 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
@@ -79,6 +80,10 @@ def build_regimes_and_template(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
+        params_already_consumed: Flat keys the process-law binder resolved and
+            acted on. They are broadcasts, so they stay in `fixed_params` for
+            the slots they may still serve; naming them here keeps a broadcast
+            that served only a bound process from reading as an unknown key.
 
     Returns:
         Tuple of (regimes, params_template).
@@ -100,6 +105,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            params_already_consumed=params_already_consumed,
             prepared_structure=prepared_structure,
         )
 
@@ -113,6 +119,7 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
@@ -124,6 +131,8 @@ def _build_regimes_and_template_with_fixed_params(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
+        params_already_consumed: Flat keys the process-law binder resolved and
+            acted on.
 
     Returns:
         Tuple of regimes and params_template with fixed params
@@ -140,7 +149,9 @@ def _build_regimes_and_template_with_fixed_params(
     raw_params_template = create_params_template(raw_regimes)
 
     fixed_flat_params = _resolve_fixed_params(
-        fixed_params=dict(fixed_params), template=raw_params_template
+        fixed_params=dict(fixed_params),
+        template=raw_params_template,
+        already_consumed=params_already_consumed,
     )
     if has_series(fixed_flat_params):
         fixed_flat_params = convert_series_in_params(
@@ -475,17 +486,28 @@ def _resolve_fixed_params(
     *,
     fixed_params: dict[str, object],
     template: ParamsTemplate,
+    already_consumed: frozenset[str],
 ) -> FlatParams:
     """Resolve fixed_params against the params template.
 
     Like `process_params`, support model/regime/function level specification, but
     do NOT require all template keys to be present — only match what's provided.
 
+    Args:
+        fixed_params: Parameters fixed at model initialization.
+        template: The params template to resolve against.
+        already_consumed: Flat keys the process-law binder acted on, which the
+            template no longer holds a slot for.
+
+    Returns:
+        The resolved flat params.
+
     """
     return broadcast_to_template(
         params=fixed_params,
         template=template,
         required=False,
+        already_consumed=already_consumed,
     )
 
 

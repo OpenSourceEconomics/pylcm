@@ -57,7 +57,7 @@ def identity(shock: ScalarFloat) -> FloatND:
 
 
 def source_value(model: Model, params: dict) -> float:
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="debug")
     p = max(period for period, regimes in solution.items() if "source" in regimes)
     return float(np.asarray(solution[p]["source"]).ravel()[0])
 

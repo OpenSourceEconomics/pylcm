@@ -34,7 +34,7 @@ def _solve(
     )
     return model.solve(
         params=toy.build_params(old_discrete_action=old_discrete_action),
-        log_level="off",
+        log_level="debug",
     )
 
 

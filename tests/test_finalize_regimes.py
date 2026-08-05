@@ -12,7 +12,14 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, W_linear, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinearAggregator,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -93,7 +100,7 @@ def test_user_regimes_are_finalized_with_the_model_level_aggregator() -> None:
     does not."""
     work = _build_work_regime()
     model = _build_model(work)
-    assert model.user_regimes["work"].koopmans_aggregator is W_linear
+    assert model.user_regimes["work"].koopmans_aggregator == LinearAggregator()
     assert work.koopmans_aggregator is None
 
 

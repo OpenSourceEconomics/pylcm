@@ -104,7 +104,7 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     """
     model = _bonus_model()
     params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     regime = model._regimes["retirement"]
     period = 0
@@ -195,7 +195,7 @@ def test_off_grid_replacement_never_scores_below_the_grid_pair():
                 ),
             },
             period_to_regime_to_V_arr=None,
-            log_level="off",
+            log_level="debug",
         )
     finally:
         simulate_module._redecide_branch_and_read_policy = original

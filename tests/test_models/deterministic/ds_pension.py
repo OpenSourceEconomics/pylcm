@@ -37,6 +37,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    LinearAggregator,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -44,7 +45,14 @@ from lcm import (
 )
 from lcm.regime import Regime
 from lcm.solvers import GridSearch, Solver
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
@@ -57,10 +65,24 @@ class RegimeId:
 
 
 def _crra(consumption: FloatND, crra: float) -> FloatND:
+    # `jnp.where` evaluates both branches, so the unselected one must stay
+    # finite: at `crra == 1` the power branch is `c**0 / 0`, and while that
+    # infinity is discarded from the primal it reaches the derivative as
+    # `0 * inf`, giving a NaN marginal utility for a perfectly ordinary model.
+    # Substituting an exponent of one there costs nothing — the branch is not
+    # selected — and leaves `c / 1` behind instead.
+    #
+    # The predicate is exact equality on purpose. This felicity omits the `-1`
+    # that would make the power branch tend to `log` as `crra -> 1`, so the two
+    # branches genuinely differ by `1 / (1 - crra)` nearby. Widening the test to
+    # a tolerance band would not remove a discontinuity but introduce one, of
+    # size `1 / tol`.
+    is_log = crra == 1.0
+    safe_exponent = jnp.where(is_log, 1.0, 1.0 - crra)
     return jnp.where(
-        crra == 1.0,
+        is_log,
         jnp.log(consumption),
-        consumption ** (1.0 - crra) / (1.0 - crra),
+        consumption**safe_exponent / safe_exponent,
     )
 
 
@@ -79,6 +101,11 @@ def utility_retired(consumption: ContinuousAction, crra: float) -> FloatND:
 def bequest(liquid: ContinuousState, crra: float) -> FloatND:
     """Terminal value: consume remaining liquid wealth (the pension is paid out)."""
     return _crra(liquid, crra)
+
+
+def inverse_marginal_utility(marginal_continuation: FloatND, crra: float) -> FloatND:
+    """Inverse of `u'(c) = c**(-crra)`; the work disutility is additive."""
+    return marginal_continuation ** (-1.0 / crra)
 
 
 def _pension_post_decision(
@@ -199,6 +226,8 @@ def get_model(
     dead_liquid_grid: ContinuousGrid | None = None,
     solvers: dict[str, Solver] | None = None,
     laws: dict[str, Callable] | None = None,
+    koopmans_aggregator: UserFunction = LinearAggregator(),
+    analytic_inverse_marginal_utility: bool = True,
     enable_jit: bool = True,
 ) -> Model:
     """Create the three-regime (working, retired, dead) DS pension model.
@@ -229,6 +258,14 @@ def get_model(
             A name absent from the mapping keeps this module's own function. Use
             it to vary a law's parameter spellings without varying its
             behaviour.
+        koopmans_aggregator: Model-level Bellman aggregator, defaulting to
+            pylcm's `utility + discount_factor * CE`.
+        analytic_inverse_marginal_utility: Whether a regime solved by an
+            endogenous-grid method declares the closed-form `(u')^-1`. With
+            `False` those regimes declare only `utility`, so the Euler equation
+            is inverted numerically. A brute-force regime never declares it: it
+            runs no Euler inversion, so `marginal_continuation` would surface as
+            one of its parameters.
         enable_jit: Whether the model JIT-compiles its kernels. Pass `False` to
             run the same solve eagerly.
 
@@ -241,6 +278,8 @@ def get_model(
     """
     solvers = solvers or {}
     laws = laws or {}
+    working_solver = solvers.get("working", GridSearch())
+    retired_solver = solvers.get("retired", GridSearch())
     liquid_working = laws.get("next_liquid_working", next_liquid_working)
     liquid_retiring = laws.get("next_liquid_retiring", next_liquid_retiring)
     pension_working = laws.get("next_pension_working", next_pension_working)
@@ -273,9 +312,14 @@ def get_model(
             "working": MarkovTransition(prob_stay_working),
             "retired": MarkovTransition(prob_retire),
         },
-        functions={"utility": utility_working},
+        functions={
+            "utility": utility_working,
+            **_euler_inversion_functions(
+                solver=working_solver, analytic=analytic_inverse_marginal_utility
+            ),
+        },
         active=lambda age, ra=retirement_age: age < ra,
-        solver=solvers.get("working", GridSearch()),
+        solver=working_solver,
     )
     retired = Regime(
         actions={"consumption": consumption_grid},
@@ -291,9 +335,14 @@ def get_model(
             "retired": MarkovTransition(prob_stay_retired),
             "dead": MarkovTransition(prob_die),
         },
-        functions={"utility": utility_retired},
+        functions={
+            "utility": utility_retired,
+            **_euler_inversion_functions(
+                solver=retired_solver, analytic=analytic_inverse_marginal_utility
+            ),
+        },
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
-        solver=solvers.get("retired", GridSearch()),
+        solver=retired_solver,
     )
     dead = Regime(
         transition=None,
@@ -305,8 +354,18 @@ def get_model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        koopmans_aggregator=koopmans_aggregator,
         enable_jit=enable_jit,
     )
+
+
+def _euler_inversion_functions(
+    *, solver: Solver, analytic: bool
+) -> dict[str, Callable]:
+    """The closed-form `(u')^-1` entry a regime declares, if it needs one."""
+    if solver.requires_continuation and analytic:
+        return {"inverse_marginal_utility": inverse_marginal_utility}
+    return {}
 
 
 def get_params(
@@ -328,12 +387,17 @@ def get_params(
     `pension_payout_return` defaults to `1 + return_pension` (the pension balance is
     paid out earning its own return at retirement); pass a value to override the
     convention pending confirmation against `fun.m`.
+
+    `crra` is written once at the model level: one risk aversion is shared by every
+    regime's felicity and by the closed-form `(u')^-1` an endogenous-grid regime
+    declares, so the same tree fits the brute and the EGM variants of the model.
     """
     if pension_payout_return is None:
         pension_payout_return = 1.0 + return_pension
     return {
+        "crra": crra,
         "working": {
-            "utility": {"crra": crra, "work_disutility": work_disutility},
+            "utility": {"work_disutility": work_disutility},
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "working": {
                 "next_liquid": {"return_liquid": return_liquid, "wage": wage},
@@ -354,7 +418,6 @@ def get_params(
             },
         },
         "retired": {
-            "utility": {"crra": crra},
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "retired": {
                 "next_liquid": {
@@ -371,5 +434,4 @@ def get_params(
                 "next_regime": {"final_age_alive": final_age_alive},
             },
         },
-        "dead": {"utility": {"crra": crra}},
     }

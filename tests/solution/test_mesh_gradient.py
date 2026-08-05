@@ -11,6 +11,7 @@ import numpy as np
 
 from _lcm.egm.mesh_gradient import region_aware_gradient, switch_mask
 from _lcm.egm.two_asset_inverse import invert_acon_cloud
+from tests.solution._crra_preferences import crra_preferences
 
 _DISCOUNT = 0.95
 _CRRA = 2.0
@@ -24,7 +25,7 @@ def test_value_grad_m_is_marginal_utility():
         consumption=consumption,
         post_decision_grad_b=jnp.array([1.0, 1.0, 1.0]),
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
     )
     np.testing.assert_allclose(
         np.asarray(gradient.value_grad_m), np.asarray(consumption ** (-_CRRA))
@@ -38,7 +39,7 @@ def test_value_grad_n_is_discounted_post_decision_gradient():
         consumption=jnp.array([1.0, 1.0, 1.0]),
         post_decision_grad_b=grad_b,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
     )
     np.testing.assert_allclose(
         np.asarray(gradient.value_grad_n), np.asarray(_DISCOUNT * grad_b)
@@ -61,14 +62,14 @@ def test_value_grad_m_matches_the_constrained_region_inverse():
         w_b_at_zero_a=w_b,
         w_a_at_zero_a=consumption ** (-_CRRA) / _DISCOUNT,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
     )
     gradient = region_aware_gradient(
         consumption=cloud.consumption,
         post_decision_grad_b=w_b,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
     )
     np.testing.assert_allclose(
         np.asarray(gradient.value_grad_m), np.asarray(cloud.value_grad_m), rtol=1e-12

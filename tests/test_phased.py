@@ -18,13 +18,13 @@ from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     NormalIIDProcess,
     Phased,
-    W_linear,
     categorical,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -322,7 +322,7 @@ def test_carried_state_without_law_of_motion_is_rejected() -> None:
         finalize_regimes(
             user_regimes={"regime": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -624,7 +624,7 @@ def _simulate_income_panel(
             "income": jnp.array([2.0, 4.0]),
             "regime_id": jnp.array([_RegimeId.working] * 2),
         },
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe().query("regime_name == 'working'")
     return df.sort_values(["subject_id", "period"])["income"].to_numpy()

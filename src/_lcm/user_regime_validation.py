@@ -23,7 +23,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
-from lcm.koopmans_aggregation import W_epstein_zin
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -454,10 +454,12 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     if not offending_actions:
         return []
     return [
-        "Action grids cannot be marked `distributed=True` — distribution "
-        "shards V-array axes, which come from states. Move `distributed=True` "
-        "to the corresponding state grid. Offending actions: "
-        f"{offending_actions}.",
+        (
+            "Action grids cannot be marked `distributed=True` — distribution "
+            "shards V-array axes, which come from states. Move `distributed=True` "
+            "to the corresponding state grid. Offending actions: "
+            f"{offending_actions}."
+        ),
     ]
 
 
@@ -548,11 +550,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.koopmans_aggregator is not W_epstein_zin:
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `W_epstein_zin` "
-                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
                 "inversion and period value read its intertemporal "
                 "elasticity. With a different aggregator the kernels would "
                 "solve a recursion the regime does not declare."
@@ -840,9 +842,11 @@ def _fixed_transition_name_mismatch(
         isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
     ):
         return [
-            f"state_transitions['{state_name}']{label}: "
-            f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
-            f"'{state_name}' — the names must match.",
+            (
+                f"state_transitions['{state_name}']{label}: "
+                f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
+                f"'{state_name}' — the names must match."
+            ),
         ]
     return []
 

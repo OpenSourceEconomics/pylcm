@@ -14,6 +14,7 @@ import numpy as np
 from _lcm.egm.two_asset_g2egm_step import g2egm_step
 from lcm import AgeSpecializedGrid, LinSpacedGrid
 from lcm.solvers import EGM, Solver, TwoAssetEGM
+from tests.solution._crra_preferences import crra_preferences
 from tests.solution.test_egm_continuation_grid_provenance import (
     _A_GRID,
     _B_GRID,
@@ -41,7 +42,7 @@ def _reader_cache_entries(next_m_grids):
             b_grid=jnp.linspace(0.0, 2.0, 5),
             consumption_grid=jnp.linspace(0.1, 2.0, 6),
             discount_factor=0.98,
-            crra=2.0,
+            preferences=crra_preferences(2.0),
             match_rate=0.1,
             return_liquid=0.02,
             return_pension=0.04,
@@ -121,8 +122,8 @@ def test_the_static_model_solves_reproducibly():
         "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     model = get_model(n_periods=_N_PERIODS, solvers=solvers)
-    first = model.solve(params=get_params(), log_level="off")
-    second = model.solve(params=get_params(), log_level="off")
+    first = model.solve(params=get_params(), log_level="debug")
+    second = model.solve(params=get_params(), log_level="debug")
     for period, regime_to_V in first.items():
         for regime_name, V_arr in regime_to_V.items():
             np.testing.assert_array_equal(

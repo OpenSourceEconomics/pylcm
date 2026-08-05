@@ -43,12 +43,15 @@ from tests.conftest import assert_agrees_to_ulp
 _INVARIANCE_ULP = 16
 
 N_PERIODS = 4
-N_WEALTH = 40
+N_WEALTH = 12
 BAND_START = 5.0
 BAND_WIDTH = 40.0
 
-CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=100.0, n_points=2000)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(110.0 * (i / 149) ** 3 for i in range(150)))
+# Block assembly is a scheduling property, so it is detected at any model size:
+# these grids are sized for the cheapest solve that still exercises the
+# flatten-and-transpose path, not for resolution.
+CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=100.0, n_points=60)
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(110.0 * (i / 29) ** 3 for i in range(30)))
 
 
 @categorical(ordered=False)
@@ -158,7 +161,7 @@ def _model(health_batch_size: int) -> Model:
     )
     dead = UserRegime(
         transition=None,
-        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=200)},
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
     return Model(
@@ -260,7 +263,7 @@ def _two_combo_model(batch_size: int) -> Model:
     )
     dead = UserRegime(
         transition=None,
-        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=200)},
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
     return Model(

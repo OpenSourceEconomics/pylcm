@@ -124,7 +124,7 @@ def test_under_specified_signature_merging_distinct_grids_is_rejected():
         signature=lambda _age: "constant",
     )
     with pytest.raises(RegimeInitializationError, match="resolved nodes"):
-        _model(under_specified).solve(params=_PARAMS, log_level="off")
+        _model(under_specified).solve(params=_PARAMS, log_level="debug")
 
 
 def test_age_invariant_grid_reproduces_plain_solve():
