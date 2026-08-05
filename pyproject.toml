@@ -187,7 +187,7 @@ unsafe-fixes = false
 select = [ "ALL" ]
 extend-ignore = [
   "COM812",  # Conflicts with ruff-format
-  "CPY001",  # Missing copyright notice at top of file
+  "CPY001",  # Missing copyright notice
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
   "EM102",   # Exception must not use an f-string literal
