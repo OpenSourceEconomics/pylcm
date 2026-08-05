@@ -29,6 +29,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     PowerMean,
+    QuasiArithmeticMean,
     Regime,
     UniformIIDProcess,
     categorical,
@@ -176,6 +177,131 @@ def test_entry_outside_the_support_reads_the_nearest_node(
     got = _source_value(model, _PARAMS)
 
     np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
+    """The reading is a property of the entry law, not of `PowerMean`.
+
+    An exponential-transform quasi-arithmetic mean is nonlinear for the same
+    reason and shares no code with the power mean's anchored form, so it pins
+    the interpolation independently. Its aggregate over a degenerate lottery is
+    the value itself, which is `2.5` when the entry is interpolated and the
+    strictly smaller `-log((exp(-1) + exp(-4)) / 2)` when the coefficients are
+    read as probabilities.
+    """
+
+    def _negative_exponential(value: FloatND) -> FloatND:
+        return -jnp.exp(-value)
+
+    def _inverse_negative_exponential(value: FloatND) -> FloatND:
+        return -jnp.log(-value)
+
+    def _enter_at() -> ScalarFloat:
+        return jnp.asarray(1.5)
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": _enter_at}},
+                functions={"utility": _zero_utility},
+                certainty_equivalent=QuasiArithmeticMean(
+                    transform=_negative_exponential,
+                    inverse=_inverse_negative_exponential,
+                ),
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _target_process()},
+                functions={"utility": _squared_shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+    params = {
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "target": {"next_regime": {}, "next_shock": {}},
+        },
+        "target": {"utility": {}},
+    }
+
+    got = _source_value(model, params)
+
+    lottery_reading = -np.log((np.exp(-_V[1]) + np.exp(-_V[2])) / 2.0)
+    np.testing.assert_almost_equal(got, 2.5, decimal=DECIMAL_PRECISION)
+    assert lottery_reading < 2.5
+
+
+def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
+    """Two declared coordinates are one point, not a product lottery.
+
+    Each entry law names a value, so the pair names a single point of the
+    target's two-dimensional node grid and its continuation is the bilinear
+    interpolation there. Treating the two bases as independent lotteries would
+    hand a nonlinear certainty equivalent a four-node product instead.
+    """
+
+    def _enter_first() -> ScalarFloat:
+        return jnp.asarray(1.5)
+
+    def _enter_second() -> ScalarFloat:
+        return jnp.asarray(0.5)
+
+    def _product_utility(shock: ScalarFloat, other: ScalarFloat) -> FloatND:
+        return shock**2 + 10.0 * other
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={
+                    "shock": {"target": _enter_first},
+                    "other": {"target": _enter_second},
+                },
+                functions={"utility": _zero_utility},
+                certainty_equivalent=PowerMean(),
+            ),
+            "target": Regime(
+                transition=None,
+                states={
+                    "shock": _target_process(),
+                    "other": UniformIIDProcess(n_points=2, start=0.0, stop=1.0),
+                },
+                functions={"utility": _product_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+    params = {
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
+            "target": {"next_regime": {}, "next_shock": {}, "next_other": {}},
+        },
+        "target": {"utility": {}},
+    }
+
+    got = _source_value(model, params)
+
+    # `V(shock, other) = shock**2 + 10*other` on nodes `(0,1,2) x (0,1)`.
+    # Entering at `(1.5, 0.5)` is the bilinear value `2.5 + 5.0`.
+    grid = np.array(_V)[:, None] + 10.0 * np.array([0.0, 1.0])[None, :]
+    weights = np.outer([0.0, 0.5, 0.5], [0.5, 0.5])
+    np.testing.assert_almost_equal(
+        got, float((grid * weights).sum()), decimal=DECIMAL_PRECISION
+    )
+    # The product-lottery reading is strictly smaller under this power mean, so
+    # the assertion above is not satisfied by both.
+    assert _power_mean(grid[weights > 0], weights[weights > 0]) < 7.5
 
 
 def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> None:
