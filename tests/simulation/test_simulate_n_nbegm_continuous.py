@@ -44,7 +44,7 @@ def _simulate(*, seed: int) -> pd.DataFrame:
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=seed,
     ).to_dataframe()
 
