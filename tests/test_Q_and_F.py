@@ -23,6 +23,8 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
+    _regime_mass_is_unit,
+    _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -878,14 +880,42 @@ def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
     ],
     ids=["linear", "power"],
 )
-def test_solve_at_unit_regime_mass_is_bit_unchanged_by_the_mass_check(
+def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     certainty_equivalent: CertaintyEquivalent, expected: list[float], x64_enabled: None
 ):
     """Unit regime mass reaches the value function the unchecked arithmetic gives.
 
-    The lottery route's multiplier is exactly `1.0` and the per-target route
-    still divides by the mass itself, both exact in IEEE754, so a well-formed
-    model keeps its floating-point association bit for bit.
+    The tolerance is one part in `1e-15`, not exact equality: these are the
+    values of a whole solve, and XLA fuses the surrounding interpolation
+    differently on CPU and GPU, which moves the last ulp. That the check itself
+    adds no arithmetic is a separate, backend-independent claim, tested against
+    the predicate rather than against a solve.
     """
     V_arr = _solve_alive_without_validation(1.0, certainty_equivalent)
-    assert_array_equal(np.asarray(V_arr), np.array(expected))
+    np.testing.assert_allclose(
+        np.asarray(V_arr), np.array(expected), rtol=1e-15, atol=0.0
+    )
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
+    """At unit mass the per-target route divides by exactly `1.0`.
+
+    Division by exactly one is the identity in IEEE754, so the check cannot
+    perturb a well-formed model however the surrounding solve is fused.
+    """
+    assert _unit_regime_mass_or_nan(jnp.ones((3,), dtype=dtype)).tolist() == [1.0] * 3
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_unit_regime_mass_predicate_passes_accumulated_float_error(
+    dtype: Any, x64_enabled: None
+):
+    """Mass that misses one by realistic accumulation error is accepted.
+
+    The tolerance is a backstop against a misspecified model, not a numerical
+    check: summing a handful of transition probabilities lands within a few
+    ulps of one, three orders of magnitude inside it.
+    """
+    accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
+    assert bool(_regime_mass_is_unit(accumulated))
