@@ -37,6 +37,7 @@ from lcm.solvers import Solver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
+_FIRST_AGE = 20
 _LIQUID_RATE = 0.03
 _LABOUR_INCOME = 4.0
 _SURVIVAL = 0.9
@@ -140,7 +141,7 @@ def _build_solver(*, variant: str) -> Solver:
 
 
 def _build_model(*, variant: str) -> Model:
-    final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
+    final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
     constraints: dict[str, Callable[..., FloatND]] = {
         "consumption_feasible": _consumption_feasible
     }
@@ -178,14 +179,18 @@ def _build_model(*, variant: str) -> Model:
     )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=_FIRST_AGE: age > n,
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(
+            start=_FIRST_AGE,
+            stop=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+            step="5Y",
+        ),
         fixed_params={"final_age_alive": final_age_alive},
     )
 
