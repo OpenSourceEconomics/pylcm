@@ -137,7 +137,7 @@ def test_period_value_at_unit_eis_is_the_cobb_douglas_limit() -> None:
     """At `rho = 1` the aggregator is the Cobb-Douglas limit `flow^(1-beta) nu^beta`.
 
     The CES exponent `1/(1-rho)` is singular at unit elasticity; the recursion's
-    well-defined limit is the geometric aggregator, matching `W_epstein_zin`.
+    well-defined limit is the geometric aggregator, matching `CESAggregator`.
     """
     beta = 0.3
     flow = 2.0
