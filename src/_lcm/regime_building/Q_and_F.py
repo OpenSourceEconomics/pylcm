@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -501,7 +501,13 @@ def _get_compute_CE(
                 lottery_values.append(values)
                 lottery_weights.append(target_probability * node_weights)
 
-        if reduces_per_target and period_targets:
+        # An empty retained target set is not "no continuation to aggregate": a
+        # non-terminal regime always emits unit mass, so retaining nothing means
+        # every bit of it was placed on a regime that is inactive next period.
+        # The represented mass is zero, and the backstop has to say so — leaving
+        # `CE` at its initialized zero would return a plausible, utility-only
+        # Bellman value for a model that cannot be solved.
+        if reduces_per_target:
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
             # the represented mass to state the same quantity as
             # `LinearExpectation.aggregate`. Regime-transition validation accepts
@@ -509,34 +515,28 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
-            #
-            # A regime with no target at all carries no continuation, and its
-            # `CE` stays at zero rather than becoming `0 / 0` — matching the
-            # lottery route, which leaves `CE` at zero when it collects no nodes.
-            # A represented mass of zero across targets that do exist is a
-            # massless lottery, and NaN there is the same answer both routes give.
             CE = CE / _unit_regime_mass_or_nan(probability_mass)
-        elif certainty_equivalent is not None and lottery_values:
+        elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
             # the aggregate and NaN leaves the well-formed path free of any
             # arithmetic at all, which a multiplication by `1.0` would not.
+            #
+            # With no node collected there is nothing to hand `aggregate` — it
+            # would reduce over an empty axis — so the selection falls back to
+            # the initialized `CE`. The mask is `False` there regardless, since
+            # a mass of zero is not unit mass.
             CE = jnp.where(
                 _regime_mass_is_unit(probability_mass),
-                certainty_equivalent.aggregate(
-                    values=jnp.concatenate(lottery_values),
-                    weights=jnp.concatenate(lottery_weights),
-                    # The params template types every certainty-equivalent
-                    # parameter as a float, so its runtime values are float
-                    # arrays.
-                    params=cast(
-                        "Mapping[str, FloatND]",
-                        {
-                            arg: states_actions_params[flat_name]
-                            for arg, flat_name in ce_flat_param_names.items()
-                        },
-                    ),
-                ),
+                _aggregate_joint_lottery(
+                    certainty_equivalent=certainty_equivalent,
+                    lottery_values=lottery_values,
+                    lottery_weights=lottery_weights,
+                    ce_flat_param_names=ce_flat_param_names,
+                    states_actions_params=states_actions_params,
+                )
+                if lottery_values
+                else CE,
                 jnp.nan,
             )
 
@@ -742,6 +742,45 @@ _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
     """Whether the represented regime mass is unit mass, within tolerance."""
     return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+
+
+def _aggregate_joint_lottery(
+    *,
+    certainty_equivalent: CertaintyEquivalent,
+    lottery_values: Sequence[FloatND],
+    lottery_weights: Sequence[FloatND],
+    ce_flat_param_names: Mapping[str, str],
+    states_actions_params: Mapping[str, Any],
+) -> FloatND:
+    """Aggregate the continuation nodes of every retained target in one piece.
+
+    Args:
+        certainty_equivalent: The regime's certainty equivalent.
+        lottery_values: Sequence of per-target continuation values.
+        lottery_weights: Sequence of per-target node weights, already scaled by
+            the target's regime-transition probability.
+        ce_flat_param_names: Mapping of certainty-equivalent argument names to
+            their flat parameter names.
+        states_actions_params: Mapping of states, actions, age, period, and flat
+            regime params.
+
+    Returns:
+        The aggregated continuation value.
+
+    """
+    return certainty_equivalent.aggregate(
+        values=jnp.concatenate(list(lottery_values)),
+        weights=jnp.concatenate(list(lottery_weights)),
+        # The params template types every certainty-equivalent parameter as a
+        # float, so its runtime values are float arrays.
+        params=cast(
+            "Mapping[str, FloatND]",
+            {
+                arg: states_actions_params[flat_name]
+                for arg, flat_name in ce_flat_param_names.items()
+            },
+        ),
+    )
 
 
 def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
