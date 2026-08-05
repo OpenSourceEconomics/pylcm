@@ -18,7 +18,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import ActionName, EconFunctionsMapping, FunctionName, StateName
+from _lcm.typing import ActionName, FunctionName, StateName
 from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
@@ -133,20 +133,6 @@ def _get_child_discrete_actions(
     grids = get_grids(user_regime)
     names = tuple(variables.discrete_action_names)
     return names, tuple(grids[name].to_jax() for name in names)
-
-
-def _concatenate_regime_function(
-    *,
-    functions: EconFunctionsMapping,
-    target: FunctionName,
-) -> UserFunction:
-    """Concatenate one regime-function target from the regime DAG."""
-    return concatenate_functions(
-        functions=dict(functions),
-        targets=target,
-        enforce_signature=False,
-        set_annotations=True,
-    )
 
 
 def _get_child_resources_function(

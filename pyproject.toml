@@ -187,13 +187,12 @@ unsafe-fixes = false
 select = [ "ALL" ]
 extend-ignore = [
   "COM812",  # Conflicts with ruff-format
-  "CPY001",  # Missing copyright notice at top of file
+  "CPY001",  # Missing copyright notice
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
   "EM102",   # Exception must not use an f-string literal
   "FIX002",  # Line contains TODO
   "ISC001",  # Conflicts with ruff-format
-  "ISC004",  # Explicit string concatenation across lines
   "N802",    # Function name should be lowercase
   "N803",    # Argument name should be lowercase
   "N806",    # Variable in function should be lowercase

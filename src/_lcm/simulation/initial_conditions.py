@@ -358,8 +358,10 @@ def validate_initial_conditions(
         raise InvalidInitialConditionsError(
             format_messages(
                 [
-                    f"Invalid regime IDs {invalid_ids}. "
-                    f"Valid IDs: {sorted(regime_ids_to_names.keys())}"
+                    (
+                        f"Invalid regime IDs {invalid_ids}. "
+                        f"Valid IDs: {sorted(regime_ids_to_names.keys())}"
+                    )
                 ]
             )
         )

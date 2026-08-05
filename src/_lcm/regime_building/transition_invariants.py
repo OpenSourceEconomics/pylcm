@@ -97,8 +97,10 @@ def _fail_if_a_basis_law_is_incomplete(
             ("a private support axis", law.support_axis_name is not None),
             ("a node-basis weight function", law.weight_name is not None),
             (
-                "a public name free of node indices — it is marked as emitting "
-                "them, which would shadow the physical value",
+                (
+                    "a public name free of node indices — it is marked as "
+                    "emitting them, which would shadow the physical value"
+                ),
                 not law.emits_support_index,
             ),
         )

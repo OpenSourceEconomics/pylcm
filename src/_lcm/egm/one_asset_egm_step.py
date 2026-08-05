@@ -23,7 +23,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from _lcm.egm.crra import crra_utility
+from _lcm.egm.preferences import Preferences
 from lcm.typing import Float1D, ScalarFloat
 
 
@@ -46,7 +46,7 @@ def egm_one_asset_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     return_liquid: ScalarFloat | float,
     income: ScalarFloat | float,
 ) -> RetiredEGMResult:
@@ -63,14 +63,15 @@ def egm_one_asset_step(
         next_value: Next period's value on `next_liquid_grid`, shape `(n_liquid,)`.
         next_marginal: Next period's marginal value of liquid `V'` on
             `next_liquid_grid`, shape `(n_liquid,)`. For a terminal bequest
-            `u(liquid)` this is `liquid ** (-crra)`.
+            `u(liquid)` this is `u'(liquid)`.
         liquid_grid: Regular liquid-state grid for this period (ascending).
         next_liquid_grid: The same state's grid in the *next* period (ascending);
             the abscissae of `next_value` and `next_marginal`.
         savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending,
             starting at 0), shape `(n_savings,)`.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         return_liquid: Liquid net return `r`.
         income: Deterministic income added to next-period liquid.
 
@@ -84,9 +85,11 @@ def egm_one_asset_step(
     value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
-    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * gross_return * marginal_next
+    )
     liquid_endog = consumption + savings_grid
-    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
 
     # Interior: interpolate the endogenous value and consumption onto the regular grid.
     interior_value = jnp.interp(liquid_grid, liquid_endog, value_endog)
@@ -97,13 +100,13 @@ def egm_one_asset_step(
     constrained = liquid_grid < liquid_endog[0]
     value_at_zero_savings = jnp.interp(income, next_liquid_grid, next_value)
     constrained_value = (
-        crra_utility(liquid_grid, crra) + discount_factor * value_at_zero_savings
+        preferences.utility(liquid_grid) + discount_factor * value_at_zero_savings
     )
     consumption_on_grid = jnp.where(constrained, liquid_grid, interior_consumption)
     value = jnp.where(constrained, constrained_value, interior_value)
     # Envelope theorem: the marginal value of liquid is the marginal utility of the
     # optimal consumption.
-    marginal = consumption_on_grid ** (-crra)
+    marginal = preferences.marginal_utility(consumption_on_grid)
     return RetiredEGMResult(
         value=value, marginal=marginal, consumption=consumption_on_grid
     )

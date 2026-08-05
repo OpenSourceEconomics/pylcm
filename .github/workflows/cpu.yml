@@ -20,6 +20,11 @@ jobs:
   tests:
     name: Run tests for ${{ matrix.os }} on ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      # `contents` for the checkout, `actions` to delete this ref's superseded
+      # JAX caches in the prune step below.
+      actions: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -29,29 +34,112 @@ jobs:
           - windows-latest
         python-version:
           - '3.14'
+        # Neither the macOS nor the Windows runner can host four parallel JAX AOT
+        # compiles of the DC-EGM solve/oracle battery: macOS swap-thrashes for
+        # hours, Windows grows past the 16 GB runner and is killed mid-suite.
+        # Drop the `slow` set on both. What it covers is numerics, which are
+        # platform-independent and stay covered on Linux and the two GPU jobs;
+        # what these runners are here for is the platform surface — imports,
+        # paths, dtypes, the pandas/arrow round trip — all of which is in the
+        # remaining set.
+        include:
+          - os: macos-latest
+            pytest_extra: -m "not slow"
+          - os: windows-latest
+            pytest_extra: -m "not slow"
     steps:
       - uses: actions/checkout@v7
-      - uses: prefix-dev/setup-pixi@v0.10.0
+      - uses: prefix-dev/setup-pixi@v0.10.1
         with:
-          pixi-version: v0.73.0
+          pixi-version: v0.76.1
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
           activate-environment: true
           frozen: true
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads —
+        # `pixi.lock` in the key only saves the pointless misses after a JAX
+        # upgrade. `github.sha` makes each run write a fresh entry while
+        # `restore-keys` starts it from the nearest earlier one, so the cache
+        # follows the branch instead of freezing at its first write.
+        #
+        # CPU only. The GPU jobs run on organization runners whose home
+        # directory may already persist between runs, which would make this an
+        # expensive no-op, and a shared cache directory is what a multi-worker
+        # GPU run races on. Measure there before adding it.
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/jax
+          key: >-
+            jax-${{ runner.os }}-${{ matrix.python-version }}-${{
+            hashFiles('pixi.lock') }}-${{ github.sha }}
+          restore-keys: |
+            jax-${{ runner.os }}-${{ matrix.python-version }}-${{
+              hashFiles('pixi.lock') }}-
+            jax-${{ runner.os }}-${{ matrix.python-version }}-
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e tests-cpu tests
+        run: pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
-        run: pixi run -e tests-cpu tests-with-cov
+        # A worker's resident memory grows with every distinct program it has
+        # compiled, because JAX holds each one live in an in-memory cache, and
+        # the DC-EGM solve/oracle battery (`slow`) compiles enough of them to
+        # exhaust the 16 GB runner mid-suite. Two mechanisms keep it in budget:
+        # - `--release-compiled-programs` drops that cache at every module
+        #   boundary, which bounds the growth instead of merely dividing it.
+        #   Measured on the `slow` battery at `-n 2`: peak resident memory over
+        #   the process tree falls from 18.25 GB to 9.44 GB and stops ratcheting,
+        #   and the phase runs faster rather than slower, because a released
+        #   program is recompiled from the persistent on-disk cache.
+        # - the phases stay separate, each starting from a fresh process, as a
+        #   second line of defence and so coverage can be appended across them.
+        run: |
+          pixi run -e tests-cpu pytest tests -m "not slow" \
+            --release-compiled-programs --cov=./ --cov-report= -n 4 \
+          && pixi run -e tests-cpu pytest tests/solution -m slow \
+            --release-compiled-programs --cov=./ --cov-append --cov-report= -n 2 \
+          && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
+            --release-compiled-programs --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
         uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+      - name: Prune superseded JAX caches for this ref
+        # `github.sha` in the key means every run writes a fresh entry instead of
+        # replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Eviction is then
+        # least-recently-used, and the first casualty is the entry on the default
+        # branch — the only one a *new* branch may restore from, since a run
+        # reads its own ref and the default branch and nothing else. Every new
+        # branch would then start cold and pay the full compile.
+        #
+        # Keep this ref's newest entry and drop the rest. Pruning here rather
+        # than after the write leaves two per (os, ref) once the post-step saves
+        # the new one, so a run cancelled before it saves still leaves the branch
+        # a warm start. Never fail the build over cache housekeeping: a pull
+        # request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --ref "$GITHUB_REF" \
+            --key "jax-${{ runner.os }}-${{ matrix.python-version }}-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
   # One context for the whole matrix, so branch protection names `cpu` rather than
   # every (os, python-version) leg — adding a platform would otherwise silently drop
   # out of the required set until someone remembered to add it there too.

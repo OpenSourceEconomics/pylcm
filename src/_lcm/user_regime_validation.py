@@ -454,10 +454,12 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     if not offending_actions:
         return []
     return [
-        "Action grids cannot be marked `distributed=True` — distribution "
-        "shards V-array axes, which come from states. Move `distributed=True` "
-        "to the corresponding state grid. Offending actions: "
-        f"{offending_actions}.",
+        (
+            "Action grids cannot be marked `distributed=True` — distribution "
+            "shards V-array axes, which come from states. Move `distributed=True` "
+            "to the corresponding state grid. Offending actions: "
+            f"{offending_actions}."
+        ),
     ]
 
 
@@ -840,9 +842,11 @@ def _fixed_transition_name_mismatch(
         isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
     ):
         return [
-            f"state_transitions['{state_name}']{label}: "
-            f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
-            f"'{state_name}' — the names must match.",
+            (
+                f"state_transitions['{state_name}']{label}: "
+                f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
+                f"'{state_name}' — the names must match."
+            ),
         ]
     return []
 
