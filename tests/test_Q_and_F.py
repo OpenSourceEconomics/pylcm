@@ -30,9 +30,9 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    LinearAggregator,
     LinearExpectation,
     PowerMean,
-    W_linear,
 )
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -66,7 +66,7 @@ def test_get_Q_and_F_function():
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(

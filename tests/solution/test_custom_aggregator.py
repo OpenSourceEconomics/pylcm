@@ -11,11 +11,14 @@ from numpy.testing import assert_array_equal
 from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
+    CESAggregator,
     DiscreteGrid,
+    LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
-    W_linear,
+    Phased,
+    PowerMean,
     categorical,
     fixed_transition,
 )
@@ -235,10 +238,10 @@ def test_default_H_injected_for_non_terminal():
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
-    assert finalized.koopmans_aggregator is W_linear
+    assert finalized.koopmans_aggregator == LinearAggregator()
 
 
 def test_default_W_not_injected_for_terminal():
@@ -250,7 +253,7 @@ def test_default_W_not_injected_for_terminal():
     finalized = finalize_regimes(
         user_regimes={"regime": r},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
     assert finalized.koopmans_aggregator is None
@@ -271,7 +274,7 @@ def test_custom_W_not_overwritten():
     finalized = finalize_regimes(
         user_regimes={"regime": r},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
     assert finalized.koopmans_aggregator is my_W
@@ -678,3 +681,67 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
         np.asarray(_solve_with_age_varying_discount(_AgeVaryingDiscountAggregator())),
         np.asarray(_solve_with_age_varying_discount(_W_age_varying_discount)),
     )
+
+
+def _solve_with_aggregator_slot(
+    koopmans_aggregator: object, aggregator_params: dict[str, float]
+) -> tuple[dict[str, str | dict[str, str]], FloatND]:
+    """Return the aggregator params template and `alive`'s first V array."""
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    alive = UserRegime(
+        transition=lambda age: jnp.where(
+            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        ),
+        active=lambda age: age < 2,
+        states={"wealth": wealth},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
+        certainty_equivalent=PowerMean(),
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": wealth},
+        functions={"utility": lambda wealth: wealth + 1.0},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_AgeIndexedRegimeId,
+    )
+    template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
+    params = {
+        "alive": {
+            "koopmans_aggregator": aggregator_params,
+            "certainty_equivalent": {"risk_aversion": 2.0},
+        }
+    }
+    return template, model.solve(params=params, log_level="debug")[0]["alive"]
+
+
+_PHASED_AGGREGATOR_PARAMS = {
+    "discount_factor": 0.95,
+    "intertemporal_elasticity_of_substitution": 0.8,
+}
+
+
+def test_phased_aggregator_objects_declare_the_union_of_their_parameters():
+    """`Phased` over two aggregator objects surfaces both variants' parameters."""
+    template, _ = _solve_with_aggregator_slot(
+        Phased(solve=LinearAggregator(), simulate=CESAggregator()),
+        _PHASED_AGGREGATOR_PARAMS,
+    )
+    assert set(template) == set(_PHASED_AGGREGATOR_PARAMS)
+
+
+def test_phased_aggregator_objects_solve_with_the_solve_variant():
+    """Backward induction uses the `solve` variant of a phased aggregator slot."""
+    _, phased_V_arr = _solve_with_aggregator_slot(
+        Phased(solve=LinearAggregator(), simulate=CESAggregator()),
+        _PHASED_AGGREGATOR_PARAMS,
+    )
+    _, bare_V_arr = _solve_with_aggregator_slot(
+        LinearAggregator(), {"discount_factor": 0.95}
+    )
+    assert_array_equal(np.asarray(phased_V_arr), np.asarray(bare_V_arr))

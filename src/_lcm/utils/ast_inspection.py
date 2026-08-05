@@ -17,13 +17,13 @@ def _get_func_indexing_params(
     `param[x, y, ...]` patterns where all index elements are bare names
     that are also function parameters.
 
+    A callable object whose own source cannot be read — a specification
+    class with a `__call__`, such as a built-in Koopmans aggregator — is
+    inspected through that `__call__`, where its body lives.
+
     Args:
         func: The function to inspect.
         array_param_name: The array parameter whose subscripts to inspect.
-
-    A callable object — a specification class with a `__call__`, such as a
-    built-in Koopmans aggregator — is inspected through that `__call__`,
-    which is where its body and its parameter annotations live.
 
     Returns:
         List of indexing parameter names, or empty list if no array
@@ -40,14 +40,13 @@ def _get_func_indexing_params(
         msg = "Cannot inspect lambda functions. Define a named function instead."
         raise TypeError(msg)
 
-    try:
-        source = textwrap.dedent(inspect.getsource(_inspectable(func)))
-    except OSError, TypeError:
+    source = _source_of(func)
+    if source is None:
         msg = (
             f"Cannot inspect source of '{func_name}'. "
             f"Define a named function instead of a lambda."
         )
-        raise TypeError(msg) from None
+        raise TypeError(msg)
 
     tree = ast.parse(source)
     sig = inspect.signature(func)
@@ -93,17 +92,22 @@ def _get_func_indexing_params(
     return []
 
 
-def _inspectable(func: Callable) -> Callable:
-    """Return the object whose source and body describe `func`'s call.
+def _source_of(func: Callable) -> str | None:
+    """Return the source that describes `func`'s call, or `None` if unavailable.
 
-    A plain function is its own body. A callable object's body is its
-    class's `__call__`, which is also what `inspect.signature` reports, so
-    the parameter names extracted from the source line up with the
-    signature either way.
+    A callable that `inspect.getsource` cannot read is retried through its
+    class's `__call__`, which is where a specification object keeps its body
+    and is also what `inspect.signature` reports, so the names extracted from
+    the source line up with the signature either way. The retry runs only
+    after the direct read fails, so a callable that wraps a function — and
+    exposes that function's source — keeps being read as itself.
     """
-    if inspect.isfunction(func) or inspect.ismethod(func):
-        return func
-    return type(func).__call__
+    for candidate in (func, type(func).__call__):
+        try:
+            return textwrap.dedent(inspect.getsource(candidate))
+        except OSError, TypeError:
+            continue
+    return None
 
 
 def _display_name(func: Callable) -> str:

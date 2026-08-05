@@ -299,7 +299,7 @@ class PowerMean(QuasiArithmeticMean):
 
         `ra` is `risk_aversion` and `w̃` the mass-normalized weights. The
         evaluation is `weighted_power_mean`, which the Koopmans aggregator
-        `W_epstein_zin` shares: the naive `inverse(Σ w · transform(v))`
+        `CESAggregator` shares: the naive `inverse(Σ w · transform(v))`
         overflows when `risk_aversion > 1` and `v` is near the borrowing
         constraint, so the mean is taken in an anchored log form instead. It
         stays finite wherever the mathematical value is, and the
