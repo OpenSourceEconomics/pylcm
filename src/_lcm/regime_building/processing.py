@@ -2037,8 +2037,8 @@ def _process_regime_core(
         # consume it exactly as it consumes any deterministic transition. What
         # the target's discrete value function additionally needs -- the node
         # axis to interpolate over -- is a *separate* object under a private
-        # name, and the weights placing the declared value on that axis read the
-        # public value from the DAG rather than re-evaluating the law.
+        # name, and the weights placing the declared value on that axis name the
+        # public producer rather than closing over the law themselves.
         | {
             f"weight_{user_regime}__next_{process}": (
                 _get_explicit_entry_weights_for_process(
@@ -2761,11 +2761,14 @@ def _get_explicit_entry_weights_for_process(
     linear interpolation of the target's value function, which is the only
     reading its nodes support.
 
-    The weights read the physical value off the DAG under its public
-    `next_<state>` name rather than re-evaluating the law. That is what keeps one
-    law with one value: the same producer serves the weights, any dependent
-    transition, diagnostics, and simulation, and no consumer can observe a second
-    evaluation disagreeing with the first.
+    The weights name the physical value by its public `next_<state>` name and
+    take whatever that producer yields, instead of closing over the law and
+    calling it themselves. That is what keeps one law with one value: the weights,
+    any dependent transition, the diagnostics, and simulation all resolve the same
+    producer, so none of them can be handed a different number. The next-state and
+    basis-weight DAGs are separate closures, so a state-dependent producer may be
+    evaluated once in each; both evaluate the same deterministic function on the
+    same inputs, so the duplication costs work, never agreement.
 
     The support is the contract. A value outside it has no representation on the
     target's nodes, so it is an error rather than something to approximate:
