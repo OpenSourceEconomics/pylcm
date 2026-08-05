@@ -7,15 +7,18 @@ envelope. On the region the post-decision grid reaches, the published value trac
 brute grid-search solve; the top pension edge is the same known uncovered hole.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.rfc_two_asset_step import rfc_two_asset_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.two_asset import get_model, get_params
 
-_P = {
+_P: dict[str, Any] = {
     "discount_factor": 0.95,
-    "crra": 2.0,
+    "preferences": crra_preferences(2.0),
     "match_rate": 1.0,
     "return_liquid": 0.02,
     "return_pension": 0.06,
@@ -47,7 +50,7 @@ def _solve():
         b_grid=_B_GRID,
         consumption_grid=jnp.linspace(0.5, 90.0, 18),
         radius=0.5,
-        **_P,  # ty: ignore[invalid-argument-type]
+        **_P,
     )
     return np.asarray(result.value), np.asarray(brute[0]["working"])
 

@@ -5,7 +5,8 @@ the two-asset model the envelope theorem gives, at the optimum,
 
 $$V_m = u'(c), \\qquad V_n = \\beta\\, W_b,$$
 
-with $u'(c) = c^{-\\rho}$. This holds in **every** KKT region: where the borrowing
+reading $u'$ off the regime's own felicity. This holds in **every** KKT region: where
+the borrowing
 constraint binds ($a = 0$) the consumption FOC is $u'(c) = \\beta w_a + \\mu_a$ with a
 non-negative multiplier $\\mu_a$, so $V_m = u'(c)$ but $V_m \\ne \\beta w_a$. Publishing
 $\\beta w_a$ there understates the marginal value. Using $u'(c)$ directly is correct in
@@ -21,6 +22,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.egm.preferences import Preferences
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -28,7 +30,7 @@ class RegionGradient(NamedTuple):
     """The region-aware marginal value of liquid and pension wealth."""
 
     value_grad_m: FloatND
-    """`V_m = u'(c) = c**(-crra)`, valid in every KKT region."""
+    """`V_m = u'(c)`, valid in every KKT region."""
     value_grad_n: FloatND
     """`V_n = discount_factor * W_b`."""
 
@@ -38,7 +40,7 @@ def region_aware_gradient(
     consumption: FloatND,
     post_decision_grad_b: FloatND,
     discount_factor: float,
-    crra: float,
+    preferences: Preferences,
 ) -> RegionGradient:
     """Compute the envelope marginal values from the selected policy.
 
@@ -46,7 +48,8 @@ def region_aware_gradient(
         consumption: Selected consumption `c` per target.
         post_decision_grad_b: Post-decision value gradient `W_b` at the selected policy.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
 
     Returns:
         The marginal value of liquid wealth `u'(c)` and of pension wealth
@@ -54,7 +57,7 @@ def region_aware_gradient(
 
     """
     return RegionGradient(
-        value_grad_m=consumption ** (-crra),
+        value_grad_m=preferences.marginal_utility(consumption),
         value_grad_n=discount_factor * post_decision_grad_b,
     )
 

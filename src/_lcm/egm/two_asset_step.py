@@ -16,6 +16,7 @@ unconstrained interior the cloud covers.
 import jax.numpy as jnp
 
 from _lcm.egm.cell_locator import locate_in_quad_mesh, read_bilinear
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.two_asset_inverse import invert_ucon_cloud
 from _lcm.egm.two_asset_post_decision import post_decision_value_and_grad
 from lcm.typing import Float1D, FloatND
@@ -29,7 +30,7 @@ def egm_step(
     a_grid: Float1D,
     b_grid: Float1D,
     discount_factor: float,
-    crra: float,
+    preferences: Preferences,
     match_rate: float,
     return_liquid: float,
     return_pension: float,
@@ -44,7 +45,8 @@ def egm_step(
         a_grid: Liquid post-decision grid.
         b_grid: Pension post-decision grid.
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         match_rate: Pension employer-match coefficient.
         return_liquid: Liquid net return `r^a`.
         return_pension: Pension net return `r^b`.
@@ -72,7 +74,7 @@ def egm_step(
         w_b=post.grad_b,
         post_decision_value=post.value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     m_mesh, n_mesh = jnp.meshgrid(m_grid, n_grid, indexing="ij")
