@@ -44,13 +44,13 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.crra import crra_utility
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
     ez_marginal_of_resource,
     ez_period_value,
 )
+from _lcm.egm.nbegm_crra import crra_utility
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
