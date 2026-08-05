@@ -80,6 +80,10 @@ type _UserParamsLeaf = (
     bool
     | int
     | float
+    # `AgeGrid.exact_values` yields `int | Fraction`, and an age read off the grid
+    # is the natural way to write an age-valued parameter — `lcm_examples.tiny`,
+    # `.mortality` and `.iskhakov_et_al_2017` all do exactly that.
+    | Fraction
     | FloatND
     | IntND
     | BoolND

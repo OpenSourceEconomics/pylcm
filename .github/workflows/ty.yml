@@ -1,5 +1,9 @@
 ---
 name: ty
+# No path filter. `[tool.ty] src.include` covers `docs/`, and most functions in the
+# notebooks carry annotations — they are the snippets users copy, so a wrong one
+# there propagates. Excluding `**.ipynb` would skip the check on exactly the change
+# that can break it.
 # Automatically cancel a previous run.
 concurrency:
   group: ty-${{ github.head_ref || github.run_id }}
@@ -11,11 +15,6 @@ on:
   pull_request:
     branches:
       - '**'
-    paths-ignore:
-      - docs/**
-      - benchmarks/**
-      - '**.md'
-      - '**.ipynb'
 jobs:
   ty:
     name: ty
