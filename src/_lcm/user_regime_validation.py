@@ -464,16 +464,30 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
 def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's Koopmans aggregator declaration.
 
-    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
-      regime function
+    - `CE` is the reserved name the aggregator receives the continuation under,
+      so a variable of that name would be shadowed
     - terminal regimes have no continuation to aggregate
     """
     error_messages: list[str] = []
-    if "H" in regime.functions:
+    # The aggregator is called as `koopmans_aggregator(utility=..., CE=...)`, so
+    # a regime variable named `CE` never reaches it: the aggregator would read
+    # the continuation while every other function in the regime read the
+    # variable, and nothing would say so.
+    colliding = sorted(
+        {"CE"}
+        & (
+            set(regime.functions)
+            | set(regime.states)
+            | set(regime.actions)
+            | set(regime.derived_categoricals)
+        )
+    )
+    if colliding:
         error_messages.append(
-            "'H' is not a regime function: the Bellman aggregator lives in the "
-            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
-            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+            "'CE' is reserved: it is the name the Koopmans aggregator receives "
+            "the certainty-equivalent continuation under, so a regime variable "
+            "of that name would be shadowed inside the aggregator only. Rename "
+            "it (`certainty_equivalent_value`, say)."
         )
     if regime.terminal and regime.koopmans_aggregator is not None:
         error_messages.append(
