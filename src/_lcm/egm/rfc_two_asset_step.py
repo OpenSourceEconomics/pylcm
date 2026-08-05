@@ -17,6 +17,7 @@ both the cut and the publisher.
 
 import jax.numpy as jnp
 
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.two_asset_g2egm_step import G2EGMResult
 from _lcm.egm.two_asset_inverse import (
     RegionCloud,
@@ -49,7 +50,7 @@ def rfc_two_asset_step(
     b_grid: Float1D,
     consumption_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     return_liquid: ScalarFloat | float,
     return_pension: ScalarFloat | float,
@@ -80,7 +81,8 @@ def rfc_two_asset_step(
         b_grid: Pension post-decision grid (shared by all segments).
         consumption_grid: Consumption sweep for `acon`/`con` at `a = 0`.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         match_rate: Pension employer-match coefficient `chi`.
         return_liquid: Liquid net return `r^a`.
         return_pension: Pension net return `r^b`.
@@ -101,7 +103,7 @@ def rfc_two_asset_step(
         b_grid=b_grid,
         consumption_grid=consumption_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
         return_liquid=return_liquid,
         return_pension=return_pension,
@@ -197,7 +199,7 @@ def _build_region_clouds(
     b_grid: Float1D,
     consumption_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     return_liquid: ScalarFloat | float,
     return_pension: ScalarFloat | float,
@@ -222,7 +224,7 @@ def _build_region_clouds(
         w_b=post.grad_b,
         post_decision_value=post.value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     dcon = invert_dcon_cloud(
@@ -232,7 +234,7 @@ def _build_region_clouds(
         w_b=post.grad_b,
         post_decision_value=post.value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     a_zero = jnp.zeros_like(b_grid)
@@ -257,7 +259,7 @@ def _build_region_clouds(
         w_b_at_zero_a=grad_b_at_zero,
         w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     con = invert_con_cloud(
@@ -267,7 +269,7 @@ def _build_region_clouds(
         w_b_at_zero_a=grad_b_at_zero,
         w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     # A candidate built from a continuation that the reader fabricated by clamping an

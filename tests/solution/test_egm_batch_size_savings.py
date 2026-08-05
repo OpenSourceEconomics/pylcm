@@ -35,7 +35,10 @@ from tests.solution.test_egm_batch_size_euler import (
     utility,
 )
 
-N_SAVINGS = 149  # prime: no batch size below divides it evenly
+# Prime, so every block size but 1 leaves a ragged final block. Sized for the
+# cheapest solve that still shows that; invariance under the partition does not
+# depend on resolution.
+N_SAVINGS = 17
 
 
 @functools.cache
@@ -74,7 +77,7 @@ def _model(savings_batch_size: int) -> Model:
     )
     dead = UserRegime(
         transition=None,
-        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=200)},
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
     return Model(
@@ -88,7 +91,7 @@ def _solve(savings_batch_size: int) -> PeriodToRegimeToVArr:
     return _model(savings_batch_size).solve(params=_params(), log_level="debug")
 
 
-@pytest.mark.parametrize("savings_batch_size", [1, 7, 16, N_SAVINGS])
+@pytest.mark.parametrize("savings_batch_size", [1, 7, N_SAVINGS])
 def test_savings_grid_batch_size_leaves_value_function_unchanged(savings_batch_size):
     """Splaying the savings grid into blocks does not change the solved V.
 

@@ -12,7 +12,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_laws import SupportAxes, TransitionLaws
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -346,6 +346,15 @@ class SolutionPhase:
 
     transition_laws: TransitionLaws
     """Immutable mapping of target regime names to their transition laws."""
+
+    support_axes: SupportAxes
+    """Immutable mapping of target regime names to their private node axes.
+
+    A declared entry into a target's process publishes its physical value under
+    the public `next_<state>` name, which every dependent law, the diagnostics,
+    and simulation read. The node axis that value is interpolated over is this
+    separate, privately keyed object, seen only by the value-function
+    interpolator."""
 
     reachability: PhaseReachability
     """Construction-time solve graph shared by every canonical regime."""

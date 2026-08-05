@@ -38,7 +38,7 @@ def active(age: float) -> bool:
 
 
 def source_value(model: Model) -> float:
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     period = max(p for p, regimes in solution.items() if "source" in regimes)
     return float(np.asarray(solution[period]["source"]).ravel()[0])
 

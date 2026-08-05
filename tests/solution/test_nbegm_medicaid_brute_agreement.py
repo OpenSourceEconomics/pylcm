@@ -37,7 +37,7 @@ def _solve(
         savings_max=22.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=params, log_level="off")
+    return model.solve(params=params, log_level="debug")
 
 
 def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:

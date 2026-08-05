@@ -44,7 +44,7 @@ def test_recurring_jump_period_matches_brute_with_side_faithful_read():
         savings_max=28.0,
         n_consumption=1800,
     )
-    brute = brute_model.solve(params=toy.build_params(), log_level="off")
+    brute = brute_model.solve(params=toy.build_params(), log_level="debug")
     nbegm_model = toy.build_model(
         variant="nbegm",
         n_liquid=_N_LIQUID,
@@ -53,7 +53,7 @@ def test_recurring_jump_period_matches_brute_with_side_faithful_read():
         savings_max=28.0,
         n_consumption=160,
     )
-    nbegm = nbegm_model.solve(params=toy.build_params(), log_level="off")
+    nbegm = nbegm_model.solve(params=toy.build_params(), log_level="debug")
 
     period = min(p for p in brute if "alive" in brute[p])
     brute_v = np.asarray(brute[period]["alive"])

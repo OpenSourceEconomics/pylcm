@@ -88,7 +88,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
 )
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import (
@@ -204,7 +204,7 @@ class Model:
         states: Mapping[str, object] = MappingProxyType({}),
         state_transitions: Mapping[str, object] = MappingProxyType({}),
         actions: Mapping[str, object] = MappingProxyType({}),
-        koopmans_aggregator: UserFunction = W_linear,
+        koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
     ) -> None:
@@ -301,7 +301,11 @@ class Model:
         # entry-law synthesis, all of which ask whether a process's law is
         # known. What no process could take stays a runtime parameter and
         # reaches `build_regimes_and_template` unchanged.
-        self.user_regimes, residual_fixed_params = bind_fixed_process_laws(
+        (
+            self.user_regimes,
+            residual_fixed_params,
+            params_consumed_by_binder,
+        ) = bind_fixed_process_laws(
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
@@ -334,6 +338,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
+            params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
         )
         self.enable_jit = enable_jit

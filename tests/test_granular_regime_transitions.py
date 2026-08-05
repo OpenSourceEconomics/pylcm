@@ -73,12 +73,20 @@ def _build_regime(**overrides: Any) -> UserRegime:
 
 
 def _build_model(work: UserRegime, retired: UserRegime | None = None) -> Model:
+    # `retired` outlives `work` by one age so that the mass `work` sends it in
+    # its final transition lands on an active regime, and hands everything to
+    # `dead` in its own final transition.
     if retired is None:
         retired = _build_regime(
             transition={
-                "retired": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
-                "dead": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+                "retired": MarkovTransition(
+                    lambda age: jnp.where(age < 2, 0.5, 0.0),
+                ),
+                "dead": MarkovTransition(
+                    lambda age: jnp.where(age < 2, 0.5, 1.0),
+                ),
             },
+            active=lambda age: age < 3,
         )
     dead = UserRegime(
         transition=None,
@@ -86,7 +94,7 @@ def _build_model(work: UserRegime, retired: UserRegime | None = None) -> Model:
     )
     return Model(
         regimes={"work": work, "retired": retired, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )
 
@@ -106,7 +114,7 @@ def test_granular_transition_solves_and_simulates() -> None:
             "regime_id": jnp.full(40, _RegimeId.work),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=7,
     )
     df = result.to_dataframe()

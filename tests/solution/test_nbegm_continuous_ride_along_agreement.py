@@ -46,7 +46,7 @@ def _solve(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def _terminal_adjacent_period(solved: Mapping[int, Mapping]) -> int:
@@ -58,7 +58,7 @@ def test_nbegm_continuous_ride_along_regime_builds() -> None:
     """A NBEGM schedule regime with more than one continuous state builds when the
     liquid axis is named, treating the continuous co-state as a ride-along axis."""
     model = toy.build_model(variant="nbegm")
-    solved = model.solve(params=toy.build_params(), log_level="off")
+    solved = model.solve(params=toy.build_params(), log_level="debug")
     period = _terminal_adjacent_period(solved)
     assert np.asarray(solved[period]["alive"]).shape == (_N_LIQUID, _WAGE.size)
 

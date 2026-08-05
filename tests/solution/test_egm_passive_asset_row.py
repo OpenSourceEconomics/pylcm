@@ -63,12 +63,15 @@ AIME_MAX = 20.0
 # Pension annuity drawn from accumulated AIME, added to next wealth.
 PENSION_RATE = 0.2
 
-WEALTH_GRID = LinSpacedGrid(start=1.0, stop=100.0, n_points=120)
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=100.0, n_points=60)
 AIME_GRID = LinSpacedGrid(start=0.0, stop=AIME_MAX, n_points=6)
+# Dense enough that the brute-force oracle's own resolution error stays well
+# below the comparison tolerance; unlike the state grids above, this one
+# cannot shrink without reintroducing that oracle-side bias.
 CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=120.0, n_points=600)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(100.0 * (i / 119) ** 3 for i in range(120)))
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(100.0 * (i / 59) ** 3 for i in range(60)))
 
-N_BRUTE_UNSTABLE_NODES = 16
+N_BRUTE_UNSTABLE_NODES = 8
 
 
 @categorical(ordered=False)
@@ -294,7 +297,7 @@ def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
     assert template is not None
     n_euler = int(WEALTH_GRID.to_jax().shape[0])
     # The envelope workspace would have been ceil(1.2 * (n_savings + n_constrained))
-    # = ceil(1.2 * (120 + 64)) = 221 rows; the persisted carry is the 120 Euler nodes.
+    # = ceil(1.2 * (60 + 64)) = 149 rows; the persisted carry is the 60 Euler nodes.
     assert template.value.shape[-1] == n_euler
     assert template.marginal_utility.shape[-1] == n_euler
     assert template.endog_grid.shape[-1] == n_euler

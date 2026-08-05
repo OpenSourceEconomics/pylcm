@@ -24,6 +24,23 @@ transition-probability ensemble or a NaN value function. Start every project at
 `"debug"` (validation runs and raises); ease to `"warning"` / `"off"` once the model is
 trusted.
 
+```{warning}
+**Run every model at `log_level="debug"` at least once, with the parameters you
+intend to use, before trusting any output.**
+
+`"off"` skips runtime validation entirely, and some of what it skips cannot be
+reconstructed from the result. If a regime transition puts probability on a target
+that is not active in the next period, that mass is dropped and the surviving
+targets are renormalized — which would otherwise make the value function come back
+finite, plausible, and *independent of the mass that went missing*.
+
+A gross departure from unit mass is caught in the arithmetic at every log level and
+turns the continuation into NaN. But that is a backstop, not a diagnosis: it names
+no regime, no target, and no age. Smaller mass errors pass it and still reverse the
+optimal action. Only the validation that `"off"` skips tells you what is wrong. See
+[Debugging](debugging.md#run-every-production-model-at-debug-at-least-once).
+```
+
 ```python
 # Debug — validation runs and raises on the first failure
 period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")

@@ -32,7 +32,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_nbegm_merges_two_derived_variable_kinks_matching_brute() -> None:
@@ -77,7 +77,7 @@ def _solve_jump(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mappi
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=jump_toy.build_params(), log_level="off")
+    return model.solve(params=jump_toy.build_params(), log_level="debug")
 
 
 def test_nbegm_merges_a_jump_and_kink_across_variables_matching_brute() -> None:
