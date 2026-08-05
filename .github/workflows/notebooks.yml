@@ -17,7 +17,10 @@ on:
       - '**'
 jobs:
   notebooks:
-    name: Run explanation notebooks for docs
+    # Named for the workflow, not for what it runs: this is the context branch
+    # protection requires, so rewording the step must not rename it and drop it
+    # out of the required set.
+    name: notebooks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
