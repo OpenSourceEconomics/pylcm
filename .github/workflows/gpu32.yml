@@ -17,13 +17,37 @@ on:
       - '**.md'
       - '**.ipynb'
 jobs:
-  gpu32:
-    name: Run fp32 GPU tests for ubuntu-latest-gpu on 3.14
+  tests:
+    name: Run fp32 GPU tests (${{ matrix.suite }})
     # Config:
     # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
     # Docs on GPU runners:
     # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
     runs-on: ubuntu-latest-gpu
+    strategy:
+      fail-fast: false
+      matrix:
+        # `tests/solution` is the DC-EGM battery: a fifth of the suite's files
+        # and four fifths of its GPU wall time. It gets its own job so that no
+        # single process spans the whole suite and so the two halves run at the
+        # same time rather than end to end. A GPU job that has to carry both has
+        # run for hours and been reclaimed before reporting anything.
+        suite:
+          - solution
+          - rest
+        include:
+          - suite: solution
+            pytest_paths: tests/solution
+          - suite: rest
+            pytest_paths: >-
+              tests --ignore=tests/solution
+              --ignore=tests/test_mahler_yum_2024.py
+    # Invoking `pytest` directly rather than the pixi task drops the task's
+    # `env`, so the preallocation setting is restored here. Without it JAX
+    # claims most of the device up front and the Mahler & Yum solve has nothing
+    # left to grow into.
+    env:
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
     steps:
       - name: Check CUDA version
         run: |
@@ -37,6 +61,44 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
-      - name: Run pytest on GPU with 32-bit precision
+      - name: Run Mahler & Yum on GPU
+        if: matrix.suite == 'rest'
         shell: bash {0}
-        run: pixi run -e tests-cuda12 tests-32bit
+        # The GPU-scale Mahler & Yum module runs in a process of its own: its
+        # solve kernels only fit the device when XLA fully fuses the
+        # max-over-actions reduction, and compiling them late in a long-lived
+        # process that has run a whole battery has produced an unfused
+        # executable whose scratch arena (half the state-action product) exceeds
+        # device memory. A fresh process pins the fused compile.
+        run: >-
+          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py
+          --precision=32 -n0
+      - name: Run pytest on GPU
+        shell: bash {0}
+        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
+        # starved of host CPU/memory by parallel JAX AOT compiles, and parallel
+        # workers sharing one persistent-cache directory race on its autotune
+        # scratch files, which fails the run at collection.
+        #
+        # `--release-compiled-programs` drops JAX's in-memory compiled-program
+        # cache at every module boundary. A worker's resident memory otherwise
+        # grows with every distinct program it has compiled, and the splitting
+        # above divides that growth without bounding it. A released program is
+        # recompiled from the persistent on-disk cache rather than from cold.
+        run: >-
+          pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
+          --precision=32 -n0 --release-compiled-programs
+  # One context for both suite legs, so branch protection names `gpu32` rather
+  # than each leg — adding a suite would otherwise silently drop out of the
+  # required set until someone remembered to add it there too.
+  gpu32:
+    name: gpu32
+    needs:
+      - tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every suite leg succeeded
+        run: |-
+          echo "tests: ${{ needs.tests.result }}"
+          test "${{ needs.tests.result }}" = "success"

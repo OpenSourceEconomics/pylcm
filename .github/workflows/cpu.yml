@@ -34,6 +34,19 @@ jobs:
           - windows-latest
         python-version:
           - '3.14'
+        # Neither the macOS nor the Windows runner can host four parallel JAX AOT
+        # compiles of the DC-EGM solve/oracle battery: macOS swap-thrashes for
+        # hours, Windows grows past the 16 GB runner and is killed mid-suite.
+        # Drop the `slow` set on both. What it covers is numerics, which are
+        # platform-independent and stay covered on Linux and the two GPU jobs;
+        # what these runners are here for is the platform surface — imports,
+        # paths, dtypes, the pandas/arrow round trip — all of which is in the
+        # remaining set.
+        include:
+          - os: macos-latest
+            pytest_extra: -m "not slow"
+          - os: windows-latest
+            pytest_extra: -m "not slow"
     steps:
       - uses: actions/checkout@v7
       - uses: prefix-dev/setup-pixi@v0.10.1
@@ -70,17 +83,36 @@ jobs:
             jax-${{ runner.os }}-${{ matrix.python-version }}-
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e tests-cpu tests
+        run: pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
-        run: pixi run -e tests-cpu tests-with-cov
+        # A worker's resident memory grows with every distinct program it has
+        # compiled, because JAX holds each one live in an in-memory cache, and
+        # the DC-EGM solve/oracle battery (`slow`) compiles enough of them to
+        # exhaust the 16 GB runner mid-suite. Two mechanisms keep it in budget:
+        # - `--release-compiled-programs` drops that cache at every module
+        #   boundary, which bounds the growth instead of merely dividing it.
+        #   Measured on the `slow` battery at `-n 2`: peak resident memory over
+        #   the process tree falls from 18.25 GB to 9.44 GB and stops ratcheting,
+        #   and the phase runs faster rather than slower, because a released
+        #   program is recompiled from the persistent on-disk cache.
+        # - the phases stay separate, each starting from a fresh process, as a
+        #   second line of defence and so coverage can be appended across them.
+        run: |
+          pixi run -e tests-cpu pytest tests -m "not slow" \
+            --release-compiled-programs --cov=./ --cov-report= -n 4 \
+          && pixi run -e tests-cpu pytest tests/solution -m slow \
+            --release-compiled-programs --cov=./ --cov-append --cov-report= -n 2 \
+          && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
+            --release-compiled-programs --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
         uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
       - name: Prune superseded JAX caches for this ref
         # `github.sha` in the key means every run writes a fresh entry instead of
         # replacing one, so an active branch accumulates them until the
