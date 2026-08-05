@@ -14,6 +14,7 @@ from _lcm.certainty_equivalent import power_inverse, power_transform
 from lcm import (
     AgeGrid,
     CertaintyEquivalent,
+    CESAggregator,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
@@ -23,7 +24,6 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.exceptions import (
@@ -884,7 +884,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     """Build a two-regime Epstein-Zin model whose value function scales with `scale`.
 
     Every primitive is homogeneous of degree one in `scale` - the grids, the
-    income flow and both utilities - and `W_epstein_zin` and the power mean
+    income flow and both utilities - and `CESAggregator` and the power mean
     are themselves homogeneous of degree one. The solved value function of
     the model at `scale` is therefore exactly `scale` times the value
     function at `scale = 1`, and the optimal consumption grid point is
@@ -919,7 +919,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         },
         constraints={"budget": _budget},
         functions={"utility": utility_alive},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
@@ -984,7 +984,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         },
         constraints={"budget": _budget},
         functions={"utility": utility_alive},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )

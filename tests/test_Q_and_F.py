@@ -31,9 +31,9 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    LinearAggregator,
     LinearExpectation,
     PowerMean,
-    W_linear,
 )
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -67,7 +67,7 @@ def test_get_Q_and_F_function():
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
@@ -967,3 +967,111 @@ def test_as_lottery_gives_a_degenerate_target_no_mass():
         has_stochastic_states=True,
     )
     assert_array_equal(np.asarray(weights), np.zeros(2))
+
+
+@categorical(ordered=False)
+class _MassRegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _model_emitting_total_regime_mass(
+    total_mass: float, certainty_equivalent: CertaintyEquivalent
+) -> Model:
+    """A two-regime model whose transition emits `total_mass` in every period.
+
+    `alive` splits its outgoing mass between itself and `dead` while it is
+    active, and sends all of it to `dead` at the last transition, so the only
+    departure from unit mass is the one `total_mass` states. Utility and the
+    terminal value are strictly positive everywhere on the grid, which every
+    certainty equivalent admits.
+    """
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    alive = UserRegime(
+        transition={
+            "alive": MarkovTransition(
+                lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+            ),
+            "dead": MarkovTransition(
+                lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+            ),
+        },
+        active=lambda age: age < 2,
+        states={"wealth": wealth},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        certainty_equivalent=certainty_equivalent,
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": wealth},
+        functions={"utility": lambda wealth: wealth + 1.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_MassRegimeId,
+    )
+
+
+def _solve_alive_without_validation(
+    total_mass: float, certainty_equivalent: CertaintyEquivalent
+) -> FloatND:
+    """Solve the model at `log_level="off"` and return `alive`'s first V array."""
+    alive_params: dict[str, Any] = {"discount_factor": 0.95}
+    if not isinstance(certainty_equivalent, LinearExpectation):
+        alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
+    model = _model_emitting_total_regime_mass(total_mass, certainty_equivalent)
+    return model.solve(params={"alive": alive_params}, log_level="off")[0]["alive"]
+
+
+@pytest.mark.parametrize(
+    "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
+)
+def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
+    certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+):
+    """A regime transition emitting 0.977 of unit mass solves to NaN.
+
+    Every aggregation route divides the continuation by the mass it received,
+    so dropped mass is otherwise divided straight back out: the same model at
+    0.977 and at 1.0 returns bit-identical values, and nothing in the result
+    marks the difference. The check therefore lives in the arithmetic rather
+    than in runtime validation, which `log_level="off"` skips.
+    """
+    V_arr = _solve_alive_without_validation(0.977, certainty_equivalent)
+    assert bool(jnp.all(jnp.isnan(V_arr)))
+
+
+@pytest.mark.parametrize(
+    ("certainty_equivalent", "expected"),
+    [
+        (
+            LinearExpectation(),
+            [1.95, 4.023375, 6.096749999999999, 8.170124999999999, 10.2435],
+        ),
+        (
+            PowerMean(),
+            [
+                1.95,
+                4.02247464898596,
+                6.094616451016636,
+                8.16671454366382,
+                10.238798370672098,
+            ],
+        ),
+    ],
+    ids=["linear", "power"],
+)
+def test_solve_at_unit_regime_mass_is_bit_unchanged_by_the_mass_check(
+    certainty_equivalent: CertaintyEquivalent, expected: list[float], x64_enabled: None
+):
+    """Unit regime mass reaches the value function the unchecked arithmetic gives.
+
+    The lottery route's multiplier is exactly `1.0` and the per-target route
+    still divides by the mass itself, both exact in IEEE754, so a well-formed
+    model keeps its floating-point association bit for bit.
+    """
+    V_arr = _solve_alive_without_validation(1.0, certainty_equivalent)
+    assert_array_equal(np.asarray(V_arr), np.array(expected))

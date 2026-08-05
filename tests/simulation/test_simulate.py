@@ -16,9 +16,9 @@ from _lcm.simulation.simulate import (
 )
 from _lcm.utils.logging import get_logger
 from lcm import (
+    LinearAggregator,
     LinearExpectation,
     Model,
-    W_linear,
 )
 from lcm.ages import AgeGrid
 from lcm.result import (
@@ -55,7 +55,7 @@ def simulate_inputs():
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
@@ -76,7 +76,7 @@ def simulate_inputs():
             user_regimes=finalize_regimes(
                 user_regimes=user_regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             regime_names_to_ids=regime_names_to_ids,

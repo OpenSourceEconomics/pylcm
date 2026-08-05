@@ -306,7 +306,10 @@ extend-immutable-calls = [
   "_lcm.certainty_equivalent.LinearExpectation",
   "_lcm.utils.containers.Unset",
   "lcm.LinearExpectation",
+  "lcm.LinearAggregator",
   "lcm.certainty_equivalent.LinearExpectation",
+  "lcm.koopmans_aggregation.LinearAggregator",
+  "LinearAggregator",
   "LinearExpectation",
   "Unset",
 ]
