@@ -17,7 +17,7 @@ on:
       - '**'
 jobs:
   notebooks:
-    name: notebooks
+    name: Run explanation notebooks for docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

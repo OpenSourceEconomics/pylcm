@@ -18,7 +18,7 @@ on:
       - '**.ipynb'
 jobs:
   gpu32:
-    name: gpu32
+    name: Run fp32 GPU tests for ubuntu-latest-gpu on 3.14
     # Config:
     # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
     # Docs on GPU runners:
