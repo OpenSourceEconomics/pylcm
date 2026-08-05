@@ -1,9 +1,9 @@
 ---
 name: Cancel runs of closed PRs
 # GitHub does not cancel a PR's queued/in-progress runs when the PR is closed, and
-# `main.yml`'s concurrency group only supersedes a run when a NEWER run appears on the
-# same head ref -- closing a PR is not a new run, so it never fires. Orphaned runs then
-# sit in the self-hosted GPU queue and block every later PR behind them.
+# the CI workflows' concurrency groups only supersede a run when a NEWER run appears
+# on the same head ref -- closing a PR is not a new run, so it never fires. Orphaned
+# runs then sit in the self-hosted GPU queue and block every later PR behind them.
 #
 # Scope: PRs closed WITHOUT merging. A merged PR's runs are left to finish -- see the
 # job-level `if` below.
