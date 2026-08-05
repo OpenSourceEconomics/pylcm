@@ -1,0 +1,36 @@
+---
+name: ty
+# Automatically cancel a previous run.
+concurrency:
+  group: ty-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+    paths-ignore:
+      - docs/**
+      - benchmarks/**
+      - '**.md'
+      - '**.ipynb'
+jobs:
+  ty:
+    name: ty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          pixi-version: v0.73.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: type-checking
+          frozen: true
+      - name: Run ty
+        shell: bash {0}
+        # The prek `ty` hook is skipped on pre-commit.ci (no pixi envs there);
+        # this job runs it against the `type-checking` env instead.
+        run: pixi run -e type-checking prek run ty --all-files
