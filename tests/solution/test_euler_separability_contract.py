@@ -42,9 +42,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.crra import crra_utility
 from _lcm.egm.ez_kernel import ez_consumption_from_euler
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
+from tests.solution._crra_preferences import crra_preferences
 
 # Exact algebra: closed-form identities and a cross-partial that must vanish, so
 # this module runs with x64 regardless of the suite's `--precision` flag.
@@ -211,7 +211,7 @@ def test_the_derived_condition_reproduces_the_time_separable_euler_equation(dnu_
     """With `LinearAggregator` the contract yields `c = (beta * dnu/ds)^(-1/crra)`."""
     got = _bisect_euler(
         _linear,
-        flow=lambda c: crra_utility(c, _CRRA),
+        flow=crra_preferences(_CRRA).utility,
         flow_marginal=lambda c: c ** (-_CRRA),
         nu=1.0,
         dnu_ds=dnu_ds,

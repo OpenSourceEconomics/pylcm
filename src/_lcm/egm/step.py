@@ -150,9 +150,9 @@ from _lcm.egm.continuation import (
     get_egm_continuation_targets,
 )
 from _lcm.egm.kernel_scope import _find_unsupported_feature
+from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.egm.regime_introspection import (
-    _concatenate_regime_function,
     _get_discrete_state_names,
     _get_passive_state_names,
     _get_process_state_names,
@@ -915,17 +915,15 @@ def _build_kernel_pieces(
         + own_passive_state_names
         + tuple(own_discrete_action_values),
         euler_axis_in_V=euler_axis_in_V,
-        utility_func=_concatenate_regime_function(
-            functions=functions, target="utility"
-        ),
+        utility_func=concatenate_regime_function(functions=functions, target="utility"),
         inverse_marginal_utility_func=(
-            _concatenate_regime_function(
+            concatenate_regime_function(
                 functions=functions, target="inverse_marginal_utility"
             )
             if "inverse_marginal_utility" in functions
             else None
         ),
-        own_resources_func=_concatenate_regime_function(
+        own_resources_func=concatenate_regime_function(
             functions=functions, target=solver.resources
         ),
         feasibility_func=_build_feasibility_function(
