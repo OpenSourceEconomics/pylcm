@@ -31,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int) -> Mapping[int, Mapping]:
         n_consumption=n_consumption,
         transition_reads_liquid=True,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_nbegm_transition_prob_reads_liquid_matches_brute() -> None:

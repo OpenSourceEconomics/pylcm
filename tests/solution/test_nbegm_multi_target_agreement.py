@@ -27,7 +27,7 @@ def _solve(variant: str, *, n_consumption: int = 140) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_nbegm_matches_brute_under_stochastic_multi_target_transition():

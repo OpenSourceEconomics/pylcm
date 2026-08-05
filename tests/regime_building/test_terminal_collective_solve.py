@@ -26,7 +26,7 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
@@ -64,7 +64,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
             user_regimes=finalize_regimes(
                 user_regimes={"couple": regime},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -72,7 +72,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
         user_regimes=finalize_regimes(
             user_regimes={"couple": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,

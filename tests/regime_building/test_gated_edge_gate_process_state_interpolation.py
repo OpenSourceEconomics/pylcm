@@ -100,7 +100,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -278,7 +278,7 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
             user_regimes=finalize_regimes(
                 user_regimes=_make_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -286,7 +286,7 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
         user_regimes=finalize_regimes(
             user_regimes=_make_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,

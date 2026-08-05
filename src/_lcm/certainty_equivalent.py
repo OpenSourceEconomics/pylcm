@@ -27,9 +27,8 @@ class CertaintyEquivalent(ABC):
     """Base class for certainty-equivalent specifications.
 
     Declared on a non-terminal `Regime` via `certainty_equivalent=...`. The
-    shipped implementations are `LinearExpectation` — expected utility, and
-    what a regime that declares nothing gets — and `QuasiArithmeticMean` with
-    its `PowerMean` specialization.
+    shipped implementations are `LinearExpectation` (expected utility, the
+    default) and `QuasiArithmeticMean` with its `PowerMean` specialization.
 
     `aggregate` reduces the whole joint continuation lottery in one piece,
     because a transform has to be applied before any expectation is taken.
@@ -139,7 +138,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
     pseudo-function name `certainty_equivalent` in the regime's params
     (`{"certainty_equivalent": {"<arg>": ...}}`).
 
-    Combined with a user-supplied Bellman aggregator `H` this expresses
+    Combined with a user-supplied Koopmans aggregator `W` this expresses
     Epstein-Zin and other transformed-expectation recursive preferences.
     The parameters are read from the params template only, not from DAG
     function outputs.
@@ -191,6 +190,10 @@ class QuasiArithmeticMean(CertaintyEquivalent):
                 probability distribution, so the weights are normalized by
                 their sum; scaling them all by a constant leaves the result
                 unchanged, and a lottery carrying no mass aggregates to NaN.
+                Because that normalization divides any lost mass back out
+                without leaving a trace, the caller — not this method — is
+                responsible for the weights summing to one; the engine checks
+                it in `_lcm.regime_building.Q_and_F`.
             params: Mapping of runtime parameter names to their values.
                 `transform` and `inverse` each receive the subset their
                 signature declares.
@@ -199,10 +202,22 @@ class QuasiArithmeticMean(CertaintyEquivalent):
             The certainty equivalent, reduced over the last axis.
 
         """
-        transformed = self.transform(value=values, **_args_for(self.transform, params))
+        # A node carrying no weight must not be able to inject a non-finite
+        # quantity into the reduction. `transform` is arbitrary user code and
+        # may be unbounded at the edge of its domain — `log` at zero is the
+        # ordinary case — and a weight of exactly zero does not cancel an
+        # infinity: `0 * inf` is NaN, which would take the well-specified nodes
+        # down with it. Transforming a stand-in value instead keeps the
+        # reduction finite and changes nothing, the node's weight being zero.
+        live = weights > 0.0
+        safe_values = jnp.where(live, values, jnp.ones_like(values))
+        transformed = self.transform(
+            value=safe_values, **_args_for(self.transform, params)
+        )
         weight_sum = jnp.sum(weights, axis=-1)
         return self.inverse(
-            value=jnp.sum(weights * transformed, axis=-1) / weight_sum,
+            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
+            / weight_sum,
             **_args_for(self.inverse, params),
         )
 
@@ -284,7 +299,7 @@ class PowerMean(QuasiArithmeticMean):
 
         `ra` is `risk_aversion` and `w̃` the mass-normalized weights. The
         evaluation is `weighted_power_mean`, which the Koopmans aggregator
-        `W_epstein_zin` shares: the naive `inverse(Σ w · transform(v))`
+        `CESAggregator` shares: the naive `inverse(Σ w · transform(v))`
         overflows when `risk_aversion > 1` and `v` is near the borrowing
         constraint, so the mean is taken in an anchored log form instead. It
         stays finite wherever the mathematical value is, and the
@@ -307,7 +322,10 @@ class PowerMean(QuasiArithmeticMean):
                 their sum; scaling them all by a constant leaves the result
                 unchanged, and a lottery carrying no mass aggregates to NaN.
                 Zero-weight entries drop out exactly, while a NaN weight
-                propagates.
+                propagates. Because that normalization divides any lost mass
+                back out without leaving a trace, the caller — not this method
+                — is responsible for the weights summing to one; the engine
+                checks it in `_lcm.regime_building.Q_and_F`.
             params: Mapping carrying the `risk_aversion` runtime parameter.
 
         Returns:

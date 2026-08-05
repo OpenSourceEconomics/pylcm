@@ -1,0 +1,33 @@
+---
+name: notebooks
+# Automatically cancel a previous run.
+concurrency:
+  group: notebooks-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+# No path filter. The explanation notebooks are pages of the documentation site
+# (`docs/myst.yml` lists them), so they must run when a notebook itself changes —
+# and they import `lcm`, so they must run when the library changes too. That leaves
+# nothing worth excluding, and as a required check it has to report on every PR.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+jobs:
+  notebooks:
+    name: Run explanation notebooks for docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.76.1
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: docs
+          frozen: false
+      - name: Run explanation notebooks
+        shell: bash {0}
+        run: pixi run -e docs explanation-notebooks

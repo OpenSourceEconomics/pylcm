@@ -35,6 +35,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import InvalidInitialConditionsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
@@ -139,7 +140,7 @@ def test_baseline_no_nan():
         n_consumption=5,
         n_periods=3,
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     for regime_to_V in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr))
@@ -161,7 +162,7 @@ def test_some_states_have_only_one_feasible_action():
         n_consumption=5,
         n_periods=3,
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     # At wealth = 1.0, only consumption = 0.5 is feasible (1.625, 2.75, 3.875,
     # 5.0 all > 1.0).
     for regime_to_V in period_to_regime_to_V_arr.values():
@@ -186,7 +187,7 @@ def test_some_states_have_no_feasible_action():
         n_consumption=5,
         n_periods=3,
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     # At wealth = 0.1, no consumption point is feasible. max returns -inf.
     # The next period interpolates V over the resulting -inf cells.
     for regime_to_V in period_to_regime_to_V_arr.values():
@@ -211,7 +212,7 @@ def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained():
         n_consumption=5,
         n_periods=3,
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     for regime_to_V in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V.values():
             # log(0) = -inf is not NaN, but combined with where-mask edge
@@ -219,15 +220,7 @@ def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained():
             assert not jnp.any(jnp.isnan(V_arr))
 
 
-@pytest.mark.parametrize(
-    ("wealth_lo", "consumption_lo", "label"),
-    [
-        (1.0, 0.5, "single-feasible"),
-        (0.1, 1.0, "all-infeasible"),
-    ],
-)
-def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label):
-    """End-to-end solve+simulate for both regimes."""
+def _constrained_simulation_inputs(*, wealth_lo, consumption_lo):
     model, params = _build_model(
         wealth_lo=wealth_lo,
         wealth_hi=20.0,
@@ -244,16 +237,43 @@ def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label)
             [RegimeId.alive, RegimeId.alive, RegimeId.alive], dtype=jnp.int32
         ),
     }
+    return model, params, initial_conditions
+
+
+def test_simulate_with_a_single_feasible_action_yields_no_nan():
+    """A state-action space narrowed to one feasible action simulates cleanly."""
+    model, params, initial_conditions = _constrained_simulation_inputs(
+        wealth_lo=1.0, consumption_lo=0.5
+    )
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
-    assert not df["value"].isna().any(), (
-        f"{label}: simulated value column should not contain NaN"
+    assert not df["value"].isna().any()
+
+
+def test_simulate_rejects_a_subject_seeded_where_no_action_is_feasible():
+    """Seeding a subject in a state with no feasible action is invalid input.
+
+    The subject has no decision to make, so there is nothing to simulate; the
+    condition is reported rather than carried silently into the result.
+    """
+    model, params, initial_conditions = _constrained_simulation_inputs(
+        wealth_lo=0.1, consumption_lo=1.0
     )
+    with pytest.raises(
+        InvalidInitialConditionsError,
+        match=r"All actions are infeasible for 1 subject",
+    ):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+        )
 
 
 @categorical(ordered=False)
@@ -380,7 +400,7 @@ def test_bequest_gamma_close_to_one_is_safe():
         coefficient_rra=(3.84, 0.999077),
         consumption_weight=(0.68, 0.88),
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     for regime_to_V in period_to_regime_to_V_arr.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr))
@@ -398,7 +418,7 @@ def test_bequest_gamma_exactly_one_for_one_type_only():
         coefficient_rra=(3.84, 1.0),  # type_1 hits the log branch
         consumption_weight=(0.68, 0.88),
     )
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     for period, regime_to_V in period_to_regime_to_V_arr.items():
         for regime, V_arr in regime_to_V.items():
             assert not jnp.any(jnp.isnan(V_arr)), (
@@ -557,6 +577,6 @@ def test_runtime_state_grid_passes_initial_conditions_validation():
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     assert result.n_subjects == 3

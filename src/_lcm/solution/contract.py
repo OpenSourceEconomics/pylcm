@@ -146,7 +146,7 @@ class SolverBuildContext:
 
     Processed like every other function, so its parameters carry their qualified
     names — a solver that reads them off the runtime pool must use this object,
-    not the user-facing `W_linear`.
+    not the user-facing `LinearAggregator`.
     """
 
     constraints: ConstraintFunctionsMapping

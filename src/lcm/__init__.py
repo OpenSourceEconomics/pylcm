@@ -116,7 +116,7 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
-from lcm.koopmans_aggregation import W_epstein_zin, W_linear  # noqa: E402
+from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -195,6 +195,7 @@ __all__ = [
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
     "BranchAggregateResult",
+    "CESAggregator",
     "CertaintyEquivalent",
     "DeterministicOuterMaximum",
     "DiscreteGrid",
@@ -204,6 +205,7 @@ __all__ = [
     "IrregSpacedGrid",
     "LegacyGoldenSection",
     "LinSpacedGrid",
+    "LinearAggregator",
     "LinearExpectation",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
@@ -231,8 +233,6 @@ __all__ = [
     "TwoAssetEGM",
     "UniformIIDProcess",
     "UniformObservedFixedCost",
-    "W_epstein_zin",
-    "W_linear",
     "__version__",
     "affine_breakpoint",
     "boundary",

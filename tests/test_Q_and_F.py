@@ -26,17 +26,18 @@ from _lcm.regime_building.Q_and_F import (
     _get_joint_weights_function,
     _get_U_and_F,
     _law_sources_differ,
+    _regime_mass_is_unit,
+    _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import TransitionLawInfo
 from lcm import (
     AgeGrid,
+    LinearAggregator,
     LinearExpectation,
     PowerMean,
-    W_linear,
 )
 from lcm.model import Model
 from lcm.regime import MarkovTransition
@@ -70,7 +71,7 @@ def test_get_Q_and_F_function():
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
@@ -197,34 +198,9 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 
 
 def test_get_multiply_weights():
-    def next_a():
-        return jnp.array([0.1, 0.9])
-
-    def next_b():
-        return jnp.array([0.2, 0.8])
-
-    transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        transition_laws=MappingProxyType(
-            {
-                "test": MappingProxyType(
-                    {
-                        name: TransitionLawInfo(
-                            target="test",
-                            next_state_name=name,
-                            qualified_name=f"test__{name}",
-                            stochastic=True,
-                            continuous_process=False,
-                            intrinsic_entry=False,
-                            weight_name=f"weight_test__{name}",
-                        )
-                        for name in ("next_a", "next_b")
-                    }
-                )
-            }
-        ),
+        variables=("next_a", "next_b"),
     )
 
     a = jnp.array([1, 2])
@@ -233,6 +209,26 @@ def test_get_multiply_weights():
     got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3, 4], [6, 8]])
     assert_array_equal(got, expected)
+
+
+def test_joint_weights_axes_follow_the_declared_variable_order():
+    """The axis order of the outer product is the order the caller passes in.
+
+    The caller productmaps the value surface over the same tuple, so the two
+    orderings have to agree; reversing the tuple must transpose the result.
+    """
+    a = jnp.array([1, 2])
+    b = jnp.array([3, 4, 5])
+
+    forward = _get_joint_weights_function(
+        regime_name="test", variables=("next_a", "next_b")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+    reversed_order = _get_joint_weights_function(
+        regime_name="test", variables=("next_b", "next_a")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+
+    assert forward.shape == (2, 3)
+    assert_array_equal(reversed_order, forward.T)
 
 
 def test_get_combined_constraint():
@@ -598,7 +594,7 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_H(utility: FloatND, CE: FloatND) -> FloatND:
+def _epstein_zin_W(utility: FloatND, CE: FloatND) -> FloatND:
     return utility + CE
 
 
@@ -606,6 +602,13 @@ def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, Float
     return MappingProxyType(
         {"low": regime_prob_low, "high": 1.0 - regime_prob_low},
     )
+
+
+def _raw_low_and_high_probs(
+    regime_prob_low: FloatND, regime_prob_high: FloatND
+) -> MappingProxyType[str, FloatND]:
+    """Return two raw probabilities without forcing their represented sum to one."""
+    return MappingProxyType({"low": regime_prob_low, "high": regime_prob_high})
 
 
 # A target regime without states: its value function array is a scalar, so the
@@ -618,20 +621,30 @@ _STATELESS_V_INFO = VInterpolationInfo(
 
 
 def _build_two_target_closure(
-    builder: Callable, *, certainty_equivalent: CertaintyEquivalent | None
+    builder: Callable,
+    *,
+    certainty_equivalent: CertaintyEquivalent | None,
+    probs_function: Callable = _low_and_high_probs,
+    flat_param_names: frozenset[str] = frozenset(
+        {"certainty_equivalent__risk_aversion"}
+    ),
+    period_targets: tuple[str, ...] = ("low", "high"),
+    scalar_targets: tuple[str, ...] = (),
 ) -> Callable:
     """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
     return builder(
         co_map_state_names=(),
-        flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
+        flat_param_names=flat_param_names,
         functions=MappingProxyType({"utility": _sum_utility}),
-        koopmans_aggregator=_epstein_zin_H,
+        koopmans_aggregator=_epstein_zin_W,
         constraints=MappingProxyType({}),
-        period_targets=("low", "high"),
+        period_targets=period_targets,
+        scalar_targets=scalar_targets,
         transitions=MappingProxyType({}),
         transition_laws=MappingProxyType({}),
+        support_axes=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
-            functions={"regime_transition_probs": _low_and_high_probs},
+            functions={"regime_transition_probs": probs_function},
             targets="regime_transition_probs",
             enforce_signature=False,
             set_annotations=True,
@@ -664,6 +677,110 @@ def _two_target_call_kwargs(
         "period": jnp.asarray(0),
         "certainty_equivalent__risk_aversion": jnp.asarray(risk_aversion, dtype=dtype),
     }
+
+
+def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return Q values for an accepted near-unit-mass lottery and a safe action."""
+    Q_and_F = _build_two_target_closure(
+        get_Q_and_F,
+        certainty_equivalent=LinearExpectation(),
+        probs_function=_raw_low_and_high_probs,
+        flat_param_names=frozenset(),
+    )
+
+    def evaluate(*, value: float, probability_high: float) -> FloatND:
+        kwargs: dict[str, Any] = {
+            "next_regime_to_V_arr": MappingProxyType(
+                {
+                    "low": jnp.asarray(value, dtype=dtype),
+                    "high": jnp.asarray(value, dtype=dtype),
+                }
+            ),
+            "utility_level": jnp.asarray(0.0, dtype=dtype),
+            "regime_prob_low": jnp.asarray(0.5, dtype=dtype),
+            "regime_prob_high": jnp.asarray(probability_high, dtype=dtype),
+            "age": jnp.asarray(25),
+            "period": jnp.asarray(0),
+        }
+        return Q_and_F(**kwargs)[0]
+
+    def both_actions() -> FloatND:
+        return jnp.asarray(
+            [
+                evaluate(value=1.0, probability_high=0.500005),
+                evaluate(value=1.000003, probability_high=0.5),
+            ]
+        )
+
+    return np.asarray(both_actions()), np.asarray(jax.jit(both_actions)())
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "dtype", "rtol"),
+    [
+        ("x64_enabled", jnp.float64, 1e-12),
+        ("x64_disabled", jnp.float32, 1e-6),
+    ],
+)
+def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
+    request: pytest.FixtureRequest,
+    fixture_name: str,
+    dtype: Any,
+    rtol: float,
+):
+    """The shortcut equals `LinearExpectation.aggregate` on accepted probabilities."""
+    request.getfixturevalue(fixture_name)
+    represented_mass = jnp.asarray(0.5, dtype=dtype) + jnp.asarray(
+        0.500005, dtype=dtype
+    )
+    assert jnp.allclose(represented_mass, 1.0)
+
+    eager, jitted = _linear_expectation_action_values(dtype=dtype)
+    expected = np.asarray([1.0, 1.000003], dtype=np.dtype(dtype))
+    np.testing.assert_allclose(eager, expected, rtol=rtol, atol=0.0)
+    np.testing.assert_allclose(jitted, expected, rtol=rtol, atol=0.0)
+    assert int(np.argmax(eager)) == 1
+    assert int(np.argmax(jitted)) == 1
+
+
+def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
+    x64_enabled: None,
+):
+    """A stateless target's probability counts toward the mass the fast path divides by.
+
+    Every reachable target here carries no state, so the whole continuation is
+    seeded from the stateless route and none of it flows through the loop over
+    targets that carry state. The represented mass is still the sum over both
+    targets, so a lottery paying the same value at every node is worth exactly
+    that value.
+    """
+    Q_and_F = _build_two_target_closure(
+        get_Q_and_F,
+        certainty_equivalent=LinearExpectation(),
+        probs_function=_raw_low_and_high_probs,
+        flat_param_names=frozenset(),
+        period_targets=(),
+        scalar_targets=("low", "high"),
+    )
+    represented_mass = 0.5 + 0.500005
+    assert jnp.allclose(jnp.asarray(represented_mass), 1.0)
+
+    value = 3.0
+    got = Q_and_F(
+        next_regime_to_V_arr=MappingProxyType(
+            {
+                "low": jnp.asarray(value),
+                "high": jnp.asarray(value),
+            }
+        ),
+        utility_level=jnp.asarray(0.0),
+        regime_prob_low=jnp.asarray(0.5),
+        regime_prob_high=jnp.asarray(0.500005),
+        age=jnp.asarray(25),
+        period=jnp.asarray(0),
+    )[0]
+
+    np.testing.assert_allclose(np.asarray(got), value, rtol=1e-12, atol=0.0)
 
 
 def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
@@ -898,3 +1015,195 @@ def test_as_lottery_gives_a_degenerate_target_no_mass():
         has_stochastic_states=True,
     )
     assert_array_equal(np.asarray(weights), np.zeros(2))
+
+
+@categorical(ordered=False)
+class _MassRegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _model_emitting_total_regime_mass(
+    total_mass: float, certainty_equivalent: CertaintyEquivalent
+) -> Model:
+    """A two-regime model whose transition emits `total_mass` in every period.
+
+    `alive` splits its outgoing mass between itself and `dead` while it is
+    active, and sends all of it to `dead` at the last transition, so the only
+    departure from unit mass is the one `total_mass` states. Utility and the
+    terminal value are strictly positive everywhere on the grid, which every
+    certainty equivalent admits.
+    """
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    alive = UserRegime(
+        transition={
+            "alive": MarkovTransition(
+                lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+            ),
+            "dead": MarkovTransition(
+                lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+            ),
+        },
+        active=lambda age: age < 2,
+        states={"wealth": wealth},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        certainty_equivalent=certainty_equivalent,
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": wealth},
+        functions={"utility": lambda wealth: wealth + 1.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_MassRegimeId,
+    )
+
+
+def _solve_alive_without_validation(
+    total_mass: float, certainty_equivalent: CertaintyEquivalent
+) -> FloatND:
+    """Solve the model at `log_level="off"` and return `alive`'s first V array."""
+    alive_params: dict[str, Any] = {"discount_factor": 0.95}
+    if not isinstance(certainty_equivalent, LinearExpectation):
+        alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
+    model = _model_emitting_total_regime_mass(total_mass, certainty_equivalent)
+    return model.solve(params={"alive": alive_params}, log_level="off")[0]["alive"]
+
+
+@pytest.mark.parametrize(
+    "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
+)
+def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
+    certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+):
+    """A regime transition emitting 0.977 of unit mass solves to NaN.
+
+    Every aggregation route divides the continuation by the mass it received,
+    so dropped mass is otherwise divided straight back out: the same model at
+    0.977 and at 1.0 returns bit-identical values, and nothing in the result
+    marks the difference. The check therefore lives in the arithmetic rather
+    than in runtime validation, which `log_level="off"` skips.
+    """
+    V_arr = _solve_alive_without_validation(0.977, certainty_equivalent)
+    assert bool(jnp.all(jnp.isnan(V_arr)))
+
+
+@pytest.mark.parametrize(
+    ("certainty_equivalent", "expected"),
+    [
+        (
+            LinearExpectation(),
+            [1.95, 4.023375, 6.096749999999999, 8.170124999999999, 10.2435],
+        ),
+        (
+            PowerMean(),
+            [
+                1.95,
+                4.02247464898596,
+                6.094616451016636,
+                8.16671454366382,
+                10.238798370672098,
+            ],
+        ),
+    ],
+    ids=["linear", "power"],
+)
+def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
+    certainty_equivalent: CertaintyEquivalent, expected: list[float], x64_enabled: None
+):
+    """Unit regime mass reaches the value function the unchecked arithmetic gives.
+
+    The tolerance is one part in `1e-15`, not exact equality: these are the
+    values of a whole solve, and XLA fuses the surrounding interpolation
+    differently on CPU and GPU, which moves the last ulp. That the check itself
+    adds no arithmetic is a separate, backend-independent claim, tested against
+    the predicate rather than against a solve.
+    """
+    V_arr = _solve_alive_without_validation(1.0, certainty_equivalent)
+    np.testing.assert_allclose(
+        np.asarray(V_arr), np.array(expected), rtol=1e-15, atol=0.0
+    )
+
+
+def _model_with_alive_active_at_every_age(
+    certainty_equivalent: CertaintyEquivalent,
+) -> Model:
+    """A two-regime model whose non-terminal regime outlives all of its targets.
+
+    `alive` is active at every age, including the last, where no regime is left
+    to carry its continuation. It emits unit mass in every period, so nothing
+    but the missing target distinguishes it from a well-formed model.
+    """
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    alive = UserRegime(
+        transition=lambda: _MassRegimeId.dead,
+        states={"wealth": wealth},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        certainty_equivalent=certainty_equivalent,
+    )
+    dead = UserRegime(
+        transition=None,
+        active=lambda age: age < 2,
+        states={"wealth": wealth},
+        functions={"utility": lambda wealth: wealth + 1.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_MassRegimeId,
+    )
+
+
+@pytest.mark.parametrize(
+    "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
+)
+def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
+    certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+):
+    """The period where a non-terminal regime has no target left solves to NaN.
+
+    Emitting unit mass toward regimes that are all inactive next period leaves
+    the continuation carrying no mass at all — the same defect as a transition
+    that drops mass, arrived at through the topology rather than through the
+    probabilities. Aggregating nothing would return the utility-only Bellman
+    value: finite, plausible, and an answer to a model that cannot be solved.
+    """
+    alive_params: dict[str, Any] = {"discount_factor": 0.95}
+    if not isinstance(certainty_equivalent, LinearExpectation):
+        alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
+    model = _model_with_alive_active_at_every_age(certainty_equivalent)
+    period_to_regime_to_V_arr = model.solve(
+        params={"alive": alive_params}, log_level="off"
+    )
+    V_arr = period_to_regime_to_V_arr[model.n_periods - 1]["alive"]
+    assert bool(jnp.all(jnp.isnan(V_arr)))
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
+    """At unit mass the per-target route divides by exactly `1.0`.
+
+    Division by exactly one is the identity in IEEE754, so the check cannot
+    perturb a well-formed model however the surrounding solve is fused.
+    """
+    assert _unit_regime_mass_or_nan(jnp.ones((3,), dtype=dtype)).tolist() == [1.0] * 3
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_unit_regime_mass_predicate_passes_accumulated_float_error(
+    dtype: Any, x64_enabled: None
+):
+    """Mass that misses one by realistic accumulation error is accepted.
+
+    The tolerance is a backstop against a misspecified model, not a numerical
+    check: summing a handful of transition probabilities lands within a few
+    ulps of one, three orders of magnitude inside it.
+    """
+    accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
+    assert bool(_regime_mass_is_unit(accumulated))

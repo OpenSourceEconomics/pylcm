@@ -3,7 +3,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.grids import Grid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.typing import UserFunction
 
@@ -60,7 +60,7 @@ class MockRegime(UserRegime):
             "koopmans_aggregator",
             koopmans_aggregator
             if koopmans_aggregator is not None or self.transition is None
-            else W_linear,
+            else LinearAggregator(),
         )
         # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "active", lambda _age: True)

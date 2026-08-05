@@ -1,4 +1,5 @@
-from collections.abc import Callable, Mapping
+import dataclasses
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
@@ -9,6 +10,7 @@ from dags import concatenate_functions, get_ancestors, with_signature
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
+    get_next_interpolation_basis_weights_function,
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
@@ -16,8 +18,10 @@ from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
 from _lcm.transition_laws import (
+    SupportAxes,
     TransitionLaws,
     all_stochastic_next_state_names,
+    is_interpolation_basis,
     is_stochastic,
 )
 from _lcm.typing import (
@@ -25,6 +29,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -36,7 +41,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
 
 
 def _sum_regime_mixture(
@@ -142,6 +147,7 @@ def get_Q_and_F(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -193,6 +199,8 @@ def get_Q_and_F(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -267,6 +275,7 @@ def get_Q_and_F(
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
+        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -334,6 +343,7 @@ def get_compute_intermediates(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -364,6 +374,8 @@ def get_compute_intermediates(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -403,6 +415,7 @@ def get_compute_intermediates(
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
+        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -1065,10 +1078,19 @@ def get_Q_and_F_collective(
                 regime_name=target_regime_name,
             )
         )
+        # `_get_joint_weights_function` now takes the ORDERED tuple of lottery
+        # variables rather than re-deriving it from the laws, so that the axes of
+        # the weights and the axes the value surface is productmapped over are
+        # fixed by one and the same ordering. The collective builder derives it
+        # exactly as `_build_target_continuation` does on the singleton path.
+        lottery_variables = tuple(
+            key
+            for key in bundle
+            if is_stochastic(transition_laws, target_regime_name, key)
+        )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=bundle,
-            transition_laws=transition_laws,
             regime_name=target_regime_name,
+            variables=lottery_variables,
         )
         V_arr_name = "next_V_arr"
         next_V_interpolator = get_V_interpolator(
@@ -1208,7 +1230,7 @@ def get_Q_and_F_collective(
 
         # W applied on the stacked arrays is W per stakeholder: `utility` and
         # `CE` share the trailing stakeholder axis and the aggregator's
-        # parameters (e.g. the default `W_linear`'s discount factor) are shared
+        # parameters (e.g. the default `LinearAggregator`'s discount factor) are shared
         # across stakeholders, so the elementwise aggregation is exactly
         # Q^s = W(u^s, CE^s, beta) with the same beta for every s.
         Q_arr = koopmans_aggregator(
@@ -1463,6 +1485,7 @@ def _get_compute_CE(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -1503,6 +1526,8 @@ def _get_compute_CE(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -1516,67 +1541,29 @@ def _get_compute_CE(
         dependencies whose arguments must enter the calling closure's signature.
 
     """
-    state_transitions = {}
-    next_stochastic_states_weights = {}
-    joint_weights_from_marginals = {}
-    next_V = {}
-
-    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
-    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
-
-    for target_regime_name in period_targets:
-        # Transitions from the current regime to the target regime
-        bundle = transitions.get(target_regime_name, MappingProxyType({}))
-
-        # Functions required to calculate the expected continuation values
-        state_transitions[target_regime_name] = get_next_state_function_for_solution(
+    continuations = {
+        target_regime_name: _build_target_continuation(
+            target_regime_name=target_regime_name,
             functions=functions,
-            transitions=bundle,
-        )
-        next_stochastic_states_weights[target_regime_name] = (
-            get_next_stochastic_weights_function(
-                functions=functions,
-                transitions=bundle,
-                transition_laws=transition_laws,
-                regime_name=target_regime_name,
-            )
-        )
-        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=bundle,
+            bundle=transitions.get(target_regime_name, MappingProxyType({})),
             transition_laws=transition_laws,
-            regime_name=target_regime_name,
-        )
-        V_arr_name = "next_V_arr"
-        next_V_interpolator = get_V_interpolator(
+            support_axes=support_axes,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
-            state_prefix="next_",
-            V_arr_name=V_arr_name,
             co_map_state_names=co_map_state_names,
         )
-        # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
-        # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
-        next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
-        )
-        stochastic_variables = tuple(
-            key
-            for key in bundle
-            if is_stochastic(transition_laws, target_regime_name, key)
-        )
-        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
-        next_V[target_regime_name] = productmap(
-            func=next_V_interpolator,
-            variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
-        )
+        for target_regime_name in period_targets
+    }
 
     # The plain expectation reduces each target on its own; every other
     # certainty equivalent needs the whole joint lottery in one piece, because
     # its transform has to be applied before any expectation is taken.
     # `LinearExpectation.aggregate` states the same quantity over the flattened
     # lottery, but reducing per target is materially cheaper.
-    reduces_per_target = certainty_equivalent is None or isinstance(
-        certainty_equivalent, LinearExpectation
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
     )
     ce_flat_param_names = (
         MappingProxyType({})
@@ -1619,47 +1606,76 @@ def _get_compute_CE(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        mixture_terms, lottery_values, lottery_weights = _scalar_target_contribution(
-            scalar_targets=scalar_targets,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            active_regime_probs=active_regime_probs,
-            as_lottery=not reduces_per_target,
+        mixture_terms, lottery_values, lottery_weights, probability_mass = (
+            _scalar_target_contribution(
+                scalar_targets=scalar_targets,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                active_regime_probs=active_regime_probs,
+                as_lottery=not reduces_per_target,
+                zero=zero,
+            )
         )
         for target_regime_name in period_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
+            continuation = continuations[target_regime_name]
+            next_states = continuation.next_states(**states_actions_params)
+            joint_next_stochastic_states_weights = continuation.joint_lottery_weights(
+                **continuation.lottery_weights(**states_actions_params)
             )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](**states_actions_params)
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime_name
-            ](**marginal_next_stochastic_states_weights)
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
+                k: states_actions_params[k] for k in continuation.extra_param_names
             }
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **{
-                    name: val
-                    for name, val in next_states.items()
-                    if name not in co_map_next_names
-                },
+            # The interpolator is indexed, not evaluated, along a node axis. A
+            # declared entry publishes its physical value under the public name
+            # every other law reads; what the target's value function is indexed
+            # by is the private axis, substituted here and nowhere else — so the
+            # physical value stays intact in `next_states` for the dependent
+            # laws, diagnostics, and simulation.
+            interpolator_coordinates = {
+                name: val
+                for name, val in next_states.items()
+                if name not in co_map_next_names
+            } | dict(continuation.support_axes)
+            next_V_at_stochastic_states_arr = continuation.next_V(
+                **interpolator_coordinates,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
+
+            if continuation.n_basis_axes:
+                # A declared entry names one value; the basis axes are only how
+                # the target's nodes can express it. Contracting them here states
+                # that value as the single number `Σ_j w_j · V(node_j)` -- the
+                # linear interpolation of the target's value function -- before
+                # any lottery is formed. The coefficients sum to one by
+                # construction, so normalizing here would mask a malformed basis
+                # rather than protect against one.
+                next_V_at_stochastic_states_arr = jnp.tensordot(
+                    next_V_at_stochastic_states_arr,
+                    continuation.joint_basis_weights(
+                        **continuation.basis_weights(**states_actions_params)
+                    ),
+                    axes=continuation.n_basis_axes,
+                )
+
+            target_probability = active_regime_probs[target_regime_name]
+            probability_mass = probability_mass + target_probability
 
             if reduces_per_target:
                 # Weighted average of the next value function at the stochastic
                 # states. Zero-safe: a zero-probability stochastic node beside an
                 # admissible on-path `-inf` must not turn the average into a `nan`
                 # -- ordinary on the collective branch, where dissolution makes
-                # `-inf` continuations routine rather than exotic.
-                if next_V_has_stochastic_states[target_regime_name]:
+                # `-inf` continuations routine rather than exotic. This is why the
+                # reducer stays `zero_safe_average` rather than becoming
+                # `_expectation_over_stochastic_nodes`: that one guards the weight
+                # SUM only, so `0 * -inf` would still poison its numerator. The
+                # predicate is upstream's `continuation.has_lottery_axes`, which
+                # replaced the `next_V_has_stochastic_states` mapping.
+                if continuation.has_lottery_axes:
                     next_V_expected_arr = zero_safe_average(
                         next_V_at_stochastic_states_arr,
                         weights=joint_next_stochastic_states_weights,
@@ -1682,44 +1698,201 @@ def _get_compute_CE(
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
-                    has_stochastic_states=next_V_has_stochastic_states[
-                        target_regime_name
-                    ],
+                    has_stochastic_states=continuation.has_lottery_axes,
                 )
                 lottery_values.append(values)
-                lottery_weights.append(
-                    active_regime_probs[target_regime_name] * node_weights
-                )
+                lottery_weights.append(target_probability * node_weights)
 
+        # ONE reduction for the whole regime mixture: stack the operands and
+        # contract once, value-ordered, rather than folding `CE = CE + p*V` per
+        # target. Accuracy (round-8) and a sum order that must not depend on
+        # regime LABELS (round-10 F1). Empty on the lottery route, where
+        # `_sum_regime_mixture` returns `zeros_like(like)` -- the same zero the
+        # upstream accumulator started from, so the branches below compose.
         CE = _sum_regime_mixture(mixture_terms, like=zero)
 
-        if (
-            certainty_equivalent is not None
-            and not reduces_per_target
-            and lottery_values
-        ):
-            CE = certainty_equivalent.aggregate(
-                values=jnp.concatenate(lottery_values),
-                weights=jnp.concatenate(lottery_weights),
-                # The params template types every certainty-equivalent
-                # parameter as a float, so its runtime values are float arrays.
-                params=cast(
-                    "Mapping[str, FloatND]",
-                    {
-                        arg: states_actions_params[flat_name]
-                        for arg, flat_name in ce_flat_param_names.items()
-                    },
-                ),
+        if reduces_per_target and (period_targets or scalar_targets):
+            # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
+            # the represented mass to state the same quantity as
+            # `LinearExpectation.aggregate`. Regime-transition validation accepts
+            # any mass within `jnp.allclose` of one, and at the top of that
+            # tolerance the undivided sum reverses the Bellman argmax. Dividing is
+            # exact whenever the mass is exactly one, so a well-formed lottery
+            # keeps its floating-point association.
+            #
+            # A regime with no target at all — neither carrying state nor
+            # stateless — carries no continuation, and its `CE` stays at zero
+            # rather than becoming `0 / 0`, matching the lottery route, which
+            # leaves `CE` at zero when it collects no nodes.
+            # A represented mass of zero across targets that do exist is a
+            # massless lottery, and NaN there is the same answer both routes give.
+            CE = CE / _unit_regime_mass_or_nan(probability_mass)
+        elif certainty_equivalent is not None:
+            # `aggregate` normalizes by the weight sum itself, so the lottery
+            # route has no division to attach the check to. Selecting between
+            # the aggregate and NaN leaves the well-formed path free of any
+            # arithmetic at all, which a multiplication by `1.0` would not.
+            #
+            # With no node collected there is nothing to hand `aggregate` — it
+            # would reduce over an empty axis — so the selection falls back to
+            # the initialized `CE`. The mask is `False` there regardless, since
+            # a mass of zero is not unit mass.
+            CE = jnp.where(
+                _regime_mass_is_unit(probability_mass),
+                _aggregate_joint_lottery(
+                    certainty_equivalent=certainty_equivalent,
+                    lottery_values=lottery_values,
+                    lottery_weights=lottery_weights,
+                    ce_flat_param_names=ce_flat_param_names,
+                    states_actions_params=states_actions_params,
+                )
+                if lottery_values
+                else CE,
+                jnp.nan,
             )
 
         return CE, active_regime_probs
 
     deps = (
         compute_regime_transition_probs,
-        *state_transitions.values(),
-        *next_stochastic_states_weights.values(),
+        *(c.next_states for c in continuations.values()),
+        *(c.lottery_weights for c in continuations.values()),
+        *(c.basis_weights for c in continuations.values()),
     )
     return compute_CE, deps
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _TargetContinuation:
+    """Everything built once for one reachable target's continuation."""
+
+    next_states: NextStateSimulationFunction
+    """Next-period states of this target at one state-action point."""
+
+    lottery_weights: Callable[..., dict[str, FloatND | IntND]]
+    """Marginal probabilities of the target's stochastic laws."""
+
+    basis_weights: Callable[..., dict[str, FloatND | IntND]]
+    """Marginal node-basis coefficients of the target's declared entry laws."""
+
+    joint_lottery_weights: Callable[..., FloatND]
+    """Outer product of the lottery marginals, over the leading node axes."""
+
+    joint_basis_weights: Callable[..., FloatND]
+    """Outer product of the basis marginals, over the trailing node axes."""
+
+    next_V: Callable[..., FloatND]
+    """Target's value function, product-mapped over its node axes.
+
+    The axes come in the order `(lottery..., basis...)`, so the basis block is
+    the tail and contracts away in one `tensordot`.
+    """
+
+    support_axes: MappingProxyType[TransitionFunctionName, Int1D]
+    """Private node axes to index `next_V` along, keyed by public next-state name.
+
+    One entry per declared entry law. The public name produces that law's
+    physical value everywhere else; only the interpolator sees this axis.
+    """
+
+    extra_param_names: frozenset[str]
+    """Arguments `next_V` needs beyond the next states and the value array.
+
+    A grid whose points arrive at runtime is the case — `wealth__points` for an
+    `IrregSpacedGrid`.
+    """
+
+    has_lottery_axes: bool
+    """Whether the target draws anything, i.e. whether `next_V` has lottery axes."""
+
+    n_basis_axes: int
+    """Number of trailing axes to contract against the basis weights."""
+
+
+def _build_target_continuation(
+    *,
+    target_regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
+    v_interpolation_info: VInterpolationInfo,
+    co_map_state_names: tuple[StateName, ...],
+) -> _TargetContinuation:
+    """Build one target's continuation machinery.
+
+    A law that carries weights contributes a node axis to the interpolated value
+    function either way, but only a lottery's weights are probabilities. The two
+    groups are kept apart here, with the lottery axes product-mapped first, so
+    the basis axes sit at the tail and can be contracted before the certainty
+    equivalent ever sees the surface.
+
+    Args:
+        target_regime_name: Regime the continuation leads into.
+        functions: Immutable mapping of function names to internal user functions.
+        bundle: This target's unqualified `next_<state>` transition functions.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
+        v_interpolation_info: The target's V-interpolation info.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V.
+
+    Returns:
+        The target's continuation machinery.
+
+    """
+    lottery_variables = tuple(
+        key for key in bundle if is_stochastic(transition_laws, target_regime_name, key)
+    )
+    basis_variables = tuple(
+        key
+        for key in bundle
+        if is_interpolation_basis(transition_laws, target_regime_name, key)
+    )
+    node_variables = (*lottery_variables, *basis_variables)
+
+    V_arr_name = "next_V_arr"
+    next_V_interpolator = get_V_interpolator(
+        v_interpolation_info=v_interpolation_info,
+        state_prefix="next_",
+        V_arr_name=V_arr_name,
+        co_map_state_names=co_map_state_names,
+    )
+    return _TargetContinuation(
+        next_states=get_next_state_function_for_solution(
+            functions=functions, transitions=bundle
+        ),
+        lottery_weights=get_next_stochastic_weights_function(
+            functions=functions,
+            transitions=bundle,
+            transition_laws=transition_laws,
+            regime_name=target_regime_name,
+        ),
+        basis_weights=get_next_interpolation_basis_weights_function(
+            functions=functions,
+            transitions=bundle,
+            transition_laws=transition_laws,
+            regime_name=target_regime_name,
+        ),
+        joint_lottery_weights=_get_joint_weights_function(
+            regime_name=target_regime_name, variables=lottery_variables
+        ),
+        joint_basis_weights=_get_joint_weights_function(
+            regime_name=target_regime_name, variables=basis_variables
+        ),
+        next_V=productmap(
+            func=next_V_interpolator,
+            variables=node_variables,
+            batch_sizes=dict.fromkeys(node_variables, 0),
+        ),
+        support_axes=support_axes.get(target_regime_name, MappingProxyType({})),
+        extra_param_names=frozenset(
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+        ),
+        has_lottery_axes=bool(lottery_variables),
+        n_basis_axes=len(basis_variables),
+    )
 
 
 def _scalar_target_contribution(
@@ -1728,7 +1901,10 @@ def _scalar_target_contribution(
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     active_regime_probs: Mapping[RegimeName, FloatND],
     as_lottery: bool,
-) -> tuple[list[tuple[RegimeName, FloatND, FloatND]], list[FloatND], list[FloatND]]:
+    zero: FloatND,
+) -> tuple[
+    list[tuple[RegimeName, FloatND, FloatND]], list[FloatND], list[FloatND], FloatND
+]:
     """Seed the continuation accumulators with the stateless targets.
 
     A target carrying no state has a rank-zero value function: there is no next
@@ -1749,15 +1925,21 @@ def _scalar_target_contribution(
             continuation, so the nodes must be handed over unaggregated.
 
     Returns:
-        Tuple of the linear mixture terms, the lottery values, and their weights.
+        Tuple of the linear mixture terms, the lottery values, their weights,
+        and the probability mass these targets represent.
 
     """
     mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
     values: list[FloatND] = []
     weights: list[FloatND] = []
+    probability_mass = zero
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
         prob = active_regime_probs[target_regime_name]
+        # A stateless target contributes to the represented mass on either
+        # route, so the linear fast path divides by the mass of *every* target
+        # it summed, not just the ones carrying state.
+        probability_mass = probability_mass + prob
         if as_lottery:
             node = jnp.ravel(scalar_V)
             values.append(node)
@@ -1768,7 +1950,21 @@ def _scalar_target_contribution(
             # here would reintroduce `0 * -inf = nan` for a zero-mass stateless
             # target and put this term outside the value-ordered reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
-    return mixture_terms, values, weights
+    return mixture_terms, values, weights, probability_mass
+
+
+def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+    """Return the weighted mean of one target's continuation over its nodes.
+
+    Normalized explicitly rather than with `jnp.average`, for the reason
+    `_as_lottery` states: a target whose joint weights carry no mass
+    contributes no branch, and must not contribute NaN either — every target
+    enters the same continuation, so a NaN here would destroy the
+    well-specified targets beside it.
+    """
+    weight_sum = jnp.sum(weights)
+    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    return jnp.sum(values * weights) / safe_weight_sum
 
 
 def _as_lottery(
@@ -1830,32 +2026,29 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
     regime_name: RegimeName,
+    variables: tuple[TransitionFunctionName, ...],
 ) -> Callable[..., FloatND]:
-    """Get function that calculates the joint weights.
+    """Get function that calculates the joint weights over one group of laws.
 
-    This function takes the weights of the individual stochastic variables and
-    multiplies them together to get the joint weights on the product space of the
-    stochastic variables.
+    This function takes the weights of the individual variables and multiplies
+    them together to get the joint weights on their product space.
+
+    The group is passed in as an ordered tuple rather than re-derived from the
+    transition laws, because the caller productmaps the value function over the
+    same tuple: one ordering fixes both the axes of the value surface and the
+    axes of the weights, so the two cannot drift apart.
 
     Args:
-        transitions: Transitions of the target regime.
-        transition_laws: Immutable mapping of target regime names to their
-            transition laws.
         regime_name: Name of the target regime.
+        variables: Ordered unqualified `next_<state>` names whose weights to
+            multiply, in the order their axes appear on the value surface.
 
     Returns:
-        A function that computes the outer product of the weights of the stochastic
-        variables.
+        A function that computes the outer product of the variables' weights.
 
     """
-    arg_names = [
-        f"weight_{regime_name}__{key}"
-        for key in transitions
-        if is_stochastic(transition_laws, regime_name, key)
-    ]
+    arg_names = [f"weight_{regime_name}__{key}" for key in variables]
 
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:
@@ -2297,3 +2490,69 @@ def _get_feasibility(
             return True
 
     return cast("ConstraintFunction", combined_constraint)
+
+
+# Gross departures from unit regime mass are a specification error, not rounding:
+# every aggregation route divides the continuation by the mass it received, so the
+# lost mass is divided straight back out and the survivors renormalize. The solved
+# value function then comes back finite, plausible, and independent of what went
+# missing. `validate_transitions` catches it, but `log_level="off"` skips that, so
+# this poisons the arithmetic itself and cannot be gated away.
+#
+# The tolerance is deliberately loose. It is a backstop against a wrong model, not
+# a numerical check: `1e-3` never fires on accumulated float error over a handful
+# of targets, while a mass of 0.977 — small enough to look plausible, large enough
+# to move every value in the model — becomes NaN.
+_MAX_REGIME_MASS_DEVIATION = 1.0e-3
+
+
+def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
+    """Whether the represented regime mass is unit mass, within tolerance."""
+    return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+
+
+def _aggregate_joint_lottery(
+    *,
+    certainty_equivalent: CertaintyEquivalent,
+    lottery_values: Sequence[FloatND],
+    lottery_weights: Sequence[FloatND],
+    ce_flat_param_names: Mapping[str, str],
+    states_actions_params: Mapping[str, Any],
+) -> FloatND:
+    """Aggregate the continuation nodes of every retained target in one piece.
+
+    Args:
+        certainty_equivalent: The regime's certainty equivalent.
+        lottery_values: Sequence of per-target continuation values.
+        lottery_weights: Sequence of per-target node weights, already scaled by
+            the target's regime-transition probability.
+        ce_flat_param_names: Mapping of certainty-equivalent argument names to
+            their flat parameter names.
+        states_actions_params: Mapping of states, actions, age, period, and flat
+            regime params.
+
+    Returns:
+        The aggregated continuation value.
+
+    """
+    return certainty_equivalent.aggregate(
+        values=jnp.concatenate(list(lottery_values)),
+        weights=jnp.concatenate(list(lottery_weights)),
+        # The params template types every certainty-equivalent parameter as a
+        # float, so its runtime values are float arrays.
+        params=cast(
+            "Mapping[str, FloatND]",
+            {
+                arg: states_actions_params[flat_name]
+                for arg, flat_name in ce_flat_param_names.items()
+            },
+        ),
+    )
+
+
+def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
+    """Return the mass itself, or NaN where it is not unit mass.
+
+    For the per-target route, which divides by the mass it accumulated.
+    """
+    return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)

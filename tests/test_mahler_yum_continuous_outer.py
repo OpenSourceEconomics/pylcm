@@ -195,7 +195,7 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
     patcher.setattr(_solvers, "collapse_continuous_candidate_bank", capturing_collapse)
     try:
         with pytest.raises(_StopAfterCaptureError):
-            model.solve(params={"alive": params}, log_level="off")
+            model.solve(params={"alive": params}, log_level="debug")
     finally:
         patcher.undo()
     return captured

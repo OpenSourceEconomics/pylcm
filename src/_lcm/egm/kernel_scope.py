@@ -13,8 +13,8 @@ kernel build rather than with the model-construction validators.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
-    _concatenate_regime_function,
     _get_child_discrete_actions,
     _get_child_resources_arg_names,
     _get_child_state_name,
@@ -321,7 +321,7 @@ def _find_unsupported_function_args(
         {solver.continuous_state} if asset_row_mode else set()
     )
     allowed_params = flat_param_names | {"age", "period"}
-    utility_func = _concatenate_regime_function(functions=functions, target="utility")
+    utility_func = concatenate_regime_function(functions=functions, target="utility")
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",
@@ -345,7 +345,7 @@ def _find_unsupported_function_args(
             weight_key = f"weight_{target}__next_{process_name}"
             if weight_key not in functions:
                 continue
-            weight_func = _concatenate_regime_function(
+            weight_func = concatenate_regime_function(
                 functions=functions, target=weight_key
             )
             arg_requirements.append(
@@ -356,7 +356,7 @@ def _find_unsupported_function_args(
                 )
             )
     for constraint_name in constraints:
-        constraint_func = _concatenate_regime_function(
+        constraint_func = concatenate_regime_function(
             functions=MappingProxyType({**dict(functions), **dict(constraints)}),
             target=constraint_name,
         )

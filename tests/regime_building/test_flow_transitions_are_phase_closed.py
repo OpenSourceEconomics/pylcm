@@ -95,13 +95,13 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
         regime_id_class=RegimeId,
         description="phase closure of the flow sub-DAG",
     )
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     return (
         model.simulate(
             params=PARAMS,
             initial_conditions=IC,
             period_to_regime_to_V_arr=V,
-            log_level="off",
+            log_level="debug",
             seed=1,
         )
         .to_dataframe()

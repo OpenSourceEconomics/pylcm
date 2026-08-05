@@ -48,7 +48,7 @@ from lcm import DiscreteGrid, NormalIIDProcess, categorical
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
@@ -100,7 +100,7 @@ def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
     finalized = finalize_regimes(
         user_regimes=regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     return {

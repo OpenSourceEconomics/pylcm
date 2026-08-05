@@ -26,7 +26,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
-from lcm.koopmans_aggregation import W_epstein_zin
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -193,8 +193,10 @@ def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
     duplicates = sorted(name for name, count in duplicate_counts.items() if count > 1)
     if duplicates:
         return [
-            f"`stakeholders` must not contain duplicate names; got "
-            f"{stakeholders} (duplicated: {duplicates})."
+            (
+                f"`stakeholders` must not contain duplicate names; got "
+                f"{stakeholders} (duplicated: {duplicates})."
+            )
         ]
     return []
 
@@ -216,8 +218,10 @@ def _collective_weights_errors(
 
     if set(regime.weights) != set(stakeholders):
         return [
-            f"`weights` keys {sorted(regime.weights)} must match the "
-            f"stakeholders {sorted(stakeholders)}."
+            (
+                f"`weights` keys {sorted(regime.weights)} must match the "
+                f"stakeholders {sorted(stakeholders)}."
+            )
         ]
 
     non_finite_or_negative = {
@@ -225,14 +229,18 @@ def _collective_weights_errors(
     }
     if non_finite_or_negative:
         return [
-            "`weights` must be finite and non-negative for every "
-            f"stakeholder; got {non_finite_or_negative}."
+            (
+                "`weights` must be finite and non-negative for every "
+                f"stakeholder; got {non_finite_or_negative}."
+            )
         ]
     if sum(regime.weights.values()) <= 0:
         return [
-            "`weights` must sum to a positive total; an all-zero "
-            "Pareto-weight mapping leaves the household scalarization "
-            "identically zero for every action, so the argmax is undefined."
+            (
+                "`weights` must sum to a positive total; an all-zero "
+                "Pareto-weight mapping leaves the household scalarization "
+                "identically zero for every action, so the argmax is undefined."
+            )
         ]
     return []
 
@@ -767,26 +775,42 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     if not offending_actions:
         return []
     return [
-        "Action grids cannot be marked `distributed=True` — distribution "
-        "shards V-array axes, which come from states. Move `distributed=True` "
-        "to the corresponding state grid. Offending actions: "
-        f"{offending_actions}.",
+        (
+            "Action grids cannot be marked `distributed=True` — distribution "
+            "shards V-array axes, which come from states. Move `distributed=True` "
+            "to the corresponding state grid. Offending actions: "
+            f"{offending_actions}."
+        ),
     ]
 
 
 def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's Koopmans aggregator declaration.
 
-    - the aggregator has its own `koopmans_aggregator` slot, so `H` is not a
-      regime function
+    - `CE` is the reserved name the aggregator receives the continuation under,
+      so a variable of that name would be shadowed
     - terminal regimes have no continuation to aggregate
     """
     error_messages: list[str] = []
-    if "H" in regime.functions:
+    # The aggregator is called as `koopmans_aggregator(utility=..., CE=...)`, so
+    # a regime variable named `CE` never reaches it: the aggregator would read
+    # the continuation while every other function in the regime read the
+    # variable, and nothing would say so.
+    colliding = sorted(
+        {"CE"}
+        & (
+            set(regime.functions)
+            | set(regime.states)
+            | set(regime.actions)
+            | set(regime.derived_categoricals)
+        )
+    )
+    if colliding:
         error_messages.append(
-            "'H' is not a regime function: the Bellman aggregator lives in the "
-            "`koopmans_aggregator` slot. Pass `koopmans_aggregator=...` on the "
-            "`Regime` or the `Model` instead of `functions={'H': ...}`."
+            "'CE' is reserved: it is the name the Koopmans aggregator receives "
+            "the certainty-equivalent continuation under, so a regime variable "
+            "of that name would be shadowed inside the aggregator only. Rename "
+            "it (`certainty_equivalent_value`, say)."
         )
     if regime.terminal and regime.koopmans_aggregator is not None:
         error_messages.append(
@@ -847,11 +871,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.koopmans_aggregator is not W_epstein_zin:
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `W_epstein_zin` "
-                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
                 "inversion and period value read its intertemporal "
                 "elasticity. With a different aggregator the kernels would "
                 "solve a recursion the regime does not declare."
@@ -1131,10 +1155,13 @@ def _phased_per_target_shape_mismatch(
         simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
         if solve_targets != simulate_targets:
             return [
-                f"state_transitions['{name}']: the per-target dicts inside `Phased` "
-                f"declare different targets — solve has {sorted(solve_targets)}, "
-                f"simulate has {sorted(simulate_targets)}. Both phases must cover the "
-                f"same targets.",
+                (
+                    f"state_transitions['{name}']: the per-target dicts inside "
+                    f"`Phased` declare different targets — solve has "
+                    f"{sorted(solve_targets)}, simulate has "
+                    f"{sorted(simulate_targets)}. Both phases must cover the same "
+                    f"targets."
+                ),
             ]
         return []
     if solve_per_target == simulate_per_target:
@@ -1147,13 +1174,16 @@ def _phased_per_target_shape_mismatch(
     )
     if _law_has_free_parameter(bare_side, regime):
         return [
-            f"state_transitions['{name}']: the {phase_label} variant is a bare "
-            f"(coarse) law with a free parameter, opposite a per-target dict "
-            f"(map-vs-bare). A parameterized coarse law broadcast over targets would "
-            f"have its parameter replicated per target with only one binding live, so "
-            f"this shape is not supported. Spell it as a both-bare `Phased` (coarse in "
-            f"both phases, one shared parameter) or as an explicit per-target dict on "
-            f"the {phase_label} side (one parameter per target).",
+            (
+                f"state_transitions['{name}']: the {phase_label} variant is a bare "
+                f"(coarse) law with a free parameter, opposite a per-target dict "
+                f"(map-vs-bare). A parameterized coarse law broadcast over targets "
+                f"would have its parameter replicated per target with only one "
+                f"binding live, so this shape is not supported. Spell it as a "
+                f"both-bare `Phased` (coarse in both phases, one shared parameter) "
+                f"or as an explicit per-target dict on the {phase_label} side (one "
+                f"parameter per target)."
+            ),
         ]
     return []
 
@@ -1252,9 +1282,11 @@ def _fixed_transition_name_mismatch(
         isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
     ):
         return [
-            f"state_transitions['{state_name}']{label}: "
-            f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
-            f"'{state_name}' — the names must match.",
+            (
+                f"state_transitions['{state_name}']{label}: "
+                f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
+                f"'{state_name}' — the names must match."
+            ),
         ]
     return []
 
@@ -1530,12 +1562,14 @@ def _fold_transition_read_errors(
     if not transition_hit:
         return []
     return [
-        f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
-        "next-period transition that reads the shock's realized value: a "
-        "folded shock is integrated out at solve time, so no downstream "
-        "state or regime transition may condition on which node was "
-        "realized. Drop `fold=True`, or stop conditioning the transition "
-        "on it."
+        (
+            f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
+            "next-period transition that reads the shock's realized value: a "
+            "folded shock is integrated out at solve time, so no downstream "
+            "state or regime transition may condition on which node was "
+            "realized. Drop `fold=True`, or stop conditioning the transition "
+            "on it."
+        )
     ]
 
 

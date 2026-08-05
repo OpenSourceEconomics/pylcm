@@ -524,10 +524,12 @@ def _reject_gate_operand_state_name_collision(
     gate_ref_collisions = sorted(state_set & set(gate_ref_names))
     if reserved_collisions or gate_ref_collisions:
         parts = [
-            f"{context}: the edge to regime '{edge_target}' has target state name(s) "
-            "that alias a higher-precedence gate operand in `_assemble_gate_kwargs`, "
-            "so the gate would silently read the operand instead of the state and "
-            "reverse routing."
+            (
+                f"{context}: the edge to regime '{edge_target}' has target state "
+                "name(s) that alias a higher-precedence gate operand in "
+                "`_assemble_gate_kwargs`, so the gate would silently read the "
+                "operand instead of the state and reverse routing."
+            )
         ]
         if reserved_collisions:
             parts.append(

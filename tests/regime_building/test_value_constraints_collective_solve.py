@@ -53,7 +53,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -267,7 +267,7 @@ def _solve_ir_model(
                     with_value_constraints=with_value_constraints,
                 ),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -278,7 +278,7 @@ def _solve_ir_model(
                 with_value_constraints=with_value_constraints,
             ),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -476,7 +476,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
                     "married_terminal": married_terminal,
                 },
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -489,7 +489,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
                 "married_terminal": married_terminal,
             },
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -601,7 +601,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "couple_terminal": couple_terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -609,7 +609,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         user_regimes=finalize_regimes(
             user_regimes={"couple": couple, "couple_terminal": couple_terminal},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -737,7 +737,7 @@ def _process_ir_variant(regimes: dict[str, Regime]) -> None:
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -745,7 +745,7 @@ def _process_ir_variant(regimes: dict[str, Regime]) -> None:
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -931,7 +931,7 @@ def test_same_period_ref_requires_reference_active_in_same_periods():
                 user_regimes=finalize_regimes(
                     user_regimes=regimes,
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
@@ -939,7 +939,7 @@ def test_same_period_ref_requires_reference_active_in_same_periods():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,

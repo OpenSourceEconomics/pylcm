@@ -20,7 +20,7 @@ def _solve_v(interval_batch_size: int) -> dict[int, np.ndarray]:
         variant="nbegm",
         interval_batch_size=interval_batch_size,
     )
-    solution = model.solve(params=toy.build_params(), log_level="off")
+    solution = model.solve(params=toy.build_params(), log_level="debug")
     return {
         period: np.asarray(regimes[_ALIVE])
         for period, regimes in solution.items()

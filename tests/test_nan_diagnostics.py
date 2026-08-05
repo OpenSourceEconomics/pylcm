@@ -151,7 +151,7 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     """Build a model whose utility is unconditionally NaN.
 
     Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
-    At `log_level="off"` the NaN-bearing V_arr must flow through without
+    At `log_level="debug"` the NaN-bearing V_arr must flow through without
     raising; at `"warning"`/`"debug"` validation fires.
     """
 

@@ -48,7 +48,7 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -91,7 +91,7 @@ def _solve_and_process(
             user_regimes=finalize_regimes(
                 user_regimes=regimes_dict,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -99,7 +99,7 @@ def _solve_and_process(
         user_regimes=finalize_regimes(
             user_regimes=regimes_dict,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,

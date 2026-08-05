@@ -47,7 +47,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import DiscreteGrid, LinSpacedGrid, categorical, fixed_transition
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -145,7 +145,7 @@ def _process(regimes: dict[str, Regime]) -> None:
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -153,7 +153,7 @@ def _process(regimes: dict[str, Regime]) -> None:
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,

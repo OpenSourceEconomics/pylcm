@@ -64,7 +64,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
@@ -146,7 +146,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
             user_regimes=finalize_regimes(
                 user_regimes=_make_shock_ref_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -154,7 +154,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
         user_regimes=finalize_regimes(
             user_regimes=_make_shock_ref_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -286,7 +286,7 @@ def _build_and_solve():
             user_regimes=finalize_regimes(
                 user_regimes=_make_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -294,7 +294,7 @@ def _build_and_solve():
         user_regimes=finalize_regimes(
             user_regimes=_make_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,

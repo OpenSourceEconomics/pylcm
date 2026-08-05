@@ -6,11 +6,15 @@ exponent:
 
 - the certainty equivalent `PowerMean` averages the continuation lottery at
   exponent `1 - risk_aversion`, weighted by the lottery's probabilities;
-- the Koopmans aggregator `W_epstein_zin` averages `(utility, CE)` at
+- the Koopmans aggregator `CESAggregator` averages `(utility, CE)` at
   exponent `1 - 1/psi`, weighted by `(1 - discount_factor, discount_factor)`.
 
-`weighted_power_mean` is the single evaluation both route through, so a
-range that one survives the other survives too.
+`weighted_power_mean` reduces a lottery of any length over its last axis.
+`weighted_power_mean_of_pair` is the same derivation written out for the
+two-node case, which is what the Koopmans aggregator needs: a trailing axis
+of length two reduces poorly, and carrying the pair as two arrays avoids
+materializing that axis at all. The two agree to a few ulps everywhere,
+which `test_CESAggregator_equals_the_general_power_mean` pins.
 """
 
 import jax.numpy as jnp
@@ -46,11 +50,18 @@ def weighted_power_mean(
     value is, and the geometric-mean limit stays exact arbitrarily close to
     `p = 0`.
 
-    The geometric mean is selected by an exact `exponent == 0` test, so at
-    that one point the result carries no dependence on `exponent` and its
-    derivative there reads as zero rather than the true finite value.
-    Gradient-based work that starts exactly there should offset the starting
-    value.
+    Three exact points carry a derivative the primal does not justify, all
+    from a branch selected by an exact test. Gradient-based work that would
+    start at one of them should offset the starting value:
+
+    - at `exponent == 0` the result carries no dependence on `exponent`, so
+      that derivative reads as zero rather than its true finite value;
+    - a weight of exactly zero is replaced by a constant, so the derivative
+      with respect to it reads as zero — which makes `dW/d(discount_factor)`
+      zero at `discount_factor` of exactly `0` or `1`;
+    - a value of exactly zero has `log v = -inf`, and while the primal is the
+      documented limit, the reverse-mode gradient is NaN for *every* input of
+      the mean, not only for that value.
 
     Args:
         values: Strictly positive values along the last axis. A value of
@@ -61,7 +72,15 @@ def weighted_power_mean(
             They are normalized by their sum, so scaling them all by a
             constant leaves the result unchanged and a lottery carrying no
             mass averages to NaN. Zero-weight entries drop out exactly, while
-            a NaN weight propagates.
+            a NaN weight propagates. So does a negative one, which is not a
+            lottery rather than a dead node.
+
+            That invariance is a property of the mean, not a licence for the
+            caller. Where the weights are probabilities that are supposed to
+            sum to one, normalization divides any lost mass straight back out
+            and leaves no trace in the result, so the total has to be checked
+            before the call — `_lcm.regime_building.Q_and_F` does so for the
+            continuation lottery.
         exponent: The power, broadcast against the reduced shape. `0` is the
             weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
 
@@ -69,6 +88,11 @@ def weighted_power_mean(
         The weighted power mean, reduced over the last axis.
 
     """
+    # A negative weight is not a lottery. Mapping it to NaN makes it propagate
+    # like any other malformed weight instead of being read as "dead" by the
+    # `> 0` test below and silently dropped — which would return the surviving
+    # nodes' mean as though the caller had asked for it.
+    weights = jnp.where(weights < 0.0, jnp.nan, weights)
     live = weights > 0.0
     # A node carrying no weight must not be able to inject a non-finite
     # quantity into the reductions. `log(0)` is `-inf` and its derivative
@@ -99,7 +123,13 @@ def weighted_power_mean(
     # finite anchor will do, and zero keeps `centered` well defined.
     anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     anchor = jnp.where(exponent == 0.0, 0.0, anchor)
-    centered = log_v - anchor[..., None]
+    # A dead node's value was replaced by `1.0` above, so its `log v` is `0` —
+    # a point the anchor knows nothing about, since only live nodes may anchor.
+    # Left alone it can sit arbitrarily far above the anchored range, overflow
+    # `exp` to infinity, and turn its own `0 * inf` contribution into a NaN that
+    # takes the whole reduction with it. Pinning it to the anchor puts its term
+    # at exactly `1`, which its zero weight then cancels exactly.
+    centered = jnp.where(live, log_v - anchor[..., None], 0.0)
     broadcast_live = jnp.broadcast_to(live, centered.shape)
     broadcast_weights = jnp.broadcast_to(weights, centered.shape)
     # A NaN weight is deliberately kept rather than masked away: a
@@ -113,7 +143,12 @@ def weighted_power_mean(
     # on the same model.
     safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
     normalized_weights = masked_weights / safe_weight[..., None]
-    scaled = exponent * centered
+    # `exponent` broadcasts against the reduced shape, so it needs the lottery
+    # axis inserted before it multiplies `centered`. Without it, ordinary
+    # broadcasting aligns the exponent's trailing dimension with the lottery
+    # nodes: same length and every node silently gets the wrong exponent,
+    # different length and the multiply raises.
+    scaled = jnp.expand_dims(exponent, axis=-1) * centered
     # The moment `M = Σ w̃ exp(p (log v - a))` has two representations, each
     # exact where the other cancels. Both reduce the same anchored lottery,
     # whose terms all lie in `[0, 1]` with the anchor's own term at exactly
@@ -141,4 +176,94 @@ def weighted_power_mean(
     )
     log_mean_power = anchor + log_moment / safe_exponent
     log_mean_geometric = jnp.sum(normalized_weights * log_v, axis=-1)
+    return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
+
+
+def weighted_power_mean_of_pair(
+    *,
+    first: FloatND,
+    second: FloatND,
+    first_weight: FloatND,
+    second_weight: FloatND,
+    exponent: FloatND,
+) -> FloatND:
+    """Return the weighted power mean of exactly two values, stably.
+
+    The arithmetic is `weighted_power_mean`'s, written out for a two-node
+    lottery so the pair never has to be stacked into a trailing axis of
+    length two. Every guarantee stated there holds here — the anchored log
+    form, the two moment representations, the exact geometric-mean limit at
+    `exponent == 0`, zero weights dropping out exactly, a NaN weight
+    propagating, and a massless pair averaging to NaN. Its gradient carries
+    the same three exact-point caveats, so `dW/d(discount_factor)` reads as
+    zero at a discount factor of exactly `0` or `1`.
+
+    Args:
+        first: Nonnegative first value.
+        second: Nonnegative second value, broadcast against `first`.
+        first_weight: Nonnegative weight on `first`. A negative weight is
+            malformed and propagates as NaN.
+        second_weight: Nonnegative weight on `second`, same contract.
+        exponent: The power, broadcast against the two values.
+
+    Returns:
+        The weighted power mean of the pair.
+
+    """
+    # A negative weight is malformed and propagates as NaN rather than reading
+    # as a dead node — see `weighted_power_mean`. For `CESAggregator` this is
+    # what a `discount_factor` outside `[0, 1]` produces, and dropping the node
+    # would silently return the other argument unchanged.
+    first_weight = jnp.where(first_weight < 0.0, jnp.nan, first_weight)
+    second_weight = jnp.where(second_weight < 0.0, jnp.nan, second_weight)
+    first_live = first_weight > 0.0
+    second_live = second_weight > 0.0
+    log_first = jnp.log(jnp.where(first_live, first, 1.0))
+    log_second = jnp.log(jnp.where(second_live, second, 1.0))
+    safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
+
+    first_anchorable = first_live & jnp.isfinite(log_first)
+    second_anchorable = second_live & jnp.isfinite(log_second)
+    anchor_high = jnp.maximum(
+        jnp.where(first_anchorable, log_first, -jnp.inf),
+        jnp.where(second_anchorable, log_second, -jnp.inf),
+    )
+    anchor_low = jnp.minimum(
+        jnp.where(first_anchorable, log_first, jnp.inf),
+        jnp.where(second_anchorable, log_second, jnp.inf),
+    )
+    anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
+    anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
+    anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+
+    masked_first_weight = jnp.where(
+        first_live | jnp.isnan(first_weight), first_weight, 0.0
+    )
+    masked_second_weight = jnp.where(
+        second_live | jnp.isnan(second_weight), second_weight, 0.0
+    )
+    weight_sum = masked_first_weight + masked_second_weight
+    safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
+    normalized_first = masked_first_weight / safe_weight
+    normalized_second = masked_second_weight / safe_weight
+
+    # Dead nodes are pinned to the anchor for the reason `weighted_power_mean`
+    # states: their substituted `log v = 0` is outside the anchored range and
+    # would overflow `exp`, and `0 * inf` is NaN, not the zero their weight says.
+    scaled_first = exponent * jnp.where(first_live, log_first - anchor, 0.0)
+    scaled_second = exponent * jnp.where(second_live, log_second - anchor, 0.0)
+    deviation_ratio = normalized_first * jnp.expm1(
+        scaled_first
+    ) + normalized_second * jnp.expm1(scaled_second)
+    moment = normalized_first * jnp.exp(scaled_first) + normalized_second * jnp.exp(
+        scaled_second
+    )
+    near_geometric = deviation_ratio > _DEVIATION_RATIO_CROSSOVER
+    log_moment = jnp.where(
+        near_geometric,
+        jnp.log1p(jnp.where(near_geometric, deviation_ratio, 0.0)),
+        jnp.log(jnp.where(near_geometric, 1.0, moment)),
+    )
+    log_mean_power = anchor + log_moment / safe_exponent
+    log_mean_geometric = normalized_first * log_first + normalized_second * log_second
     return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
