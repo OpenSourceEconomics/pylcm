@@ -188,6 +188,11 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
     the model builds. The weights are poisoned instead, and the solve-time value
     check raises at `log_level="debug"` rather than letting a zero continuation
     pass for a real one.
+
+    Reaching that report also exercises solve/diagnostics parity for a declared
+    entry: the diagnostics closure recomputes the continuation from the same
+    builder the Bellman uses, so a basis law missing from its signature would
+    surface here as a missing argument rather than as the NaN report.
     """
 
     def _enter_at_wealth(wealth: ScalarFloat) -> ScalarFloat:
@@ -225,8 +230,55 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
         "target": {"utility": {}},
     }
 
-    with pytest.raises(InvalidValueFunctionError, match=r"(?i)nan"):
+    with pytest.raises(InvalidValueFunctionError, match=r"(?i)nan") as excinfo:
         model.solve(params=params, log_level="debug")
+
+    assert "compute_intermediates" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_a_linear_payoff_entry_interpolates_to_its_own_value(
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
+    """On `V = 1 + shock`, entering at `0.5` is worth `1.5`, not `4/3`.
+
+    A payoff linear in the shock makes the interpolated continuation equal the
+    payoff at the declared value, so the expected number needs no arithmetic to
+    believe. Reading the coefficients as probabilities gives the harmonic mean
+    of `V(0) = 1` and `V(1) = 2`, which is `4/3` — below a competing action
+    worth `1.4`, while the correct `1.5` is above it.
+    """
+
+    def _one_plus_shock(shock: ScalarFloat) -> FloatND:
+        return 1.0 + shock
+
+    def _enter_at_half() -> ScalarFloat:
+        return jnp.asarray(0.5)
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": _enter_at_half}},
+                functions={"utility": _zero_utility},
+                certainty_equivalent=PowerMean(),
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _target_process()},
+                functions={"utility": _one_plus_shock},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=enable_jit,
+    )
+
+    got = _source_value(model, _PARAMS)
+
+    np.testing.assert_almost_equal(got, 1.5, decimal=DECIMAL_PRECISION)
+    assert got > 1.4 > 4.0 / 3.0
 
 
 def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
