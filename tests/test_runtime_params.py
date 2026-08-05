@@ -120,7 +120,7 @@ def test_solve_with_runtime_grid():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": jnp.linspace(1, 10, 5)}},
     }
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -133,7 +133,7 @@ def test_runtime_grid_matches_fixed():
         wealth_grid=IrregSpacedGrid(points=list(points.tolist())),
     )
     params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
-    V_fixed = model_fixed.solve(params=params_fixed, log_level="off")
+    V_fixed = model_fixed.solve(params=params_fixed, log_level="debug")
 
     # Runtime-points model
     model_runtime = _make_model(
@@ -144,7 +144,7 @@ def test_runtime_grid_matches_fixed():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": points}},
     }
-    V_runtime = model_runtime.solve(params=params_runtime, log_level="off")
+    V_runtime = model_runtime.solve(params=params_runtime, log_level="debug")
 
     # V_arr for period 0, regime "alive" should match
     for period in V_fixed:
@@ -195,7 +195,7 @@ def test_solve_with_runtime_action_grid():
         "interest_rate": 0.05,
         "alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}},
     }
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -207,7 +207,7 @@ def test_runtime_action_grid_matches_fixed():
         consumption_grid=IrregSpacedGrid(points=list(points.tolist())),
     )
     params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
-    V_fixed = model_fixed.solve(params=params_fixed, log_level="off")
+    V_fixed = model_fixed.solve(params=params_fixed, log_level="debug")
 
     model_runtime = _make_action_grid_model(
         consumption_grid=IrregSpacedGrid(n_points=5),
@@ -217,7 +217,7 @@ def test_runtime_action_grid_matches_fixed():
         "interest_rate": 0.05,
         "alive": {"consumption": {"points": points}},
     }
-    V_runtime = model_runtime.solve(params=params_runtime, log_level="off")
+    V_runtime = model_runtime.solve(params=params_runtime, log_level="debug")
 
     for period in V_fixed:
         if "alive" in V_fixed[period] and "alive" in V_runtime[period]:
@@ -232,11 +232,11 @@ def test_runtime_action_grid_changes_solution():
     base = {"discount_factor": 0.95, "interest_rate": 0.05}
     V_low = model.solve(
         params=base | {"alive": {"consumption": {"points": jnp.linspace(0.1, 1.0, 5)}}},
-        log_level="off",
+        log_level="debug",
     )
     V_high = model.solve(
         params=base | {"alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}}},
-        log_level="off",
+        log_level="debug",
     )
     # Period 0 alive value should differ when the action support differs
     assert not jnp.allclose(V_low[0]["alive"], V_high[0]["alive"])
@@ -309,7 +309,7 @@ def test_simulate_with_runtime_action_grid_no_nan() -> None:
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert not df["value"].isna().any()

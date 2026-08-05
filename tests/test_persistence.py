@@ -101,7 +101,7 @@ def model_and_params():
 @pytest.fixture
 def solved(model_and_params):
     model, params = model_and_params
-    return model.solve(params=params, log_level="off")
+    return model.solve(params=params, log_level="debug")
 
 
 # -- save_solution / load_solution ---------------------------------------------------
@@ -153,7 +153,7 @@ def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
 
 def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     model.simulate(
         params=params,
@@ -223,7 +223,7 @@ def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
 
 def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     model.simulate(
         params=params,
@@ -337,7 +337,7 @@ def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     assert isinstance(snapshot.model, Model)
     assert snapshot.params is not None
     period_to_regime_to_V_arr_2 = snapshot.model.solve(
-        params=snapshot.params, log_level="off"
+        params=snapshot.params, log_level="debug"
     )
     for period in period_to_regime_to_V_arr:
         for regime_name in period_to_regime_to_V_arr[period]:
