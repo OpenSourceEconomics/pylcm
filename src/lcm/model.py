@@ -300,7 +300,11 @@ class Model:
         # entry-law synthesis, all of which ask whether a process's law is
         # known. What no process could take stays a runtime parameter and
         # reaches `build_regimes_and_template` unchanged.
-        self.user_regimes, residual_fixed_params = bind_fixed_process_laws(
+        (
+            self.user_regimes,
+            residual_fixed_params,
+            params_consumed_by_binder,
+        ) = bind_fixed_process_laws(
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
@@ -333,6 +337,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
+            params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
         )
         self.enable_jit = enable_jit
