@@ -54,6 +54,16 @@ class TransitionLawInfo:
     it, so the value comes from the process's unconditional distribution.
     """
 
+    emits_support_index: bool
+    """Whether the law's output indexes the target's support for this state.
+
+    A continuous stochastic process is stored on a discrete value-function axis,
+    so every law leading into one has to emit node indices — never the physical
+    value a user's entry law names, which no axis can be indexed by. A declared
+    entry law is split to satisfy this: the axis becomes the node vector and the
+    declared value becomes interpolation weights over it.
+    """
+
     weight_name: str | None
     """`weight_<target>__next_<state>`, or `None` for a deterministic law."""
 

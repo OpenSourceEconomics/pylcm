@@ -323,3 +323,156 @@ def test_entry_draws_come_from_the_process_law_not_from_its_solver_nodes() -> No
 
     assert len(entered) == n_subjects
     np.testing.assert_allclose(float(np.mean(entered**2)), 3.0, atol=0.1)
+
+
+def _build_explicit_entry_model(
+    *,
+    entry_value: float,
+    enable_jit: bool,
+) -> Model:
+    """Build a source that enters the target's process at one physical value."""
+
+    def _enter_at() -> ScalarFloat:
+        return jnp.asarray(entry_value)
+
+    return Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": _enter_at}},
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={
+                    "shock": NormalIIDProcess(
+                        n_points=3,
+                        gauss_hermite=False,
+                        mu=1.0,
+                        sigma=0.5,
+                        n_std=2.0,
+                    )
+                },
+                functions={"utility": _squared_shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=enable_jit,
+    )
+
+
+_EXPLICIT_ENTRY_PARAMS = {
+    "source": {
+        "utility": {},
+        "koopmans_aggregator": {"discount_factor": 1.0},
+        "target": {"next_regime": {}, "next_shock": {}},
+    },
+    "target": {"utility": {}},
+}
+
+# `mu=1, sigma=0.5, n_std=2` at three points puts nodes on `(0, 1, 2)`, and the
+# target's payoff is `shock**2`, so its value function is `(0, 1, 4)`.
+_ENTRY_NODES = (0.0, 1.0, 2.0)
+_ENTRY_VALUES = (0.0, 1.0, 4.0)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_explicit_entry_at_a_node_reads_that_node_alone(
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
+    """An entry law naming a support point prices the target at that point.
+
+    The source declares an entry law for a process it does not carry, which is
+    the more specific statement and beats the process's own unconditional law.
+    Entering at node `2.0` under payoff `shock**2` is therefore worth `4.0`,
+    not the law's mean of the three nodes.
+    """
+    model = _build_explicit_entry_model(entry_value=2.0, enable_jit=enable_jit)
+
+    got = _source_value(model, _EXPLICIT_ENTRY_PARAMS)
+
+    np.testing.assert_almost_equal(got, 4.0, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_explicit_entry_between_nodes_interpolates_the_value(
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
+    """An entry law off the support interpolates the target's value function.
+
+    A discretized process holds its value function only at its nodes, so a
+    physical entry value halfway between nodes `1.0` and `2.0` is worth the
+    midpoint of `V(1) = 1` and `V(2) = 4`, i.e. `2.5`. Evaluating the payoff at
+    the entry value instead would give `1.5**2 = 2.25`.
+    """
+    model = _build_explicit_entry_model(entry_value=1.5, enable_jit=enable_jit)
+
+    got = _source_value(model, _EXPLICIT_ENTRY_PARAMS)
+
+    expected = 0.5 * _ENTRY_VALUES[1] + 0.5 * _ENTRY_VALUES[2]
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_explicit_entry_beats_the_processs_own_law() -> None:
+    """The declared entry law, not the unconditional law, prices the target.
+
+    The process's own law would weight all three nodes; the entry law names one
+    of them. The two answers must differ, so a silent fallback to intrinsic
+    entry cannot pass this.
+    """
+    entered = _source_value(
+        _build_explicit_entry_model(entry_value=0.0, enable_jit=False),
+        _EXPLICIT_ENTRY_PARAMS,
+    )
+    intrinsic = _source_value(
+        _build_model(
+            process=NormalIIDProcess(
+                n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
+            ),
+            target_utility=_squared_shock_utility,
+            coarse=False,
+            enable_jit=False,
+        ),
+        {
+            "source": {
+                "utility": {},
+                "koopmans_aggregator": {"discount_factor": 1.0},
+                "next_regime": {},
+            },
+            "target": {"utility": {}},
+        },
+    )
+
+    np.testing.assert_almost_equal(entered, _ENTRY_VALUES[0], decimal=DECIMAL_PRECISION)
+    assert intrinsic > entered
+
+
+@pytest.mark.parametrize("entry_value", [2.0, 1.5], ids=["on_node", "off_node"])
+def test_explicit_entry_puts_every_subject_at_the_declared_value(
+    entry_value: float,
+) -> None:
+    """Every subject enters the target at exactly the value the law names.
+
+    A simulated process state holds a physical value, not a node index, so the
+    declared entry value is what the state takes — on the support or between
+    two of its points. The solve phase reads the same value as a coordinate on
+    the target's nodes, so the two phases price and realize one entry law.
+    """
+    n_subjects = 2_000
+    result = _build_explicit_entry_model(
+        entry_value=entry_value, enable_jit=False
+    ).simulate(
+        params=_EXPLICIT_ENTRY_PARAMS,
+        initial_conditions={
+            "regime_id": jnp.full(n_subjects, RegimeId.source, dtype=jnp.int32),
+            "age": jnp.full(n_subjects, 20.0),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+    entered = result.to_dataframe().query("regime_name == 'target'")["shock"]
+
+    assert len(entered) == n_subjects
+    np.testing.assert_allclose(entered.to_numpy(), entry_value, atol=1e-6)

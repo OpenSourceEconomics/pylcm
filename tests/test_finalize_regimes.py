@@ -1,7 +1,7 @@
 """`finalize_regimes` — the regimes as the model runs them.
 
 A user `Regime` validates only local, value-shape properties at construction;
-completeness (a `utility` entry, state-transition coverage, default-`H`
+completeness (a `utility` entry, state-transition coverage, aggregator
 injection, state/action overlap) is validated when the model finalizes its
 regimes. `model.user_regimes` exposes the finalized form: plain `Regime`
 instances, complete, immutable, still in user vocabulary.
@@ -89,7 +89,8 @@ def test_model_with_uncovered_state_raises() -> None:
 
 
 def test_user_regimes_are_finalized_with_the_model_level_aggregator() -> None:
-    """`model.user_regimes` carries the model-level `H`; the raw regime does not."""
+    """`model.user_regimes` carries the model-level aggregator; the raw regime
+    does not."""
     work = _build_work_regime()
     model = _build_model(work)
     assert model.user_regimes["work"].koopmans_aggregator is W_linear
