@@ -50,11 +50,18 @@ def weighted_power_mean(
     value is, and the geometric-mean limit stays exact arbitrarily close to
     `p = 0`.
 
-    The geometric mean is selected by an exact `exponent == 0` test, so at
-    that one point the result carries no dependence on `exponent` and its
-    derivative there reads as zero rather than the true finite value.
-    Gradient-based work that starts exactly there should offset the starting
-    value.
+    Three exact points carry a derivative the primal does not justify, all
+    from a branch selected by an exact test. Gradient-based work that would
+    start at one of them should offset the starting value:
+
+    - at `exponent == 0` the result carries no dependence on `exponent`, so
+      that derivative reads as zero rather than its true finite value;
+    - a weight of exactly zero is replaced by a constant, so the derivative
+      with respect to it reads as zero — which makes `dW/d(discount_factor)`
+      zero at `discount_factor` of exactly `0` or `1`;
+    - a value of exactly zero has `log v = -inf`, and while the primal is the
+      documented limit, the reverse-mode gradient is NaN for *every* input of
+      the mean, not only for that value.
 
     Args:
         values: Strictly positive values along the last axis. A value of
@@ -65,7 +72,8 @@ def weighted_power_mean(
             They are normalized by their sum, so scaling them all by a
             constant leaves the result unchanged and a lottery carrying no
             mass averages to NaN. Zero-weight entries drop out exactly, while
-            a NaN weight propagates.
+            a NaN weight propagates. So does a negative one, which is not a
+            lottery rather than a dead node.
         exponent: The power, broadcast against the reduced shape. `0` is the
             weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
 
@@ -73,6 +81,11 @@ def weighted_power_mean(
         The weighted power mean, reduced over the last axis.
 
     """
+    # A negative weight is not a lottery. Mapping it to NaN makes it propagate
+    # like any other malformed weight instead of being read as "dead" by the
+    # `> 0` test below and silently dropped — which would return the surviving
+    # nodes' mean as though the caller had asked for it.
+    weights = jnp.where(weights < 0.0, jnp.nan, weights)
     live = weights > 0.0
     # A node carrying no weight must not be able to inject a non-finite
     # quantity into the reductions. `log(0)` is `-inf` and its derivative
@@ -103,7 +116,13 @@ def weighted_power_mean(
     # finite anchor will do, and zero keeps `centered` well defined.
     anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
     anchor = jnp.where(exponent == 0.0, 0.0, anchor)
-    centered = log_v - anchor[..., None]
+    # A dead node's value was replaced by `1.0` above, so its `log v` is `0` —
+    # a point the anchor knows nothing about, since only live nodes may anchor.
+    # Left alone it can sit arbitrarily far above the anchored range, overflow
+    # `exp` to infinity, and turn its own `0 * inf` contribution into a NaN that
+    # takes the whole reduction with it. Pinning it to the anchor puts its term
+    # at exactly `1`, which its zero weight then cancels exactly.
+    centered = jnp.where(live, log_v - anchor[..., None], 0.0)
     broadcast_live = jnp.broadcast_to(live, centered.shape)
     broadcast_weights = jnp.broadcast_to(weights, centered.shape)
     # A NaN weight is deliberately kept rather than masked away: a
@@ -168,19 +187,28 @@ def weighted_power_mean_of_pair(
     length two. Every guarantee stated there holds here — the anchored log
     form, the two moment representations, the exact geometric-mean limit at
     `exponent == 0`, zero weights dropping out exactly, a NaN weight
-    propagating, and a massless pair averaging to NaN.
+    propagating, and a massless pair averaging to NaN. Its gradient carries
+    the same three exact-point caveats, so `dW/d(discount_factor)` reads as
+    zero at a discount factor of exactly `0` or `1`.
 
     Args:
         first: Nonnegative first value.
         second: Nonnegative second value, broadcast against `first`.
-        first_weight: Nonnegative weight on `first`.
-        second_weight: Nonnegative weight on `second`.
+        first_weight: Nonnegative weight on `first`. A negative weight is
+            malformed and propagates as NaN.
+        second_weight: Nonnegative weight on `second`, same contract.
         exponent: The power, broadcast against the two values.
 
     Returns:
         The weighted power mean of the pair.
 
     """
+    # A negative weight is malformed and propagates as NaN rather than reading
+    # as a dead node — see `weighted_power_mean`. For `W_epstein_zin` this is
+    # what a `discount_factor` outside `[0, 1]` produces, and dropping the node
+    # would silently return the other argument unchanged.
+    first_weight = jnp.where(first_weight < 0.0, jnp.nan, first_weight)
+    second_weight = jnp.where(second_weight < 0.0, jnp.nan, second_weight)
     first_live = first_weight > 0.0
     second_live = second_weight > 0.0
     log_first = jnp.log(jnp.where(first_live, first, 1.0))
@@ -212,8 +240,11 @@ def weighted_power_mean_of_pair(
     normalized_first = masked_first_weight / safe_weight
     normalized_second = masked_second_weight / safe_weight
 
-    scaled_first = exponent * (log_first - anchor)
-    scaled_second = exponent * (log_second - anchor)
+    # Dead nodes are pinned to the anchor for the reason `weighted_power_mean`
+    # states: their substituted `log v = 0` is outside the anchored range and
+    # would overflow `exp`, and `0 * inf` is NaN, not the zero their weight says.
+    scaled_first = exponent * jnp.where(first_live, log_first - anchor, 0.0)
+    scaled_second = exponent * jnp.where(second_live, log_second - anchor, 0.0)
     deviation_ratio = normalized_first * jnp.expm1(
         scaled_first
     ) + normalized_second * jnp.expm1(scaled_second)
