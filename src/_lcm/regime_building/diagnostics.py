@@ -30,7 +30,7 @@ from _lcm.regime_building.age_normalization import (
 )
 from _lcm.regime_building.Q_and_F import get_compute_intermediates
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_laws import SupportAxes, TransitionLaws
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -56,6 +56,7 @@ def _build_compute_intermediates_per_period(
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -86,6 +87,8 @@ def _build_compute_intermediates_per_period(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability
             function for the current regime.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -148,6 +151,7 @@ def _build_compute_intermediates_per_period(
             period_targets=period_targets,
             transitions=transitions,
             transition_laws=transition_laws,
+            support_axes=support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             koopmans_aggregator=koopmans_aggregator,

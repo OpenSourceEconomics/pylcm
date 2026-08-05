@@ -15,6 +15,7 @@ from _lcm.regime_building.next_state import (
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.transition_laws import (
+    SupportAxes,
     TransitionLaws,
     is_interpolation_basis,
     is_stochastic,
@@ -35,7 +36,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, Float1D, FloatND, IntND
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
 
 
 def get_Q_and_F(
@@ -46,6 +47,7 @@ def get_Q_and_F(
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -67,6 +69,8 @@ def get_Q_and_F(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -91,6 +95,7 @@ def get_Q_and_F(
         period_targets=period_targets,
         transitions=transitions,
         transition_laws=transition_laws,
+        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -150,6 +155,7 @@ def get_compute_intermediates(
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -175,6 +181,8 @@ def get_compute_intermediates(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -198,6 +206,7 @@ def get_compute_intermediates(
         period_targets=period_targets,
         transitions=transitions,
         transition_laws=transition_laws,
+        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -306,6 +315,7 @@ def _get_compute_CE(
     period_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -337,6 +347,8 @@ def _get_compute_CE(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -356,6 +368,7 @@ def _get_compute_CE(
             functions=functions,
             bundle=transitions.get(target_regime_name, MappingProxyType({})),
             transition_laws=transition_laws,
+            support_axes=support_axes,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
         )
@@ -431,12 +444,19 @@ def _get_compute_CE(
             extra_kw = {
                 k: states_actions_params[k] for k in continuation.extra_param_names
             }
+            # The interpolator is indexed, not evaluated, along a node axis. A
+            # declared entry publishes its physical value under the public name
+            # every other law reads; what the target's value function is indexed
+            # by is the private axis, substituted here and nowhere else — so the
+            # physical value stays intact in `next_states` for the dependent
+            # laws, diagnostics, and simulation.
+            interpolator_coordinates = {
+                name: val
+                for name, val in next_states.items()
+                if name not in co_map_next_names
+            } | dict(continuation.support_axes)
             next_V_at_stochastic_states_arr = continuation.next_V(
-                **{
-                    name: val
-                    for name, val in next_states.items()
-                    if name not in co_map_next_names
-                },
+                **interpolator_coordinates,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
@@ -556,6 +576,13 @@ class _TargetContinuation:
     the tail and contracts away in one `tensordot`.
     """
 
+    support_axes: MappingProxyType[TransitionFunctionName, Int1D]
+    """Private node axes to index `next_V` along, keyed by public next-state name.
+
+    One entry per declared entry law. The public name produces that law's
+    physical value everywhere else; only the interpolator sees this axis.
+    """
+
     extra_param_names: frozenset[str]
     """Arguments `next_V` needs beyond the next states and the value array.
 
@@ -576,6 +603,7 @@ def _build_target_continuation(
     functions: EconFunctionsMapping,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
 ) -> _TargetContinuation:
@@ -593,6 +621,8 @@ def _build_target_continuation(
         bundle: This target's unqualified `next_<state>` transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
@@ -644,6 +674,7 @@ def _build_target_continuation(
             variables=node_variables,
             batch_sizes=dict.fromkeys(node_variables, 0),
         ),
+        support_axes=support_axes.get(target_regime_name, MappingProxyType({})),
         extra_param_names=frozenset(
             get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         ),

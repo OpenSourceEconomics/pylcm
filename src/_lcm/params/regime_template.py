@@ -50,11 +50,18 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         The regime parameter template with type annotations as values.
 
     """
+    # Every state the regime declares a law for produces a `next_<state>` in the
+    # target's bundle, so a law reading one reads a DAG value, not a parameter.
+    # Reading `state_transitions` and not only `states` is what makes that hold
+    # for a state the source hands over without carrying — a declared entry into
+    # a target's process is the case, and its physical value is available to its
+    # neighbours exactly as any other transition's output is.
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
         *(f"next_{name}" for name in user_regime.states),
+        *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
         "CE",

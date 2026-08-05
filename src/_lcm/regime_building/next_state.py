@@ -207,26 +207,32 @@ def _get_next_weights_function(
         for func_name in transitions
         if select(transition_laws, regime_name, func_name)
     ]
-    # A weight law may read another transition's *deterministic* `next_<state>`
-    # output within the same target's DAG -- the supported
-    # transition-reads-transition composition that the solution next-state builder
-    # (`get_next_state_function_for_solution`) already relies on. Those producers live
-    # in `transitions`, not `functions`, so include the deterministic transitions in
-    # the weight DAG; otherwise the read is left as an unsupplied argument and the Q
-    # build fails with a missing input.
-    # Every weighted law's own `next_<state>` is excluded on purpose: it is the node
-    # vector the weights are stated against, not a closed-form producer. A weight
-    # depending on another stochastic next-state would need a conditional joint
-    # kernel the product-of-marginals form cannot represent -- leaving it unresolved
-    # surfaces that unsupported composition loudly.
-    weightless_transitions = {
+    # A weight law may read another transition's `next_<state>` output within the
+    # same target's DAG -- the supported transition-reads-transition composition
+    # that the solution next-state builder
+    # (`get_next_state_function_for_solution`) already relies on. Those producers
+    # live in `transitions`, not `functions`, so the deterministic transitions
+    # belong in the weight DAG; otherwise the read is left as an unsupplied
+    # argument and the Q build fails with a missing input.
+    #
+    # Availability is decided by whether a law has a physical value to publish,
+    # never by whether weights were built for it:
+    #
+    # - An interpolation-basis law is deterministic -- it names one value -- so it
+    #   stays a producer. Its weights place that value on the target's private
+    #   node axis; they do not replace it.
+    # - A stochastic law realizes a draw, which has no value while the expectation
+    #   over it is still being built. Excluding it leaves a dependency on one
+    #   unresolved, which surfaces the unsupported composition loudly rather than
+    #   pricing a conditional joint kernel the product-of-marginals form cannot
+    #   represent.
+    available_transitions = {
         name: func
         for name, func in transitions.items()
         if not is_stochastic(transition_laws, regime_name, name)
-        and not is_interpolation_basis(transition_laws, regime_name, name)
     }
     return concatenate_functions(
-        functions=dict(weightless_transitions) | dict(functions),
+        functions=dict(available_transitions) | dict(functions),
         targets=targets,
         return_type="dict",
         enforce_signature=False,
