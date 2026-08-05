@@ -216,6 +216,7 @@ def test_get_multiply_weights():
                             stochastic=True,
                             continuous_process=False,
                             intrinsic_entry=False,
+                            emits_support_index=False,
                             weight_name=f"weight_test__{name}",
                         )
                         for name in ("next_a", "next_b")
@@ -553,7 +554,7 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_H(utility: FloatND, CE: FloatND) -> FloatND:
+def _epstein_zin_W(utility: FloatND, CE: FloatND) -> FloatND:
     return utility + CE
 
 
@@ -561,6 +562,13 @@ def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, Float
     return MappingProxyType(
         {"low": regime_prob_low, "high": 1.0 - regime_prob_low},
     )
+
+
+def _raw_low_and_high_probs(
+    regime_prob_low: FloatND, regime_prob_high: FloatND
+) -> MappingProxyType[str, FloatND]:
+    """Return two raw probabilities without forcing their represented sum to one."""
+    return MappingProxyType({"low": regime_prob_low, "high": regime_prob_high})
 
 
 # A target regime without states: its value function array is a scalar, so the
@@ -573,20 +581,29 @@ _STATELESS_V_INFO = VInterpolationInfo(
 
 
 def _build_two_target_closure(
-    builder: Callable, *, certainty_equivalent: CertaintyEquivalent | None
+    builder: Callable,
+    *,
+    certainty_equivalent: CertaintyEquivalent | None,
+    probs_function: Callable = _low_and_high_probs,
+    flat_param_names: frozenset[str] = frozenset(
+        {"certainty_equivalent__risk_aversion"}
+    ),
+    period_targets: tuple[str, ...] = ("low", "high"),
+    scalar_targets: tuple[str, ...] = (),
 ) -> Callable:
     """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
     return builder(
         co_map_state_names=(),
-        flat_param_names=frozenset({"certainty_equivalent__risk_aversion"}),
+        flat_param_names=flat_param_names,
         functions=MappingProxyType({"utility": _sum_utility}),
-        koopmans_aggregator=_epstein_zin_H,
+        koopmans_aggregator=_epstein_zin_W,
         constraints=MappingProxyType({}),
-        period_targets=("low", "high"),
+        period_targets=period_targets,
+        scalar_targets=scalar_targets,
         transitions=MappingProxyType({}),
         transition_laws=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
-            functions={"regime_transition_probs": _low_and_high_probs},
+            functions={"regime_transition_probs": probs_function},
             targets="regime_transition_probs",
             enforce_signature=False,
             set_annotations=True,
@@ -619,6 +636,110 @@ def _two_target_call_kwargs(
         "period": jnp.asarray(0),
         "certainty_equivalent__risk_aversion": jnp.asarray(risk_aversion, dtype=dtype),
     }
+
+
+def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return Q values for an accepted near-unit-mass lottery and a safe action."""
+    Q_and_F = _build_two_target_closure(
+        get_Q_and_F,
+        certainty_equivalent=LinearExpectation(),
+        probs_function=_raw_low_and_high_probs,
+        flat_param_names=frozenset(),
+    )
+
+    def evaluate(*, value: float, probability_high: float) -> FloatND:
+        kwargs: dict[str, Any] = {
+            "next_regime_to_V_arr": MappingProxyType(
+                {
+                    "low": jnp.asarray(value, dtype=dtype),
+                    "high": jnp.asarray(value, dtype=dtype),
+                }
+            ),
+            "utility_level": jnp.asarray(0.0, dtype=dtype),
+            "regime_prob_low": jnp.asarray(0.5, dtype=dtype),
+            "regime_prob_high": jnp.asarray(probability_high, dtype=dtype),
+            "age": jnp.asarray(25),
+            "period": jnp.asarray(0),
+        }
+        return Q_and_F(**kwargs)[0]
+
+    def both_actions() -> FloatND:
+        return jnp.asarray(
+            [
+                evaluate(value=1.0, probability_high=0.500005),
+                evaluate(value=1.000003, probability_high=0.5),
+            ]
+        )
+
+    return np.asarray(both_actions()), np.asarray(jax.jit(both_actions)())
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "dtype", "rtol"),
+    [
+        ("x64_enabled", jnp.float64, 1e-12),
+        ("x64_disabled", jnp.float32, 1e-6),
+    ],
+)
+def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
+    request: pytest.FixtureRequest,
+    fixture_name: str,
+    dtype: Any,
+    rtol: float,
+):
+    """The shortcut equals `LinearExpectation.aggregate` on accepted probabilities."""
+    request.getfixturevalue(fixture_name)
+    represented_mass = jnp.asarray(0.5, dtype=dtype) + jnp.asarray(
+        0.500005, dtype=dtype
+    )
+    assert jnp.allclose(represented_mass, 1.0)
+
+    eager, jitted = _linear_expectation_action_values(dtype=dtype)
+    expected = np.asarray([1.0, 1.000003], dtype=np.dtype(dtype))
+    np.testing.assert_allclose(eager, expected, rtol=rtol, atol=0.0)
+    np.testing.assert_allclose(jitted, expected, rtol=rtol, atol=0.0)
+    assert int(np.argmax(eager)) == 1
+    assert int(np.argmax(jitted)) == 1
+
+
+def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
+    x64_enabled: None,
+):
+    """A stateless target's probability counts toward the mass the fast path divides by.
+
+    Every reachable target here carries no state, so the whole continuation is
+    seeded from the stateless route and none of it flows through the loop over
+    targets that carry state. The represented mass is still the sum over both
+    targets, so a lottery paying the same value at every node is worth exactly
+    that value.
+    """
+    Q_and_F = _build_two_target_closure(
+        get_Q_and_F,
+        certainty_equivalent=LinearExpectation(),
+        probs_function=_raw_low_and_high_probs,
+        flat_param_names=frozenset(),
+        period_targets=(),
+        scalar_targets=("low", "high"),
+    )
+    represented_mass = 0.5 + 0.500005
+    assert jnp.allclose(jnp.asarray(represented_mass), 1.0)
+
+    value = 3.0
+    got = Q_and_F(
+        next_regime_to_V_arr=MappingProxyType(
+            {
+                "low": jnp.asarray(value),
+                "high": jnp.asarray(value),
+            }
+        ),
+        utility_level=jnp.asarray(0.0),
+        regime_prob_low=jnp.asarray(0.5),
+        regime_prob_high=jnp.asarray(0.500005),
+        age=jnp.asarray(25),
+        period=jnp.asarray(0),
+    )[0]
+
+    np.testing.assert_allclose(np.asarray(got), value, rtol=1e-12, atol=0.0)
 
 
 def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):

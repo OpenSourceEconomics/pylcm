@@ -7,7 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.power_mean import weighted_power_mean
 from lcm import PowerMean, W_epstein_zin, W_linear
+from lcm.typing import FloatND
 from tests.test_models.taste_shocks_toy import get_model as get_toy_model
 
 
@@ -48,7 +50,7 @@ def test_W_epstein_zin_unit_ies_is_cobb_douglas():
 
 
 def test_default_aggregator_is_W_linear():
-    """A non-terminal regime without an explicit `H` gets `W_linear` at model build."""
+    """A non-terminal regime declaring no aggregator gets `W_linear` at model build."""
     toy = get_toy_model()
     assert toy.user_regimes["alive"].koopmans_aggregator is W_linear
 
@@ -213,3 +215,132 @@ def test_W_epstein_zin_is_the_power_mean_of_utility_and_continuation(
         params={"risk_aversion": jnp.asarray(1.0 / ies)},
     )
     np.testing.assert_allclose(float(aggregated), float(as_power_mean), rtol=1e-12)
+
+
+def test_W_epstein_zin_applies_a_batched_ies_pointwise(x64_enabled: None):
+    """A per-state IES applies to its own state, not to a lottery node.
+
+    `psi` is a state/action-batched quantity: it broadcasts over the aggregated
+    points, and each point's own `psi` governs it.
+    """
+    utility = jnp.array([0.1, 0.1])
+    ce = jnp.array([0.1, 0.05])
+    result = W_epstein_zin(
+        utility=utility,
+        CE=ce,
+        discount_factor=jnp.asarray(0.1),
+        intertemporal_elasticity_of_substitution=jnp.array([0.125, 0.25]),
+    )
+    pointwise = [
+        float(
+            W_epstein_zin(
+                utility=utility[i],
+                CE=ce[i],
+                discount_factor=jnp.asarray(0.1),
+                intertemporal_elasticity_of_substitution=jnp.asarray(psi),
+            )
+        )
+        for i, psi in enumerate((0.125, 0.25))
+    ]
+    np.testing.assert_allclose(np.asarray(result), pointwise, rtol=1e-12)
+    assert int(jnp.argmax(result)) == 0
+
+
+def test_W_epstein_zin_accepts_a_batched_ies_of_any_length(x64_enabled: None):
+    """A batched IES whose length differs from the two aggregated values works."""
+    result = W_epstein_zin(
+        utility=jnp.array([0.1, 0.1, 0.1]),
+        CE=jnp.array([0.1, 0.05, 0.2]),
+        discount_factor=jnp.asarray(0.1),
+        intertemporal_elasticity_of_substitution=jnp.array([0.5, 2.0, 4.0]),
+    )
+    np.testing.assert_allclose(
+        np.asarray(result), [0.1, 0.09422792, 0.10919235], rtol=1e-6
+    )
+
+
+def _pair_and_general(
+    *, utility: FloatND, CE: FloatND, beta: FloatND, ies: FloatND
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return `W_epstein_zin` and the general kernel on the same two-point lottery."""
+    got = W_epstein_zin(
+        utility=utility,
+        CE=CE,
+        discount_factor=beta,
+        intertemporal_elasticity_of_substitution=ies,
+    )
+    shape = jnp.broadcast_shapes(jnp.shape(utility), jnp.shape(CE))
+    expected = weighted_power_mean(
+        values=jnp.stack(jnp.broadcast_arrays(utility, CE), axis=-1),
+        weights=jnp.stack(
+            (
+                jnp.broadcast_to(1.0 - beta, shape),
+                jnp.broadcast_to(beta, shape),
+            ),
+            axis=-1,
+        ),
+        exponent=1.0 - 1.0 / ies,
+    )
+    return np.asarray(got), np.asarray(expected)
+
+
+# `beta` outside `[0, 1]` makes one weight negative, which both evaluations must
+# report as NaN rather than read as a dead node.
+_DISCOUNT_FACTORS = (0.96, 0.0, 1.0, 1.5, -0.5)
+# `1.0` is the geometric limit; either side of it is where the moment
+# representation switches. `psi -> 0+` drives the exponent to `-inf`.
+_IES_VALUES = (0.7, 1.0, 1.0 + 1e-6, 1.0 - 1e-6, 8.0, 0.125)
+
+
+@pytest.mark.parametrize("fixture_name", ["x64_enabled", "x64_disabled"])
+@pytest.mark.parametrize("discount_factor", _DISCOUNT_FACTORS)
+@pytest.mark.parametrize("ies", _IES_VALUES)
+def test_W_epstein_zin_equals_the_general_power_mean(
+    request: pytest.FixtureRequest,
+    fixture_name: str,
+    discount_factor: float,
+    ies: float,
+):
+    """`W_epstein_zin` agrees with the general kernel on the same two-point lottery."""
+    request.getfixturevalue(fixture_name)
+    # Includes an exact `0.0` on either side — the documented limiting case,
+    # which anchors differently at positive and negative exponents.
+    utility = jnp.array([0.5, 1.0, 2.0, 1e-30, 3.0, 0.0, 2.0, 0.0])
+    CE = jnp.array([2.0, 1.0, 0.5, 1e-30, 1e-30, 2.0, 0.0, 0.0])
+
+    got, expected = _pair_and_general(
+        utility=utility,
+        CE=CE,
+        beta=jnp.asarray(discount_factor),
+        ies=jnp.asarray(ies),
+    )
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))
+    finite = np.isfinite(got) & np.isfinite(expected)
+    np.testing.assert_allclose(got[finite], expected[finite], rtol=1e-6, atol=1e-30)
+
+
+def test_W_epstein_zin_equals_the_general_power_mean_for_a_batched_ies(
+    x64_enabled: None,
+):
+    """A per-element IES binds to the same element in both evaluations."""
+    utility = jnp.array([0.5, 1.0, 2.0, 3.0])
+    CE = jnp.array([2.0, 1.0, 0.5, 1e-30])
+    got, expected = _pair_and_general(
+        utility=utility,
+        CE=CE,
+        beta=jnp.asarray(0.96),
+        ies=jnp.array([0.125, 1.0, 2.0, 8.0]),
+    )
+    np.testing.assert_allclose(got, expected, rtol=1e-14, atol=0.0)
+
+
+def test_W_epstein_zin_propagates_a_nan_discount_factor(x64_enabled: None):
+    """A NaN weight propagates rather than silently dropping a node."""
+    got, expected = _pair_and_general(
+        utility=jnp.array([2.0]),
+        CE=jnp.array([3.0]),
+        beta=jnp.asarray(jnp.nan),
+        ies=jnp.asarray(0.7),
+    )
+    assert np.isnan(got).all()
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(expected))

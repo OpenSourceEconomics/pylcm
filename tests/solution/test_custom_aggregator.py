@@ -1,4 +1,4 @@
-"""Test that a custom aggregation function H can be used in a model."""
+"""Test that a custom Koopmans aggregator can be used in a model."""
 
 from collections.abc import Callable
 
@@ -74,7 +74,7 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-def ces_H(
+def ces_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -105,21 +105,21 @@ def discount_factor_from_type(
     """Index a per-type discount factor Series by the pref_type state.
 
     Wiring this as `functions["discount_factor"]` exercises pylcm's
-    ability to resolve an H argument from a DAG function output when
+    ability to resolve a `W` argument from a DAG function output when
     the name is not in `states_actions_params`.
     """
     return discount_factor_by_type[pref_type]
 
 
-def _make_model(custom_H=None, *, with_pref_type: bool = False):
-    """Create a simple model, optionally with a custom H and pref_type state.
+def _make_model(custom_W=None, *, with_pref_type: bool = False):
+    """Create a simple model, optionally with a custom `W` and pref_type state.
 
     When `with_pref_type=True`, the working-life regime gains a
     `pref_type` discrete state (`batch_size=1`, three categories) and
     wires `discount_factor` as a DAG function that indexes
     `discount_factor_by_type` by the state. This exercises the
-    "DAG output feeds H" path in pylcm's Q_and_F — and relies on
-    `_validate_all_variables_used` treating H-DAG targets as reachable
+    "DAG output feeds `W`" path in pylcm's Q_and_F — and relies on
+    `_validate_all_variables_used` treating aggregator-DAG targets as reachable
     so `pref_type` counts as used without any workaround in `utility`.
     """
     functions: dict[str, Callable] = {
@@ -152,14 +152,14 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions=functions,
-        koopmans_aggregator=custom_H,
+        koopmans_aggregator=custom_W,
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
     # Terminal regime: when pref_type is declared as a state across
     # regimes, dead_utility must reference it so pylcm's state-usage
-    # check accepts the declaration (terminal regimes have no H, so
-    # the H-DAG reachability fix does not apply here).
+    # check accepts the declaration (terminal regimes have no aggregator,
+    # so the aggregator-DAG reachability fix does not apply here).
     if with_pref_type:
 
         def dead_utility(pref_type: DiscreteState) -> FloatND:  # noqa: ARG001
@@ -186,7 +186,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
 def test_custom_ces_aggregator_differs_from_default():
     """A CES aggregator with ies != 1 should produce different value functions."""
     model_default = _make_model()
-    model_ces = _make_model(custom_H=ces_H)
+    model_ces = _make_model(custom_W=ces_W)
 
     params_default = {
         "discount_factor": 0.95,
@@ -223,7 +223,7 @@ def test_custom_ces_aggregator_differs_from_default():
 
 
 def test_default_H_injected_for_non_terminal():
-    """The default H is injected on the non-terminal finalized regime."""
+    """The model-level aggregator is injected on the non-terminal finalized regime."""
     regime = UserRegime(
         functions={"utility": lambda: 0.0},
         transition=lambda: {"a": 1.0},
@@ -238,7 +238,7 @@ def test_default_H_injected_for_non_terminal():
     assert finalized.koopmans_aggregator is W_linear
 
 
-def test_default_H_not_injected_for_terminal():
+def test_default_W_not_injected_for_terminal():
     """Terminal regimes have no continuation, so they get no aggregator."""
     r = UserRegime(
         transition=None,
@@ -253,17 +253,17 @@ def test_default_H_not_injected_for_terminal():
     assert finalized.koopmans_aggregator is None
 
 
-def test_custom_H_not_overwritten():
+def test_custom_W_not_overwritten():
     """A regime-level aggregator survives finalization."""
 
-    def my_H(utility: float, CE: float) -> float:
+    def my_W(utility: float, CE: float) -> float:
         return utility + CE
 
     r = UserRegime(
         transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
         functions={"utility": lambda: 0.0},
-        koopmans_aggregator=my_H,
+        koopmans_aggregator=my_W,
     )
     finalized = finalize_regimes(
         user_regimes={"regime": r},
@@ -271,28 +271,28 @@ def test_custom_H_not_overwritten():
         koopmans_aggregator=W_linear,
         certainty_equivalent=LinearExpectation(),
     )["regime"]
-    assert finalized.koopmans_aggregator is my_H
+    assert finalized.koopmans_aggregator is my_W
 
 
-def test_params_template_includes_H():
+def test_params_template_includes_W():
     """The default aggregator's `discount_factor` surfaces in the template."""
     model = _make_model()
     template = model._params_template
     assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
 
 
-def test_params_template_custom_H():
-    """Custom H params should appear in the template."""
-    model = _make_model(custom_H=ces_H)
+def test_params_template_custom_W():
+    """A custom aggregator's params should appear in the template."""
+    model = _make_model(custom_W=ces_W)
     template = model._params_template
     assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
     assert "ies" in template["working_life"]["koopmans_aggregator"]
 
 
-def test_terminal_regime_value_unchanged_by_H():
-    """Terminal regimes don't use H, so different H should give same terminal values."""
+def test_terminal_regime_value_unchanged_by_W():
+    """Terminal regimes have no aggregator, so varying it leaves their values alone."""
     model_default = _make_model()
-    model_ces = _make_model(custom_H=ces_H)
+    model_ces = _make_model(custom_W=ces_W)
 
     params_default = {
         "discount_factor": 0.95,
@@ -321,18 +321,18 @@ def test_terminal_regime_value_unchanged_by_H():
     )
 
 
-# DAG-output feeds H: `discount_factor` computed by a DAG function that
+# DAG-output feeds `W`: `discount_factor` computed by a DAG function that
 # indexes a per-type Series by the `pref_type` state.
 
 
 def test_model_constructs_when_state_reachable_only_via_w_dag():
-    """State reached only via H's DAG deps must pass the usage check.
+    """State reached only via the aggregator's DAG deps passes the usage check.
 
     `pref_type` is used by `discount_factor_from_type`, whose output
-    feeds the default H. `utility` / `feasibility` / transitions do
+    feeds the default `W`. `utility` / `feasibility` / transitions do
     not reference `pref_type`. Pre-fix, this failed with
     "states defined but never used"; post-fix, the state-usage walk
-    treats H-DAG targets as reachable.
+    treats aggregator-DAG targets as reachable.
     """
     _make_model(with_pref_type=True)
 
@@ -340,10 +340,10 @@ def test_model_constructs_when_state_reachable_only_via_w_dag():
 def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     """Higher per-type discount factor ⇒ higher value function.
 
-    The working-life regime uses the default H (which expects a scalar
+    The working-life regime uses the default `W` (which expects a scalar
     `discount_factor`). That scalar is produced by a DAG function that
     indexes `discount_factor_by_type` by the `pref_type` state. This
-    only works if pylcm's Q_and_F resolves H arguments from DAG
+    only works if pylcm's Q_and_F resolves `W` arguments from DAG
     function outputs when they are not in `states_actions_params`.
     """
     model = _make_model(with_pref_type=True)
@@ -374,12 +374,12 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
         )
 
 
-# H's permissive kwarg contract: H may name any argument supported by
+# `W`'s permissive kwarg contract: it may name any argument supported by
 # regime functions — states, actions, flat params, or DAG-output
 # functions. The following tests lock that contract in.
 
 
-def wealth_H(
+def wealth_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -390,7 +390,7 @@ def wealth_H(
 
 
 def test_h_consumes_continuous_state():
-    """Solve when H names a continuous state; exact lift at the last period.
+    """Solve when `W` names a continuous state; exact lift at the last period.
 
     Regression guard against a refactor that narrows `_H_accepted_params`
     to reject state names. At the last period where `working_life` is
@@ -398,7 +398,7 @@ def test_h_consumes_continuous_state():
     `wealth_weight * wealth` to `Q` shifts `V` by exactly that term —
     independent of the argmax.
     """
-    model = _make_model(custom_H=wealth_H)
+    model = _make_model(custom_W=wealth_W)
     common = {
         "utility": {"disutility_of_work": 0.5},
         "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
@@ -430,7 +430,7 @@ def test_h_consumes_continuous_state():
     assert bool(jnp.allclose(lift_at_terminal, expected, atol=1e-5))
 
 
-def consumption_H(
+def consumption_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -441,14 +441,14 @@ def consumption_H(
 
 
 def test_h_consumes_continuous_action():
-    """H may name a continuous action; non-zero weight shifts V.
+    """`W` may name a continuous action; non-zero weight shifts V.
 
-    Regression guard: when `H` names `consumption`, the scalar at the
+    Regression guard: when `W` names `consumption`, the scalar at the
     current action-gridpoint is bound at Q evaluation (before argmax).
     A positive `action_weight` therefore shifts `V` relative to the
     `action_weight=0` baseline.
     """
-    model = _make_model(custom_H=consumption_H)
+    model = _make_model(custom_W=consumption_W)
     common = {
         "utility": {"disutility_of_work": 0.5},
         "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
@@ -482,7 +482,7 @@ def test_h_consumes_continuous_action():
     assert diffs_exist, "action_weight>0 must shift V at some working-life period"
 
 
-def labor_supply_H(
+def labor_supply_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -493,12 +493,12 @@ def labor_supply_H(
 
 
 def test_h_consumes_discrete_action():
-    """H may name a discrete action; solve compiles and V shapes match baseline.
+    """`W` may name a discrete action; solve compiles and V shapes match baseline.
 
-    Regression guard: discrete action scalars reach `H` via
+    Regression guard: discrete action scalars reach `W` via
     `states_actions_params` the same way continuous ones do.
     """
-    model = _make_model(custom_H=labor_supply_H)
+    model = _make_model(custom_W=labor_supply_W)
     V = model.solve(
         log_level="debug",
         params={
@@ -525,7 +525,7 @@ def test_h_consumes_discrete_action():
             assert V[period][regime].shape == baseline[period][regime].shape
 
 
-def pref_type_direct_H(
+def pref_type_direct_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -535,15 +535,15 @@ def pref_type_direct_H(
 
 
 def test_h_consumes_discrete_state():
-    """H may name a discrete state directly, without a DAG function of that name.
+    """`W` may name a discrete state directly, without a DAG function of that name.
 
-    Regression guard: `pref_type` reaches `H` as a scalar per
+    Regression guard: `pref_type` reaches `W` as a scalar per
     state-action gridpoint — the same path utility uses.
     `discount_factor` here is still a DAG output
     (`discount_factor_from_type`), proving state-direct and
-    DAG-output paths can coexist in one `H`.
+    DAG-output paths can coexist in one `W`.
     """
-    model = _make_model(custom_H=pref_type_direct_H, with_pref_type=True)
+    model = _make_model(custom_W=pref_type_direct_W, with_pref_type=True)
     V = model.solve(
         log_level="debug",
         params={
@@ -562,7 +562,7 @@ def test_h_consumes_discrete_state():
         assert bool(jnp.all(jnp.isfinite(v)))
 
 
-def mixed_H(
+def mixed_W(
     utility: float,
     CE: float,
     discount_factor: float,
@@ -581,13 +581,13 @@ def mixed_H(
 
 
 def test_h_consumes_flat_param_state_action_and_dag_output():
-    """H may simultaneously name a flat param, a state, an action, and a DAG output.
+    """`W` may name a flat param, a state, an action, and a DAG output at once.
 
     Regression guard: every kwarg-resolution path fires at once —
     `states_actions_params` supplies wealth/consumption/pref_type,
     flat params supply `ies`, the DAG supplies `discount_factor`.
     """
-    model = _make_model(custom_H=mixed_H, with_pref_type=True)
+    model = _make_model(custom_W=mixed_W, with_pref_type=True)
     V = model.solve(
         log_level="debug",
         params={
