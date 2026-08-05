@@ -27,9 +27,8 @@ class CertaintyEquivalent(ABC):
     """Base class for certainty-equivalent specifications.
 
     Declared on a non-terminal `Regime` via `certainty_equivalent=...`. The
-    shipped implementations are `LinearExpectation` — expected utility, and
-    what a regime that declares nothing gets — and `QuasiArithmeticMean` with
-    its `PowerMean` specialization.
+    shipped implementations are `LinearExpectation` (expected utility, the
+    default) and `QuasiArithmeticMean` with its `PowerMean` specialization.
 
     `aggregate` reduces the whole joint continuation lottery in one piece,
     because a transform has to be applied before any expectation is taken.
