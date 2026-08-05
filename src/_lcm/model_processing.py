@@ -399,8 +399,13 @@ def _validate_all_variables_used(
                 if name.startswith("next_")
                 and not getattr(user_functions[name], "_is_auto_identity", False)
             ),
+            # Both phases, because a `Phased` aggregator may consume a variable
+            # in only one of them and the variable is used either way.
             *get_dag_targets_consumed_by_W(
                 user_functions, user_regime.get_koopmans_aggregator(phase="solve")
+            ),
+            *get_dag_targets_consumed_by_W(
+                user_functions, user_regime.get_koopmans_aggregator(phase="simulate")
             ),
         ]
         reachable = get_ancestors(

@@ -94,10 +94,10 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
     }
 
 
-def test_create_params_with_custom_H_no_extra_params():
+def test_create_params_with_custom_W_no_extra_params():
     """A custom H with no extra params beyond utility and CE."""
 
-    def custom_H(utility: float, CE: float) -> float:
+    def custom_W(utility: float, CE: float) -> float:
         return utility + CE
 
     regime = MockRegime(
@@ -108,7 +108,7 @@ def test_create_params_with_custom_H_no_extra_params():
             "b": None,
         },
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
-        koopmans_aggregator=custom_H,
+        koopmans_aggregator=custom_W,
     )
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
@@ -143,7 +143,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     )
 
 
-def test_custom_H_shadowing_state_is_allowed():
+def test_custom_W_shadowing_state_is_allowed():
     """Custom H may declare a state in its signature to subscript it.
 
     This is how a model with a `pref_type` state can have a custom H that
@@ -152,14 +152,14 @@ def test_custom_H_shadowing_state_is_allowed():
     call time from the state space.
     """
 
-    def custom_H(utility: float, CE: float, wealth: float) -> float:
+    def custom_W(utility: float, CE: float, wealth: float) -> float:
         return utility + wealth * CE
 
     regime = MockRegime(
         actions={"a": None},
         states={"wealth": None},
         functions={"utility": lambda a, wealth: None},  # noqa: ARG005
-        koopmans_aggregator=custom_H,
+        koopmans_aggregator=custom_W,
     )
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(

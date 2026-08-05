@@ -480,8 +480,11 @@ def _get_compute_CE(
     # its transform has to be applied before any expectation is taken.
     # `LinearExpectation.aggregate` states the same quantity over the flattened
     # lottery, but reducing per target is materially cheaper.
-    reduces_per_target = certainty_equivalent is None or isinstance(
-        certainty_equivalent, LinearExpectation
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
     )
     ce_flat_param_names = (
         MappingProxyType({})
@@ -524,12 +527,14 @@ def _get_compute_CE(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        CE, lottery_values, lottery_weights = _scalar_target_contribution(
-            scalar_targets=scalar_targets,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            active_regime_probs=active_regime_probs,
-            as_lottery=not reduces_per_target,
-            zero=zero,
+        CE, lottery_values, lottery_weights, probability_mass = (
+            _scalar_target_contribution(
+                scalar_targets=scalar_targets,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                active_regime_probs=active_regime_probs,
+                as_lottery=not reduces_per_target,
+                zero=zero,
+            )
         )
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
@@ -563,13 +568,15 @@ def _get_compute_CE(
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
                 if next_V_has_stochastic_states[target_regime_name]:
-                    next_V_expected_arr = jnp.average(
-                        next_V_at_stochastic_states_arr,
+                    next_V_expected_arr = _expectation_over_stochastic_nodes(
+                        values=next_V_at_stochastic_states_arr,
                         weights=joint_next_stochastic_states_weights,
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                CE = CE + active_regime_probs[target_regime_name] * next_V_expected_arr
+                target_probability = active_regime_probs[target_regime_name]
+                CE = CE + target_probability * next_V_expected_arr
+                probability_mass = probability_mass + target_probability
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
@@ -583,11 +590,23 @@ def _get_compute_CE(
                     active_regime_probs[target_regime_name] * node_weights
                 )
 
-        if (
-            certainty_equivalent is not None
-            and not reduces_per_target
-            and lottery_values
-        ):
+        if reduces_per_target and (period_targets or scalar_targets):
+            # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
+            # the represented mass to state the same quantity as
+            # `LinearExpectation.aggregate`. Regime-transition validation accepts
+            # any mass within `jnp.allclose` of one, and at the top of that
+            # tolerance the undivided sum reverses the Bellman argmax. Dividing is
+            # exact whenever the mass is exactly one, so a well-formed lottery
+            # keeps its floating-point association.
+            #
+            # A regime with no target at all — neither carrying state nor
+            # stateless — carries no continuation, and its `CE` stays at zero
+            # rather than becoming `0 / 0`, matching the lottery route, which
+            # leaves `CE` at zero when it collects no nodes.
+            # A represented mass of zero across targets that do exist is a
+            # massless lottery, and NaN there is the same answer both routes give.
+            CE = CE / probability_mass
+        elif certainty_equivalent is not None and lottery_values:
             CE = certainty_equivalent.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
@@ -619,7 +638,7 @@ def _scalar_target_contribution(
     active_regime_probs: Mapping[RegimeName, FloatND],
     as_lottery: bool,
     zero: FloatND,
-) -> tuple[FloatND, list[FloatND], list[FloatND]]:
+) -> tuple[FloatND, list[FloatND], list[FloatND], FloatND]:
     """Seed the continuation accumulators with the stateless targets.
 
     A target carrying no state has a rank-zero value function: there is no next
@@ -641,23 +660,42 @@ def _scalar_target_contribution(
         zero: Zero at the shape and dtype of the value being built up.
 
     Returns:
-        Tuple of the seeded certainty equivalent, the lottery values, and
-        their weights.
+        Tuple of the seeded certainty equivalent, the lottery values, their
+        weights, and the probability mass these targets represent.
 
     """
     CE = zero
     values: list[FloatND] = []
     weights: list[FloatND] = []
+    probability_mass = zero
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
         prob = active_regime_probs[target_regime_name]
+        # A stateless target contributes to the represented mass on either
+        # route, so the linear fast path divides by the mass of *every* target
+        # it summed, not just the ones carrying state.
+        probability_mass = probability_mass + prob
         if as_lottery:
             node = jnp.ravel(scalar_V)
             values.append(node)
             weights.append(prob * jnp.ones_like(node))
         else:
             CE = CE + prob * scalar_V
-    return CE, values, weights
+    return CE, values, weights, probability_mass
+
+
+def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+    """Return the weighted mean of one target's continuation over its nodes.
+
+    Normalized explicitly rather than with `jnp.average`, for the reason
+    `_as_lottery` states: a target whose joint weights carry no mass
+    contributes no branch, and must not contribute NaN either — every target
+    enters the same continuation, so a NaN here would destroy the
+    well-specified targets beside it.
+    """
+    weight_sum = jnp.sum(weights)
+    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    return jnp.sum(values * weights) / safe_weight_sum
 
 
 def _as_lottery(
