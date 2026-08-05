@@ -61,6 +61,7 @@ import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors
 
+from _lcm.egm.preferences import fail_if_custom_koopmans_aggregator
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -72,7 +73,6 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.exceptions import GridInitializationError, ModelInitializationError
-from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
@@ -164,8 +164,8 @@ def _validate_dcegm_regime(
     _fail_if_required_functions_missing(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
-    _fail_if_custom_koopmans_aggregator(
-        regime_name=regime_name, user_regime=user_regime
+    fail_if_custom_koopmans_aggregator(
+        regime_name=regime_name, user_regime=user_regime, solver_name="DCEGM"
     )
 
     functions = _resolve_solve_functions(user_regime=user_regime)
@@ -323,37 +323,6 @@ def _fail_if_required_functions_missing(
         msg = (
             f"Regime '{regime_name}' uses the DCEGM solver but is missing "
             f"required entries in `functions`: {'; '.join(missing)}."
-        )
-        raise ModelInitializationError(msg)
-
-
-def _fail_if_custom_koopmans_aggregator(
-    *, regime_name: RegimeName, user_regime: UserRegime
-) -> None:
-    """Require the default Koopmans aggregator `W` at solve time.
-
-    The Euler inversion hard-codes `W = utility + discount_factor * CE`, so a
-    custom *solve-phase* aggregator would silently change the meaning of the
-    solution. A `Phased` aggregator whose solve variant is the default is
-    accepted — DC-EGM never reads the simulate variant, so a naive present-bias
-    regime (`koopmans_aggregator=Phased(solve=LinearAggregator(),
-    simulate=beta_delta_W)`) is admissible: the present bias enters only the
-    simulate-phase
-    re-optimization, outside the Euler inversion.
-
-    A regime that declares nothing takes the model-level default, which this
-    check sees as `None` because it runs on the user regime before the model
-    fills the slot.
-    """
-    declared = user_regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
-    if solve_W is not None and not isinstance(solve_W, LinearAggregator):
-        msg = (
-            f"Regime '{regime_name}' declares a custom solve-phase Koopmans "
-            "aggregator. The DCEGM solver hard-codes the default aggregator "
-            "`W = utility + discount_factor * CE` at solve time; remove the "
-            "custom `koopmans_aggregator` (a `Phased` one whose solve variant "
-            "is `LinearAggregator()` is accepted) or use the brute-force solver."
         )
         raise ModelInitializationError(msg)
 
