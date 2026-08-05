@@ -1,0 +1,306 @@
+"""A declared entry law names one value, however the engine represents it.
+
+A source that does not carry a target's continuous stochastic process may declare
+an entry law for it. The law names a *physical value*. The target holds its value
+function only on the process's nodes, so the engine expresses that value in the
+node basis — the hat weights of linear interpolation — and the continuation is
+`Σ_j w_j · V(node_j)`.
+
+Those weights are basis coefficients, not probabilities: entering at `1.5` on
+nodes `(1, 2)` is the single value `0.5·1 + 0.5·2`, not a coin flip between them.
+The distinction is invisible under a linear expectation, which averages either
+reading identically, and decisive under every other certainty equivalent, whose
+transform is applied before any averaging. Every case below therefore uses a
+nonlinear certainty equivalent — that is the only shape that separates the two
+readings.
+
+Oracles are arithmetic on a three-node grid whose value function is written out
+in full, so they share no code with the engine under test.
+"""
+
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    NormalIIDProcess,
+    PowerMean,
+    Regime,
+    UniformIIDProcess,
+    categorical,
+)
+from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.conftest import DECIMAL_PRECISION
+
+# `mu=1, sigma=0.5, n_std=2` at three points puts the target's nodes on
+# `(0, 1, 2)`, and its payoff is `shock**2`, so its value function is `(0, 1, 4)`.
+_NODES = (0.0, 1.0, 2.0)
+_V = (0.0, 1.0, 4.0)
+_RISK_AVERSION = 2.0
+
+
+@categorical(ordered=False)
+class RegimeId:
+    source: ScalarInt
+    target: ScalarInt
+
+
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
+    return shock**2
+
+
+def _one_probability() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _source_is_early(age: float) -> bool:
+    return age < 22
+
+
+def _target_process() -> NormalIIDProcess:
+    return NormalIIDProcess(
+        n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
+    )
+
+
+def _power_mean(values: np.ndarray, weights: np.ndarray) -> float:
+    """Return the weighted power mean at `_RISK_AVERSION`, computed independently."""
+    normalized = weights / weights.sum()
+    exponent = 1.0 - _RISK_AVERSION
+    return float(np.sum(normalized * values**exponent) ** (1.0 / exponent))
+
+
+def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
+    """Build a source entering the target's process at one physical value."""
+
+    def _enter_at() -> ScalarFloat:
+        return jnp.asarray(entry_value)
+
+    return Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": _enter_at}},
+                functions={"utility": _zero_utility},
+                certainty_equivalent=PowerMean(),
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _target_process()},
+                functions={"utility": _squared_shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=enable_jit,
+    )
+
+
+_PARAMS = {
+    "source": {
+        "utility": {},
+        "koopmans_aggregator": {"discount_factor": 1.0},
+        "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
+        "target": {"next_regime": {}, "next_shock": {}},
+    },
+    "target": {"utility": {}},
+}
+
+
+def _source_value(model: Model, params: dict) -> float:
+    solution = model.solve(params=params, log_level="debug")
+    last_living = max(period for period in solution if "source" in solution[period])
+    return float(np.asarray(solution[last_living]["source"]).ravel()[0])
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_entry_between_nodes_interpolates_under_a_nonlinear_ce(
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
+    """Entering at `1.5` is worth the midpoint of `V(1)` and `V(2)`, i.e. `2.5`.
+
+    Reading the same weights as a lottery and handing them to `PowerMean` at
+    `risk_aversion = 2` gives the weighted harmonic mean `1.6` instead — a
+    different number by a finite margin, not by rounding.
+    """
+    model = _build_model(entry_value=1.5, enable_jit=enable_jit)
+
+    got = _source_value(model, _PARAMS)
+
+    expected = 0.5 * _V[1] + 0.5 * _V[2]
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_entry_on_a_node_reads_that_node_under_a_nonlinear_ce(
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
+    """Entering at node `2.0` is worth `V(2) = 4`.
+
+    The weights are one-hot here, so both readings agree. This is the negative
+    control: it keeps a repair from being a blanket rescaling that happens to
+    fix the off-node case.
+    """
+    model = _build_model(entry_value=2.0, enable_jit=enable_jit)
+
+    got = _source_value(model, _PARAMS)
+
+    np.testing.assert_almost_equal(got, _V[2], decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize(
+    ("entry_value", "expected"),
+    [(-1.0, _V[0]), (5.0, _V[2])],
+    ids=["below_support", "above_support"],
+)
+def test_entry_outside_the_support_reads_the_nearest_node(
+    entry_value: float, expected: float
+) -> None:
+    """A value the process cannot represent enters at the nearest node.
+
+    The process has no representation beyond its own range, so the continuation
+    is that endpoint's value — under a nonlinear certainty equivalent as under a
+    linear one.
+    """
+    model = _build_model(entry_value=entry_value, enable_jit=False)
+
+    got = _source_value(model, _PARAMS)
+
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> None:
+    """One target, two processes: one entered deterministically, one drawn.
+
+    The declared entry contributes a single interpolated value on its own axis;
+    the process the source does not name is entered at its own unconditional law
+    and stays a genuine lottery. The certainty equivalent must see the second and
+    not the first, so the oracle applies `PowerMean` only across the drawn nodes
+    of the interpolated surface.
+    """
+
+    def _enter_at() -> ScalarFloat:
+        return jnp.asarray(1.5)
+
+    def _sum_utility(shock: ScalarFloat, extra: ScalarFloat) -> FloatND:
+        return shock**2 + extra
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": _enter_at}},
+                functions={"utility": _zero_utility},
+                certainty_equivalent=PowerMean(),
+            ),
+            "target": Regime(
+                transition=None,
+                states={
+                    "shock": _target_process(),
+                    "extra": UniformIIDProcess(n_points=2, start=1.0, stop=3.0),
+                },
+                functions={"utility": _sum_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+    params = {
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
+            "target": {"next_regime": {}, "next_shock": {}},
+        },
+        "target": {"utility": {}},
+    }
+
+    got = _source_value(model, params)
+
+    # `V(shock, extra) = shock**2 + extra`. Interpolating the declared entry at
+    # `1.5` collapses the shock axis to `0.5*V(1) + 0.5*V(2) = 2.5` per `extra`
+    # node, leaving a two-node lottery the drawn process weights equally.
+    interpolated = 2.5 + np.array([1.0, 3.0])
+    expected = _power_mean(interpolated, np.array([0.5, 0.5]))
+    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_the_entry_representation_decides_the_action() -> None:
+    """A competing action worth more than the lottery reading but less than `2.5`.
+
+    Entering is worth `2.5` when the declared value is interpolated and `1.6`
+    when its weights are priced as a lottery, so a payoff of `2.0` reverses the
+    Bellman argmax between the two readings. The assertion is the discrete
+    choice, which no tolerance can absorb.
+    """
+
+    def _stay_utility(wealth: ScalarFloat) -> FloatND:
+        return 2.0 + 0.0 * wealth
+
+    def _enter_at() -> ScalarFloat:
+        return jnp.asarray(1.5)
+
+    @categorical(ordered=False)
+    class _ThreeRegimeId:
+        source: ScalarInt
+        stay: ScalarInt
+        enter: ScalarInt
+
+    def _choose(go: ScalarInt) -> ScalarInt:
+        return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition=_choose,
+                active=_source_is_early,
+                actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                state_transitions={
+                    "wealth": {"stay": lambda: jnp.asarray(1.0)},
+                    "shock": {"enter": _enter_at},
+                },
+                functions={"utility": _zero_utility},
+                certainty_equivalent=PowerMean(),
+            ),
+            "stay": Regime(
+                transition=None,
+                states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+                functions={"utility": _stay_utility},
+            ),
+            "enter": Regime(
+                transition=None,
+                states={"shock": _target_process()},
+                functions={"utility": _squared_shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=_ThreeRegimeId,
+        enable_jit=False,
+    )
+    params = {
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
+            "next_wealth": {},
+            "next_shock": {},
+            "next_regime": {},
+        },
+        "stay": {"utility": {}},
+        "enter": {"utility": {}},
+    }
+
+    got = _source_value(model, params)
+
+    np.testing.assert_almost_equal(got, 2.5, decimal=DECIMAL_PRECISION)

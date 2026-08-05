@@ -29,7 +29,6 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import TransitionLawInfo
 from lcm import (
     AgeGrid,
     LinearExpectation,
@@ -195,35 +194,9 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 
 
 def test_get_multiply_weights():
-    def next_a():
-        return jnp.array([0.1, 0.9])
-
-    def next_b():
-        return jnp.array([0.2, 0.8])
-
-    transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        transition_laws=MappingProxyType(
-            {
-                "test": MappingProxyType(
-                    {
-                        name: TransitionLawInfo(
-                            target="test",
-                            next_state_name=name,
-                            qualified_name=f"test__{name}",
-                            stochastic=True,
-                            continuous_process=False,
-                            intrinsic_entry=False,
-                            emits_support_index=False,
-                            weight_name=f"weight_test__{name}",
-                        )
-                        for name in ("next_a", "next_b")
-                    }
-                )
-            }
-        ),
+        variables=("next_a", "next_b"),
     )
 
     a = jnp.array([1, 2])
@@ -232,6 +205,26 @@ def test_get_multiply_weights():
     got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3, 4], [6, 8]])
     assert_array_equal(got, expected)
+
+
+def test_joint_weights_axes_follow_the_declared_variable_order():
+    """The axis order of the outer product is the order the caller passes in.
+
+    The caller productmaps the value surface over the same tuple, so the two
+    orderings have to agree; reversing the tuple must transpose the result.
+    """
+    a = jnp.array([1, 2])
+    b = jnp.array([3, 4, 5])
+
+    forward = _get_joint_weights_function(
+        regime_name="test", variables=("next_a", "next_b")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+    reversed_order = _get_joint_weights_function(
+        regime_name="test", variables=("next_b", "next_a")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+
+    assert forward.shape == (2, 3)
+    assert_array_equal(reversed_order, forward.T)
 
 
 def test_get_combined_constraint():

@@ -11,11 +11,17 @@ there, so its entry law reads as deterministic and its weights are built and the
 discarded. Keying on the target instead asks the only question that has an
 answer -- how does *this* target obtain *this* state.
 
-Stochasticity is read off the synthesized functions rather than re-derived from
-the user's declarations: a law is stochastic when a target-qualified weight
-function was built for it. That keeps the description in step with what the DAG
-actually contains, so a law can never be priced by a weight that was never built,
-nor built a weight that nothing consumes.
+A weight vector alone does not say what the weights *mean*, so the description
+separates the two things a target-qualified weight function can be:
+
+- `stochastic` — the weights are probabilities, and the law realizes a draw.
+- `interpolation_basis` — the weights are the coefficients that express one
+  declared value in the target's node basis. The law names a single value.
+
+Exactly one of the two holds whenever `weight_name` is set, and neither when it
+is `None`. Collapsing them into "has weights" would price a declared entry value
+as a lottery over the nodes it interpolates between, which every certainty
+equivalent but the linear one answers differently.
 """
 
 from dataclasses import dataclass
@@ -38,7 +44,18 @@ class TransitionLawInfo:
     """`<target>__next_<state>`, as keyed in the flat function namespace."""
 
     stochastic: bool
-    """Whether the law realizes a draw rather than a single value."""
+    """Whether the law's weights are probabilities, so that it realizes a draw."""
+
+    interpolation_basis: bool
+    """Whether the law's weights express one declared value in the node basis.
+
+    True for a declared entry law into a target's continuous process: the value
+    the source names is off the target's nodes in general, so it reaches the
+    engine as the hat weights of linear interpolation over them. Those
+    coefficients are not probabilities, and the continuation they describe is the
+    single value `Σ_j w_j · V(node_j)` — contracted before any certainty
+    equivalent sees it.
+    """
 
     continuous_process: bool
     """Whether the target's grid for this state is a continuous process.
@@ -65,7 +82,10 @@ class TransitionLawInfo:
     """
 
     weight_name: str | None
-    """`weight_<target>__next_<state>`, or `None` for a deterministic law."""
+    """`weight_<target>__next_<state>`, or `None` for a law that carries no weights.
+
+    Set exactly when one of `stochastic` / `interpolation_basis` holds.
+    """
 
 
 # Immutable mapping of target regime names to their transition laws.
@@ -111,3 +131,23 @@ def is_stochastic(
     """
     info = laws.get(target, MappingProxyType({})).get(next_state_name)
     return info is not None and info.stochastic
+
+
+def is_interpolation_basis(
+    laws: TransitionLaws, target: RegimeName, next_state_name: TransitionFunctionName
+) -> bool:
+    """Return whether one target's named law weights a node basis, not a lottery.
+
+    Args:
+        laws: Immutable mapping of target regime names to their transition laws.
+        target: Regime the law leads into.
+        next_state_name: Unqualified `next_<state>` name.
+
+    Returns:
+        Whether the law's weights are interpolation coefficients. Unknown pairs
+        are not, which keeps callers that iterate a bundle wider than the
+        description safe.
+
+    """
+    info = laws.get(target, MappingProxyType({})).get(next_state_name)
+    return info is not None and info.interpolation_basis

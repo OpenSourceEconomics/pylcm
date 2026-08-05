@@ -1,3 +1,4 @@
+import dataclasses
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -7,17 +8,23 @@ from dags import concatenate_functions, get_ancestors, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
+    get_next_interpolation_basis_weights_function,
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
-from _lcm.transition_laws import TransitionLaws, is_stochastic
+from _lcm.transition_laws import (
+    TransitionLaws,
+    is_interpolation_basis,
+    is_stochastic,
+)
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
@@ -29,7 +36,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, IntND
 
 
 def get_Q_and_F(
@@ -421,59 +428,17 @@ def _get_compute_CE(
         dependencies whose arguments must enter the calling closure's signature.
 
     """
-    state_transitions = {}
-    next_stochastic_states_weights = {}
-    joint_weights_from_marginals = {}
-    next_V = {}
-
-    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
-    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
-
-    for target_regime_name in period_targets:
-        # Transitions from the current regime to the target regime
-        bundle = transitions.get(target_regime_name, MappingProxyType({}))
-
-        # Functions required to calculate the expected continuation values
-        state_transitions[target_regime_name] = get_next_state_function_for_solution(
+    continuations = {
+        target_regime_name: _build_target_continuation(
+            target_regime_name=target_regime_name,
             functions=functions,
-            transitions=bundle,
-        )
-        next_stochastic_states_weights[target_regime_name] = (
-            get_next_stochastic_weights_function(
-                functions=functions,
-                transitions=bundle,
-                transition_laws=transition_laws,
-                regime_name=target_regime_name,
-            )
-        )
-        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=bundle,
+            bundle=transitions.get(target_regime_name, MappingProxyType({})),
             transition_laws=transition_laws,
-            regime_name=target_regime_name,
-        )
-        V_arr_name = "next_V_arr"
-        next_V_interpolator = get_V_interpolator(
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
-            state_prefix="next_",
-            V_arr_name=V_arr_name,
             co_map_state_names=co_map_state_names,
         )
-        # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
-        # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
-        next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
-        )
-        stochastic_variables = tuple(
-            key
-            for key in bundle
-            if is_stochastic(transition_laws, target_regime_name, key)
-        )
-        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
-        next_V[target_regime_name] = productmap(
-            func=next_V_interpolator,
-            variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
-        )
+        for target_regime_name in period_targets
+    }
 
     # The plain expectation reduces each target on its own; every other
     # certainty equivalent needs the whole joint lottery in one piece, because
@@ -537,24 +502,19 @@ def _get_compute_CE(
             )
         )
         for target_regime_name in period_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
+            continuation = continuations[target_regime_name]
+            next_states = continuation.next_states(**states_actions_params)
+            joint_next_stochastic_states_weights = continuation.joint_lottery_weights(
+                **continuation.lottery_weights(**states_actions_params)
             )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](**states_actions_params)
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime_name
-            ](**marginal_next_stochastic_states_weights)
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
+                k: states_actions_params[k] for k in continuation.extra_param_names
             }
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+            next_V_at_stochastic_states_arr = continuation.next_V(
                 **{
                     name: val
                     for name, val in next_states.items()
@@ -564,10 +524,26 @@ def _get_compute_CE(
                 **extra_kw,
             )
 
+            if continuation.n_basis_axes:
+                # A declared entry names one value; the basis axes are only how
+                # the target's nodes can express it. Contracting them here states
+                # that value as the single number `Σ_j w_j · V(node_j)` -- the
+                # linear interpolation of the target's value function -- before
+                # any lottery is formed. The coefficients sum to one by
+                # construction, so normalizing here would mask a malformed basis
+                # rather than protect against one.
+                next_V_at_stochastic_states_arr = jnp.tensordot(
+                    next_V_at_stochastic_states_arr,
+                    continuation.joint_basis_weights(
+                        **continuation.basis_weights(**states_actions_params)
+                    ),
+                    axes=continuation.n_basis_axes,
+                )
+
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
-                if next_V_has_stochastic_states[target_regime_name]:
+                if continuation.has_lottery_axes:
                     next_V_expected_arr = _expectation_over_stochastic_nodes(
                         values=next_V_at_stochastic_states_arr,
                         weights=joint_next_stochastic_states_weights,
@@ -581,9 +557,7 @@ def _get_compute_CE(
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
-                    has_stochastic_states=next_V_has_stochastic_states[
-                        target_regime_name
-                    ],
+                    has_stochastic_states=continuation.has_lottery_axes,
                 )
                 lottery_values.append(values)
                 lottery_weights.append(
@@ -625,10 +599,133 @@ def _get_compute_CE(
 
     deps = (
         compute_regime_transition_probs,
-        *state_transitions.values(),
-        *next_stochastic_states_weights.values(),
+        *(c.next_states for c in continuations.values()),
+        *(c.lottery_weights for c in continuations.values()),
+        *(c.basis_weights for c in continuations.values()),
     )
     return compute_CE, deps
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _TargetContinuation:
+    """Everything built once for one reachable target's continuation."""
+
+    next_states: NextStateSimulationFunction
+    """Next-period states of this target at one state-action point."""
+
+    lottery_weights: Callable[..., dict[str, FloatND | IntND]]
+    """Marginal probabilities of the target's stochastic laws."""
+
+    basis_weights: Callable[..., dict[str, FloatND | IntND]]
+    """Marginal node-basis coefficients of the target's declared entry laws."""
+
+    joint_lottery_weights: Callable[..., FloatND]
+    """Outer product of the lottery marginals, over the leading node axes."""
+
+    joint_basis_weights: Callable[..., FloatND]
+    """Outer product of the basis marginals, over the trailing node axes."""
+
+    next_V: Callable[..., FloatND]
+    """Target's value function, product-mapped over its node axes.
+
+    The axes come in the order `(lottery..., basis...)`, so the basis block is
+    the tail and contracts away in one `tensordot`.
+    """
+
+    extra_param_names: frozenset[str]
+    """Arguments `next_V` needs beyond the next states and the value array.
+
+    A grid whose points arrive at runtime is the case — `wealth__points` for an
+    `IrregSpacedGrid`.
+    """
+
+    has_lottery_axes: bool
+    """Whether the target draws anything, i.e. whether `next_V` has lottery axes."""
+
+    n_basis_axes: int
+    """Number of trailing axes to contract against the basis weights."""
+
+
+def _build_target_continuation(
+    *,
+    target_regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+    v_interpolation_info: VInterpolationInfo,
+    co_map_state_names: tuple[StateName, ...],
+) -> _TargetContinuation:
+    """Build one target's continuation machinery.
+
+    A law that carries weights contributes a node axis to the interpolated value
+    function either way, but only a lottery's weights are probabilities. The two
+    groups are kept apart here, with the lottery axes product-mapped first, so
+    the basis axes sit at the tail and can be contracted before the certainty
+    equivalent ever sees the surface.
+
+    Args:
+        target_regime_name: Regime the continuation leads into.
+        functions: Immutable mapping of function names to internal user functions.
+        bundle: This target's unqualified `next_<state>` transition functions.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+        v_interpolation_info: The target's V-interpolation info.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V.
+
+    Returns:
+        The target's continuation machinery.
+
+    """
+    lottery_variables = tuple(
+        key for key in bundle if is_stochastic(transition_laws, target_regime_name, key)
+    )
+    basis_variables = tuple(
+        key
+        for key in bundle
+        if is_interpolation_basis(transition_laws, target_regime_name, key)
+    )
+    node_variables = (*lottery_variables, *basis_variables)
+
+    V_arr_name = "next_V_arr"
+    next_V_interpolator = get_V_interpolator(
+        v_interpolation_info=v_interpolation_info,
+        state_prefix="next_",
+        V_arr_name=V_arr_name,
+        co_map_state_names=co_map_state_names,
+    )
+    return _TargetContinuation(
+        next_states=get_next_state_function_for_solution(
+            functions=functions, transitions=bundle
+        ),
+        lottery_weights=get_next_stochastic_weights_function(
+            functions=functions,
+            transitions=bundle,
+            transition_laws=transition_laws,
+            regime_name=target_regime_name,
+        ),
+        basis_weights=get_next_interpolation_basis_weights_function(
+            functions=functions,
+            transitions=bundle,
+            transition_laws=transition_laws,
+            regime_name=target_regime_name,
+        ),
+        joint_lottery_weights=_get_joint_weights_function(
+            regime_name=target_regime_name, variables=lottery_variables
+        ),
+        joint_basis_weights=_get_joint_weights_function(
+            regime_name=target_regime_name, variables=basis_variables
+        ),
+        next_V=productmap(
+            func=next_V_interpolator,
+            variables=node_variables,
+            batch_sizes=dict.fromkeys(node_variables, 0),
+        ),
+        extra_param_names=frozenset(
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+        ),
+        has_lottery_axes=bool(lottery_variables),
+        n_basis_axes=len(basis_variables),
+    )
 
 
 def _scalar_target_contribution(
@@ -757,32 +854,29 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
     regime_name: RegimeName,
+    variables: tuple[TransitionFunctionName, ...],
 ) -> Callable[..., FloatND]:
-    """Get function that calculates the joint weights.
+    """Get function that calculates the joint weights over one group of laws.
 
-    This function takes the weights of the individual stochastic variables and
-    multiplies them together to get the joint weights on the product space of the
-    stochastic variables.
+    This function takes the weights of the individual variables and multiplies
+    them together to get the joint weights on their product space.
+
+    The group is passed in as an ordered tuple rather than re-derived from the
+    transition laws, because the caller productmaps the value function over the
+    same tuple: one ordering fixes both the axes of the value surface and the
+    axes of the weights, so the two cannot drift apart.
 
     Args:
-        transitions: Transitions of the target regime.
-        transition_laws: Immutable mapping of target regime names to their
-            transition laws.
         regime_name: Name of the target regime.
+        variables: Ordered unqualified `next_<state>` names whose weights to
+            multiply, in the order their axes appear on the value surface.
 
     Returns:
-        A function that computes the outer product of the weights of the stochastic
-        variables.
+        A function that computes the outer product of the variables' weights.
 
     """
-    arg_names = [
-        f"weight_{regime_name}__{key}"
-        for key in transitions
-        if is_stochastic(transition_laws, regime_name, key)
-    ]
+    arg_names = [f"weight_{regime_name}__{key}" for key in variables]
 
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:
