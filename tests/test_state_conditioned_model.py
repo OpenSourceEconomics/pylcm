@@ -137,9 +137,7 @@ def _params():
 
 
 def _solve(sigma_low, sigma_high):
-    return _get_model(sigma_low, sigma_high).solve(
-        params=_params(), log_level="warning"
-    )
+    return _get_model(sigma_low, sigma_high).solve(params=_params(), log_level="debug")
 
 
 def _uncertainty_axis_maxdiff(V) -> float:
@@ -184,7 +182,7 @@ def _simulate_income_by_uncertainty(sigma_low: float, sigma_high: float, n: int 
     half = n // 2
     result = model.simulate(
         params=_params(),
-        log_level="warning",
+        log_level="debug",
         initial_conditions={
             "wealth": jnp.full(n, 10.0),
             "income": jnp.zeros(n),
@@ -288,7 +286,7 @@ def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma():
         _ar1_model(sigma_low, sigma_high)
         .simulate(
             params=_params(),
-            log_level="warning",
+            log_level="debug",
             initial_conditions={
                 "wealth": jnp.full(n, 20.0),
                 "income": jnp.zeros(n),
@@ -383,7 +381,7 @@ def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME():
         _get_switching_model(sigma_low, sigma_high)
         .simulate(
             params=_params(),
-            log_level="warning",
+            log_level="debug",
             initial_conditions={
                 "wealth": jnp.full(n, 10.0),
                 "income": jnp.zeros(n),
@@ -454,7 +452,7 @@ def test_gauss_hermite_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def test_rouwenhorst_state_conditioned_rejected():
@@ -469,7 +467,7 @@ def test_rouwenhorst_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="only supported for CDF-binned"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def test_unknown_conditioning_state_rejected():
@@ -483,7 +481,7 @@ def test_unknown_conditioning_state_rejected():
         state_conditioned=StateConditioned(on="nope", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="must name a DiscreteGrid"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 @categorical(ordered=True)
@@ -540,7 +538,7 @@ def test_gauss_hermite_tauchen_state_conditioned_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def test_runtime_grid_param_rejected():
@@ -560,7 +558,7 @@ def test_runtime_grid_param_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="every grid parameter fixed"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def next_uncertainty_age_only(age: int) -> FloatND:
@@ -702,7 +700,7 @@ def test_non_increasing_node_axis_rejected(kwargs):
     """
     income = _conditioned_income(mu=0.0, **kwargs)
     with pytest.raises(ModelInitializationError, match="strictly increasing"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def test_singleton_node_axis_rejected():
@@ -710,7 +708,7 @@ def test_singleton_node_axis_rejected():
     EMPTY (shape `(0,)`) vector rather than the only coherent one-state row `[1.0]`."""
     income = _conditioned_income(n_points=1, mu=0.0, sigma=0.3, n_std=3.0)
     with pytest.raises(ModelInitializationError, match="at least 2 nodes"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
@@ -727,7 +725,7 @@ def test_nonfinite_sigma_rejected(bad):
         ),
     )
     with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 def test_nonpositive_sigma_rejected():
@@ -743,7 +741,7 @@ def test_nonpositive_sigma_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
-        _model_with_income(income).solve(params=_params(), log_level="warning")
+        _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
 # --- Cross-regime conditioning (round-3 review F1) ------------------------------- #
@@ -864,7 +862,7 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
     )
-    V = model.solve(params=_cross_params(), log_level="warning")
+    V = model.solve(params=_cross_params(), log_level="debug")
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
@@ -903,7 +901,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
     assert "uncertainty" not in model.pruned_variables["young"]  # source: reaches old
     assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
     assert "uncertainty" in model.pruned_variables["gone"]  # terminal: reaches nothing
-    V = model.solve(params=_cross_params(), log_level="warning")
+    V = model.solve(params=_cross_params(), log_level="debug")
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
@@ -942,7 +940,7 @@ def test_cross_regime_conditioned_draw_uses_the_source_sigma():
     )
     result = model.simulate(
         params=_cross_params(),
-        log_level="warning",
+        log_level="debug",
         initial_conditions={
             "wealth": jnp.full(n, 15.0),
             "income": jnp.zeros(n),
