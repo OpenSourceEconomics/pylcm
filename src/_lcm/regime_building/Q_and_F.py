@@ -517,18 +517,27 @@ def _get_compute_CE(
             # massless lottery, and NaN there is the same answer both routes give.
             CE = CE / _unit_regime_mass_or_nan(probability_mass)
         elif certainty_equivalent is not None and lottery_values:
-            CE = _unit_mass_poison(probability_mass) * certainty_equivalent.aggregate(
-                values=jnp.concatenate(lottery_values),
-                weights=jnp.concatenate(lottery_weights),
-                # The params template types every certainty-equivalent
-                # parameter as a float, so its runtime values are float arrays.
-                params=cast(
-                    "Mapping[str, FloatND]",
-                    {
-                        arg: states_actions_params[flat_name]
-                        for arg, flat_name in ce_flat_param_names.items()
-                    },
+            # `aggregate` normalizes by the weight sum itself, so the lottery
+            # route has no division to attach the check to. Selecting between
+            # the aggregate and NaN leaves the well-formed path free of any
+            # arithmetic at all, which a multiplication by `1.0` would not.
+            CE = jnp.where(
+                _regime_mass_is_unit(probability_mass),
+                certainty_equivalent.aggregate(
+                    values=jnp.concatenate(lottery_values),
+                    weights=jnp.concatenate(lottery_weights),
+                    # The params template types every certainty-equivalent
+                    # parameter as a float, so its runtime values are float
+                    # arrays.
+                    params=cast(
+                        "Mapping[str, FloatND]",
+                        {
+                            arg: states_actions_params[flat_name]
+                            for arg, flat_name in ce_flat_param_names.items()
+                        },
+                    ),
                 ),
+                jnp.nan,
             )
 
         return CE, active_regime_probs
@@ -741,14 +750,3 @@ def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
     For the per-target route, which divides by the mass it accumulated.
     """
     return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)
-
-
-def _unit_mass_poison(probability_mass: FloatND) -> FloatND:
-    """Return exactly `1.0`, or NaN where the mass is not unit mass.
-
-    For the lottery route, whose `aggregate` normalizes by the weight sum on
-    its own. Multiplying by exactly `1.0` is exact in IEEE754, so a well-formed
-    lottery keeps its floating-point association unchanged — the factor must be
-    one rather than the mass, which would rescale an in-tolerance result.
-    """
-    return jnp.where(_regime_mass_is_unit(probability_mass), 1.0, jnp.nan)
