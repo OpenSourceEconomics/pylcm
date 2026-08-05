@@ -1,0 +1,42 @@
+---
+name: gpu32
+# Automatically cancel a previous run.
+concurrency:
+  group: gpu32-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+    paths-ignore:
+      - docs/**
+      - benchmarks/**
+      - '**.md'
+      - '**.ipynb'
+jobs:
+  gpu32:
+    name: gpu32
+    # Config:
+    # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
+    # Docs on GPU runners:
+    # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
+    runs-on: ubuntu-latest-gpu
+    steps:
+      - name: Check CUDA version
+        run: |
+          nvidia-smi
+          nvcc --version || echo "nvcc not found"
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          pixi-version: v0.73.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cuda12
+          frozen: false
+      - name: Run pytest on GPU with 32-bit precision
+        shell: bash {0}
+        run: pixi run -e tests-cuda12 tests-32bit
