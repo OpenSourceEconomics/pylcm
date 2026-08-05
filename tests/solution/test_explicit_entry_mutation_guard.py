@@ -1,10 +1,15 @@
-"""The nonlinear-CE test is sensitive to how a declared entry is classified.
+"""Calling a declared entry a draw is rejected, not silently repriced.
 
 A test battery is only evidence if some reachable change to the code breaks it.
 The mutation here is the exact defect the interpolation-basis distinction exists
 to prevent: re-label a declared entry law as a draw, so its node-basis
-coefficients flow into the joint lottery and reach the certainty equivalent as
-probabilities.
+coefficients would flow into the joint lottery and reach the certainty
+equivalent as probabilities.
+
+A declared entry publishes a physical value that its own weights read, and a
+draw publishes nothing until the expectation over it is complete. Relabelling
+therefore leaves the weights without a producer, which the model rejects at
+build rather than resolving into some other number.
 
 The mutation is applied to the descriptor the engine reads, not by editing
 source, so it stays valid as the surrounding code changes.
@@ -28,14 +33,14 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 _RISK_AVERSION = 2.0
 # Nodes `(0, 1, 2)` under payoff `shock**2` give `V = (0, 1, 4)`; entering at
 # `1.5` interpolates to `2.5`, while reading the coefficients as probabilities
-# gives the weighted harmonic mean `1.6`.
+# would give the weighted harmonic mean `1.6`.
 _INTERPOLATED = 2.5
-_AS_LOTTERY = 1.6
 
 
 @categorical(ordered=False)
@@ -103,13 +108,26 @@ def _source_value(model: Model) -> float:
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
 
 
-def test_relabelling_the_declared_entry_as_a_draw_changes_the_value(
+def test_the_declared_entry_prices_at_its_interpolated_value() -> None:
+    """A deterministic entry at `1.5` between nodes `(0, 1, 2)` prices at `2.5`.
+
+    Under `PowerMean` the coefficients read as probabilities would give the
+    weighted harmonic mean `1.6` instead, so this pins the value against exactly
+    the reading the mutation below makes unbuildable.
+    """
+    got = _source_value(_build_model())
+
+    np.testing.assert_allclose(got, _INTERPOLATED, rtol=1e-6)
+
+
+def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Calling a declared entry stochastic yields `1.6` where the truth is `2.5`.
+    """Calling a declared entry stochastic fails the model build, naming the law.
 
-    Both numbers are finite and neither is a rounding of the other, so the
-    battery would catch this classification silently flipping back.
+    A draw publishes no value until the expectation over it closes, so the
+    entry's own basis weights lose the producer they read. The model says so
+    instead of pricing the coefficients as probabilities.
     """
     original = processing._build_transition_laws
 
@@ -135,7 +153,5 @@ def test_relabelling_the_declared_entry_as_a_draw_changes_the_value(
 
     monkeypatch.setattr(processing, "_build_transition_laws", _as_all_stochastic)
 
-    got = _source_value(_build_model())
-
-    np.testing.assert_allclose(got, _AS_LOTTERY, rtol=1e-4)
-    assert not np.isclose(got, _INTERPOLATED, rtol=1e-4)
+    with pytest.raises(ModelInitializationError, match="realizes a draw"):
+        _build_model()
