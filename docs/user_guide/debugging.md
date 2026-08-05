@@ -52,21 +52,28 @@ period_to_regime_to_V_arr = model.solve(
 
 ### Run every production model at `"debug"` at least once
 
-`"off"` skips runtime validation entirely, and some of what it skips cannot be detected
-in the output afterwards. The clearest case is regime-transition probabilities that do
-not represent unit mass.
+`"off"` skips runtime validation entirely, and some of what it skips cannot be
+reconstructed from the output afterwards. The clearest case is regime-transition
+probabilities that do not represent unit mass.
 
 Every aggregation route normalizes the continuation by the mass it actually receives. So
 if a regime transition puts probability on a target that is not active in the next
 period, that target is dropped from the continuation and the remaining targets are
-renormalized — and the solved value function comes back finite, plausible, and
-*independent of the missing mass*. A model whose survival probability ranges from
-0.999999 to 0.000001 can produce bit-identical values, because in each case the
-surviving branch renormalizes to one.
+renormalized. Left alone, that would make the solved value function come back finite,
+plausible, and *independent of the missing mass*: a model whose survival probability
+ranges from 0.999999 to 0.000001 would produce bit-identical values, because in each
+case the surviving branch renormalizes to one.
 
-There is no post-hoc check for this. Nothing in the result is NaN, out of range, or
-otherwise marked. Run the model once at `log_level="debug"`, with the parameters you
-intend to use, and the transition check reports the offending
+The arithmetic itself carries a backstop against that, at every log level, `"off"`
+included: a represented regime mass more than `1e-3` away from one turns the
+continuation into NaN, so a grossly misspecified transition cannot return a plausible
+number. The tolerance is deliberately loose — it catches a wrong *model*, not a
+numerical inaccuracy. Smaller mass errors still pass silently, and at the top of the
+validator's own tolerance they are already large enough to reverse the optimal action.
+
+A NaN is also not a diagnosis. It tells you the model is wrong; it does not tell you
+which regime, which target, or which age. Run the model once at `log_level="debug"`,
+with the parameters you intend to use, and the transition check reports the offending
 `(source regime, target regime, age)` directly.
 
 ```python
@@ -78,6 +85,27 @@ After that run passes, `"off"` is a reasonable choice for an estimation loop tha
 re-solves the same model at many parameter vectors — validation costs roughly a fifth of
 a warm solve, so skipping it is worth real time. It is only safe because the structural
 question was already answered.
+
+### Never diagnose a failure below `"debug"`
+
+Unless the cause is **very** obvious, do not reason about a failure observed at `"off"`,
+`"warning"`, or `"progress"`. Reproduce it at `log_level="debug"` first and diagnose
+from that run. The lower levels are for models you already trust; the moment one
+misbehaves, the setting that made it cheap is also the setting that removed the
+information you need.
+
+The mass check above is the example to keep in mind. At `"off"` a non-unit regime mass
+reaches you as NaN in the value function and nothing else — no source regime, no target,
+no age, and no indication that transition probabilities are involved at all. From that
+observation the natural hypotheses are the ones you can see: the utility function at the
+edge of its domain, a constraint that admits no action, an interpolation running off the
+grid. Every one of them is wrong, and each is expensive to rule out. The same run at
+`"debug"` names the offending `(source regime, target regime, age)` in the exception
+message.
+
+The general form: `"off"` and `"warning"` change which failures are *visible* and how
+much of the failure survives into what you can inspect. A hypothesis formed from a
+degraded observation is a hypothesis about the log level as much as about the model.
 
 ## Debug snapshots
 

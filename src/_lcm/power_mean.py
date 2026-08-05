@@ -74,6 +74,13 @@ def weighted_power_mean(
             mass averages to NaN. Zero-weight entries drop out exactly, while
             a NaN weight propagates. So does a negative one, which is not a
             lottery rather than a dead node.
+
+            That invariance is a property of the mean, not a licence for the
+            caller. Where the weights are probabilities that are supposed to
+            sum to one, normalization divides any lost mass straight back out
+            and leaves no trace in the result, so the total has to be checked
+            before the call — `_lcm.regime_building.Q_and_F` does so for the
+            continuation lottery.
         exponent: The power, broadcast against the reduced shape. `0` is the
             weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
 

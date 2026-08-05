@@ -476,6 +476,9 @@ def _get_compute_CE(
                 **extra_kw,
             )
 
+            target_probability = active_regime_probs[target_regime_name]
+            probability_mass = probability_mass + target_probability
+
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
                 # stochastic states to get the expected next value function.
@@ -486,9 +489,7 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                target_probability = active_regime_probs[target_regime_name]
                 CE = CE + target_probability * next_V_expected_arr
-                probability_mass = probability_mass + target_probability
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
@@ -498,9 +499,7 @@ def _get_compute_CE(
                     ],
                 )
                 lottery_values.append(values)
-                lottery_weights.append(
-                    active_regime_probs[target_regime_name] * node_weights
-                )
+                lottery_weights.append(target_probability * node_weights)
 
         if reduces_per_target and period_targets:
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
@@ -516,9 +515,9 @@ def _get_compute_CE(
             # lottery route, which leaves `CE` at zero when it collects no nodes.
             # A represented mass of zero across targets that do exist is a
             # massless lottery, and NaN there is the same answer both routes give.
-            CE = CE / probability_mass
+            CE = CE / _unit_regime_mass_or_nan(probability_mass)
         elif certainty_equivalent is not None and lottery_values:
-            CE = certainty_equivalent.aggregate(
+            CE = _unit_mass_poison(probability_mass) * certainty_equivalent.aggregate(
                 values=jnp.concatenate(lottery_values),
                 weights=jnp.concatenate(lottery_weights),
                 # The params template types every certainty-equivalent
@@ -715,3 +714,41 @@ def _get_feasibility(
             return True
 
     return cast("ConstraintFunction", combined_constraint)
+
+
+# Gross departures from unit regime mass are a specification error, not rounding:
+# every aggregation route divides the continuation by the mass it received, so the
+# lost mass is divided straight back out and the survivors renormalize. The solved
+# value function then comes back finite, plausible, and independent of what went
+# missing. `validate_transitions` catches it, but `log_level="off"` skips that, so
+# this poisons the arithmetic itself and cannot be gated away.
+#
+# The tolerance is deliberately loose. It is a backstop against a wrong model, not
+# a numerical check: `1e-3` never fires on accumulated float error over a handful
+# of targets, while a mass of 0.977 — small enough to look plausible, large enough
+# to move every value in the model — becomes NaN.
+_MAX_REGIME_MASS_DEVIATION = 1.0e-3
+
+
+def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
+    """Whether the represented regime mass is unit mass, within tolerance."""
+    return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+
+
+def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
+    """Return the mass itself, or NaN where it is not unit mass.
+
+    For the per-target route, which divides by the mass it accumulated.
+    """
+    return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)
+
+
+def _unit_mass_poison(probability_mass: FloatND) -> FloatND:
+    """Return exactly `1.0`, or NaN where the mass is not unit mass.
+
+    For the lottery route, whose `aggregate` normalizes by the weight sum on
+    its own. Multiplying by exactly `1.0` is exact in IEEE754, so a well-formed
+    lottery keeps its floating-point association unchanged — the factor must be
+    one rather than the mass, which would rescale an in-tolerance result.
+    """
+    return jnp.where(_regime_mass_is_unit(probability_mass), 1.0, jnp.nan)

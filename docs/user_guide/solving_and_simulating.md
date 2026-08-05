@@ -28,15 +28,16 @@ trusted.
 **Run every model at `log_level="debug"` at least once, with the parameters you
 intend to use, before trusting any output.**
 
-`"off"` skips runtime validation entirely, and some of what it skips leaves no
-trace in the result. If a regime transition puts probability on a target that is
-not active in the next period, that mass is dropped and the surviving targets are
-renormalized — so the value function comes back finite, plausible, and
-*independent of the mass that went missing*. A model whose survival probability
-ranges from 0.999999 to 0.000001 can return bit-identical values.
+`"off"` skips runtime validation entirely, and some of what it skips cannot be
+reconstructed from the result. If a regime transition puts probability on a target
+that is not active in the next period, that mass is dropped and the surviving
+targets are renormalized — which would otherwise make the value function come back
+finite, plausible, and *independent of the mass that went missing*.
 
-Nothing is NaN, nothing is out of range, and there is no post-hoc check for it.
-The only thing that catches it is the validation that `"off"` skips. See
+A gross departure from unit mass is caught in the arithmetic at every log level and
+turns the continuation into NaN. But that is a backstop, not a diagnosis: it names
+no regime, no target, and no age. Smaller mass errors pass it and still reverse the
+optimal action. Only the validation that `"off"` skips tells you what is wrong. See
 [Debugging](debugging.md#run-every-production-model-at-debug-at-least-once).
 ```
 
