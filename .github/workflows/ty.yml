@@ -17,7 +17,7 @@ on:
       - '**'
 jobs:
   ty:
-    name: ty
+    name: Run ty on the codebase on 3.14
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
