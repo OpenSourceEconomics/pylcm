@@ -59,3 +59,8 @@ tmp/
 # Agent working files
 docs/superpowers/
 .superpowers/
+# Inputs and evidence for the external numerical audit: the profile contract, the
+# completion record, resource-gate scripts and their raw observations. They must sit
+# under the project root — the audit tooling takes real project paths, not a staged
+# side directory — but they are per-round working files, not repository content.
+.pro-audit/
