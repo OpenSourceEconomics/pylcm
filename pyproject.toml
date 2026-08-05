@@ -324,8 +324,7 @@ expand_tables = [
 ]
 
 [tool.ty]
-src.exclude = [ "docs/**/*.ipynb" ]
-src.include = [ "src/", "tests/" ]
+src.include = [ "docs/", "src/", "tests/" ]
 # ty resolves third-party imports from this pixi env (the ty-pre-commit hook runs
 # `uv check --no-project`, so uv neither creates a `.venv` nor resolves deps). Run
 # `pixi install` once.
