@@ -88,12 +88,12 @@ def _simulated(stock_law=_next_stock):
         regime_id_class=RegimeId,
         description="transition-dependent target",
     )
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(
         params=PARAMS,
         initial_conditions=IC,
         period_to_regime_to_V_arr=V,
-        log_level="off",
+        log_level="debug",
         seed=1,
     )
 

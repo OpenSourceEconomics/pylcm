@@ -33,12 +33,15 @@ from lcm.typing import (
 )
 
 N_PERIODS = 4
-N_WEALTH = 23  # deliberately prime-ish: no batch size below divides it evenly
+N_WEALTH = 11  # prime, so every block size but 1 leaves a ragged final block
 BAND_START = 5.0
 BAND_WIDTH = 40.0
 
-CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=100.0, n_points=2000)
-SAVINGS_GRID = IrregSpacedGrid(points=tuple(110.0 * (i / 149) ** 3 for i in range(150)))
+# Block assembly is a scheduling property, so it is detected at any model size:
+# these grids are sized for the cheapest solve that still exercises a ragged
+# final block, not for resolution.
+CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=100.0, n_points=60)
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(110.0 * (i / 29) ** 3 for i in range(30)))
 
 
 @categorical(ordered=False)
@@ -129,7 +132,7 @@ def _model(batch_size: int) -> Model:
     )
     dead = UserRegime(
         transition=None,
-        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=200)},
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
     return Model(
@@ -147,7 +150,7 @@ def _solve(batch_size: int) -> PeriodToRegimeToVArr:
     return _model(batch_size).solve(params=_params(), log_level="debug")
 
 
-@pytest.mark.parametrize("batch_size", [1, 4, 8, N_WEALTH])
+@pytest.mark.parametrize("batch_size", [1, 4, N_WEALTH])
 def test_euler_grid_batch_size_leaves_value_function_unchanged(batch_size: int):
     """Splaying the Euler grid into blocks does not change the solved V.
 

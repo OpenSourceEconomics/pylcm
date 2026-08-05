@@ -17,6 +17,7 @@ import numpy as np
 from lcm import (
     NBEGM,
     AgeGrid,
+    CESAggregator,
     GridSearch,
     LinSpacedGrid,
     MarkovTransition,
@@ -24,13 +25,13 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
+_FIRST_AGE = 20
 _N_INCOME_NODES = 5
 _INCOME_SCALE = 0.3
 _RETURN = 0.03
@@ -83,7 +84,7 @@ def _prob_dead(age: int, final_age_alive: float) -> FloatND:
 
 
 def _build_model(*, solver: Solver) -> Model:
-    final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
+    final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
@@ -99,20 +100,24 @@ def _build_model(*, solver: Solver) -> Model:
             "savings": _savings,
         },
         constraints={"feasible": _feasible},
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=solver,
     )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=_FIRST_AGE: age > n,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(
+            start=_FIRST_AGE,
+            stop=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+            step="5Y",
+        ),
         fixed_params={"final_age_alive": final_age_alive},
     )
 
@@ -141,8 +146,8 @@ def test_nbegm_epstein_zin_composite_flow_matches_brute_force() -> None:
             savings_grid=_SAVINGS_GRID,
             continuous_state="liquid",
         )
-    ).solve(params=_PARAMS, log_level="off")
-    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
+    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
     for period in (0, 1):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

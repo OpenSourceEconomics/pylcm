@@ -14,7 +14,7 @@ def test_state_conditioned_is_public():
 
 def test_example_solves_and_uncertainty_matters():
     model = get_model(n_periods=6)
-    V = model.solve(params=get_params(), log_level="warning")
+    V = model.solve(params=get_params(), log_level="debug")
     # finite value everywhere
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))

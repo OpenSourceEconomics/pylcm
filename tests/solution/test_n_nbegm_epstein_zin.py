@@ -24,19 +24,20 @@ from lcm import (
     NBEGM,
     NNBEGM,
     AgeGrid,
+    CESAggregator,
     GridSearch,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     PowerMean,
     Regime,
-    W_epstein_zin,
     categorical,
 )
 from lcm.solvers import Solver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
+_FIRST_AGE = 20
 _LIQUID_RATE = 0.03
 _LABOUR_INCOME = 4.0
 _SURVIVAL = 0.9
@@ -140,7 +141,7 @@ def _build_solver(*, variant: str) -> Solver:
 
 
 def _build_model(*, variant: str) -> Model:
-    final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
+    final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
     constraints: dict[str, Callable[..., FloatND]] = {
         "consumption_feasible": _consumption_feasible
     }
@@ -172,20 +173,24 @@ def _build_model(*, variant: str) -> Model:
             "credited": _credited,
         },
         constraints=constraints,
-        koopmans_aggregator=W_epstein_zin,
+        koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=_build_solver(variant=variant),
     )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=_FIRST_AGE: age > n,
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(
+            start=_FIRST_AGE,
+            stop=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+            step="5Y",
+        ),
         fixed_params={"final_age_alive": final_age_alive},
     )
 
@@ -213,8 +218,8 @@ def test_n_nbegm_epstein_zin_tracks_the_dense_reference() -> None:
     contains the other, so no directional (dominance) ordering exists between
     the two values; agreement is asserted as unsigned gaps.
     """
-    nested = _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="off")
-    brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="off")
+    nested = _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="debug")
+    brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="debug")
     for period in (0, 1):
         nested_V = np.asarray(nested[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

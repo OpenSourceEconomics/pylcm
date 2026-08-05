@@ -101,6 +101,9 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
+from _lcm.regime_building.transition_invariants import (
+    fail_if_transition_namespaces_are_mixed,
+)
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -110,6 +113,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
+    SupportAxes,
     TransitionLawInfo,
     TransitionLaws,
     all_stochastic_next_state_names,
@@ -496,6 +500,7 @@ def process_regimes(
             solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
+            solve_support_axes=solution.support_axes,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
@@ -941,6 +946,7 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
+            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -960,6 +966,7 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
+            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_space,
@@ -1072,6 +1079,7 @@ def _build_solution_phase(
         constraints=core.constraints,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
+        support_axes=core.support_axes,
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
@@ -1358,6 +1366,7 @@ def _build_simulation_phase(
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_transition_laws: TransitionLaws,
+    solve_support_axes: SupportAxes,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
     solver: Solver,
@@ -1409,6 +1418,8 @@ def _build_simulation_phase(
             a declared entry law into a process is split into node indices plus
             weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
+        solve_support_axes: Immutable mapping of target regime names to their
+            private node axes, as the solution phase built them.
         solve_transition_laws: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
@@ -1575,6 +1586,7 @@ def _build_simulation_phase(
             constraints=constraints,
             transitions=solve_transitions,
             transition_laws=solve_transition_laws,
+            support_axes=solve_support_axes,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -1839,6 +1851,14 @@ class _CoreResult:
 
     transition_laws: TransitionLaws
     """Immutable mapping of target regime names to their transition laws."""
+
+    support_axes: SupportAxes
+    """Immutable mapping of target regime names to their private node axes.
+
+    One entry per `next_<state>` whose law is an interpolation basis: the node
+    index vector the target's value function is indexed by, which the physical
+    value the same law publishes is interpolated over. Empty in the simulate
+    phase, which stores physical process values and indexes nothing."""
 
     next_regime_func: TransitionFunction | None
     """The coarse regime transition function; `None` for terminal regimes and
@@ -2108,26 +2128,40 @@ def _process_regime_core(
             )
             for (user_regime, process), grid in entered_process_grids.items()
         }
-        # A declared entry law names a physical value, but the target holds its
-        # value function on the process's nodes, so the law is split in two: the
-        # axis is the node vector, and the weights place the declared value on
-        # it. Every law for a process state therefore reaches the engine in one
-        # representation -- support indices plus weights.
+        # A declared entry law names a physical value, and it keeps naming it:
+        # the public `next_<state>` stays the user's law, so any other law may
+        # consume it exactly as it consumes any deterministic transition. What
+        # the target's discrete value function additionally needs -- the node
+        # axis to interpolate over -- is a *separate* object under a private
+        # name, and the weights placing the declared value on that axis name the
+        # public producer rather than closing over the law themselves.
         | {
             f"weight_{user_regime}__next_{process}": (
                 _get_explicit_entry_weights_for_process(
                     grid=grid,
                     entry_law=processed_functions[f"{user_regime}__next_{process}"],
+                    physical_name=f"next_{process}",
+                    target=user_regime,
+                    state_name=process,
                 )
             )
             for (user_regime, process), grid in split_entry_process_grids.items()
         }
-        | {
-            f"{user_regime}__next_{process}": _get_entry_next_for_process(
-                grid=grid.to_jax()
-            )
-            for (user_regime, process), grid in split_entry_process_grids.items()
-        }
+    )
+
+    # The node axis a declared entry is interpolated over. It is keyed by the
+    # public `next_<state>` name but is emphatically not that function: the
+    # public name produces the physical value every dependent law reads, and
+    # this array is what the target's value function is indexed by. Kept in its
+    # own mapping rather than in the transition bundle, so no builder that
+    # iterates transitions can mistake it for one.
+    axes_by_target: dict[RegimeName, dict[TransitionFunctionName, Int1D]] = {}
+    for (user_regime, process), grid in split_entry_process_grids.items():
+        axes_by_target.setdefault(user_regime, {})[f"next_{process}"] = jnp.arange(
+            grid.to_jax().shape[0], dtype=jnp.int32
+        )
+    support_axes: SupportAxes = MappingProxyType(
+        {target: MappingProxyType(axes) for target, axes in axes_by_target.items()}
     )
 
     process_transition_keys = {
@@ -2160,14 +2194,19 @@ def _process_regime_core(
         processed_functions=processed_functions,
         all_grids=all_grids,
         entered_processes=frozenset(entered_process_grids),
+        explicit_entry_processes=frozenset(split_entry_process_grids),
         support_index_processes=frozenset(
-            (
-                *carried_process_grids,
-                *entered_process_grids,
-                *split_entry_process_grids,
-            )
+            (*carried_process_grids, *entered_process_grids)
         ),
         phase_name=phase_name,
+    )
+
+    fail_if_transition_namespaces_are_mixed(
+        source_regime_name=source_regime_name,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        processed_functions=MappingProxyType(processed_functions),
+        all_grids=all_grids,
     )
 
     next_regime_func, next_regime_cells = _process_next_regime_cells(
@@ -2190,6 +2229,7 @@ def _process_regime_core(
         constraints=processed_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
+        support_axes=support_axes,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
@@ -2202,16 +2242,20 @@ def _build_transition_laws(
     processed_functions: Mapping[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     entered_processes: frozenset[tuple[RegimeName, ProcessName]],
+    explicit_entry_processes: frozenset[tuple[RegimeName, ProcessName]],
     support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
     phase_name: PhaseName,
 ) -> TransitionLaws:
     """Describe every target's transition laws, after synthesis has built them.
 
-    Stochasticity is read off the synthesized functions rather than re-derived
-    from the user's declarations: a law is stochastic exactly when a
-    target-qualified weight function exists for it. Building the description here
-    -- once both explicit and intrinsic laws are in `processed_functions` -- is
-    what lets a process the source does not carry be described at all.
+    Whether a law carries weights is read off the synthesized functions rather
+    than re-derived from the user's declarations, which keeps the description in
+    step with what the DAG actually contains. What those weights *mean* comes
+    from how the law was synthesized: a declared entry into a target's process
+    was split into a node axis plus interpolation coefficients, and every other
+    weighted law prices a genuine draw. Building the description here -- once
+    both explicit and intrinsic laws are in `processed_functions` -- is what lets
+    a process the source does not carry be described at all.
 
     Args:
         transitions: Immutable mapping of target regime names to their bundles of
@@ -2221,6 +2265,9 @@ def _build_transition_laws(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         entered_processes: Frozenset of `(target, process)` pairs entered at the
             process's own unconditional law.
+        explicit_entry_processes: Frozenset of `(target, process)` pairs whose
+            declared entry law was split into a node axis and the interpolation
+            coefficients placing the declared value on it.
         support_index_processes: Frozenset of `(target, process)` pairs whose
             synthesized law emits node indices in this phase.
         phase_name: Phase being described. The solution phase indexes a target's
@@ -2249,10 +2296,15 @@ def _build_transition_laws(
                 _ContinuousStochasticProcess,
             )
             emits_support_index = (target, state_name) in support_index_processes
+            interpolation_basis = (target, state_name) in explicit_entry_processes
+            # A process's value function is stored on its nodes, so a law
+            # reaching one must say where on those nodes it lands. There are
+            # exactly two ways: emit node indices directly, or publish a physical
+            # value plus the basis weights placing it on the private node axis.
             if (
                 phase_name == "solution"
                 and continuous_process
-                and not emits_support_index
+                and not (emits_support_index or interpolation_basis)
             ):
                 msg = (
                     f"The law '{qualified_name}' leads into stochastic process "
@@ -2262,17 +2314,20 @@ def _build_transition_laws(
                     f"must be placed on its support before it can index one."
                 )
                 raise ModelInitializationError(msg)
+            has_weights = weight_name in processed_functions
             target_laws[next_state_name] = TransitionLawInfo(
                 target=target,
                 next_state_name=next_state_name,
                 qualified_name=qualified_name,
-                stochastic=weight_name in processed_functions,
+                stochastic=has_weights and not interpolation_basis,
+                interpolation_basis=interpolation_basis,
                 continuous_process=continuous_process,
                 intrinsic_entry=(target, state_name) in entered_processes,
                 emits_support_index=emits_support_index,
-                weight_name=(
-                    weight_name if weight_name in processed_functions else None
+                support_axis_name=(
+                    f"support_{qualified_name}" if interpolation_basis else None
                 ),
+                weight_name=weight_name if has_weights else None,
             )
         laws[target] = MappingProxyType(target_laws)
     return MappingProxyType(laws)
@@ -3110,47 +3165,103 @@ def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunct
 
 
 def _get_explicit_entry_weights_for_process(
-    *, grid: _ContinuousStochasticProcess, entry_law: UserFunction
+    *,
+    grid: _ContinuousStochasticProcess,
+    entry_law: UserFunction,
+    physical_name: TransitionFunctionName,
+    target: RegimeName,
+    state_name: ProcessName,
 ) -> UserFunction:
     """Get the weights that place a declared entry value on a process's nodes.
 
     A declared entry law names a physical value, but a discretized process holds
-    its value function only at its nodes, so the value enters as the lottery
-    over adjacent nodes whose mean coordinate it is — the hat weights of linear
-    interpolation. On a node the weights are one-hot, so naming a support point
-    reads that point alone; off the support the continuation is the linear
-    interpolation of the target's value function, which is the only reading its
-    nodes support. A value outside the support enters at the nearest node,
-    since the process has no representation beyond its own range.
+    its value function only at its nodes, so that value additionally reaches the
+    engine as the coefficients expressing it in that node basis — the hat weights
+    of linear interpolation. On a node the weights are one-hot, so naming a
+    support point reads that point alone; between nodes the continuation is the
+    linear interpolation of the target's value function, which is the only
+    reading its nodes support.
+
+    The weights name the physical value by its public `next_<state>` name and
+    take whatever that producer yields, instead of closing over the law and
+    calling it themselves. That is what keeps one law with one value: the weights,
+    any dependent transition, the diagnostics, and simulation all resolve the same
+    producer, so none of them can be handed a different number. The next-state and
+    basis-weight DAGs are separate closures, so a state-dependent producer may be
+    evaluated once in each; both evaluate the same deterministic function on the
+    same inputs, so the duplication costs work, never agreement.
+
+    The support is the contract. A value outside it has no representation on the
+    target's nodes, so it is an error rather than something to approximate:
+
+    - A law that reads nothing has one value, known while the model builds, and
+      an out-of-support one is rejected there.
+    - A law that reads states cannot be checked until it runs, so an
+      out-of-support value yields `NaN` weights. That reaches the caller's
+      value function, where the existing solve-time check reports it under the
+      caller's `log_level` rather than publishing a continuation the support
+      cannot justify.
 
     Args:
         grid: The target's process grid, whose law is fixed at construction —
             `_state_handoff_errors` rejects entry into a runtime-parameterized
             one, because the source cannot read the target's parameters.
-        entry_law: The source's declared law for this state, returning a
-            physical value.
+        entry_law: The source's declared law for this state. Read only while the
+            model builds, to reject a state-independent out-of-support value.
+        physical_name: Unqualified `next_<state>` name under which the target's
+            bundle publishes the physical value these weights place.
+        target: Regime the law leads into, named in the rejection message.
+        state_name: Process the law enters, named in the rejection message.
 
     Returns:
-        Callable with the entry law's own arguments, returning one weight per
+        Callable taking the physical next-state value, returning one weight per
         node.
+
+    Raises:
+        ModelInitializationError: If a state-independent law names a value
+            outside the process's support.
 
     """
     gridpoints = grid.to_jax()
     n_points = gridpoints.shape[0]
-    arg_names = {
-        name: annotation
-        for name, annotation in get_annotations(entry_law).items()
-        if name != "return"
-    }
+    lower = float(gridpoints[0])
+    upper = float(gridpoints[-1])
+    law_annotations = get_annotations(entry_law)
+    law_reads_nothing = not [name for name in law_annotations if name != "return"]
+    # The DAG requires a consumer to annotate a producer's output the way the
+    # producer declares it, so the physical value's annotation is read off the law
+    # that produces it rather than assumed.
+    physical_annotation = law_annotations.get("return", "FloatND")
 
-    @with_signature(args=arg_names, return_annotation="FloatND", enforce=False)
+    if law_reads_nothing:
+        declared = float(jnp.asarray(entry_law()))
+        if not lower <= declared <= upper:
+            msg = (
+                f"The entry law for stochastic process '{state_name}' of regime "
+                f"'{target}' names {declared}, which is outside that process's "
+                f"support [{lower}, {upper}]. The target holds its value "
+                f"function on that process's nodes and has no representation "
+                f"beyond them, so an entry law must name a value the process "
+                f"can represent. Widen the process — a larger 'n_std' or "
+                f"'sigma' — or enter at a value inside its range."
+            )
+            raise ModelInitializationError(msg)
+
+    @with_signature(
+        args={physical_name: physical_annotation},
+        return_annotation="FloatND",
+        enforce=False,
+    )
     def explicit_entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-        value = entry_law(**kwargs)
-        coordinate = jnp.clip(
-            get_irreg_coordinate(value=value, points=gridpoints), 0.0, n_points - 1
-        )
+        value = kwargs[physical_name]
+        coordinate = get_irreg_coordinate(value=value, points=gridpoints)
         distance = jnp.abs(jnp.arange(n_points, dtype=gridpoints.dtype) - coordinate)
-        return jnp.clip(1.0 - distance, 0.0, 1.0)
+        weights = jnp.clip(1.0 - distance, 0.0, 1.0)
+        # Outside the support every hat is zero, which would read as a silent
+        # zero continuation. Poison it instead, so the solve-time check names
+        # the regime and period rather than publishing an unjustified value.
+        on_support = (coordinate >= 0.0) & (coordinate <= n_points - 1)
+        return jnp.where(on_support, weights, jnp.nan)
 
     return explicit_entry_weights
 
@@ -3742,6 +3853,7 @@ def _build_Q_and_F_per_period(
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
+    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -3781,6 +3893,8 @@ def _build_Q_and_F_per_period(
         transitions: Immutable mapping of regime-to-regime transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
+        support_axes: Immutable mapping of target regime names to their private
+            node axes.
         compute_regime_transition_probs: Regime transition probability function.
         regime_to_v_interpolation_info: Mapping of regime names to representative
             V-interpolation info (the age-invariant fallback).
@@ -3865,6 +3979,7 @@ def _build_Q_and_F_per_period(
             scalar_targets=scalar_targets,
             transitions=transitions,
             transition_laws=transition_laws,
+            support_axes=support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,

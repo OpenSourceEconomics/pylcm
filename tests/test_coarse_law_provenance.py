@@ -28,6 +28,26 @@ def _prob(age: int) -> ScalarFloat:  # noqa: ARG001
     return jnp.asarray(0.5)
 
 
+def _prob_nonterminal(age: int) -> ScalarFloat:
+    """Mass kept among the non-terminal regimes; zero in the last active period.
+
+    `work` and `retired` are active only while `age < 2`, so at age 1 neither is
+    a receivable target. Mass left on them there is silently dropped and the
+    survivors renormalized -- see NOTICE-tests-must-use-log-level-debug.md.
+    """
+    return jnp.where(age < 1, jnp.asarray(0.5), jnp.asarray(0.0))
+
+
+def _prob_to_dead_from_work(age: int) -> ScalarFloat:
+    """`work`'s escape leg: it takes all the mass in the last active period."""
+    return jnp.where(age < 1, jnp.asarray(0.0), jnp.asarray(1.0))
+
+
+def _prob_to_dead_from_retired(age: int) -> ScalarFloat:
+    """`retired` already had a `dead` leg; it absorbs the rest at age 1."""
+    return jnp.where(age < 1, jnp.asarray(0.5), jnp.asarray(1.0))
+
+
 _WEALTH = LinSpacedGrid(start=1.0, stop=100.0, n_points=8)
 _CONS = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 _PARAMS = {
@@ -57,8 +77,9 @@ def test_coarse_parameterized_law_read_by_utility_is_accepted():
         # self-loop + retired: `wealth` is carried by two targets.
         return Regime(
             transition={
-                "work": MarkovTransition(_prob),
-                "retired": MarkovTransition(_prob),
+                "work": MarkovTransition(_prob_nonterminal),
+                "retired": MarkovTransition(_prob_nonterminal),
+                "dead": MarkovTransition(_prob_to_dead_from_work),
             },
             active=lambda age: age < 2,
             states={"wealth": _WEALTH},
@@ -70,8 +91,8 @@ def test_coarse_parameterized_law_read_by_utility_is_accepted():
     work = regime()
     retired = Regime(
         transition={
-            "retired": MarkovTransition(_prob),
-            "dead": MarkovTransition(_prob),
+            "retired": MarkovTransition(_prob_nonterminal),
+            "dead": MarkovTransition(_prob_to_dead_from_retired),
         },
         active=lambda age: age < 2,
         states={"wealth": _WEALTH},
@@ -85,7 +106,7 @@ def test_coarse_parameterized_law_read_by_utility_is_accepted():
         regime_id_class=RegimeId,
     )
     # Must not raise a "target-dependent deterministic state law" ValueError.
-    model.solve(params=_PARAMS, log_level="off")
+    model.solve(params=_PARAMS, log_level="debug")
 
 
 def test_genuinely_different_per_target_laws_read_by_utility_still_rejected():

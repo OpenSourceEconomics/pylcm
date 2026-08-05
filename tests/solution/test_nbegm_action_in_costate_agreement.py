@@ -31,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int) -> Mapping[int, Mapping]:
         n_consumption=n_consumption,
         action_in_costate=True,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_nbegm_action_in_costate_matches_brute() -> None:

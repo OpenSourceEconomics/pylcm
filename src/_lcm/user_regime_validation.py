@@ -23,7 +23,7 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
-from lcm.koopmans_aggregation import W_epstein_zin
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -454,10 +454,12 @@ def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
     if not offending_actions:
         return []
     return [
-        "Action grids cannot be marked `distributed=True` — distribution "
-        "shards V-array axes, which come from states. Move `distributed=True` "
-        "to the corresponding state grid. Offending actions: "
-        f"{offending_actions}.",
+        (
+            "Action grids cannot be marked `distributed=True` — distribution "
+            "shards V-array axes, which come from states. Move `distributed=True` "
+            "to the corresponding state grid. Offending actions: "
+            f"{offending_actions}."
+        ),
     ]
 
 
@@ -548,11 +550,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
                 f"`certainty_equivalent=PowerMean()` or solve the regime with "
                 f"GridSearch()."
             )
-        if regime.koopmans_aggregator is not W_epstein_zin:
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
             error_messages.append(
                 f"{solver_name} with a `certainty_equivalent` requires the "
-                "regime's aggregator to be `W_epstein_zin` "
-                "(`koopmans_aggregator=lcm.W_epstein_zin`): the Euler "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
                 "inversion and period value read its intertemporal "
                 "elasticity. With a different aggregator the kernels would "
                 "solve a recursion the regime does not declare."
@@ -832,10 +834,13 @@ def _phased_per_target_shape_mismatch(
         simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
         if solve_targets != simulate_targets:
             return [
-                f"state_transitions['{name}']: the per-target dicts inside `Phased` "
-                f"declare different targets — solve has {sorted(solve_targets)}, "
-                f"simulate has {sorted(simulate_targets)}. Both phases must cover the "
-                f"same targets.",
+                (
+                    f"state_transitions['{name}']: the per-target dicts inside "
+                    f"`Phased` declare different targets — solve has "
+                    f"{sorted(solve_targets)}, simulate has "
+                    f"{sorted(simulate_targets)}. Both phases must cover the same "
+                    f"targets."
+                ),
             ]
         return []
     if solve_per_target == simulate_per_target:
@@ -848,13 +853,16 @@ def _phased_per_target_shape_mismatch(
     )
     if _law_has_free_parameter(bare_side, regime):
         return [
-            f"state_transitions['{name}']: the {phase_label} variant is a bare "
-            f"(coarse) law with a free parameter, opposite a per-target dict "
-            f"(map-vs-bare). A parameterized coarse law broadcast over targets would "
-            f"have its parameter replicated per target with only one binding live, so "
-            f"this shape is not supported. Spell it as a both-bare `Phased` (coarse in "
-            f"both phases, one shared parameter) or as an explicit per-target dict on "
-            f"the {phase_label} side (one parameter per target).",
+            (
+                f"state_transitions['{name}']: the {phase_label} variant is a bare "
+                f"(coarse) law with a free parameter, opposite a per-target dict "
+                f"(map-vs-bare). A parameterized coarse law broadcast over targets "
+                f"would have its parameter replicated per target with only one "
+                f"binding live, so this shape is not supported. Spell it as a "
+                f"both-bare `Phased` (coarse in both phases, one shared parameter) "
+                f"or as an explicit per-target dict on the {phase_label} side (one "
+                f"parameter per target)."
+            ),
         ]
     return []
 
@@ -953,9 +961,11 @@ def _fixed_transition_name_mismatch(
         isinstance(value, _IdentityTransition) and value._state_name != state_name  # noqa: SLF001
     ):
         return [
-            f"state_transitions['{state_name}']{label}: "
-            f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
-            f"'{state_name}' — the names must match.",
+            (
+                f"state_transitions['{state_name}']{label}: "
+                f"`fixed_transition('{value._state_name}')` is assigned to state "  # noqa: SLF001
+                f"'{state_name}' — the names must match."
+            ),
         ]
     return []
 

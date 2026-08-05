@@ -120,8 +120,10 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     terminal = user_regime.transition is None
     terminal_errors = (
         [
-            f"Terminal regimes cannot declare carried states (no next period "
-            f"to carry {sorted(carried_only)} into)."
+            (
+                f"Terminal regimes cannot declare carried states (no next period "
+                f"to carry {sorted(carried_only)} into)."
+            )
         ]
         if terminal and carried_only
         else []
@@ -388,8 +390,10 @@ def _normalize_phased_state(
             None,
             None,
             [
-                f"states['{name}']: stochastic-process grids have intrinsic "
-                f"transitions and cannot be phase-variant."
+                (
+                    f"states['{name}']: stochastic-process grids have intrinsic "
+                    f"transitions and cannot be phase-variant."
+                )
             ],
         )
     solve_is_grid = isinstance(solve_side, Grid)
@@ -462,14 +466,18 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     """
     if isinstance(law, MarkovTransition):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"stochastic (`MarkovTransition`) law of motion for it is not "
-            f"yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"stochastic (`MarkovTransition`) law of motion for it is not "
+                f"yet supported."
+            )
         ]
     if isinstance(law, Mapping):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"per-target dict law of motion for it is not yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"per-target dict law of motion for it is not yet supported."
+            )
         ]
     return []
 

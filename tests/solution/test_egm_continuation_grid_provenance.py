@@ -542,6 +542,7 @@ def _renamed_two_asset_params():
     params = get_params()
     working = params["working"]
     return {
+        "crra": params["crra"],
         "working": {
             "utility": working["utility"],
             "koopmans_aggregator": working["koopmans_aggregator"],
@@ -556,7 +557,6 @@ def _renamed_two_asset_params():
             },
         },
         "retired": {
-            "utility": params["retired"]["utility"],
             "koopmans_aggregator": params["retired"]["koopmans_aggregator"],
             "retired": {
                 "next_cash_only": params["retired"]["retired"]["next_liquid"],
@@ -567,7 +567,6 @@ def _renamed_two_asset_params():
                 "next_regime": params["retired"]["dead"]["next_regime"],
             },
         },
-        "dead": params["dead"],
     }
 
 

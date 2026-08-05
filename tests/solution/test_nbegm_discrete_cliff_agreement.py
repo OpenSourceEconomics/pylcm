@@ -37,7 +37,7 @@ def _solve(
         mixed_schedule=mixed_schedule,
     )
     return model.solve(
-        params=toy.build_params(mixed_schedule=mixed_schedule), log_level="off"
+        params=toy.build_params(mixed_schedule=mixed_schedule), log_level="debug"
     )
 
 
