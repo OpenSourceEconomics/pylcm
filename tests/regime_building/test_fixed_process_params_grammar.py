@@ -20,12 +20,15 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    LinSpacedGrid,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
     NormalIIDProcess,
+    Phased,
     Regime,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import (
     InvalidNameError,
@@ -57,6 +60,15 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 def _one_probability() -> ScalarFloat:
     return jnp.float32(1)
+
+
+def _impute_carried(wealth: ScalarFloat) -> ScalarFloat:
+    """Solve-phase value of the carried state, imputed rather than gridded."""
+    return wealth * 0.5
+
+
+def _evolve_carried(carried: ScalarFloat) -> ScalarFloat:
+    return carried
 
 
 def _entered_process_model(fixed_params: dict, *, enable_jit: bool = False) -> Model:
@@ -279,6 +291,49 @@ def test_one_resolved_process_object_reaches_every_consumer() -> None:
     np.testing.assert_allclose(
         np.asarray(process.to_jax()), np.array([0.0, _MU, 2.0]), atol=1e-6
     )
+
+
+def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
+    """The binder walks every state declaration a regime may legally hold.
+
+    A carried state is `Phased(solve=callable, simulate=Grid)`, so one member of
+    the pair is a plain function rather than a grid. Looking for processes has to
+    survive that shape wherever it appears — a model that happens to carry a
+    state must still be able to pin a process's law by fixed parameter.
+    """
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=lambda age: age < 22,
+                states={
+                    "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+                    "carried": Phased(
+                        solve=_impute_carried,
+                        simulate=LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                    ),
+                },
+                state_transitions={
+                    "wealth": fixed_transition("wealth"),
+                    "carried": _evolve_carried,
+                },
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params=dict(_LAW),
+        enable_jit=False,
+    )
+
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
 
 def test_a_law_left_to_runtime_still_cannot_be_entered() -> None:

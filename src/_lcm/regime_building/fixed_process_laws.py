@@ -21,7 +21,7 @@ specified — and entry into a process requires its law to be fixed *here*.
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -42,8 +42,11 @@ from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedGrid
 from lcm.typing import UserParams
 
-# A state as the user declares it on a `Regime`.
-type StateDeclaration = Grid | Phased | AgeSpecializedGrid | None
+# A state as the user declares it on a `Regime`, or one member of a `Phased`
+# declaration. The two are one type because a carried state is
+# `Phased(solve=callable, simulate=Grid)`, so a member may be a plain function
+# where the outer slot may not.
+type StateDeclaration = Grid | Phased | AgeSpecializedGrid | Callable[..., Any] | None
 
 
 def bind_fixed_process_laws(
@@ -180,7 +183,9 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
     """Return the stochastic processes a state declaration holds.
 
     Args:
-        declaration: A state as the user declared it, possibly `Phased`.
+        declaration: A state as the user declared it, possibly `Phased`, or one
+            member of such a pair — for a carried state that member is the
+            solve-phase callable.
 
     Returns:
         List of the processes in it, empty when it holds none.
