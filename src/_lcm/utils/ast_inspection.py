@@ -21,6 +21,10 @@ def _get_func_indexing_params(
         func: The function to inspect.
         array_param_name: The array parameter whose subscripts to inspect.
 
+    A callable object — a specification class with a `__call__`, such as a
+    built-in Koopmans aggregator — is inspected through that `__call__`,
+    which is where its body and its parameter annotations live.
+
     Returns:
         List of indexing parameter names, or empty list if no array
         subscripts are found (scalar function).
@@ -30,14 +34,14 @@ def _get_func_indexing_params(
         ValueError: If computed indices are used instead of bare names.
 
     """
-    func_name = getattr(func, "__name__", "<unknown>")
+    func_name = _display_name(func)
 
     if func_name == "<lambda>":
         msg = "Cannot inspect lambda functions. Define a named function instead."
         raise TypeError(msg)
 
     try:
-        source = textwrap.dedent(inspect.getsource(func))
+        source = textwrap.dedent(inspect.getsource(_inspectable(func)))
     except OSError, TypeError:
         msg = (
             f"Cannot inspect source of '{func_name}'. "
@@ -87,6 +91,31 @@ def _get_func_indexing_params(
         raise ValueError(msg)
 
     return []
+
+
+def _inspectable(func: Callable) -> Callable:
+    """Return the object whose source and body describe `func`'s call.
+
+    A plain function is its own body. A callable object's body is its
+    class's `__call__`, which is also what `inspect.signature` reports, so
+    the parameter names extracted from the source line up with the
+    signature either way.
+    """
+    if inspect.isfunction(func) or inspect.ismethod(func):
+        return func
+    return type(func).__call__
+
+
+def _display_name(func: Callable) -> str:
+    """Return the name to use for `func` in error messages.
+
+    A callable object has no `__name__`; naming its class is what lets the
+    reader find the declaration.
+    """
+    name = getattr(func, "__name__", None)
+    if name is not None:
+        return name
+    return type(func).__name__
 
 
 def _slice_references_params(

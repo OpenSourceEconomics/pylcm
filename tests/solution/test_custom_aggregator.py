@@ -1,8 +1,11 @@
 """Test that a custom Koopmans aggregator can be used in a model."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import jax.numpy as jnp
+import numpy as np
+import pandas as pd
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.finalize import finalize_regimes
@@ -608,3 +611,70 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
                 f"Non-finite working_life V at period {period}"
             )
             assert 3 in v.shape
+
+
+@categorical(ordered=False)
+class _AgeIndexedRegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _W_age_varying_discount(
+    utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+) -> FloatND:
+    """Aggregate with a discount factor read off an age-indexed array."""
+    return utility + discount_factor[age] * CE
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AgeVaryingDiscountAggregator:
+    """The same aggregator, written as a callable specification object."""
+
+    def __call__(
+        self, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+    ) -> FloatND:
+        return utility + discount_factor[age] * CE
+
+
+def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
+    """Solve a two-regime model whose discount factor is a `Series` over ages."""
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    alive = UserRegime(
+        transition=lambda age: jnp.where(
+            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        ),
+        active=lambda age: age < 2,
+        states={"wealth": wealth},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
+        functions={"utility": lambda consumption: consumption},
+        koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": wealth},
+        functions={"utility": lambda wealth: wealth + 1.0},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_AgeIndexedRegimeId,
+    )
+    discount_factor = pd.Series(
+        [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
+    )
+    params = {"alive": {"koopmans_aggregator": {"discount_factor": discount_factor}}}
+    return model.solve(params=params, log_level="debug")[0]["alive"]
+
+
+def test_callable_object_aggregator_indexing_a_series_matches_the_function_form():
+    """A callable-object aggregator resolves a `Series` parameter like a function.
+
+    The `Series` is scattered into an array along the axis its subscript
+    names, which the engine reads off the aggregator's body — for a callable
+    object, the body of its `__call__`.
+    """
+    assert_array_equal(
+        np.asarray(_solve_with_age_varying_discount(_AgeVaryingDiscountAggregator())),
+        np.asarray(_solve_with_age_varying_discount(_W_age_varying_discount)),
+    )
