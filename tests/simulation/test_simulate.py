@@ -120,7 +120,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 [simulate_inputs["regime_names_to_ids"]["working_life"]] * 2
             ),
         },
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         **simulate_inputs,
     )
     got = result.to_dataframe().query('regime_name == "working_life"')

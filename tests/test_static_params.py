@@ -97,7 +97,7 @@ def test_solve_with_fewer_params():
     )
     # Should NOT need interest_rate in params, only discount_factor
     params = {"discount_factor": 0.95}
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -114,7 +114,7 @@ def test_simulate_with_fixed_params():
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
 
     # Model with interest_rate as fixed param
@@ -130,7 +130,7 @@ def test_simulate_with_fixed_params():
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
 
     # Results should be identical
@@ -145,10 +145,12 @@ def test_solve_fixed_params_aot_parity():
     params_full: UserParams = {"discount_factor": 0.95, "interest_rate": 0.05}
 
     model_runtime = _make_model()
-    result_runtime = model_runtime.solve(params=params_full, log_level="off")
+    result_runtime = model_runtime.solve(params=params_full, log_level="debug")
 
     model_fixed = _make_model(extra_fixed_params={"interest_rate": 0.05})
-    result_fixed = model_fixed.solve(params={"discount_factor": 0.95}, log_level="off")
+    result_fixed = model_fixed.solve(
+        params={"discount_factor": 0.95}, log_level="debug"
+    )
 
     for period in result_runtime:
         for regime_name in result_runtime[period]:
@@ -194,7 +196,7 @@ def test_regime_level_fixed_param():
     assert "interest_rate" not in all_param_names
 
     params = {"discount_factor": 0.95}
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -208,7 +210,7 @@ def test_all_params_fixed():
         assert len(regime_template) == 0
 
     # Solve with empty params
-    period_to_regime_to_V_arr = model.solve(params={}, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params={}, log_level="debug")
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -247,7 +249,7 @@ def test_series_as_runtime_param_works():
         params={"discount_factor": 0.95, "probs_array": _PROBS_SERIES},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert len(df) > 0
@@ -262,7 +264,7 @@ def test_series_as_fixed_param():
         params={"discount_factor": 0.95},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert len(df) > 0
@@ -275,7 +277,7 @@ def test_series_fixed_param_parity_with_runtime_param():
         params={"discount_factor": 0.95, "probs_array": _PROBS_SERIES},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=0,
     )
 
@@ -286,7 +288,7 @@ def test_series_fixed_param_parity_with_runtime_param():
         params={"discount_factor": 0.95},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=0,
     )
 
@@ -307,7 +309,7 @@ def test_mixed_series_and_scalar_fixed_params():
         params={},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert len(df) > 0
@@ -366,7 +368,7 @@ def test_series_fixed_param_with_derived_categoricals():
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert len(df) > 0

@@ -50,6 +50,35 @@ period_to_regime_to_V_arr = model.solve(
 
 `log_path` is optional at every level — including `"debug"`.
 
+### Run every production model at `"debug"` at least once
+
+`"off"` skips runtime validation entirely, and some of what it skips cannot be detected
+in the output afterwards. The clearest case is regime-transition probabilities that do
+not represent unit mass.
+
+Every aggregation route normalizes the continuation by the mass it actually receives. So
+if a regime transition puts probability on a target that is not active in the next
+period, that target is dropped from the continuation and the remaining targets are
+renormalized — and the solved value function comes back finite, plausible, and
+*independent of the missing mass*. A model whose survival probability ranges from
+0.999999 to 0.000001 can produce bit-identical values, because in each case the
+surviving branch renormalizes to one.
+
+There is no post-hoc check for this. Nothing in the result is NaN, out of range, or
+otherwise marked. Run the model once at `log_level="debug"`, with the parameters you
+intend to use, and the transition check reports the offending
+`(source regime, target regime, age)` directly.
+
+```python
+# Do this once per model and parameter regime, before trusting any output.
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+```
+
+After that run passes, `"off"` is a reasonable choice for an estimation loop that
+re-solves the same model at many parameter vectors — validation costs roughly a fifth of
+a warm solve, so skipping it is worth real time. It is only safe because the structural
+question was already answered.
+
 ## Debug snapshots
 
 When `log_path` is provided, pylcm saves a **snapshot directory** containing all inputs

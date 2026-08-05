@@ -54,7 +54,7 @@ def _simulate_df(
         )
     params = get_multi_regime_params("normal")
     result = model.simulate(
-        log_level="off",
+        log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
@@ -144,7 +144,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     model = get_multi_regime_model(n_periods=6, distribution_type="normal")
     params = get_multi_regime_params("normal")
     result = model.simulate(
-        log_level="off",
+        log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,

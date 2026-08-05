@@ -103,7 +103,7 @@ def test_regression_precautionary_savings():
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
-        log_level="off",
+        log_level="debug",
     ).to_dataframe(terminal_rows="all")
 
     assert_frame_equal(
@@ -136,7 +136,7 @@ def test_regression_mortality():
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
-        log_level="off",
+        log_level="debug",
     ).to_dataframe(terminal_rows="all")
 
     assert_frame_equal(
