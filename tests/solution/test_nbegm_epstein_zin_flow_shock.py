@@ -169,7 +169,7 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
             savings_grid=_SAVINGS_GRID,
             continuous_state="liquid",
         )
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     values = np.asarray(nbegm[1]["alive"])[:, 0]
     nodes, _ = np.polynomial.hermite_e.hermegauss(5)
     health_nodes = nodes * sigma
@@ -191,8 +191,8 @@ def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:
             savings_grid=_SAVINGS_GRID,
             continuous_state="liquid",
         )
-    ).solve(params=_PARAMS, log_level="off")
-    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
+    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
     for period in (0, 1):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])
@@ -216,7 +216,7 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
             savings_grid=_SAVINGS_GRID,
             continuous_state="liquid",
         )
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     batched = _build_model(
         solver=NBEGM(
             post_decision_function="savings",
@@ -225,7 +225,7 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
             continuous_state="liquid",
             stochastic_node_batch_size=2,
         )
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     for period in (0, 1):
         batched_arr = np.asarray(batched[period]["alive"])
         fused_arr = np.asarray(fused[period]["alive"])

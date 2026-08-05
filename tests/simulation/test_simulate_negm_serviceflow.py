@@ -41,7 +41,7 @@ _CONSUMPTION_ATOL = 1e-5
 
 def _simulate_period0_alive_consumption(model, regime_id) -> np.ndarray:
     """Solve, simulate, and return the period-0 `alive` consumption per subject."""
-    solution = model.solve(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="debug")
     n_subjects = len(_INITIAL_WEALTH)
     initial_conditions = {
         "wealth": jnp.asarray(_INITIAL_WEALTH),
@@ -53,7 +53,7 @@ def _simulate_period0_alive_consumption(model, regime_id) -> np.ndarray:
         params=_PARAMS,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=solution,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     period0 = df.query("regime_name == 'alive' and period == 0")

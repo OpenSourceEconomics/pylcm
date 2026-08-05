@@ -107,5 +107,5 @@ def test_a_rescaled_liquid_law_is_refused_by_the_single_liquid_kernels():
 def test_the_supported_fixed_form_still_builds():
     """The plain CRRA / affine-law regime the kernels do solve is still accepted."""
     model = _build()
-    solution = model.solve(params=_params(), log_level="off")
+    solution = model.solve(params=_params(), log_level="debug")
     assert any("alive" in period for period in solution.values())

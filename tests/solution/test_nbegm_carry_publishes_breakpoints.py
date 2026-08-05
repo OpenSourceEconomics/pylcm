@@ -54,7 +54,7 @@ def test_schedule_carry_breakpoints_are_the_per_kind_cliff_preimages(
         savings_max=28.0,
         n_consumption=8,
     )
-    model.solve(params=toy.build_params(), log_level="off")
+    model.solve(params=toy.build_params(), log_level="debug")
 
     assert captured_carries, "no captured carry published breakpoints"
     breakpoints, _, _ = captured_carries[-1]
@@ -81,7 +81,7 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
         savings_max=28.0,
         n_consumption=8,
     )
-    model.solve(params=toy.build_params(), log_level="off")
+    model.solve(params=toy.build_params(), log_level="debug")
 
     assert captured_carries, "no captured carry published breakpoints"
     _, endog, value = captured_carries[-1]
@@ -121,7 +121,7 @@ def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(monkeypatch)
         n_consumption=8,
         jump_read="bridged",
     )
-    model.solve(params=toy.build_params(), log_level="off")
+    model.solve(params=toy.build_params(), log_level="debug")
 
     assert seen, "no EGM carry was read"
     assert all(no_breakpoints for no_breakpoints, _ in seen)

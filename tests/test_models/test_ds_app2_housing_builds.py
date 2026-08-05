@@ -192,7 +192,7 @@ def test_housing_model_solves_on_gpu():
     """
     model = ds_app2_housing.build_model(n_grid=250)
     params = ds_app2_housing.build_params(tau=0.05)
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="debug")
     assert solution[0]["working"] is not None
 
 

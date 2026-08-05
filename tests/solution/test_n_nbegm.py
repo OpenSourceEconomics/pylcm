@@ -85,10 +85,10 @@ def test_two_period_toy_agrees_with_nested_dcegm() -> None:
     inner families' constrained-region representation at the poorest cells.
     """
     nested = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     negm = toy.build_model(variant="negm", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     V_nested = np.asarray(nested[0]["alive"])
     V_negm = np.asarray(negm[0]["alive"])
@@ -109,10 +109,10 @@ def test_two_period_toy_tracks_dense_brute() -> None:
     the values; agreement is asserted as an unsigned gap.
     """
     nested = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     brute = toy.build_model(variant="brute", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     nested_V = np.asarray(nested[0]["alive"])
     brute_V = np.asarray(brute[0]["alive"])
@@ -133,10 +133,10 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
     the topology-preserving publication is a separate, tighter deliverable.
     """
     nested = toy.build_model(variant="n_nbegm", n_periods=3).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     negm = toy.build_model(variant="negm", n_periods=3).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     for period in (0, 1):
         np.testing.assert_allclose(
@@ -151,11 +151,11 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
 def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
     """Chunking the outer sweep never changes the solved values."""
     reference = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
     chunked = toy.build_model(
         variant="n_nbegm", outer_batch_size=outer_batch_size, n_periods=2
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     for period, regime_to_V in reference.items():
         for regime_name, V_arr in regime_to_V.items():
             np.testing.assert_array_equal(

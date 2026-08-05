@@ -31,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         n_consumption=n_consumption,
     )
     return model.solve(
-        params=toy.build_params(budget_name="resources"), log_level="off"
+        params=toy.build_params(budget_name="resources"), log_level="debug"
     )
 
 

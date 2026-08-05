@@ -549,12 +549,12 @@ def test_asset_row_decreasing_resources_nan_poisons_the_marginal():
     node; `resources = offset - wealth` is positive over the grid but has `dR/da < 0`.
     The published marginal `dV/dR` divides the direct continuation channel by `dR/da`,
     so a negative slope must surface as NaN (caught by the solve's NaN diagnostics)
-    rather than a finite marginal with the wrong sign. `log_level="off"` lets the NaN
+    rather than a finite marginal with the wrong sign. `log_level="debug"` lets the NaN
     propagate into the earliest-period value instead of raising, so it surfaces in the
     returned solution.
     """
     params = {**_params(), "offset": 200.0}
     del params["rate_of_return"]
-    solution = _decreasing_resources_model().solve(params=params, log_level="off")
+    solution = _decreasing_resources_model().solve(params=params, log_level="debug")
     earliest = min(solution)
     assert np.isnan(np.asarray(solution[earliest]["working_life"])).any()

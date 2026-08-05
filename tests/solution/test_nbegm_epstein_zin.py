@@ -132,8 +132,8 @@ def test_nbegm_epstein_zin_matches_brute_force() -> None:
             savings_grid=_SAVINGS_GRID,
             continuous_state="liquid",
         )
-    ).solve(params=_PARAMS, log_level="off")
-    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
+    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
     for period in (0, 1):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

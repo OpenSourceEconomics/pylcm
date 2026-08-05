@@ -142,7 +142,7 @@ def test_fold_commutes_with_the_linear_expected_utility_read() -> None:
     changes only the order of the floating-point reduction.
     """
     folded = _build_model(solver=_nbegm(), epstein_zin=False).solve(
-        params=_linear_params(), log_level="off"
+        params=_linear_params(), log_level="debug"
     )
 
     def identity_fold(*, read, carry, stochastic_node_values, weight_vecs):
@@ -150,7 +150,7 @@ def test_fold_commutes_with_the_linear_expected_utility_read() -> None:
 
     with patch.object(continuation, "_fold_stochastic_dims", identity_fold):
         unfolded = _build_model(solver=_nbegm(), epstein_zin=False).solve(
-            params=_linear_params(), log_level="off"
+            params=_linear_params(), log_level="debug"
         )
     for period in (0, 1):
         folded_arr = np.asarray(folded[period]["alive"])
@@ -176,11 +176,11 @@ def test_fold_engages_for_linear_but_never_for_a_certainty_equivalent() -> None:
 
     with patch.object(continuation, "_fold_stochastic_dims", spy):
         _build_model(solver=_nbegm(), epstein_zin=False).solve(
-            params=_linear_params(), log_level="off"
+            params=_linear_params(), log_level="debug"
         )
         linear_calls = len(calls)
         _build_model(solver=_nbegm(), epstein_zin=True).solve(
-            params=_ez_params(), log_level="off"
+            params=_ez_params(), log_level="debug"
         )
         ez_calls = len(calls) - linear_calls
     assert linear_calls > 0

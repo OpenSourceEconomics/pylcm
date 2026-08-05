@@ -31,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int) -> Mapping[int, Mapping]:
         action_in_schedule_variable=True,
     )
     return model.solve(
-        params=toy.build_params(action_in_schedule_variable=True), log_level="off"
+        params=toy.build_params(action_in_schedule_variable=True), log_level="debug"
     )
 
 
