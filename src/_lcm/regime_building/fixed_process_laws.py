@@ -21,27 +21,32 @@ specified — and entry into a process requires its law to be fixed *here*.
 """
 
 import dataclasses
-import numbers
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
-import numpy as np
+import jax.numpy as jnp
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import Grid
-from _lcm.params.processing import find_param_candidates
+from _lcm.params.processing import (
+    cast_params_to_canonical_dtypes,
+    find_param_candidates,
+)
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.typing import RegimeName, StateName
+from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedGrid
 from lcm.typing import UserParams
 
-# A state as the user declares it on a `Regime`.
-type StateDeclaration = Grid | Phased | AgeSpecializedGrid | None
+# A state as the user declares it on a `Regime`, or one member of a `Phased`
+# declaration. The two are one type because a carried state is
+# `Phased(solve=callable, simulate=Grid)`, so a member may be a plain function
+# where the outer slot may not.
+type StateDeclaration = Grid | Phased | AgeSpecializedGrid | Callable[..., Any] | None
 
 
 def bind_fixed_process_laws(
@@ -123,9 +128,12 @@ def _resolve_process_law_params(
 
     Raises:
         InvalidNameError: If a process parameter is written at two levels.
+        InvalidParamsError: If a resolved leaf is not a numeric scalar, or is a
+            leaf type the canonical boundary cast rejects.
 
     """
-    resolved: dict[RegimeName, dict[StateName, dict[str, Any]]] = {}
+    raw: dict[RegimeName, dict[str, Any]] = {name: {} for name in user_regimes}
+    slot_owner: dict[tuple[RegimeName, str], tuple[StateName, str]] = {}
     consumed: set[str] = set()
     for regime_name, user_regime in user_regimes.items():
         for state_name, declaration in user_regime.states.items():
@@ -143,14 +151,31 @@ def _resolve_process_law_params(
                         raise InvalidNameError(msg)
                     if not candidates:
                         continue
-                    value = params_flat[candidates[0]]
-                    scalar = _as_bindable_scalar(value)
-                    if scalar is None:
-                        continue
-                    resolved.setdefault(regime_name, {}).setdefault(state_name, {})[
-                        param_name
-                    ] = scalar
+                    slot = qname_from_tree_path((state_name, param_name))
+                    raw[regime_name][slot] = params_flat[candidates[0]]
+                    slot_owner[regime_name, slot] = (state_name, param_name)
                     consumed.add(candidates[0])
+
+    # The same boundary cast every other fixed parameter goes through, so a
+    # process law has one dtype and leaf-type contract rather than a second one.
+    # It also raises on the leaf types no parameter may take, naming the qname.
+    canonical = cast_params_to_canonical_dtypes(
+        cast(
+            "FlatParams",
+            MappingProxyType({k: MappingProxyType(v) for k, v in raw.items()}),
+        )
+    )
+
+    resolved: dict[RegimeName, dict[StateName, dict[str, Any]]] = {}
+    for regime_name, regime_slots in canonical.items():
+        for slot, value in regime_slots.items():
+            state_name, param_name = slot_owner[regime_name, slot]
+            resolved.setdefault(regime_name, {}).setdefault(state_name, {})[
+                param_name
+            ] = _as_process_field(
+                value=value,
+                qname=qname_from_tree_path((regime_name, state_name, param_name)),
+            )
     return resolved, consumed
 
 
@@ -158,7 +183,9 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
     """Return the stochastic processes a state declaration holds.
 
     Args:
-        declaration: A state as the user declared it, possibly `Phased`.
+        declaration: A state as the user declared it, possibly `Phased`, or one
+            member of such a pair — for a carried state that member is the
+            solve-phase callable.
 
     Returns:
         List of the processes in it, empty when it holds none.
@@ -175,34 +202,41 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
     return []
 
 
-def _as_bindable_scalar(value: Any) -> Any | None:  # noqa: ANN401
-    """Return `value` as a Python scalar a process field can take, or `None`.
+def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa: ANN401
+    """Return a canonically cast leaf as the Python scalar a process field takes.
 
-    A process computes its nodes eagerly with numpy, so a 0-d array has to be
-    materialized before it can be a field. Anything that is not a numeric scalar
-    — an array with axes, a container, a string — is left alone and stays a
-    runtime parameter.
+    A process's distribution fields are Python scalars, and it computes its nodes
+    eagerly, so the 0-d array the boundary cast produces is materialized here.
 
     Args:
-        value: A leaf of the user's `fixed_params`.
+        value: A leaf of `cast_params_to_canonical_dtypes`' output.
+        qname: Qualified name of the parameter, named in the rejection.
 
     Returns:
-        The scalar, or `None` when the value cannot pin a process field.
+        The scalar to bake into the process.
+
+    Raises:
+        InvalidParamsError: If the leaf is not a scalar. A process's law is one
+            number per field, so an array — an age-varying or per-subject one —
+            has no field to become.
 
     """
-    if isinstance(value, numbers.Real):
-        return value
-    array = getattr(value, "shape", None)
-    if array is None or array != ():
-        return None
-    dtype_kind = getattr(getattr(value, "dtype", None), "kind", "")
-    if dtype_kind == "b":
-        return bool(value)
-    if dtype_kind in "iu":
-        return int(value)
-    if dtype_kind == "f":
-        return float(np.asarray(value))
-    return None
+    array = jnp.asarray(value)
+    if array.ndim != 0:
+        msg = (
+            f"The fixed parameter {qname!r} pins a stochastic process's law, "
+            f"which is one number per field, but its value has shape "
+            f"{array.shape}. Entering a process the source does not carry "
+            f"requires a law fixed at construction, so this field must be a "
+            f"scalar; pass an age- or subject-varying value at runtime instead, "
+            f"on a process the source carries."
+        )
+        raise InvalidParamsError(msg)
+    if array.dtype.kind == "b":
+        return bool(array)
+    if array.dtype.kind in "iu":
+        return int(array)
+    return float(array)
 
 
 def _bind_regime(

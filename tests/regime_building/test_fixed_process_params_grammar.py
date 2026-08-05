@@ -12,19 +12,29 @@ built. A spelling the resolver accepts but the binder ignores would therefore
 reject a model whose law is fully specified.
 """
 
+import math
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from lcm import (
     AgeGrid,
+    LinSpacedGrid,
+    LogNormalIIDProcess,
     MarkovTransition,
     Model,
     NormalIIDProcess,
+    Phased,
     Regime,
     categorical,
+    fixed_transition,
 )
-from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+)
 from lcm.typing import ScalarFloat, ScalarInt
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
@@ -52,7 +62,16 @@ def _one_probability() -> ScalarFloat:
     return jnp.float32(1)
 
 
-def _entered_process_model(fixed_params: dict) -> Model:
+def _impute_carried(wealth: ScalarFloat) -> ScalarFloat:
+    """Solve-phase value of the carried state, imputed rather than gridded."""
+    return wealth * 0.5
+
+
+def _evolve_carried(carried: ScalarFloat) -> ScalarFloat:
+    return carried
+
+
+def _entered_process_model(fixed_params: dict, *, enable_jit: bool = False) -> Model:
     """Build a source entering a target process whose law it does not carry."""
     return Model(
         regimes={
@@ -70,7 +89,7 @@ def _entered_process_model(fixed_params: dict) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
-        enable_jit=False,
+        enable_jit=enable_jit,
     )
 
 
@@ -81,20 +100,31 @@ _SPELLINGS = {
     "jax_scalar_leaves": {
         "target": {"shock": {name: jnp.asarray(v) for name, v in _LAW.items()}}
     },
+    "numpy_scalar_leaves": {
+        "target": {"shock": {name: np.float64(v) for name, v in _LAW.items()}}
+    },
+    "numpy_zero_d_leaves": {
+        "target": {"shock": {name: np.array(v) for name, v in _LAW.items()}}
+    },
+    "python_int_leaves": {"target": {"shock": {**_LAW, "n_std": 2}}},
 }
 
 
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("spelling", sorted(_SPELLINGS))
-def test_every_level_pins_an_entered_process_law(spelling: str) -> None:
+def test_every_level_pins_an_entered_process_law(
+    spelling: str,
+    enable_jit: bool,  # noqa: FBT001
+) -> None:
     """A law written at any accepted level fixes the process at construction.
 
     With the target's payoff equal to the shock and no discounting, entering at
     the process's own law is worth `mu`. Each spelling must build *and* reach
     that value — building alone would not show the law was actually bound.
     """
-    solution = _entered_process_model(_SPELLINGS[spelling]).solve(
-        params=_SOLVE_PARAMS, log_level="debug"
-    )
+    solution = _entered_process_model(
+        _SPELLINGS[spelling], enable_jit=enable_jit
+    ).solve(params=_SOLVE_PARAMS, log_level="debug")
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
@@ -152,6 +182,158 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 2 * _MU, atol=1e-6)
+
+
+def test_an_unknown_fixed_param_is_rejected_as_it_always_was() -> None:
+    """Widening where a law may be written does not widen what may be written.
+
+    A key matching no template slot and no process field is still unknown, and
+    binding a process must not turn the resolver's unknown-key check off for
+    everything else in the same call.
+    """
+    with pytest.raises(InvalidParamsError, match=r"(?i)unknown"):
+        _entered_process_model({**_LAW, "not_a_parameter": 1.0})
+
+
+def test_a_non_scalar_law_names_the_parameter_it_cannot_pin() -> None:
+    """A process's law is one number per field, so an array has no field to be.
+
+    The rejection names the qualified parameter rather than surfacing later as a
+    generic entry failure, because the two have different fixes.
+    """
+    with pytest.raises(InvalidParamsError, match="target__shock__mu"):
+        _entered_process_model({"target": {"shock": {**_LAW, "mu": jnp.zeros(3)}}})
+
+
+def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
+    """The grammar belongs to `fixed_params`, not to one process class.
+
+    A log-normal entry is priced at the mean of the exponentiated nodes, which
+    differs from `exp(mu)`, so the value also shows the bound law reached the
+    nodes rather than merely satisfying the build.
+    """
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=lambda age: age < 22,
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": LogNormalIIDProcess(n_points=3, gauss_hermite=True)},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"mu": 0.0, "sigma": 1.0},
+        enable_jit=False,
+    )
+
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+
+    raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
+    nodes = math.sqrt(2.0) * raw_nodes
+    weights = raw_weights / math.sqrt(math.pi)
+    expected = float(np.dot(np.exp(nodes), weights))
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), expected, atol=1e-6)
+
+
+def test_a_coarse_regime_transition_pins_the_same_law() -> None:
+    """The binder does not depend on how the source names its target.
+
+    A bare callable makes every regime reachable, where a per-target dict names
+    one; the law is a property of the target's process either way.
+    """
+
+    def _always_target() -> ScalarInt:
+        return RegimeId.target
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition=_always_target,
+                active=lambda age: age < 22,
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params=dict(_LAW),
+        enable_jit=False,
+    )
+
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
+
+
+def test_one_resolved_process_object_reaches_every_consumer() -> None:
+    """The model runs the bound process, not a half-specified twin.
+
+    Every downstream stage — handoff validation, the target's own nodes,
+    diagnostics, simulation — reads `user_regimes`, so pinning that the process
+    there is fully specified pins that they all see the same resolved object.
+    """
+    model = _entered_process_model({"target": {"shock": _LAW}})
+
+    process = model.user_regimes["target"].states["shock"]
+
+    assert isinstance(process, NormalIIDProcess)
+    assert process.params_to_pass_at_runtime == ()
+    assert process.mu == _MU
+    np.testing.assert_allclose(
+        np.asarray(process.to_jax()), np.array([0.0, _MU, 2.0]), atol=1e-6
+    )
+
+
+def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
+    """The binder walks every state declaration a regime may legally hold.
+
+    A carried state is `Phased(solve=callable, simulate=Grid)`, so one member of
+    the pair is a plain function rather than a grid. Looking for processes has to
+    survive that shape wherever it appears — a model that happens to carry a
+    state must still be able to pin a process's law by fixed parameter.
+    """
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=lambda age: age < 22,
+                states={
+                    "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+                    "carried": Phased(
+                        solve=_impute_carried,
+                        simulate=LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                    ),
+                },
+                state_transitions={
+                    "wealth": fixed_transition("wealth"),
+                    "carried": _evolve_carried,
+                },
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params=dict(_LAW),
+        enable_jit=False,
+    )
+
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+
+    np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
 
 def test_a_law_left_to_runtime_still_cannot_be_entered() -> None:
