@@ -17,7 +17,10 @@ on:
       - '**'
 jobs:
   ty:
-    name: Run ty on the codebase on 3.14
+    # Named for the workflow, not for what it runs on: this is the context branch
+    # protection requires, so a Python-version bump must not rename it and drop it
+    # out of the required set.
+    name: ty
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
