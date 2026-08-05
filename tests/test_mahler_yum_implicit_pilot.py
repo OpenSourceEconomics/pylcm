@@ -21,6 +21,19 @@ real model and the first branch is covered analytically in
 `test_outer_implicit_derivative.py`. The full AD-vs-FD agreement on a
 resolved *moment* is the GPU-scale gate that lands with the estimation
 pipeline.
+
+Excluded from CI and run on request:
+
+```
+pytest tests/test_mahler_yum_implicit_pilot.py -m manual
+```
+
+The cost is not `_N_CELLS` or `_N_MESH` — those govern the pilot stage,
+which runs only after the capture below. It is the capture itself: the
+pilot builds the model with `enable_jit=False`, because the objective has
+to stay traceable for `vmap` and the forward-mode JVP, and solving the
+paper-scale model eagerly does not finish a single non-terminal period
+within minutes. Shrinking the model is the lever here, not the knobs.
 """
 
 import jax
@@ -55,7 +68,7 @@ def pilot_report() -> PilotReport:
     )
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None:
     assert np.isfinite(pilot_report.f_star).all()
     assert (pilot_report.f_star > 0.0).all()
@@ -64,7 +77,7 @@ def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None
     assert np.isfinite(pilot_report.ad_tangent).all()
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
     pilot_report: PilotReport,
 ) -> None:
@@ -109,7 +122,7 @@ def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
             }
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_real_model_kink_is_materially_nonstationary(
     pilot_report: PilotReport,
 ) -> None:

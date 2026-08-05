@@ -357,10 +357,16 @@ ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
   "--dist",
   "loadfile",
+  # Deselect the `manual` gates by default, everywhere — CI, the pixi tasks and
+  # a bare `pytest`. A command-line `-m` overrides this one (pytest keeps the
+  # last `-m` it sees), so `pytest ... -m manual` still runs them.
+  "-m",
+  "not manual",
 ]
 ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
+  "manual: gates that solve the real paper-scale model; run on request, never in CI",
   "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]
 ini_options.filterwarnings = [

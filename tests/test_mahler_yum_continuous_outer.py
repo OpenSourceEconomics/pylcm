@@ -1,12 +1,25 @@
-"""PR-8 merge gates for the paper-mode Mahler & Yum configuration.
+"""Merge gates for the paper-mode Mahler & Yum configuration.
 
 Fast gates check the paper-mode equations against the brute-force module's
 (the shared functions are imported, so only the *replaced* ones can drift)
-and the solver wiring against the plan's target interface. The slow gates
-run the terminal period's NNBEGM kernel once per mesh and assert the
-continuous-outer contract on the real model: keeper dominance under the
-closed-form fixed-cost fold, off-node (continuous) next-habit selections,
-and coarse/fine outer-mesh convergence.
+and the solver wiring against the plan's target interface. These run in CI.
+
+The `manual` gates solve the real paper-scale model down to the capture
+period and assert the continuous-outer contract on it: keeper dominance
+under the closed-form fixed-cost fold, off-node (continuous) next-habit
+selections, and coarse/fine outer-mesh convergence. They are excluded from
+CI and run on request:
+
+```
+pytest tests/test_mahler_yum_continuous_outer.py -m manual
+```
+
+Their cost is the paper-scale state space the outer-mesh solve iterates
+over, not the mesh sizes: the mesh knobs below scale AOT compile time
+roughly with `max_nodes`, but a single non-terminal period does not finish
+within a quarter hour even with refinement cut to the bone, where the
+off-node and coarse/fine assertions would no longer have anything to
+measure. Reach for a smaller model before reaching for a smaller mesh.
 """
 
 import jax
@@ -215,13 +228,13 @@ def fine_capture() -> dict:
     return _solve_and_capture(_mesh(initial=17, max_nodes=65, rounds=4, tol=1e-4))
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_captured_period_is_fully_finite(coarse_capture: dict) -> None:
     for name in ("keeper_V", "V", "p_adjust"):
         assert np.isfinite(coarse_capture[name]).all(), name
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_exact_keeper_dominance_under_the_fixed_cost_fold(
     coarse_capture: dict,
 ) -> None:
@@ -242,7 +255,7 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
         )
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_coarse_fine_outer_convergence(
     coarse_capture: dict, fine_capture: dict
 ) -> None:
@@ -259,7 +272,7 @@ def test_coarse_fine_outer_convergence(
     np.testing.assert_allclose(fine_V, coarse_V, atol=2e-3, rtol=1e-5)
 
 
-@pytest.mark.slow
+@pytest.mark.manual
 def test_next_habit_is_continuous_not_grid_snapped(coarse_capture: dict) -> None:
     """A material share of cells selects an off-node continuous next habit.
 
