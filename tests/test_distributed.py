@@ -261,7 +261,7 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
     pending kernels leak from solve to simulate.
     """
     period_to_regime_to_V_arr = correct_distributed_model.solve(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
     )
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
@@ -280,7 +280,7 @@ def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model)
     `raw_results`) start with concrete arrays rather than pending kernels.
     """
     res = correct_distributed_model.simulate(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
         initial_conditions={
             "age": jnp.full(36, 0),
@@ -335,7 +335,7 @@ def test_save_load_preserves_sharding_and_dataframe(
     in-memory result.
     """
     res = correct_distributed_model.simulate(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
         initial_conditions={
             "age": jnp.full(36, 0),

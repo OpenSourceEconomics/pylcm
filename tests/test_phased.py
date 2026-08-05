@@ -624,7 +624,7 @@ def _simulate_income_panel(
             "income": jnp.array([2.0, 4.0]),
             "regime_id": jnp.array([_RegimeId.working] * 2),
         },
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe().query("regime_name == 'working'")
     return df.sort_values(["subject_id", "period"])["income"].to_numpy()
