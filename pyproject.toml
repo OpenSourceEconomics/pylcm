@@ -193,7 +193,6 @@ extend-ignore = [
   "EM102",   # Exception must not use an f-string literal
   "FIX002",  # Line contains TODO
   "ISC001",  # Conflicts with ruff-format
-  "ISC004",  # Explicit string concatenation across lines
   "N802",    # Function name should be lowercase
   "N803",    # Argument name should be lowercase
   "N806",    # Variable in function should be lowercase
