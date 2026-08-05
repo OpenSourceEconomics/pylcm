@@ -185,7 +185,7 @@ class Regime:
     regime functions of the same name. `Phased(solve=..., simulate=...)`
     gives the two phases different aggregators (a naive/sophisticated
     beta-delta split, say). `None` means the regime takes the model-level
-    aggregator (`lcm.W_linear` unless the `Model` says otherwise). Terminal
+    aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
     regimes have no continuation and take none.
     """
 

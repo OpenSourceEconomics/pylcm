@@ -87,7 +87,7 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     PyLCMError,
 )
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.typing import (
@@ -203,7 +203,7 @@ class Model:
         states: Mapping[str, object] = MappingProxyType({}),
         state_transitions: Mapping[str, object] = MappingProxyType({}),
         actions: Mapping[str, object] = MappingProxyType({}),
-        koopmans_aggregator: UserFunction = W_linear,
+        koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
     ) -> None:

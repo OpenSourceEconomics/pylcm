@@ -6,7 +6,7 @@ exponent:
 
 - the certainty equivalent `PowerMean` averages the continuation lottery at
   exponent `1 - risk_aversion`, weighted by the lottery's probabilities;
-- the Koopmans aggregator `W_epstein_zin` averages `(utility, CE)` at
+- the Koopmans aggregator `CESAggregator` averages `(utility, CE)` at
   exponent `1 - 1/psi`, weighted by `(1 - discount_factor, discount_factor)`.
 
 `weighted_power_mean` reduces a lottery of any length over its last axis.
@@ -14,7 +14,7 @@ exponent:
 two-node case, which is what the Koopmans aggregator needs: a trailing axis
 of length two reduces poorly, and carrying the pair as two arrays avoids
 materializing that axis at all. The two agree to a few ulps everywhere,
-which `test_W_epstein_zin_equals_the_general_power_mean` pins.
+which `test_CESAggregator_equals_the_general_power_mean` pins.
 """
 
 import jax.numpy as jnp
@@ -74,6 +74,13 @@ def weighted_power_mean(
             mass averages to NaN. Zero-weight entries drop out exactly, while
             a NaN weight propagates. So does a negative one, which is not a
             lottery rather than a dead node.
+
+            That invariance is a property of the mean, not a licence for the
+            caller. Where the weights are probabilities that are supposed to
+            sum to one, normalization divides any lost mass straight back out
+            and leaves no trace in the result, so the total has to be checked
+            before the call — `_lcm.regime_building.Q_and_F` does so for the
+            continuation lottery.
         exponent: The power, broadcast against the reduced shape. `0` is the
             weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
 
@@ -204,7 +211,7 @@ def weighted_power_mean_of_pair(
 
     """
     # A negative weight is malformed and propagates as NaN rather than reading
-    # as a dead node — see `weighted_power_mean`. For `W_epstein_zin` this is
+    # as a dead node — see `weighted_power_mean`. For `CESAggregator` this is
     # what a `discount_factor` outside `[0, 1]` produces, and dropping the node
     # would silently return the other argument unchanged.
     first_weight = jnp.where(first_weight < 0.0, jnp.nan, first_weight)

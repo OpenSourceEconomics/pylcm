@@ -190,6 +190,10 @@ class QuasiArithmeticMean(CertaintyEquivalent):
                 probability distribution, so the weights are normalized by
                 their sum; scaling them all by a constant leaves the result
                 unchanged, and a lottery carrying no mass aggregates to NaN.
+                Because that normalization divides any lost mass back out
+                without leaving a trace, the caller — not this method — is
+                responsible for the weights summing to one; the engine checks
+                it in `_lcm.regime_building.Q_and_F`.
             params: Mapping of runtime parameter names to their values.
                 `transform` and `inverse` each receive the subset their
                 signature declares.
@@ -295,7 +299,7 @@ class PowerMean(QuasiArithmeticMean):
 
         `ra` is `risk_aversion` and `w̃` the mass-normalized weights. The
         evaluation is `weighted_power_mean`, which the Koopmans aggregator
-        `W_epstein_zin` shares: the naive `inverse(Σ w · transform(v))`
+        `CESAggregator` shares: the naive `inverse(Σ w · transform(v))`
         overflows when `risk_aversion > 1` and `v` is near the borrowing
         constraint, so the mean is taken in an anchored log form instead. It
         stays finite wherever the mathematical value is, and the
@@ -318,7 +322,10 @@ class PowerMean(QuasiArithmeticMean):
                 their sum; scaling them all by a constant leaves the result
                 unchanged, and a lottery carrying no mass aggregates to NaN.
                 Zero-weight entries drop out exactly, while a NaN weight
-                propagates.
+                propagates. Because that normalization divides any lost mass
+                back out without leaving a trace, the caller — not this method
+                — is responsible for the weights summing to one; the engine
+                checks it in `_lcm.regime_building.Q_and_F`.
             params: Mapping carrying the `risk_aversion` runtime parameter.
 
         Returns:
