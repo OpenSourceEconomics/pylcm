@@ -1370,6 +1370,8 @@ def _process_regime_core(
                 _get_explicit_entry_weights_for_process(
                     grid=grid,
                     entry_law=processed_functions[f"{user_regime}__next_{process}"],
+                    target=user_regime,
+                    state_name=process,
                 )
             )
             for (user_regime, process), grid in split_entry_process_grids.items()
@@ -2046,18 +2048,32 @@ def _get_entry_weights_for_process(*, name: str, grid: _IIDProcess) -> UserFunct
 
 
 def _get_explicit_entry_weights_for_process(
-    *, grid: _ContinuousStochasticProcess, entry_law: UserFunction
+    *,
+    grid: _ContinuousStochasticProcess,
+    entry_law: UserFunction,
+    target: RegimeName,
+    state_name: ProcessName,
 ) -> UserFunction:
     """Get the weights that place a declared entry value on a process's nodes.
 
     A declared entry law names a physical value, but a discretized process holds
-    its value function only at its nodes, so the value enters as the lottery
-    over adjacent nodes whose mean coordinate it is — the hat weights of linear
+    its value function only at its nodes, so the value reaches the engine as the
+    coefficients expressing it in that node basis — the hat weights of linear
     interpolation. On a node the weights are one-hot, so naming a support point
-    reads that point alone; off the support the continuation is the linear
+    reads that point alone; between nodes the continuation is the linear
     interpolation of the target's value function, which is the only reading its
-    nodes support. A value outside the support enters at the nearest node,
-    since the process has no representation beyond its own range.
+    nodes support.
+
+    The support is the contract. A value outside it has no representation on the
+    target's nodes, so it is an error rather than something to approximate:
+
+    - A law that reads nothing has one value, known while the model builds, and
+      an out-of-support one is rejected there.
+    - A law that reads states cannot be checked until it runs, so an
+      out-of-support value yields `NaN` weights. That reaches the caller's
+      value function, where the existing solve-time check reports it under the
+      caller's `log_level` rather than publishing a continuation the support
+      cannot justify.
 
     Args:
         grid: The target's process grid, whose law is fixed at construction —
@@ -2065,28 +2081,53 @@ def _get_explicit_entry_weights_for_process(
             one, because the source cannot read the target's parameters.
         entry_law: The source's declared law for this state, returning a
             physical value.
+        target: Regime the law leads into, named in the rejection message.
+        state_name: Process the law enters, named in the rejection message.
 
     Returns:
         Callable with the entry law's own arguments, returning one weight per
         node.
 
+    Raises:
+        ModelInitializationError: If a state-independent law names a value
+            outside the process's support.
+
     """
     gridpoints = grid.to_jax()
     n_points = gridpoints.shape[0]
+    lower = float(gridpoints[0])
+    upper = float(gridpoints[-1])
     arg_names = {
         name: annotation
         for name, annotation in get_annotations(entry_law).items()
         if name != "return"
     }
 
+    if not arg_names:
+        declared = float(jnp.asarray(entry_law()))
+        if not lower <= declared <= upper:
+            msg = (
+                f"The entry law for stochastic process '{state_name}' of regime "
+                f"'{target}' names {declared}, which is outside that process's "
+                f"support [{lower}, {upper}]. The target holds its value "
+                f"function on that process's nodes and has no representation "
+                f"beyond them, so an entry law must name a value the process "
+                f"can represent. Widen the process — a larger 'n_std' or "
+                f"'sigma' — or enter at a value inside its range."
+            )
+            raise ModelInitializationError(msg)
+
     @with_signature(args=arg_names, return_annotation="FloatND", enforce=False)
     def explicit_entry_weights(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
         value = entry_law(**kwargs)
-        coordinate = jnp.clip(
-            get_irreg_coordinate(value=value, points=gridpoints), 0.0, n_points - 1
-        )
+        coordinate = get_irreg_coordinate(value=value, points=gridpoints)
         distance = jnp.abs(jnp.arange(n_points, dtype=gridpoints.dtype) - coordinate)
-        return jnp.clip(1.0 - distance, 0.0, 1.0)
+        weights = jnp.clip(1.0 - distance, 0.0, 1.0)
+        # Outside the support every hat is zero, which would read as a silent
+        # zero continuation. Poison it instead, so the solve-time check names
+        # the regime and period rather than publishing an unjustified value.
+        on_support = (coordinate >= 0.0) & (coordinate <= n_points - 1)
+        return jnp.where(on_support, weights, jnp.nan)
 
     return explicit_entry_weights
 

@@ -33,7 +33,9 @@ from lcm import (
     Regime,
     UniformIIDProcess,
     categorical,
+    fixed_transition,
 )
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -159,24 +161,72 @@ def test_entry_on_a_node_reads_that_node_under_a_nonlinear_ce(
 
 
 @pytest.mark.parametrize(
-    ("entry_value", "expected"),
-    [(-1.0, _V[0]), (5.0, _V[2])],
-    ids=["below_support", "above_support"],
+    "entry_value", [-1.0, 5.0], ids=["below_support", "above_support"]
 )
-def test_entry_outside_the_support_reads_the_nearest_node(
-    entry_value: float, expected: float
-) -> None:
-    """A value the process cannot represent enters at the nearest node.
+def test_a_constant_entry_outside_the_support_is_rejected(entry_value: float) -> None:
+    """A value the process cannot represent is an error, not an approximation.
 
-    The process has no representation beyond its own range, so the continuation
-    is that endpoint's value — under a nonlinear certainty equivalent as under a
-    linear one.
+    The target holds its value function on the process's nodes and has nothing
+    beyond them, so clamping to the nearest node or extrapolating past it would
+    publish a continuation the support does not justify. A law that reads no
+    state has one value, known while the model builds, so it is rejected there
+    with the state, the value, and the range named.
     """
-    model = _build_model(entry_value=entry_value, enable_jit=False)
+    with pytest.raises(ModelInitializationError) as excinfo:
+        _build_model(entry_value=entry_value, enable_jit=False)
 
-    got = _source_value(model, _PARAMS)
+    message = str(excinfo.value)
+    assert "'shock'" in message
+    assert str(entry_value) in message
+    assert f"[{_NODES[0]}, {_NODES[-1]}]" in message
 
-    np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
+
+def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
+    """A law that only leaves the support for some states does not go unnoticed.
+
+    Its value is unknown until it runs, so the support check cannot happen while
+    the model builds. The weights are poisoned instead, and the solve-time value
+    check raises at `log_level="debug"` rather than letting a zero continuation
+    pass for a real one.
+    """
+
+    def _enter_at_wealth(wealth: ScalarFloat) -> ScalarFloat:
+        return wealth
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                # The top of this grid lies outside the target's `(0, 1, 2)`.
+                states={"wealth": LinSpacedGrid(start=1.0, stop=9.0, n_points=3)},
+                state_transitions={
+                    "shock": {"target": _enter_at_wealth},
+                    "wealth": fixed_transition("wealth"),
+                },
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _target_process()},
+                functions={"utility": _squared_shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+    params = {
+        "source": {
+            "utility": {},
+            "koopmans_aggregator": {"discount_factor": 1.0},
+            "target": {"next_regime": {}, "next_shock": {}},
+        },
+        "target": {"utility": {}},
+    }
+
+    with pytest.raises(InvalidValueFunctionError, match=r"(?i)nan"):
+        model.solve(params=params, log_level="debug")
 
 
 def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
