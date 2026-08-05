@@ -1412,6 +1412,7 @@ def _process_regime_core(
         processed_functions=processed_functions,
         all_grids=all_grids,
         entered_processes=frozenset(entered_process_grids),
+        explicit_entry_processes=frozenset(split_entry_process_grids),
         support_index_processes=frozenset(
             (
                 *carried_process_grids,
@@ -1454,16 +1455,20 @@ def _build_transition_laws(
     processed_functions: Mapping[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     entered_processes: frozenset[tuple[RegimeName, ProcessName]],
+    explicit_entry_processes: frozenset[tuple[RegimeName, ProcessName]],
     support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
     phase_name: PhaseName,
 ) -> TransitionLaws:
     """Describe every target's transition laws, after synthesis has built them.
 
-    Stochasticity is read off the synthesized functions rather than re-derived
-    from the user's declarations: a law is stochastic exactly when a
-    target-qualified weight function exists for it. Building the description here
-    -- once both explicit and intrinsic laws are in `processed_functions` -- is
-    what lets a process the source does not carry be described at all.
+    Whether a law carries weights is read off the synthesized functions rather
+    than re-derived from the user's declarations, which keeps the description in
+    step with what the DAG actually contains. What those weights *mean* comes
+    from how the law was synthesized: a declared entry into a target's process
+    was split into a node axis plus interpolation coefficients, and every other
+    weighted law prices a genuine draw. Building the description here -- once
+    both explicit and intrinsic laws are in `processed_functions` -- is what lets
+    a process the source does not carry be described at all.
 
     Args:
         transitions: Immutable mapping of target regime names to their bundles of
@@ -1473,6 +1478,9 @@ def _build_transition_laws(
         all_grids: Immutable mapping of regime names to Grid spec objects.
         entered_processes: Frozenset of `(target, process)` pairs entered at the
             process's own unconditional law.
+        explicit_entry_processes: Frozenset of `(target, process)` pairs whose
+            declared entry law was split into a node axis and the interpolation
+            coefficients placing the declared value on it.
         support_index_processes: Frozenset of `(target, process)` pairs whose
             synthesized law emits node indices in this phase.
         phase_name: Phase being described. The solution phase indexes a target's
@@ -1514,17 +1522,18 @@ def _build_transition_laws(
                     f"must be placed on its support before it can index one."
                 )
                 raise ModelInitializationError(msg)
+            has_weights = weight_name in processed_functions
+            interpolation_basis = (target, state_name) in explicit_entry_processes
             target_laws[next_state_name] = TransitionLawInfo(
                 target=target,
                 next_state_name=next_state_name,
                 qualified_name=qualified_name,
-                stochastic=weight_name in processed_functions,
+                stochastic=has_weights and not interpolation_basis,
+                interpolation_basis=interpolation_basis,
                 continuous_process=continuous_process,
                 intrinsic_entry=(target, state_name) in entered_processes,
                 emits_support_index=emits_support_index,
-                weight_name=(
-                    weight_name if weight_name in processed_functions else None
-                ),
+                weight_name=weight_name if has_weights else None,
             )
         laws[target] = MappingProxyType(target_laws)
     return MappingProxyType(laws)

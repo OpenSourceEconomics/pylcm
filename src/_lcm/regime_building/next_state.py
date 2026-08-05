@@ -11,7 +11,11 @@ from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.iid import _IIDProcess
-from _lcm.transition_laws import TransitionLaws, is_stochastic
+from _lcm.transition_laws import (
+    TransitionLaws,
+    is_interpolation_basis,
+    is_stochastic,
+)
 from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
@@ -134,29 +138,95 @@ def get_next_stochastic_weights_function(
         Function that computes the weights for the next stochastic states.
 
     """
+    return _get_next_weights_function(
+        regime_name=regime_name,
+        functions=functions,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        select=is_stochastic,
+    )
+
+
+def get_next_interpolation_basis_weights_function(
+    *,
+    regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+) -> Callable[..., dict[str, FloatND | IntND]]:
+    """Get function that computes the node-basis weights of the declared entries.
+
+    These weights place one declared value on the target's nodes; they are the
+    coefficients of an interpolation, not probabilities, and the caller contracts
+    them into a single continuation before any certainty equivalent runs.
+
+    Args:
+        regime_name: Name of the regime that the transitions target.
+        functions: Immutable mapping of auxiliary functions of the model.
+        transitions: Transitions to the target regime.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+
+    Returns:
+        Function that computes the node-basis weights of the declared entries.
+
+    """
+    return _get_next_weights_function(
+        regime_name=regime_name,
+        functions=functions,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        select=is_interpolation_basis,
+    )
+
+
+def _get_next_weights_function(
+    *,
+    regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+    select: Callable[[TransitionLaws, RegimeName, TransitionFunctionName], bool],
+) -> Callable[..., dict[str, FloatND | IntND]]:
+    """Build the DAG producing one kind of target-qualified weight vector.
+
+    Args:
+        regime_name: Name of the regime that the transitions target.
+        functions: Immutable mapping of auxiliary functions of the model.
+        transitions: Transitions to the target regime.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+        select: Predicate picking the laws whose weights to build.
+
+    Returns:
+        Function that computes the selected weight vectors.
+
+    """
     targets = [
         f"weight_{regime_name}__{func_name}"
         for func_name in transitions
-        if is_stochastic(transition_laws, regime_name, func_name)
+        if select(transition_laws, regime_name, func_name)
     ]
-    # A stochastic weight law may read another transition's *deterministic*
-    # `next_<state>` output within the same target's DAG -- the supported
+    # A weight law may read another transition's *deterministic* `next_<state>`
+    # output within the same target's DAG -- the supported
     # transition-reads-transition composition that the solution next-state builder
     # (`get_next_state_function_for_solution`) already relies on. Those producers live
     # in `transitions`, not `functions`, so include the deterministic transitions in
     # the weight DAG; otherwise the read is left as an unsupplied argument and the Q
     # build fails with a missing input.
-    # Stochastic stubs are excluded on purpose: they are the realised draws, not
-    # closed-form producers, and a weight depending on another stochastic next-state
-    # would need a conditional joint kernel the product-of-marginals form cannot
-    # represent -- leaving it unresolved surfaces that unsupported composition loudly.
-    deterministic_transitions = {
+    # Every weighted law's own `next_<state>` is excluded on purpose: it is the node
+    # vector the weights are stated against, not a closed-form producer. A weight
+    # depending on another stochastic next-state would need a conditional joint
+    # kernel the product-of-marginals form cannot represent -- leaving it unresolved
+    # surfaces that unsupported composition loudly.
+    weightless_transitions = {
         name: func
         for name, func in transitions.items()
         if not is_stochastic(transition_laws, regime_name, name)
+        and not is_interpolation_basis(transition_laws, regime_name, name)
     }
     return concatenate_functions(
-        functions=dict(deterministic_transitions) | dict(functions),
+        functions=dict(weightless_transitions) | dict(functions),
         targets=targets,
         return_type="dict",
         enforce_signature=False,
