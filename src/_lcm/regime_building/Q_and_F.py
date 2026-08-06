@@ -479,6 +479,12 @@ def _get_compute_CE(
 
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
+            # A target carrying no mass here is never consulted, so whatever its
+            # entry law names at this point -- a value off the target's support,
+            # or nothing meaningful at all -- must not reach the aggregate.
+            # The value is replaced rather than the product masked: `0 * nan` is
+            # `nan`, and zeroing the value leaves the derivative finite too.
+            carries_mass = target_probability > 0
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -490,14 +496,16 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                CE = CE + target_probability * next_V_expected_arr
+                CE = CE + target_probability * jnp.where(
+                    carries_mass, next_V_expected_arr, zero
+                )
             else:
                 values, node_weights = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
-                lottery_values.append(values)
+                lottery_values.append(jnp.where(carries_mass, values, zero))
                 lottery_weights.append(target_probability * node_weights)
 
         # An empty retained target set is not "no continuation to aggregate": a

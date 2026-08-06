@@ -501,16 +501,19 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
-                    # A process the source does not carry has to be placed on
-                    # the target's support from inside the source's Bellman
-                    # equation -- as the process's own unconditional weights
-                    # without an entry law, and as a coordinate on its nodes
-                    # with one. Either way that support is built where only the
-                    # source's parameters are readable, so a law the target
-                    # parameterizes at runtime cannot be entered at all.
-                    if isinstance(
-                        target_grid, _ContinuousStochasticProcess
-                    ) and state_name not in set(source_slice.grid_states):
+                    # A value reaching a process the source does not hold
+                    # identically has to be placed on the target's support from
+                    # inside the source's Bellman equation -- as the process's
+                    # own unconditional weights without an entry law, and as a
+                    # coordinate on its nodes with one. Either way that support
+                    # is built where only the source's parameters are readable,
+                    # so a law the target parameterizes at runtime cannot be
+                    # entered at all. A source holding the same process places
+                    # nothing: the process transitions under its own law.
+                    if (
+                        isinstance(target_grid, _ContinuousStochasticProcess)
+                        and source_slice.grid_states.get(state_name) != target_grid
+                    ):
                         entry_error = _runtime_param_entry_error(
                             phase_name=phase_name,
                             phase_reachability=phase_reachability,
