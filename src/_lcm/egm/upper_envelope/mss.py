@@ -28,6 +28,10 @@ All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -247,6 +251,7 @@ def refine_envelope(
     return out_grid, out_policy, out_value, n_kept
 
 
+@dataclass(frozen=True, kw_only=True)
 class _CrossingBlocks:
     """Per-query crossing candidate: abscissa, value, both policy copies, flag.
 
@@ -256,20 +261,16 @@ class _CrossingBlocks:
     intersection abscissa falls strictly between the two queries.
     """
 
-    def __init__(
-        self,
-        *,
-        grid: Float1D,
-        value: Float1D,
-        policy_left: Float1D,
-        policy_right: Float1D,
-        valid: BoolND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_left = policy_left
-        self.policy_right = policy_right
-        self.valid = valid
+    grid: Float1D
+    """Crossing abscissa per query."""
+    value: Float1D
+    """Envelope value at the crossing."""
+    policy_left: Float1D
+    """Policy of the outgoing owner at the crossing."""
+    policy_right: Float1D
+    """Policy of the incoming owner at the crossing."""
+    valid: BoolND
+    """Whether this query contributes a crossing at all."""
 
 
 def _crossing_blocks(
@@ -352,56 +353,56 @@ def _crossing_blocks(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
 class _CrossingRow:
-    """One step's crossing emission (scan carry-compatible stacked leaves)."""
+    """One step's crossing emission, stacked by the scan into row arrays."""
 
-    def __init__(
-        self,
-        *,
-        grid: FloatND,
-        value: FloatND,
-        policy_left: FloatND,
-        policy_right: FloatND,
-        valid: BoolND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_left = policy_left
-        self.policy_right = policy_right
-        self.valid = valid
+    grid: FloatND
+    """Crossing abscissa emitted at this step."""
+    value: FloatND
+    """Envelope value at that abscissa."""
+    policy_left: FloatND
+    """Policy of the outgoing owner."""
+    policy_right: FloatND
+    """Policy of the incoming owner."""
+    valid: BoolND
+    """Whether this step emits a crossing."""
 
 
+_CROSSING_ROW_FIELDS = ("grid", "value", "policy_left", "policy_right", "valid")
+
+
+def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[Any, ...], None]:
+    return tuple(getattr(row, name) for name in _CROSSING_ROW_FIELDS), None
+
+
+def _unflatten_crossing_row(_aux: None, children: Sequence[Any]) -> _CrossingRow:
+    row = object.__new__(_CrossingRow)
+    for name, child in zip(_CROSSING_ROW_FIELDS, children, strict=True):
+        object.__setattr__(row, name, child)
+    return row
+
+
+# The scan stacks this row's leaves, so it must be a pytree. A frozen dataclass
+# is not one by construction; registering it is the same shape `EGMCarry` and
+# the params leaves use.
 jax.tree_util.register_pytree_node(
-    _CrossingRow,
-    lambda r: (
-        (r.grid, r.value, r.policy_left, r.policy_right, r.valid),
-        None,
-    ),
-    lambda _aux, children: _CrossingRow(
-        grid=children[0],
-        value=children[1],
-        policy_left=children[2],
-        policy_right=children[3],
-        valid=children[4],
-    ),
+    _CrossingRow, _flatten_crossing_row, _unflatten_crossing_row
 )
 
 
+@dataclass(frozen=True, kw_only=True)
 class _SegmentIntersection:
     """Intersection of two winning segments' value lines, with both policies."""
 
-    def __init__(
-        self,
-        *,
-        grid: FloatND,
-        value: FloatND,
-        policy_a: FloatND,
-        policy_b: FloatND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_a = policy_a
-        self.policy_b = policy_b
+    grid: FloatND
+    """Abscissa where the two value lines meet."""
+    value: FloatND
+    """Common value there."""
+    policy_a: FloatND
+    """Policy of the first segment at the intersection."""
+    policy_b: FloatND
+    """Policy of the second segment at the intersection."""
 
 
 def _intersect_winners(

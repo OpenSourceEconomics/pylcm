@@ -361,7 +361,13 @@ def _run_period_kernel(
     state_action_space = dataclasses.replace(
         state_action_space,
         states=MappingProxyType(
-            dict(_states_for_period(regime, state_action_space, period))
+            dict(
+                _states_for_period(
+                    regime=regime,
+                    state_action_space=state_action_space,
+                    period=period,
+                )
+            )
         ),
     )
 

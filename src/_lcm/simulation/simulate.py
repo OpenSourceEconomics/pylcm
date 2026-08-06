@@ -760,14 +760,14 @@ def _replace_continuous_action_with_policy_read(
 
     n_subjects = next(iter(states.values())).shape[0]
 
-    def grid_position(name: StateOrActionName, values: FloatND | IntND) -> IntND:
+    def grid_position(*, name: StateOrActionName, values: FloatND | IntND) -> IntND:
         grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
         return jnp.clip(
             jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1
         )
 
     state_positions = tuple(
-        grid_position(name, jnp.asarray(states[name]))
+        grid_position(name=name, values=jnp.asarray(states[name]))
         for name in sim_policy.row_discrete_state_names
     )
 
