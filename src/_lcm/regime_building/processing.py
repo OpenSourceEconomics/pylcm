@@ -398,8 +398,18 @@ def process_regimes(
         {
             # The representative regime already carries first-active concrete
             # functions and representative-age grids, so the template is built
-            # from it and needs no age argument of its own.
-            regime_name: create_regime_params_template(user_regime)
+            # from it and needs no age argument of its own. The other regimes'
+            # state names are what let a `next_<state>` argument be classified by
+            # the role that reads it rather than mistaken for a parameter.
+            regime_name: create_regime_params_template(
+                user_regime,
+                other_regime_state_names=frozenset(
+                    state_name
+                    for other_name, other in representative_user_regimes.items()
+                    if other_name != regime_name
+                    for state_name in other.states
+                ),
+            )
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
@@ -636,16 +646,19 @@ def _state_handoff_errors(
             for target in phase_reachability.targets(period=period, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
-                    # A process the source does not carry has to be placed on
-                    # the target's support from inside the source's Bellman
-                    # equation -- as the process's own unconditional weights
-                    # without an entry law, and as a coordinate on its nodes
-                    # with one. Either way that support is built where only the
-                    # source's parameters are readable, so a law the target
-                    # parameterizes at runtime cannot be entered at all.
-                    if isinstance(
-                        target_grid, _ContinuousStochasticProcess
-                    ) and state_name not in set(source_slice.grid_states):
+                    # A value reaching a process the source does not hold
+                    # identically has to be placed on the target's support from
+                    # inside the source's Bellman equation -- as the process's
+                    # own unconditional weights without an entry law, and as a
+                    # coordinate on its nodes with one. Either way that support
+                    # is built where only the source's parameters are readable,
+                    # so a law the target parameterizes at runtime cannot be
+                    # entered at all. A source holding the same process places
+                    # nothing: the process transitions under its own law.
+                    if (
+                        isinstance(target_grid, _ContinuousStochasticProcess)
+                        and source_slice.grid_states.get(state_name) != target_grid
+                    ):
                         entry_error = _runtime_param_entry_error(
                             phase_name=phase_name,
                             phase_reachability=phase_reachability,
@@ -1955,6 +1968,12 @@ def _process_regime_core(
         )
 
     for func_name, func in stochastic_transition_functions.items():
+        _fail_if_a_markov_law_names_a_continuous_state(
+            func_name=func_name,
+            grid=flat_grids[func_name.replace("next_", "")],
+            state_transitions=state_transitions,
+            source_regime_name=source_regime_name,
+        )
         processed_functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -2137,6 +2156,7 @@ def _process_regime_core(
     )
 
     fail_if_transition_namespaces_are_mixed(
+        phase_name=phase_name,
         source_regime_name=source_regime_name,
         transitions=transitions,
         transition_laws=transition_laws,
@@ -2639,6 +2659,64 @@ def _extract_template_names_key(
     return func_name
 
 
+def _fail_if_a_markov_law_names_a_continuous_state(
+    *,
+    func_name: TransitionFunctionName,
+    grid: Grid,
+    state_transitions: Mapping[StateName, object],
+    source_regime_name: RegimeName,
+) -> None:
+    """Reject a `MarkovTransition` law written for a state with a continuous grid.
+
+    `MarkovTransition` declares a probability vector over a discrete outcome space,
+    which only exists for a `DiscreteGrid`. A continuous stochastic process carries
+    its own transition mechanism and needs no law at all; an entry into one is a
+    deterministic function of the source's variables. Both mistakes reach the same
+    place, so both are named here.
+
+    Intrinsic process transitions are synthesized rather than written by the user
+    and never carry a law in `state_transitions`, so they do not reach this check.
+
+    Args:
+        func_name: The transition function name, e.g. `"next_shock"`.
+        grid: Grid spec of the state the law names.
+        state_transitions: This phase's `state_transitions` slice, read to
+            distinguish a user-written law from a synthesized process transition
+            and to name the targets a per-target law was written for.
+        source_regime_name: Regime whose law is being checked, named in the message.
+
+    Raises:
+        ModelInitializationError: If the law is a `MarkovTransition` and the state's
+            grid is not a `DiscreteGrid`.
+
+    """
+    if isinstance(grid, DiscreteGrid):
+        return
+
+    tree_path = tree_path_from_qname(func_name)
+    target = tree_path[0] if len(tree_path) > 1 else None
+    state_name = tree_path[-1].replace("next_", "")
+    raw = state_transitions.get(state_name)
+    if isinstance(raw, MarkovTransition):
+        written_for = "every target it reaches"
+    elif isinstance(raw, Mapping) and isinstance(raw.get(target), MarkovTransition):
+        written_for = f"target '{target}'"
+    else:
+        return
+
+    msg = (
+        f"The law for state '{state_name}' of regime '{source_regime_name}' toward "
+        f"{written_for} is wrapped in `MarkovTransition`, but '{state_name}' has a "
+        f"{type(grid).__name__}, not a DiscreteGrid. `MarkovTransition` declares a "
+        f"probability vector over a discrete outcome space, which a continuous grid "
+        f"does not have. A continuous stochastic process already carries its own "
+        f"transition mechanism and needs no law; write the law as a plain function "
+        f"returning the state's value, or drop it and let the process transition "
+        f"itself."
+    )
+    raise ModelInitializationError(msg)
+
+
 def _get_discrete_markov_next_function(
     *, func: UserFunction, grid: Int1D
 ) -> UserFunction:
@@ -2844,7 +2922,19 @@ def _get_explicit_entry_weights_for_process(
     physical_annotation = law_annotations.get("return", "FloatND")
 
     if law_reads_nothing:
-        declared = float(jnp.asarray(entry_law()))
+        declared_arr = jnp.asarray(entry_law())
+        if declared_arr.ndim != 0:
+            msg = (
+                f"The entry law for stochastic process '{state_name}' of regime "
+                f"'{target}' returns an array of shape {declared_arr.shape}, but "
+                f"an entry law names one value: the point on the target's "
+                f"support the source hands over. A law naming several values is "
+                f"a distribution, which the process already carries — drop the "
+                f"law to enter at the process's own law, or return the single "
+                f"value to enter at."
+            )
+            raise ModelInitializationError(msg)
+        declared = float(declared_arr)
         if not lower <= declared <= upper:
             msg = (
                 f"The entry law for stochastic process '{state_name}' of regime "
