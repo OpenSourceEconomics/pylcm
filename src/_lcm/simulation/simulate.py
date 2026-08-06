@@ -724,7 +724,7 @@ def _replace_continuous_action_with_policy_read(
     )
 
     score_actions = functools.partial(
-        _canonical_q_at_actions,
+        _canonical_Q_at_actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -991,7 +991,7 @@ def _interp_rows_with_support(
     return values, in_support
 
 
-def _canonical_q_at_actions(
+def _canonical_Q_at_actions(
     *,
     candidate_actions: Mapping[ActionName, FloatND | IntND],
     regime: Regime,

@@ -348,8 +348,8 @@ def _reduce_coincident_groups(
 ) -> tuple[Float1D, Float1D, Float1D, Float1D]:
     """Reduce each coincident-abscissa group to its envelope-relevant maximizers.
 
-    Replaces the destructive coincident-node dedup. Within each maximal run of
-    equal finite abscissae (the arrays arrive sorted ascending in grid):
+    Within each maximal run of equal finite abscissae (the arrays arrive sorted
+    ascending in grid):
 
     - keep only members whose value equals the group maximum. The test is exact
       equality against the segment maximum, so it is invariant to a common value

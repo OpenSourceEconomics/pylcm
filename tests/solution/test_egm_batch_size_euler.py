@@ -4,8 +4,9 @@ A DC-EGM regime in asset-row mode solves the single-post-state pipeline per
 exogenous Euler-state (asset) node. Splaying that axis — setting `batch_size`
 on the Euler-state grid — processes the asset nodes in blocks rather than one
 fused vmap, shedding peak working-set memory. It is a pure scheduling choice:
-the solved value function is identical to the unsplayed (`batch_size=0`) solve,
-whatever the block size, including block sizes that do not divide the grid.
+which cells are feasible is unchanged, and the solved value function agrees
+with the unsplayed (`batch_size=0`) solve to the working precision, whatever
+the block size, including block sizes that do not divide the grid.
 """
 
 import functools
@@ -31,6 +32,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import invariance_tolerances
 
 N_PERIODS = 4
 N_WEALTH = 11  # prime, so every block size but 1 leaves a ragged final block
@@ -155,9 +157,10 @@ def test_euler_grid_batch_size_leaves_value_function_unchanged(batch_size: int):
     """Splaying the Euler grid into blocks does not change the solved V.
 
     `batch_size` on the Euler-state grid only changes how the asset-row nodes
-    are scheduled (blocks via `lax.map` instead of one fused vmap), so the
-    value function at every period matches the unsplayed `batch_size=0` solve
-    exactly — including block sizes that do not divide the grid.
+    are scheduled (blocks via `lax.map` instead of one fused vmap). Feasibility
+    is structural and matches exactly; the value function at every period
+    agrees with the unsplayed `batch_size=0` solve to the working precision —
+    including block sizes that do not divide the grid.
     """
     reference = _solve(0)
     splayed = _solve(batch_size)
@@ -168,10 +171,18 @@ def test_euler_grid_batch_size_leaves_value_function_unchanged(batch_size: int):
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
+            # An infeasible cell carries `-inf`; a tolerance cannot adjudicate
+            # it, so the finite/infinite split is compared exactly.
+            np.testing.assert_array_equal(
+                np.isfinite(got_V),
+                np.isfinite(ref_V),
+                err_msg=f"feasibility differs: period={period}, regime={regime_name}",
+            )
+            rtol, atol = invariance_tolerances(ref_V)
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=1e-12,
-                atol=1e-12,
+                rtol=rtol,
+                atol=atol,
                 err_msg=f"period={period}, regime={regime_name}",
             )

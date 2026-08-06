@@ -9,6 +9,8 @@ that boot must not cycle back into a half-initialized `_lcm.typing`.
 import subprocess
 import sys
 
+import lcm
+
 
 def test_engine_submodule_imports_without_lcm_first():
     """An `_lcm` engine submodule imports cleanly in a fresh interpreter.
@@ -23,3 +25,14 @@ def test_engine_submodule_imports_without_lcm_first():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_every_public_name_is_bound():
+    """Every name `lcm.__all__` advertises resolves, so `from lcm import *` works.
+
+    A name left in `__all__` after its implementation is dropped turns a star
+    import into an `AttributeError`, and the failure names only the first
+    casualty rather than the list.
+    """
+    unbound = [name for name in lcm.__all__ if not hasattr(lcm, name)]
+    assert unbound == []

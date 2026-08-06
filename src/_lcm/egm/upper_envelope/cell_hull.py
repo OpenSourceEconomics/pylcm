@@ -299,7 +299,7 @@ def _reading_difference(
 
 
 def _is_negative(reading: tuple[FloatND, FloatND]) -> BoolND:
-    """Whether a reading is strictly below zero, low word included.
+    """Report whether a reading is strictly below zero, low word included.
 
     The high word alone answers this only when it is nonzero. Where two links
     meet to within a rounding, it is exactly zero and the entire question lives
