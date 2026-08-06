@@ -4,7 +4,12 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, get_ancestors, with_signature
+from dags import (
+    concatenate_functions,
+    get_ancestors,
+    get_annotations,
+    with_signature,
+)
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
@@ -38,6 +43,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
 
 
@@ -689,6 +695,160 @@ class _TargetContinuation:
     n_basis_axes: int
     """Number of trailing axes to contract against the basis weights."""
 
+    draw_dependent_names: frozenset[TransitionFunctionName] = frozenset()
+    """Laws the interpolator resolves itself, one value per node of a sibling draw."""
+
+
+def _draw_dependent_law_names(
+    *,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    stochastic_names: tuple[TransitionFunctionName, ...],
+) -> tuple[TransitionFunctionName, ...]:
+    """Return the target's deterministic laws that read one of its own draws.
+
+    A law reading `next_<state>` of a stochastic sibling depends on which node the
+    draw lands on, so its value is one number per node rather than one number. The
+    dependence travels through helpers, so the walk is transitive.
+
+    Args:
+        bundle: This target's unqualified `next_<state>` transition functions.
+        functions: Immutable mapping of function names to internal user functions.
+        stochastic_names: This target's stochastic `next_<state>` names.
+
+    Returns:
+        Tuple of the deterministic law names that resolve on the node axis, in
+        `bundle` order.
+
+    """
+    carries_a_draw = set(stochastic_names)
+    candidates = {
+        name: func
+        for name, func in (dict(functions) | dict(bundle)).items()
+        if name not in carries_a_draw
+    }
+    growing = True
+    while growing:
+        growing = False
+        for name, func in candidates.items():
+            if name in carries_a_draw:
+                continue
+            args = (arg for arg in get_annotations(func) if arg != "return")
+            if any(arg in carries_a_draw for arg in args):
+                carries_a_draw.add(name)
+                growing = True
+    return tuple(
+        name
+        for name in bundle
+        if name in carries_a_draw and name not in stochastic_names
+    )
+
+
+def _fail_if_a_read_draw_has_no_nodes_yet(
+    *,
+    target_regime_name: RegimeName,
+    stochastic_names: tuple[TransitionFunctionName, ...],
+    draw_dependent_names: tuple[TransitionFunctionName, ...],
+    v_interpolation_info: VInterpolationInfo,
+) -> None:
+    """Check that every draw a law reads has a support while the model builds.
+
+    Resolving a dependent law on the node axis reads the nodes themselves, so a
+    process whose law arrives at runtime has nothing to resolve against — its
+    nodes are not numbers yet.
+
+    Args:
+        target_regime_name: Regime whose laws are being built, named in the message.
+        stochastic_names: This target's stochastic `next_<state>` names.
+        draw_dependent_names: Laws resolved on the node axis, named in the message.
+        v_interpolation_info: The target's V-interpolation info, holding the grids.
+
+    Raises:
+        ModelInitializationError: If a read draw's process is not fully specified.
+
+    """
+    for next_state_name in stochastic_names:
+        state_name = next_state_name.removeprefix("next_")
+        grid = v_interpolation_info.discrete_states[state_name]
+        if getattr(grid, "is_fully_specified", True):
+            continue
+        msg = (
+            f"{', '.join(sorted(draw_dependent_names))} of regime "
+            f"'{target_regime_name}' reads the draw '{next_state_name}', but that "
+            f"process is parameterized at runtime, so its nodes are not known "
+            f"while the model builds. A law reading a draw is resolved on that "
+            f"draw's own nodes, which requires them to be fixed at construction — "
+            f"through the process constructor or `fixed_params`."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _get_interpolator_resolving_draws(
+    *,
+    next_V_interpolator: Callable[..., FloatND],
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    stochastic_names: tuple[TransitionFunctionName, ...],
+    draw_dependent_names: tuple[TransitionFunctionName, ...],
+    node_values: MappingProxyType[TransitionFunctionName, FloatND],
+) -> Callable[..., FloatND]:
+    """Wrap the interpolator so draw-dependent laws resolve on the node axis.
+
+    The caller product-maps the result over the target's node axes, so one call
+    sees one node per stochastic law. The draw's *index* is what indexes the value
+    function; the draw's *value* is what a dependent law reads. Both come from the
+    same node, which is why resolving them here — inside the axis the process
+    already contributes — needs no second axis and no parameter for the draw.
+
+    Args:
+        next_V_interpolator: The target's value-function interpolator.
+        bundle: This target's unqualified `next_<state>` transition functions.
+        functions: Immutable mapping of function names to internal user functions.
+        stochastic_names: This target's stochastic `next_<state>` names.
+        draw_dependent_names: Laws to resolve here rather than ahead of the axes.
+        node_values: Immutable mapping of each stochastic law to its nodes, indexed
+            by the value its next-state function yields.
+
+    Returns:
+        A callable with the interpolator's signature, minus the laws it now
+        resolves itself, plus whatever resolving them reads.
+
+    """
+    resolve = concatenate_functions(
+        functions={
+            name: func
+            for name, func in (dict(bundle) | dict(functions)).items()
+            if name not in stochastic_names
+        },
+        targets=list(draw_dependent_names),
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    resolver_args = get_union_of_args([resolve])
+    interpolator_args = get_union_of_args([next_V_interpolator])
+    read_as_a_draw = tuple(name for name in stochastic_names if name in resolver_args)
+    arg_names = sorted((interpolator_args - set(draw_dependent_names)) | resolver_args)
+
+    @with_signature(args=arg_names)
+    def interpolate_at_this_node(**kwargs: FloatND) -> FloatND:
+        drawn = {
+            name: node_values[name][kwargs[name].astype(jnp.int32)]
+            for name in read_as_a_draw
+        }
+        resolved = resolve(
+            **{
+                k: v for k, v in kwargs.items() if k in resolver_args and k not in drawn
+            },
+            **drawn,
+        )
+        return next_V_interpolator(
+            **{k: v for k, v in kwargs.items() if k in interpolator_args},
+            **resolved,
+        )
+
+    return interpolate_at_this_node
+
 
 def _build_target_continuation(
     *,
@@ -740,9 +900,40 @@ def _build_target_continuation(
         V_arr_name=V_arr_name,
         co_map_state_names=co_map_state_names,
     )
+
+    # A law reading one of this target's own draws has one value per node, so it
+    # is resolved inside the node axes rather than once ahead of them.
+    draw_dependent_names = _draw_dependent_law_names(
+        bundle=bundle, functions=functions, stochastic_names=lottery_variables
+    )
+    if draw_dependent_names:
+        _fail_if_a_read_draw_has_no_nodes_yet(
+            target_regime_name=target_regime_name,
+            stochastic_names=lottery_variables,
+            draw_dependent_names=draw_dependent_names,
+            v_interpolation_info=v_interpolation_info,
+        )
+        next_V_interpolator = _get_interpolator_resolving_draws(
+            next_V_interpolator=next_V_interpolator,
+            bundle=bundle,
+            functions=functions,
+            stochastic_names=lottery_variables,
+            draw_dependent_names=draw_dependent_names,
+            node_values=MappingProxyType(
+                {
+                    name: v_interpolation_info.discrete_states[
+                        name.removeprefix("next_")
+                    ].to_jax()
+                    for name in lottery_variables
+                }
+            ),
+        )
+
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
-            functions=functions, transitions=bundle
+            functions=functions,
+            transitions=bundle,
+            targets=[key for key in bundle if key not in draw_dependent_names],
         ),
         lottery_weights=get_next_stochastic_weights_function(
             functions=functions,
@@ -773,6 +964,7 @@ def _build_target_continuation(
         ),
         has_lottery_axes=bool(lottery_variables),
         n_basis_axes=len(basis_variables),
+        draw_dependent_names=frozenset(draw_dependent_names),
     )
 
 

@@ -125,9 +125,9 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
 ) -> None:
     """Calling a declared entry stochastic fails the model build, naming the law.
 
-    A draw publishes no value until the expectation over it closes, so the
-    entry's own basis weights lose the producer they read. The model says so
-    instead of pricing the coefficients as probabilities.
+    An entry's coefficients express one value in the target's node basis; a
+    draw's weights are probabilities over those nodes. Nothing is both, and the
+    model says so instead of pricing the coefficients as probabilities.
     """
     original = processing._build_transition_laws
 
@@ -153,5 +153,5 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
 
     monkeypatch.setattr(processing, "_build_transition_laws", _as_all_stochastic)
 
-    with pytest.raises(ModelInitializationError, match="realizes a draw"):
+    with pytest.raises(ModelInitializationError, match="carries the node basis"):
         _build_model()

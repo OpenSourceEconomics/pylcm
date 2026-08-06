@@ -247,12 +247,12 @@ def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # n
     msg = (
         f"The fixed parameter {qname!r} pins a stochastic process's law, which "
         f"is one number per field, but its value has shape {shape}. A process's "
-        f"law is fixed at construction, so this field takes one number. For a "
-        f"law that varies with age, build the state with `AgeSpecializedGrid`, "
-        f"which gives each age its own process and carries the shape-invariance "
-        f"contract the engine needs. For one that varies across subjects, the "
-        f"varying quantity belongs in a deterministic function reading a state, "
-        f"not in the process's own law."
+        f"law is fixed at construction, so this field takes one number. A law "
+        f"that varies with age is not supported: `AgeSpecializedGrid` builds a "
+        f"plain grid per age and rejects a stochastic process. Fix the law "
+        f"across ages and carry the age variation in a deterministic function "
+        f"that reads `age` and the process's draw. A quantity varying across "
+        f"subjects belongs in such a function too, never in the process's law."
     )
     raise InvalidParamsError(msg)
 

@@ -1,6 +1,6 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import MappingProxyType
 
 import jax
@@ -34,12 +34,16 @@ def get_next_state_function_for_solution(
     *,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
+    targets: Sequence[TransitionFunctionName] | None = None,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        targets: Laws to compute, defaulting to every law in `transitions`. A law
+            reading one of this target's own draws is resolved on the node axis
+            instead, so the caller leaves it out here.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -52,7 +56,7 @@ def get_next_state_function_for_solution(
 
     return concatenate_functions(
         functions=functions_to_concatenate,
-        targets=list(transitions.keys()),
+        targets=list(transitions.keys() if targets is None else targets),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,

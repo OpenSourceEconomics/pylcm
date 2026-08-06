@@ -68,29 +68,38 @@ def create_regime_params_template(
         The regime parameter template with type annotations as values.
 
     """
-    # Every state the regime declares a law for produces a `next_<state>` in the
-    # target's bundle, so a law reading one reads a DAG value, not a parameter.
-    # Reading `state_transitions` and not only `states` is what makes that hold
-    # for a state the source hands over without carrying — a declared entry into
-    # a target's process is the case, and its physical value is available to its
-    # neighbours exactly as any other transition's output is.
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
-        *(f"next_{name}" for name in user_regime.states),
-        *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
         "CE",
     }
-    # A target's state is next-period vocabulary only where next-period values
-    # exist: inside a transition, and inside whatever feeds one. `utility` and
-    # `constraints` are evaluated at this period's states, so `next_<state>`
-    # there names an ordinary parameter and stays one.
+    # `next_<state>` names a transition's output only where next-period values
+    # exist: inside a transition, and inside whatever feeds one. The consumer's
+    # role decides this, never the spelling on its own — `utility` and
+    # `constraints` are evaluated at this period's states and never read a
+    # transition's output, so an argument spelled that way there is an ordinary
+    # parameter, whether or not this regime happens to move a state of that name.
+    #
+    # For a consumer that is in the transition role, three families of name are
+    # transition outputs rather than parameters:
+    #
+    # - `next_<state>` for a state this regime carries;
+    # - `next_<state>` for a state it declares a law for — which covers a state
+    #   handed over without being carried, a declared entry into a target's
+    #   process being the case;
+    # - `next_<state>` for a state some other regime declares, since the value
+    #   belongs to a target and is produced by the entry or is a draw.
     transition_role = _function_names_in_transition_role(user_regime)
     variables_in_transition_role = variables | {
-        f"next_{name}" for name in other_regime_state_names
+        f"next_{name}"
+        for name in (
+            *user_regime.states,
+            *user_regime.state_transitions,
+            *other_regime_state_names,
+        )
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
@@ -305,23 +314,37 @@ def _fail_if_runtime_grid_shadows_function(
         )
 
 
-def _phase_variants(func: UserFunction | Phased | None) -> list[UserFunction]:
-    """Return the callables a regime function stands for.
+def _callables_in(value: object) -> list[UserFunction]:
+    """Return the callables a regime slot value stands for.
 
-    Three cases, and a list covers all of them so a caller can walk a regime
-    function without first asking which kind it holds:
+    A law and a regime function accept the same shapes, so one traversal serves
+    both and they cannot come to disagree about what is walkable:
 
     - a plain callable stands for itself;
-    - a `Phased` entry is two implementations rather than one callable, so
-      anything that reads a signature has to descend into both;
-    - `None` masks a model-level entry and so stands for no implementation at
-      all — there is no signature to read.
+    - a `Phased` entry is two implementations rather than one, so anything
+      reading a signature descends into both;
+    - a per-target dict holds one law per target, each walked in turn;
+    - `None` masks a model-level entry and stands for no implementation at all,
+      so there is no signature to read.
+
+    Args:
+        value: A `state_transitions` or `functions` entry.
+
+    Returns:
+        List of the callables it stands for, empty when it stands for none.
+
     """
-    if func is None:
+    if value is None:
         return []
-    if isinstance(func, Phased):
-        return [cast("UserFunction", func.solve), cast("UserFunction", func.simulate)]
-    return [func]
+    if isinstance(value, Phased):
+        return [*_callables_in(value.solve), *_callables_in(value.simulate)]
+    if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
+        return [
+            callable_
+            for member in value.values()
+            for callable_ in _callables_in(member)
+        ]
+    return [cast("UserFunction", value)]
 
 
 def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
@@ -335,20 +358,13 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
         regime function they read, directly or through other regime functions.
 
     """
-    roots: list[UserFunction] = []
-    frontier_laws: list[object] = list(user_regime.state_transitions.values())
-    while frontier_laws:
-        law = frontier_laws.pop()
-        if isinstance(law, Phased):
-            frontier_laws.extend([law.solve, law.simulate])
-        elif isinstance(law, Mapping) and not isinstance(law, MarkovTransition):
-            frontier_laws.extend(law.values())
-        elif law is not None:
-            roots.append(cast("UserFunction", law))
-
     functions = user_regime.functions
     feeders: set[str] = set()
-    frontier = list(roots)
+    frontier = [
+        variant
+        for law in user_regime.state_transitions.values()
+        for variant in _callables_in(law)
+    ]
     while frontier:
         func = frontier.pop()
         for arg in dt.create_tree_with_input_types({"_": func}):
@@ -356,7 +372,7 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.extend(_phase_variants(functions[arg_name]))
+            frontier.extend(_callables_in(functions[arg_name]))
 
     return frozenset(
         {f"next_{name}" for name in user_regime.state_transitions}
