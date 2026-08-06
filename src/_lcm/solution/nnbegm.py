@@ -199,6 +199,11 @@ class NNBEGM(Solver):
         return True
 
     @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """The inner NB-EGM solve inverts the recursive Euler equation."""
+        return self.inner.supports_nonlinear_certainty_equivalent
+
+    @property
     def carry_retains_discrete_action_rows(self) -> bool:
         """The inner NB-EGM merges discrete branches inside its envelope."""
         return self.inner.carry_retains_discrete_action_rows
