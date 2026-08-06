@@ -66,6 +66,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -585,14 +586,7 @@ def _fold_stochastic_dims(
         broadcast_weights = weights.reshape(
             (weights.shape[0],) + (1,) * (moved.ndim - 1)
         )
-        return jnp.sum(
-            jnp.where(
-                broadcast_weights > 0.0,
-                broadcast_weights * moved,
-                broadcast_weights * 0.0,
-            ),
-            axis=0,
-        )
+        return jnp.sum(zero_safe_weighted_term(broadcast_weights, moved), axis=0)
 
     weight_by_name = dict(zip(read.stochastic_state_names, weight_vecs, strict=True))
     endog_grid = carry.endog_grid
@@ -1033,10 +1027,9 @@ def _expect_over_stochastic_nodes(
 
     def _weighted_node_sum(values: FloatND, weights: FloatND) -> ScalarFloat:
         # A zero-weight node contributes exactly 0.0 even when its smoothed
-        # value is -inf (never 0 * inf = NaN). The else branch is `weights *
-        # 0.0` (not a bare `0.0`) so a NaN weight poisons the sum instead of
-        # vanishing.
-        return jnp.sum(jnp.where(weights > 0.0, weights * values, weights * 0.0))
+        # value is -inf, while a NaN weight still poisons the sum and a
+        # negative one stays visible rather than collapsing to zero.
+        return jnp.sum(zero_safe_weighted_term(weights, values))
 
     # The expectation mesh (the product of the child's stochastic-node counts)
     # is the dominant `egm_step` working buffer's child-node axis. A positive
