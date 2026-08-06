@@ -13,6 +13,12 @@ exactly zero whenever the whole evaluation was exact. That distinction is the
 point: a certified tie and a tie that merely fits in the format are different
 answers, and only the first is safe to act on.
 
+Every function here is an operator surrogate on a double-double number, so its
+operands are positional — the spelling each operation is known by. This module
+contains nothing else, which is what makes that exemption from the project's
+keyword-only rule auditable: a helper that is not an operator does not belong
+here.
+
 The transforms are exact only while their intermediates stay normal. Dekker's
 splitting multiplies by `2**((nmant + 2) // 2) + 1`, so a product that underflows
 or lands among the subnormals silently loses the tail. Callers that read a zero

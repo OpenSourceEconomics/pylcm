@@ -789,6 +789,37 @@ far.
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
 
+### Keyword-Only Arguments
+
+**A function takes its arguments keyword-only as soon as there are two.** This binds
+everywhere — engine internals and model functions alike. Readability is not something
+only the public surface earns, and a call reading `f(a, b)` says nothing about which
+value is which.
+
+```python
+# Good
+def compute_regret(*, published: FloatND, reference: FloatND) -> FloatND: ...
+
+
+# Bad — the call site cannot say which is which
+def compute_regret(published: FloatND, reference: FloatND) -> FloatND: ...
+```
+
+There are exactly two exemptions:
+
+1. **A callback whose caller is a library that passes positionally** — `lax.scan` bodies
+   `(carry, x)`, `custom_jvp` rules `(primals, tangents)`, pytree
+   `unflatten(aux, children)`. Not a judgement call: Python raises otherwise. `dags` is
+   *not* in this class — it binds by parameter name and accepts keyword-only functions,
+   so a model function complies like anything else.
+1. **A module that implements an arithmetic and nothing else** — operator surrogates
+   keep the spelling their operation is known by (`two_sum(a, b)`,
+   `dd_mul(left, right)`). State it once in the module docstring; such a module may
+   contain *only* operators, so the exemption stays auditable rather than sprinkled per
+   function.
+
+Functions predating this rule are being converted separately; see issue #421.
+
 ### Module Layout
 
 Write "deep" modules: important public function(s) at the top, private helpers below.
