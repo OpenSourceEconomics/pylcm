@@ -190,8 +190,18 @@ def _fail_if_a_param_is_next_prefixed(
     denoting a value this consumer can see has already been removed by the time
     this runs — a state the regime carries or declares a law for, and, for a
     transition, a state belonging to a target. What remains would be handed to the
-    user as a parameter under a name that says it is a next-period value, in a
-    place where that value does not exist.
+    user as a parameter under a name that says it is a next-period value.
+
+    The prefix stays reserved outside a transition even for a quantity that is in
+    fact determined within the period, such as a post-decision stock. What
+    `next_<name>` denotes depends on where the value is going: with one law per
+    target it is target-specific, and with a stochastic law it is a distribution
+    rather than a number. Admitting the name wherever the declaration happens to
+    make it single-valued would make a utility function's legality depend on the
+    regime's transition topology, so that adding a second target invalidates a
+    payoff that never mentioned targets. A quantity a payoff or a constraint needs
+    is an ordinary function of this period's states and actions; the law reads that
+    function, and so does everything else.
 
     Args:
         consumer_name: Function whose parameters are being checked, named in the
@@ -206,16 +216,20 @@ def _fail_if_a_param_is_next_prefixed(
     reserved = sorted(name for name in params if name.startswith("next_"))
     if not reserved:
         return
+    example = reserved[0].removeprefix("next_")
     raise InvalidNameError(
         f"'{consumer_name}' takes {reserved} as arguments, but the 'next_' prefix "
-        f"names the output of a state transition and is never a parameter. "
-        f"'{consumer_name}' is evaluated before this period's transitions run, so "
-        f"there is no next-period value for {reserved} to mean here — accepting "
-        f"them would answer a next-period question with a constant supplied at "
-        f"solve time. Restate the quantity in this period's states and actions "
-        f"(a constraint on next-period assets is a constraint on assets minus "
-        f"consumption), read it inside a transition law, or rename the argument "
-        f"if a parameter was meant."
+        f"names the output of a state transition and is never a parameter. Only a "
+        f"transition law, and what feeds one, may read a next-period value; "
+        f"elsewhere the name would be bound to a constant supplied at solve time, "
+        f"answering a next-period question with a number that has nothing to do "
+        f"with next period. If the quantity is determined within this period — a "
+        f"post-decision stock, or next period's assets as this period's assets "
+        f"minus consumption — give it its own name as an ordinary function of this "
+        f"period's states and actions, and have both '{consumer_name}' and the law "
+        f"read that function: define `new_{example}(...)`, then declare "
+        f"`state_transitions={{'{example}': lambda new_{example}: new_{example}}}`. "
+        f"If a parameter was meant, rename the argument."
     )
 
 
