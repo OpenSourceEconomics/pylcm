@@ -1588,7 +1588,7 @@ def _build_simulation_phase(
     # - no `Phased` declaration anywhere on the regime (a phase-variant
     #   utility, budget, transition, or state domain changes the
     #   simulate-phase FOC or the policy-row coordinates even under an
-    #   unchanged `H`) — `Phased` is the grammar's only source of phase
+    #   unchanged `W`) — `Phased` is the grammar's only source of phase
     #   variance, so its absence is the exact test;
     # - no carried-only states (their simulate-phase domain has no solve-side
     #   row coordinates to read the policy on);
