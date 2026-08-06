@@ -102,29 +102,6 @@ def create_regime_params_template(
             *other_regime_state_names,
         )
     }
-    # A within-period consumer may read a next state the chosen action
-    # determines -- the NEGM/DC-EGM durable pattern, where the service flow
-    # accrues from the newly chosen stock and the budget constraint bounds it.
-    # The decision evaluation resolves such a name from the regime's own law,
-    # so it is that law's output rather than a parameter.
-    #
-    # Only a law that is both deterministic and target-independent qualifies:
-    #
-    # - a `MarkovTransition` names a draw not yet realised when the decision is
-    #   evaluated, so it produces nothing there;
-    # - a per-target law is a handover value that is not well defined until the
-    #   destination is known, which is the same ground on which the decision
-    #   evaluation rejects reading a `next_<state>` whose law differs across
-    #   targets.
-    #
-    # A `next_<state>` this regime does not move at all -- a target's process,
-    # say -- is a parameter here, whatever it is spelled.
-    variables_from_own_within_period_laws = variables | {
-        f"next_{state_name}"
-        for state_name, law in user_regime.state_transitions.items()
-        if _is_within_period_law(law)
-    }
-
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
 
@@ -143,7 +120,7 @@ def create_regime_params_template(
         non_params = (
             variables_in_transition_role
             if tree_path_from_qname(name)[0] in transition_role
-            else variables_from_own_within_period_laws
+            else variables
         )
         params = {k: v for k, v in sorted(tree.items()) if k not in non_params}
         _fail_if_a_param_is_next_prefixed(consumer_name=name, params=params)
@@ -422,25 +399,6 @@ def _callables_in(value: object) -> list[UserFunction]:
             for callable_ in _callables_in(member)
         ]
     return [cast("UserFunction", value)]
-
-
-def _is_within_period_law(law: object) -> bool:
-    """Return whether a state's law produces a value the decision can read.
-
-    Two things disqualify a law. A `MarkovTransition` names a draw that has not
-    been realised when the within-period decision is evaluated. A per-target
-    dict names a handover value that is not well defined until the destination
-    is known -- one law per reachable target, and nothing says they agree.
-
-    What is left is a bare, target-independent, deterministic law: the chosen
-    next durable stock, and anything else this period's states and actions
-    determine on their own.
-    """
-    if isinstance(law, MarkovTransition | Mapping):
-        return False
-    if isinstance(law, Phased):
-        return _is_within_period_law(law.solve)
-    return True
 
 
 def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
