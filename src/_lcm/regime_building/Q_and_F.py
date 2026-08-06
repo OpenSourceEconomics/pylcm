@@ -91,7 +91,7 @@ def get_Q_and_F(
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    compute_CE, continuation_deps = _get_compute_CE(
+    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
@@ -106,7 +106,11 @@ def get_Q_and_F(
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        include=frozenset(
+            {"next_regime_to_V_arr", "period", "age"}
+            | flat_param_names
+            | continuation_arg_names
+        ),
         exclude=frozenset(),
     )
 
@@ -202,7 +206,7 @@ def get_compute_intermediates(
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    compute_CE, continuation_deps = _get_compute_CE(
+    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         transitions=transitions,
@@ -217,7 +221,11 @@ def get_compute_intermediates(
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        include=frozenset(
+            {"next_regime_to_V_arr", "period", "age"}
+            | flat_param_names
+            | continuation_arg_names
+        ),
         exclude=frozenset(),
     )
 
@@ -324,6 +332,7 @@ def _get_compute_CE(
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
+    frozenset[str],
 ]:
     """Build the closure that aggregates next period's value into `CE`.
 
@@ -359,8 +368,10 @@ def _get_compute_CE(
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
     Returns:
-        Tuple of the closure returning `(CE, active_regime_probs)` and the
-        dependencies whose arguments must enter the calling closure's signature.
+        Tuple of the closure returning `(CE, active_regime_probs)`, the
+        dependencies whose arguments must enter the calling closure's signature,
+        and the further argument names that signature must carry for weights
+        formed inside the node axes.
 
     """
     continuations = {
@@ -470,13 +481,39 @@ def _get_compute_CE(
                 # any lottery is formed. The coefficients sum to one by
                 # construction, so normalizing here would mask a malformed basis
                 # rather than protect against one.
-                next_V_at_stochastic_states_arr = jnp.tensordot(
-                    next_V_at_stochastic_states_arr,
-                    continuation.joint_basis_weights(
-                        **continuation.basis_weights(**states_actions_params)
-                    ),
-                    axes=continuation.n_basis_axes,
-                )
+                #
+                # An entry whose value depends on a sibling draw has different
+                # coefficients at each node of that draw, so its weights carry
+                # the lottery axes as well and the contraction is elementwise
+                # over the tail. Where they do not, the weights are one vector
+                # per basis axis and `tensordot` contracts them without ever
+                # forming the elementwise product — which is the whole surface,
+                # so building it would cost a copy of the continuation in both
+                # time and memory.
+                if continuation.joint_basis_weights_at_nodes is not None:
+                    basis = continuation.joint_basis_weights_at_nodes(
+                        **{
+                            name: value
+                            for name, value in states_actions_params.items()
+                            if name in continuation.basis_node_arg_names
+                        },
+                        **{
+                            name: next_states[name]
+                            for name in continuation.lottery_axis_names
+                        },
+                    )
+                    next_V_at_stochastic_states_arr = jnp.sum(
+                        next_V_at_stochastic_states_arr * basis,
+                        axis=tuple(range(-continuation.n_basis_axes, 0)),
+                    )
+                else:
+                    next_V_at_stochastic_states_arr = jnp.tensordot(
+                        next_V_at_stochastic_states_arr,
+                        continuation.joint_basis_weights(
+                            **continuation.basis_weights(**states_actions_params)
+                        ),
+                        axes=continuation.n_basis_axes,
+                    )
 
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
@@ -550,13 +587,24 @@ def _get_compute_CE(
 
         return CE, active_regime_probs
 
+    # A basis formed inside the node axes takes the draw from the node rather than
+    # from the caller, so the pre-axis weight function's arguments are not the
+    # calling closure's. Its own pass-through arguments are, and they are named
+    # separately because the node axes it also takes are supplied here.
     deps = (
         compute_regime_transition_probs,
         *(c.next_states for c in continuations.values()),
         *(c.lottery_weights for c in continuations.values()),
-        *(c.basis_weights for c in continuations.values()),
+        *(
+            c.basis_weights
+            for c in continuations.values()
+            if c.joint_basis_weights_at_nodes is None
+        ),
     )
-    return compute_CE, deps
+    extra_arg_names = frozenset().union(
+        *(c.basis_node_arg_names for c in continuations.values()), frozenset()
+    )
+    return compute_CE, deps, extra_arg_names
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -582,7 +630,7 @@ class _TargetContinuation:
     """Target's value function, product-mapped over its node axes.
 
     The axes come in the order `(lottery..., basis...)`, so the basis block is
-    the tail and contracts away in one `tensordot`.
+    the tail and contracts away against the basis weights.
     """
 
     support_axes: MappingProxyType[TransitionFunctionName, Int1D]
@@ -605,21 +653,39 @@ class _TargetContinuation:
     n_basis_axes: int
     """Number of trailing axes to contract against the basis weights."""
 
+    joint_basis_weights_at_nodes: Callable[..., FloatND] | None = None
+    """Basis coefficients formed inside the node axes, or `None` if none need to be.
+
+    Set exactly when a declared entry's value depends on a sibling draw, in which
+    case its coefficients differ by node and carry the lottery axes as well.
+    """
+
+    basis_node_arg_names: frozenset[str] = frozenset()
+    """Arguments `joint_basis_weights_at_nodes` takes besides the lottery axes."""
+
+    lottery_axis_names: tuple[TransitionFunctionName, ...] = ()
+    """Stochastic `next_<state>` names, in the order their axes appear."""
+
     draw_dependent_names: frozenset[TransitionFunctionName] = frozenset()
-    """Laws the interpolator resolves itself, one value per node of a sibling draw."""
+    """Laws resolved on a node axis, one value per node of a sibling draw."""
 
 
-def _draw_dependent_law_names(
+def _draw_dependencies_by_law(
     *,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
     stochastic_names: tuple[TransitionFunctionName, ...],
-) -> tuple[TransitionFunctionName, ...]:
-    """Return the target's deterministic laws that read one of its own draws.
+) -> MappingProxyType[TransitionFunctionName, frozenset[TransitionFunctionName]]:
+    """Return, per deterministic law, which of the target's own draws it reads.
 
     A law reading `next_<state>` of a stochastic sibling depends on which node the
     draw lands on, so its value is one number per node rather than one number. The
     dependence travels through helpers, so the walk is transitive.
+
+    Which draws a law reads — not merely whether it reads any — is what the
+    consumers need: the interpolator substitutes exactly those, and the
+    construction-time support requirement falls on exactly those and no other
+    stochastic sibling.
 
     Args:
         bundle: This target's unqualified `next_<state>` transition functions.
@@ -627,63 +693,114 @@ def _draw_dependent_law_names(
         stochastic_names: This target's stochastic `next_<state>` names.
 
     Returns:
-        Tuple of the deterministic law names that resolve on the node axis, in
-        `bundle` order.
+        Immutable mapping of each draw-dependent law in `bundle` order to the
+        draws it reads. Laws reading none are absent.
 
     """
-    carries_a_draw = set(stochastic_names)
+    draws = set(stochastic_names)
     candidates = {
         name: func
         for name, func in (dict(functions) | dict(bundle)).items()
-        if name not in carries_a_draw
+        if name not in draws
+    }
+    reads: dict[TransitionFunctionName, frozenset[TransitionFunctionName]] = {
+        name: frozenset() for name in candidates
     }
     growing = True
     while growing:
         growing = False
         for name, func in candidates.items():
-            if name in carries_a_draw:
-                continue
-            args = (arg for arg in get_annotations(func) if arg != "return")
-            if any(arg in carries_a_draw for arg in args):
-                carries_a_draw.add(name)
+            args = [arg for arg in get_annotations(func) if arg != "return"]
+            found = {arg for arg in args if arg in draws}
+            found |= {draw for arg in args if arg in reads for draw in reads[arg]}
+            merged = reads[name] | found
+            if merged != reads[name]:
+                reads[name] = merged
                 growing = True
-    return tuple(
-        name
-        for name in bundle
-        if name in carries_a_draw and name not in stochastic_names
+    return MappingProxyType({name: reads[name] for name in bundle if reads.get(name)})
+
+
+def _fail_if_a_draw_reads_a_sibling_draw(
+    *,
+    target_regime_name: RegimeName,
+    lottery_weights: Callable[..., dict[str, FloatND | IntND]],
+    stochastic_names: tuple[TransitionFunctionName, ...],
+) -> None:
+    """Check that no draw's own distribution is conditioned on another draw.
+
+    Each draw contributes its own node axis and its own weight vector, and the
+    joint distribution over those axes is formed as the product of the marginals.
+    A draw whose probabilities depend on where a sibling landed is not that
+    product — it is a genuine joint kernel, and no product of marginals expresses
+    the correlation it describes.
+
+    The dependence is read off the weight DAG's own arguments, which is where it
+    surfaces: a draw has no realized value while the expectation over it is being
+    built, so a sibling's weights asking for one leaves it unbound.
+
+    Args:
+        target_regime_name: Regime whose laws are being built, named in the message.
+        lottery_weights: DAG producing this target's probability weight vectors.
+        stochastic_names: This target's stochastic `next_<state>` names.
+
+    Raises:
+        ModelInitializationError: If a draw's weights read a sibling draw.
+
+    """
+    read_draws = sorted(get_union_of_args([lottery_weights]) & set(stochastic_names))
+    if not read_draws:
+        return
+    named = ", ".join(f"'{name}'" for name in read_draws)
+    msg = (
+        f"A draw of regime '{target_regime_name}' has probabilities that read "
+        f"{named}, which are draws of the same regime. Each draw carries its own "
+        f"nodes and its own probabilities, and their joint distribution is formed "
+        f"as the product of those marginals — a distribution conditioned on where "
+        f"a sibling landed is a joint kernel that product cannot express. Declare "
+        f"the two as one state with a joint law, or condition a deterministic law "
+        f"on the draw instead of the draw's own distribution."
     )
+    raise ModelInitializationError(msg)
 
 
 def _fail_if_a_read_draw_has_no_nodes_yet(
     *,
     target_regime_name: RegimeName,
-    stochastic_names: tuple[TransitionFunctionName, ...],
-    draw_dependent_names: tuple[TransitionFunctionName, ...],
+    dependencies_by_law: MappingProxyType[
+        TransitionFunctionName, frozenset[TransitionFunctionName]
+    ],
     v_interpolation_info: VInterpolationInfo,
 ) -> None:
     """Check that every draw a law reads has a support while the model builds.
 
     Resolving a dependent law on the node axis reads the nodes themselves, so a
     process whose law arrives at runtime has nothing to resolve against — its
-    nodes are not numbers yet.
+    nodes are not numbers yet. The requirement falls on the draws that are read
+    and on no other stochastic sibling: a process nothing resolves against is
+    free to receive its law at solve time, as any carried process is.
 
     Args:
         target_regime_name: Regime whose laws are being built, named in the message.
-        stochastic_names: This target's stochastic `next_<state>` names.
-        draw_dependent_names: Laws resolved on the node axis, named in the message.
+        dependencies_by_law: Immutable mapping of each draw-dependent law to the
+            draws it reads.
         v_interpolation_info: The target's V-interpolation info, holding the grids.
 
     Raises:
         ModelInitializationError: If a read draw's process is not fully specified.
 
     """
-    for next_state_name in stochastic_names:
+    readers_by_draw: dict[TransitionFunctionName, list[TransitionFunctionName]] = {}
+    for law_name, draws in dependencies_by_law.items():
+        for draw in draws:
+            readers_by_draw.setdefault(draw, []).append(law_name)
+
+    for next_state_name in sorted(readers_by_draw):
         state_name = next_state_name.removeprefix("next_")
         grid = v_interpolation_info.discrete_states[state_name]
         if getattr(grid, "is_fully_specified", True):
             continue
         msg = (
-            f"{', '.join(sorted(draw_dependent_names))} of regime "
+            f"{', '.join(sorted(readers_by_draw[next_state_name]))} of regime "
             f"'{target_regime_name}' reads the draw '{next_state_name}', but that "
             f"process is parameterized at runtime, so its nodes are not known "
             f"while the model builds. A law reading a draw is resolved on that "
@@ -760,6 +877,62 @@ def _get_interpolator_resolving_draws(
     return interpolate_at_this_node
 
 
+def _get_joint_basis_weights_at_nodes(
+    *,
+    basis_weights: Callable[..., dict[str, FloatND | IntND]],
+    joint_basis_weights: Callable[..., FloatND],
+    lottery_variables: tuple[TransitionFunctionName, ...],
+    read_draws: frozenset[TransitionFunctionName],
+    node_values: MappingProxyType[TransitionFunctionName, FloatND],
+) -> tuple[Callable[..., FloatND], frozenset[str]]:
+    """Build the basis coefficients of an entry whose value depends on a draw.
+
+    An entry names one value, and its coefficients express that value in the
+    target's node basis. When the value differs by node of a sibling draw, so do
+    the coefficients — they have to be formed where the draw has a realized value,
+    which is inside the node axes rather than once ahead of them.
+
+    The result is mapped over *every* lottery axis, not only the ones the entry
+    reads, so its axes line up with the value surface it will be contracted
+    against. It is the same shape as that surface, so nothing is materialized
+    that the contraction did not already require.
+
+    Args:
+        basis_weights: DAG producing this target's node-basis weight vectors.
+        joint_basis_weights: Outer product over the basis groups' weight vectors.
+        lottery_variables: Ordered stochastic `next_<state>` names, in the order
+            their axes appear on the value surface.
+        read_draws: Draws the entries read, substituted from the node.
+        node_values: Immutable mapping of each stochastic law to its nodes.
+
+    Returns:
+        Tuple of the mapped function and the argument names it takes besides the
+        lottery variables.
+
+    """
+    basis_args = get_union_of_args([basis_weights])
+    passed_through = frozenset(basis_args) - read_draws
+    arg_names = sorted(passed_through | set(lottery_variables))
+
+    @with_signature(args=arg_names)
+    def joint_basis_at_this_node(**kwargs: FloatND) -> FloatND:
+        drawn = {
+            name: node_values[name][kwargs[name].astype(jnp.int32)]
+            for name in read_draws
+        }
+        weights = basis_weights(
+            **{k: v for k, v in kwargs.items() if k in passed_through}, **drawn
+        )
+        return joint_basis_weights(**weights)
+
+    mapped = productmap(
+        func=joint_basis_at_this_node,
+        variables=lottery_variables,
+        batch_sizes=dict.fromkeys(lottery_variables, 0),
+    )
+    return mapped, passed_through
+
+
 def _build_target_continuation(
     *,
     target_regime_name: RegimeName,
@@ -812,57 +985,92 @@ def _build_target_continuation(
     )
 
     # A law reading one of this target's own draws has one value per node, so it
-    # is resolved inside the node axes rather than once ahead of them.
-    draw_dependent_names = _draw_dependent_law_names(
+    # is resolved inside the node axes rather than once ahead of them. Which
+    # consumer resolves it depends on what the law is: a law feeding a coordinate
+    # is resolved by the interpolator, a declared entry by its basis weights.
+    lottery_weights = get_next_stochastic_weights_function(
+        functions=functions,
+        transitions=bundle,
+        transition_laws=transition_laws,
+        regime_name=target_regime_name,
+    )
+    _fail_if_a_draw_reads_a_sibling_draw(
+        target_regime_name=target_regime_name,
+        lottery_weights=lottery_weights,
+        stochastic_names=lottery_variables,
+    )
+    dependencies_by_law = _draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_variables
     )
-    if draw_dependent_names:
+    dependent_coordinate_names = tuple(
+        name for name in dependencies_by_law if name not in basis_variables
+    )
+    dependent_basis_names = tuple(
+        name for name in basis_variables if name in dependencies_by_law
+    )
+    node_values = MappingProxyType(
+        {
+            name: v_interpolation_info.discrete_states[
+                name.removeprefix("next_")
+            ].to_jax()
+            for name in lottery_variables
+        }
+    )
+    if dependencies_by_law:
         _fail_if_a_read_draw_has_no_nodes_yet(
             target_regime_name=target_regime_name,
-            stochastic_names=lottery_variables,
-            draw_dependent_names=draw_dependent_names,
+            dependencies_by_law=dependencies_by_law,
             v_interpolation_info=v_interpolation_info,
         )
+    if dependent_coordinate_names:
         next_V_interpolator = _get_interpolator_resolving_draws(
             next_V_interpolator=next_V_interpolator,
             bundle=bundle,
             functions=functions,
             stochastic_names=lottery_variables,
-            draw_dependent_names=draw_dependent_names,
-            node_values=MappingProxyType(
-                {
-                    name: v_interpolation_info.discrete_states[
-                        name.removeprefix("next_")
-                    ].to_jax()
-                    for name in lottery_variables
-                }
-            ),
+            draw_dependent_names=dependent_coordinate_names,
+            node_values=node_values,
+        )
+
+    basis_weights = get_next_interpolation_basis_weights_function(
+        functions=functions,
+        transitions=bundle,
+        transition_laws=transition_laws,
+        regime_name=target_regime_name,
+    )
+    joint_basis_weights = _get_joint_weights_function(
+        regime_name=target_regime_name, variables=basis_variables
+    )
+    joint_basis_weights_at_nodes = None
+    basis_node_arg_names: frozenset[str] = frozenset()
+    if dependent_basis_names:
+        joint_basis_weights_at_nodes, basis_node_arg_names = (
+            _get_joint_basis_weights_at_nodes(
+                basis_weights=basis_weights,
+                joint_basis_weights=joint_basis_weights,
+                lottery_variables=lottery_variables,
+                read_draws=frozenset().union(
+                    *(dependencies_by_law[name] for name in dependent_basis_names)
+                ),
+                node_values=node_values,
+            )
         )
 
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
             functions=functions,
             transitions=bundle,
-            targets=[key for key in bundle if key not in draw_dependent_names],
+            targets=[key for key in bundle if key not in dependencies_by_law],
         ),
-        lottery_weights=get_next_stochastic_weights_function(
-            functions=functions,
-            transitions=bundle,
-            transition_laws=transition_laws,
-            regime_name=target_regime_name,
-        ),
-        basis_weights=get_next_interpolation_basis_weights_function(
-            functions=functions,
-            transitions=bundle,
-            transition_laws=transition_laws,
-            regime_name=target_regime_name,
-        ),
+        lottery_weights=lottery_weights,
+        basis_weights=basis_weights,
         joint_lottery_weights=_get_joint_weights_function(
             regime_name=target_regime_name, variables=lottery_variables
         ),
-        joint_basis_weights=_get_joint_weights_function(
-            regime_name=target_regime_name, variables=basis_variables
-        ),
+        joint_basis_weights=joint_basis_weights,
+        joint_basis_weights_at_nodes=joint_basis_weights_at_nodes,
+        basis_node_arg_names=basis_node_arg_names,
+        lottery_axis_names=lottery_variables,
         next_V=productmap(
             func=next_V_interpolator,
             variables=node_variables,
@@ -874,7 +1082,7 @@ def _build_target_continuation(
         ),
         has_lottery_axes=bool(lottery_variables),
         n_basis_axes=len(basis_variables),
-        draw_dependent_names=frozenset(draw_dependent_names),
+        draw_dependent_names=frozenset(dependencies_by_law),
     )
 
 
