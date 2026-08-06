@@ -305,6 +305,25 @@ def _fail_if_runtime_grid_shadows_function(
         )
 
 
+def _phase_variants(func: UserFunction | Phased | None) -> list[UserFunction]:
+    """Return the callables a regime function stands for.
+
+    Three cases, and a list covers all of them so a caller can walk a regime
+    function without first asking which kind it holds:
+
+    - a plain callable stands for itself;
+    - a `Phased` entry is two implementations rather than one callable, so
+      anything that reads a signature has to descend into both;
+    - `None` masks a model-level entry and so stands for no implementation at
+      all — there is no signature to read.
+    """
+    if func is None:
+        return []
+    if isinstance(func, Phased):
+        return [cast("UserFunction", func.solve), cast("UserFunction", func.simulate)]
+    return [func]
+
+
 def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
     """Return the names of functions that compute, or feed, a state transition.
 
@@ -337,7 +356,7 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.append(cast("UserFunction", functions[arg_name]))
+            frontier.extend(_phase_variants(functions[arg_name]))
 
     return frozenset(
         {f"next_{name}" for name in user_regime.state_transitions}

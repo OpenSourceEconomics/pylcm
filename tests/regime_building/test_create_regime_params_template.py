@@ -94,6 +94,40 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
     }
 
 
+def test_create_params_walks_a_phased_function_a_transition_reads(
+    binary_category_class,
+):
+    """A `Phased` function that a state transition reads contributes both variants.
+
+    Classifying an argument by the role that reads it walks from each law of
+    motion through the regime functions it consumes. A phased function is two
+    implementations rather than one callable, so the walk descends into both
+    rather than treating the wrapper as the function.
+    """
+
+    def solve_adjustment(b, solve_rate):  # noqa: ARG001
+        return solve_rate
+
+    def simulate_adjustment(b, simulate_rate):  # noqa: ARG001
+        return simulate_rate
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda adjustment: adjustment},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "adjustment": Phased(solve=solve_adjustment, simulate=simulate_adjustment),
+        },
+    )
+    got = create_regime_params_template(regime)
+    assert got["adjustment"] == {
+        "solve_rate": "no_annotation_found",
+        "simulate_rate": "no_annotation_found",
+    }
+
+
 def test_create_params_with_custom_W_no_extra_params():
     """A custom H with no extra params beyond utility and CE."""
 
