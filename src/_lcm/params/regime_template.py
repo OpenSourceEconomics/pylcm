@@ -101,6 +101,19 @@ def create_regime_params_template(
             *other_regime_state_names,
         )
     }
+    # A constraint is the one within-period consumer that may cut on a next
+    # state the chosen action determines -- the NEGM/DC-EGM durable pattern,
+    # where the budget constraint bounds the next durable stock. The decision
+    # evaluation resolves such a name from this regime's own deterministic law,
+    # so it is that law's output rather than a parameter. Only deterministic
+    # laws qualify: an unrealised stochastic draw is not available within the
+    # period, and only this regime's own states, since a target's value is
+    # produced by the entry and belongs to the transition role.
+    variables_in_constraint_role = variables | {
+        f"next_{state_name}"
+        for state_name, law in user_regime.state_transitions.items()
+        if _is_deterministic_law(law)
+    }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
@@ -117,10 +130,13 @@ def create_regime_params_template(
         # exempt from param-template extraction: pylcm wires those values
         # through `states_actions_params` at call time, so they must not
         # surface as user-facing params in the template.
-        non_params = (
-            variables_in_transition_role
-            if tree_path_from_qname(name)[0] in transition_role
-            else variables
+        non_params = _non_params_for(
+            consumer=tree_path_from_qname(name)[0],
+            user_regime=user_regime,
+            transition_role=transition_role,
+            variables=variables,
+            variables_in_transition_role=variables_in_transition_role,
+            variables_in_constraint_role=variables_in_constraint_role,
         )
         params = {k: v for k, v in sorted(tree.items()) if k not in non_params}
 
@@ -345,6 +361,52 @@ def _callables_in(value: object) -> list[UserFunction]:
             for callable_ in _callables_in(member)
         ]
     return [cast("UserFunction", value)]
+
+
+def _non_params_for(
+    *,
+    consumer: FunctionName,
+    user_regime: UserRegime,
+    transition_role: frozenset[str],
+    variables: set[str],
+    variables_in_transition_role: set[str],
+    variables_in_constraint_role: set[str],
+) -> set[str]:
+    """Return the names this consumer receives from the engine rather than the user.
+
+    Three roles, each with its own reach into next-period vocabulary:
+
+    - a transition, or anything feeding one, sees every `next_<state>` a value
+      could exist for — carried here, declared here, or belonging to a target;
+    - a constraint additionally sees the `next_<state>` names this regime's own
+      deterministic laws produce, which is what lets a budget constraint cut on
+      a next durable stock the chosen action determines;
+    - every other function sees only this period's states, actions, and helper
+      outputs, so an argument spelled `next_<state>` there is a parameter.
+    """
+    if consumer in transition_role:
+        return variables_in_transition_role
+    if consumer in user_regime.constraints:
+        return variables_in_constraint_role
+    return variables
+
+
+def _is_deterministic_law(law: object) -> bool:
+    """Return whether a state's law of motion produces a value within the period.
+
+    A `MarkovTransition` names a draw that has not been realised when the
+    within-period decision is evaluated, so it produces nothing there. A
+    per-target dict carries one law per reachable target and is deterministic
+    only when every cell is; the regime validation already requires the cells to
+    agree on that, so any cell decides.
+    """
+    if isinstance(law, MarkovTransition):
+        return False
+    if isinstance(law, Phased):
+        return _is_deterministic_law(law.solve)
+    if isinstance(law, Mapping):
+        return all(_is_deterministic_law(cell) for cell in law.values())
+    return True
 
 
 def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
