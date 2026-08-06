@@ -12,14 +12,12 @@ from dags import (
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
-    get_next_interpolation_basis_weights_function,
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.transition_laws import (
-    SupportAxes,
     TransitionLaws,
     is_interpolation_basis,
     is_stochastic,
@@ -43,7 +41,12 @@ from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+)
 
 
 def get_Q_and_F(
@@ -55,7 +58,6 @@ def get_Q_and_F(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -82,8 +84,6 @@ def get_Q_and_F(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -109,7 +109,6 @@ def get_Q_and_F(
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -174,7 +173,6 @@ def get_compute_intermediates(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -204,8 +202,6 @@ def get_compute_intermediates(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -230,7 +226,6 @@ def get_compute_intermediates(
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -376,7 +371,6 @@ def _get_compute_CE(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -414,8 +408,6 @@ def _get_compute_CE(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -437,7 +429,6 @@ def _get_compute_CE(
             functions=functions,
             bundle=transitions.get(target_regime_name, MappingProxyType({})),
             transition_laws=transition_laws,
-            support_axes=support_axes,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
         )
@@ -518,65 +509,24 @@ def _get_compute_CE(
             extra_kw = {
                 k: states_actions_params[k] for k in continuation.extra_param_names
             }
-            # The interpolator is indexed, not evaluated, along a node axis. A
-            # declared entry publishes its physical value under the public name
-            # every other law reads; what the target's value function is indexed
-            # by is the private axis, substituted here and nowhere else — so the
-            # physical value stays intact in `next_states` for the dependent
-            # laws, diagnostics, and simulation.
             interpolator_coordinates = {
                 name: val
                 for name, val in next_states.items()
                 if name not in co_map_next_names
-            } | dict(continuation.support_axes)
+            }
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
 
-            if continuation.n_basis_axes:
-                # A declared entry names one value; the basis axes are only how
-                # the target's nodes can express it. Contracting them here states
-                # that value as the single number `Σ_j w_j · V(node_j)` -- the
-                # linear interpolation of the target's value function -- before
-                # any lottery is formed. The coefficients sum to one by
-                # construction, so normalizing here would mask a malformed basis
-                # rather than protect against one.
-                #
-                # An entry whose value depends on a sibling draw has different
-                # coefficients at each node of that draw, so its weights carry
-                # the lottery axes as well and the contraction is elementwise
-                # over the tail. Where they do not, the weights are one vector
-                # per basis axis and `tensordot` contracts them without ever
-                # forming the elementwise product — which is the whole surface,
-                # so building it would cost a copy of the continuation in both
-                # time and memory.
-                if continuation.joint_basis_weights_at_nodes is not None:
-                    basis = continuation.joint_basis_weights_at_nodes(
-                        **{
-                            name: value
-                            for name, value in states_actions_params.items()
-                            if name in continuation.basis_node_arg_names
-                        },
-                        **{
-                            name: next_states[name]
-                            for name in continuation.lottery_axis_names
-                        },
-                    )
-                    next_V_at_stochastic_states_arr = jnp.sum(
-                        next_V_at_stochastic_states_arr * basis,
-                        axis=tuple(range(-continuation.n_basis_axes, 0)),
-                    )
-                else:
-                    next_V_at_stochastic_states_arr = jnp.tensordot(
-                        next_V_at_stochastic_states_arr,
-                        continuation.joint_basis_weights(
-                            **continuation.basis_weights(**states_actions_params)
-                        ),
-                        axes=continuation.n_basis_axes,
-                    )
-
+            # A node the target's own lottery gives zero probability is never
+            # realized, so whatever a law names there -- a value off the target's
+            # support, and so a NaN out of the interpolator -- is not part of the
+            # model. Both aggregation routes drop such a node rather than
+            # multiplying it by its zero weight, since `0 * nan` is `nan`: the
+            # per-target route in `_expectation_over_stochastic_nodes`, the
+            # lottery route in the certainty equivalent's own `aggregate`.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
 
@@ -658,24 +608,12 @@ def _get_compute_CE(
 
         return CE, active_regime_probs
 
-    # A basis formed inside the node axes takes the draw from the node rather than
-    # from the caller, so the pre-axis weight function's arguments are not the
-    # calling closure's. Its own pass-through arguments are, and they are named
-    # separately because the node axes it also takes are supplied here.
     deps = (
         compute_regime_transition_probs,
         *(c.next_states for c in continuations.values()),
         *(c.lottery_weights for c in continuations.values()),
-        *(
-            c.basis_weights
-            for c in continuations.values()
-            if c.joint_basis_weights_at_nodes is None
-        ),
     )
-    extra_arg_names = frozenset().union(
-        *(c.basis_node_arg_names for c in continuations.values()), frozenset()
-    )
-    return compute_CE, deps, extra_arg_names
+    return compute_CE, deps, frozenset()
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -688,27 +626,14 @@ class _TargetContinuation:
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
     """Marginal probabilities of the target's stochastic laws."""
 
-    basis_weights: Callable[..., dict[str, FloatND | IntND]]
-    """Marginal node-basis coefficients of the target's declared entry laws."""
-
     joint_lottery_weights: Callable[..., FloatND]
-    """Outer product of the lottery marginals, over the leading node axes."""
-
-    joint_basis_weights: Callable[..., FloatND]
-    """Outer product of the basis marginals, over the trailing node axes."""
+    """Outer product of the lottery marginals, over the node axes."""
 
     next_V: Callable[..., FloatND]
-    """Target's value function, product-mapped over its node axes.
+    """Target's value function, product-mapped over its lottery axes.
 
-    The axes come in the order `(lottery..., basis...)`, so the basis block is
-    the tail and contracts away against the basis weights.
-    """
-
-    support_axes: MappingProxyType[TransitionFunctionName, Int1D]
-    """Private node axes to index `next_V` along, keyed by public next-state name.
-
-    One entry per declared entry law. The public name produces that law's
-    physical value everywhere else; only the interpolator sees this axis.
+    A declared entry gets no axis: its one value is interpolated on the target's
+    nodes inside the interpolator, so the surface carries genuine draws only.
     """
 
     extra_param_names: frozenset[str]
@@ -720,19 +645,6 @@ class _TargetContinuation:
 
     has_lottery_axes: bool
     """Whether the target draws anything, i.e. whether `next_V` has lottery axes."""
-
-    n_basis_axes: int
-    """Number of trailing axes to contract against the basis weights."""
-
-    joint_basis_weights_at_nodes: Callable[..., FloatND] | None = None
-    """Basis coefficients formed inside the node axes, or `None` if none need to be.
-
-    Set exactly when a declared entry's value depends on a sibling draw, in which
-    case its coefficients differ by node and carry the lottery axes as well.
-    """
-
-    basis_node_arg_names: frozenset[str] = frozenset()
-    """Arguments `joint_basis_weights_at_nodes` takes besides the lottery axes."""
 
     lottery_axis_names: tuple[TransitionFunctionName, ...] = ()
     """Stochastic `next_<state>` names, in the order their axes appear."""
@@ -948,79 +860,23 @@ def _get_interpolator_resolving_draws(
     return interpolate_at_this_node
 
 
-def _get_joint_basis_weights_at_nodes(
-    *,
-    basis_weights: Callable[..., dict[str, FloatND | IntND]],
-    joint_basis_weights: Callable[..., FloatND],
-    lottery_variables: tuple[TransitionFunctionName, ...],
-    read_draws: frozenset[TransitionFunctionName],
-    node_values: MappingProxyType[TransitionFunctionName, FloatND],
-) -> tuple[Callable[..., FloatND], frozenset[str]]:
-    """Build the basis coefficients of an entry whose value depends on a draw.
-
-    An entry names one value, and its coefficients express that value in the
-    target's node basis. When the value differs by node of a sibling draw, so do
-    the coefficients — they have to be formed where the draw has a realized value,
-    which is inside the node axes rather than once ahead of them.
-
-    The result is mapped over *every* lottery axis, not only the ones the entry
-    reads, so its axes line up with the value surface it will be contracted
-    against. It is the same shape as that surface, so nothing is materialized
-    that the contraction did not already require.
-
-    Args:
-        basis_weights: DAG producing this target's node-basis weight vectors.
-        joint_basis_weights: Outer product over the basis groups' weight vectors.
-        lottery_variables: Ordered stochastic `next_<state>` names, in the order
-            their axes appear on the value surface.
-        read_draws: Draws the entries read, substituted from the node.
-        node_values: Immutable mapping of each stochastic law to its nodes.
-
-    Returns:
-        Tuple of the mapped function and the argument names it takes besides the
-        lottery variables.
-
-    """
-    basis_args = get_union_of_args([basis_weights])
-    passed_through = frozenset(basis_args) - read_draws
-    arg_names = sorted(passed_through | set(lottery_variables))
-
-    @with_signature(args=arg_names)
-    def joint_basis_at_this_node(**kwargs: FloatND) -> FloatND:
-        drawn = {
-            name: node_values[name][kwargs[name].astype(jnp.int32)]
-            for name in read_draws
-        }
-        weights = basis_weights(
-            **{k: v for k, v in kwargs.items() if k in passed_through}, **drawn
-        )
-        return joint_basis_weights(**weights)
-
-    mapped = productmap(
-        func=joint_basis_at_this_node,
-        variables=lottery_variables,
-        batch_sizes=dict.fromkeys(lottery_variables, 0),
-    )
-    return mapped, passed_through
-
-
 def _build_target_continuation(
     *,
     target_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
-    A law that carries weights contributes a node axis to the interpolated value
-    function either way, but only a lottery's weights are probabilities. The two
-    groups are kept apart here, with the lottery axes product-mapped first, so
-    the basis axes sit at the tail and can be contracted before the certainty
-    equivalent ever sees the surface.
+    A law that carries weights is either a lottery or a declared entry, and only
+    a lottery's weights are probabilities. The distinction decides what the value
+    function is mapped over: a lottery gets a node axis, because its outcome is
+    genuinely uncertain and every node can occur; a declared entry names one
+    value, which the interpolator places on the target's nodes without the axis
+    ever being formed.
 
     Args:
         target_regime_name: Regime the continuation leads into.
@@ -1028,8 +884,6 @@ def _build_target_continuation(
         bundle: This target's unqualified `next_<state>` transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
@@ -1045,7 +899,12 @@ def _build_target_continuation(
         for key in bundle
         if is_interpolation_basis(transition_laws, target_regime_name, key)
     )
-    node_variables = (*lottery_variables, *basis_variables)
+    # A declared entry names one value on the target's node axis, so it is
+    # interpolated there rather than enumerated: only a genuine draw gets an axis
+    # of its own on the continuation surface. Enumerating a declared entry instead
+    # would make the surface Cartesian in the entered dimensions -- the product of
+    # their node counts at every state-action point -- to state a single number.
+    node_variables = lottery_variables
 
     V_arr_name = "next_V_arr"
     next_V_interpolator = get_V_interpolator(
@@ -1053,6 +912,9 @@ def _build_target_continuation(
         state_prefix="next_",
         V_arr_name=V_arr_name,
         co_map_state_names=co_map_state_names,
+        entered_process_names=tuple(
+            name.removeprefix("next_") for name in basis_variables
+        ),
     )
 
     # A law reading one of this target's own draws has one value per node, so it
@@ -1073,12 +935,10 @@ def _build_target_continuation(
     dependencies_by_law = _draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_variables
     )
-    dependent_coordinate_names = tuple(
-        name for name in dependencies_by_law if name not in basis_variables
-    )
-    dependent_basis_names = tuple(
-        name for name in basis_variables if name in dependencies_by_law
-    )
+    # A declared entry is a coordinate like any other now, so a law reading a
+    # sibling draw is resolved inside that draw's axes whether it feeds a
+    # coordinate or an entry.
+    dependent_coordinate_names = tuple(dependencies_by_law)
     node_values = MappingProxyType(
         {
             name: v_interpolation_info.discrete_states[
@@ -1103,30 +963,6 @@ def _build_target_continuation(
             node_values=node_values,
         )
 
-    basis_weights = get_next_interpolation_basis_weights_function(
-        functions=functions,
-        transitions=bundle,
-        transition_laws=transition_laws,
-        regime_name=target_regime_name,
-    )
-    joint_basis_weights = _get_joint_weights_function(
-        regime_name=target_regime_name, variables=basis_variables
-    )
-    joint_basis_weights_at_nodes = None
-    basis_node_arg_names: frozenset[str] = frozenset()
-    if dependent_basis_names:
-        joint_basis_weights_at_nodes, basis_node_arg_names = (
-            _get_joint_basis_weights_at_nodes(
-                basis_weights=basis_weights,
-                joint_basis_weights=joint_basis_weights,
-                lottery_variables=lottery_variables,
-                read_draws=frozenset().union(
-                    *(dependencies_by_law[name] for name in dependent_basis_names)
-                ),
-                node_values=node_values,
-            )
-        )
-
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
             functions=functions,
@@ -1134,25 +970,19 @@ def _build_target_continuation(
             targets=[key for key in bundle if key not in dependencies_by_law],
         ),
         lottery_weights=lottery_weights,
-        basis_weights=basis_weights,
         joint_lottery_weights=_get_joint_weights_function(
             regime_name=target_regime_name, variables=lottery_variables
         ),
-        joint_basis_weights=joint_basis_weights,
-        joint_basis_weights_at_nodes=joint_basis_weights_at_nodes,
-        basis_node_arg_names=basis_node_arg_names,
         lottery_axis_names=lottery_variables,
         next_V=productmap(
             func=next_V_interpolator,
             variables=node_variables,
             batch_sizes=dict.fromkeys(node_variables, 0),
         ),
-        support_axes=support_axes.get(target_regime_name, MappingProxyType({})),
         extra_param_names=frozenset(
             get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         ),
         has_lottery_axes=bool(lottery_variables),
-        n_basis_axes=len(basis_variables),
         draw_dependent_names=frozenset(dependencies_by_law),
     )
 
