@@ -156,6 +156,10 @@ def _resolve_process_law_params(
                     slot_owner[regime_name, slot] = (state_name, param_name)
                     consumed.add(candidates[0])
 
+    # A varying leaf is rejected before the boundary cast, which speaks to the
+    # dtype contract rather than to the process's own one-number-per-field law.
+    _fail_if_any_process_law_field_varies(raw=raw, slot_owner=slot_owner)
+
     # The same boundary cast every other fixed parameter goes through, so a
     # process law has one dtype and leaf-type contract rather than a second one.
     # It also raises on the leaf types no parameter may take, naming the qname.
@@ -202,6 +206,57 @@ def _processes_in(declaration: StateDeclaration) -> list[_ContinuousStochasticPr
     return []
 
 
+def _fail_if_any_process_law_field_varies(
+    *,
+    raw: Mapping[RegimeName, Mapping[str, Any]],
+    slot_owner: Mapping[tuple[RegimeName, str], tuple[StateName, str]],
+) -> None:
+    """Reject every process law field that was given more than one number.
+
+    Args:
+        raw: Mapping of regime names to the process law slots collected for them.
+        slot_owner: Mapping of `(regime, slot)` to the state and field it fills.
+
+    Raises:
+        InvalidParamsError: If any value holds more than one number.
+
+    """
+    for regime_name, regime_slots in raw.items():
+        for slot, value in regime_slots.items():
+            state_name, param_name = slot_owner[regime_name, slot]
+            _fail_if_a_process_law_field_varies(
+                value=value,
+                qname=qname_from_tree_path((regime_name, state_name, param_name)),
+            )
+
+
+def _fail_if_a_process_law_field_varies(*, value: Any, qname: str) -> None:  # noqa: ANN401
+    """Reject a process law field given more than one number.
+
+    Args:
+        value: The value supplied for the field, before any dtype cast.
+        qname: Qualified name of the parameter, named in the rejection.
+
+    Raises:
+        InvalidParamsError: If the value holds more than one number.
+
+    """
+    shape = getattr(value, "shape", ())
+    if not shape:
+        return
+    msg = (
+        f"The fixed parameter {qname!r} pins a stochastic process's law, which "
+        f"is one number per field, but its value has shape {shape}. A process's "
+        f"law is fixed at construction, so this field takes one number. For a "
+        f"law that varies with age, build the state with `AgeSpecializedGrid`, "
+        f"which gives each age its own process and carries the shape-invariance "
+        f"contract the engine needs. For one that varies across subjects, the "
+        f"varying quantity belongs in a deterministic function reading a state, "
+        f"not in the process's own law."
+    )
+    raise InvalidParamsError(msg)
+
+
 def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa: ANN401
     """Return a canonically cast leaf as the Python scalar a process field takes.
 
@@ -222,16 +277,7 @@ def _as_process_field(*, value: Any, qname: str) -> float | int | bool:  # noqa:
 
     """
     array = jnp.asarray(value)
-    if array.ndim != 0:
-        msg = (
-            f"The fixed parameter {qname!r} pins a stochastic process's law, "
-            f"which is one number per field, but its value has shape "
-            f"{array.shape}. Entering a process the source does not carry "
-            f"requires a law fixed at construction, so this field must be a "
-            f"scalar; pass an age- or subject-varying value at runtime instead, "
-            f"on a process the source carries."
-        )
-        raise InvalidParamsError(msg)
+    _fail_if_a_process_law_field_varies(value=value, qname=qname)
     if array.dtype.kind == "b":
         return bool(array)
     if array.dtype.kind in "iu":

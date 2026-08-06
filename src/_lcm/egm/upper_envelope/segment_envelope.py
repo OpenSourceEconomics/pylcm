@@ -426,11 +426,27 @@ def _emit_envelope(
     high = sub_cells.owner_right_index
     live = jnp.arange(n_slots) < n_live
 
-    own_value = _line_value(low, high, left, endog_grid, value)
-    own_policy = _line_value(low, high, left, endog_grid, policy)
+    own_value = _line_value(
+        low=low, high=high, x_query=left, endog_grid=endog_grid, ordinate=value
+    )
+    own_policy = _line_value(
+        low=low, high=high, x_query=left, endog_grid=endog_grid, ordinate=policy
+    )
     previous = jnp.clip(jnp.arange(n_slots) - 1, 0, n_slots - 1)
-    prior_value = _line_value(low[previous], high[previous], left, endog_grid, value)
-    prior_policy = _line_value(low[previous], high[previous], left, endog_grid, policy)
+    prior_value = _line_value(
+        low=low[previous],
+        high=high[previous],
+        x_query=left,
+        endog_grid=endog_grid,
+        ordinate=value,
+    )
+    prior_policy = _line_value(
+        low=low[previous],
+        high=high[previous],
+        x_query=left,
+        endog_grid=endog_grid,
+        ordinate=policy,
+    )
 
     is_first = jnp.arange(n_slots) == 0
     kinks = (
@@ -449,11 +465,19 @@ def _emit_envelope(
     closing_valid = (n_live > 0)[None]
     closing_grid = right[last][None]
     closing_policy = _line_value(
-        low[last], high[last], right[last], endog_grid, policy
+        low=low[last],
+        high=high[last],
+        x_query=right[last],
+        endog_grid=endog_grid,
+        ordinate=policy,
     )[None]
-    closing_value = _line_value(low[last], high[last], right[last], endog_grid, value)[
-        None
-    ]
+    closing_value = _line_value(
+        low=low[last],
+        high=high[last],
+        x_query=right[last],
+        endog_grid=endog_grid,
+        ordinate=value,
+    )[None]
 
     row_valid = jnp.concatenate([row_valid, closing_valid])
     row_grid = jnp.concatenate([row_grid, closing_grid])
@@ -477,6 +501,7 @@ def _emit_envelope(
 
 
 def _line_value(
+    *,
     low: IntND,
     high: IntND,
     x_query: FloatND,

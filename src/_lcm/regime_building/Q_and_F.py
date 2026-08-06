@@ -1664,6 +1664,12 @@ def _get_compute_CE(
 
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
+            # A target carrying no mass here is never consulted, so whatever its
+            # entry law names at this point -- a value off the target's support,
+            # or nothing meaningful at all -- must not reach the aggregate.
+            # The value is replaced rather than the product masked: `0 * nan` is
+            # `nan`, and zeroing the value leaves the derivative finite too.
+            carries_mass = target_probability > 0
 
             if reduces_per_target:
                 # Weighted average of the next value function at the stochastic
@@ -1712,7 +1718,7 @@ def _get_compute_CE(
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
-                lottery_values.append(values)
+                lottery_values.append(jnp.where(carries_mass, values, zero))
                 lottery_weights.append(target_probability * node_weights)
 
         # ONE reduction for the whole regime mixture: stack the operands and
@@ -1966,32 +1972,6 @@ def _scalar_target_contribution(
             # stateless target and put this term outside the value-ordered reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
     return mixture_terms, values, weights, probability_mass
-
-
-def _neutralize_where_unreachable(*, value: FloatND, prob: FloatND) -> FloatND:
-    """Return `value`, replaced by zero wherever the target carries no probability.
-
-    `-inf` is the ordinary value of a state at which every action is infeasible
-    (`max_Q_over_a` masks with `-jnp.inf`), and a regime transition may send
-    exactly zero probability to the regime carrying it. The product is then
-    `0 · -inf`, which floating point calls NaN and an expectation calls zero: an
-    event of probability zero carries no weight, whatever value sits on it.
-    Leaving the NaN in place would not merely mislabel that target — every
-    target enters the same certainty equivalent, so the states that *are*
-    reachable would lose their value because of one that is not.
-
-    The value is neutralized rather than the product, so neither operand of the
-    multiplication is infinite where the probability vanishes. Masking the
-    product instead would still evaluate `0 · -inf` in the untaken `jnp.where`
-    branch: primal-safe, but it poisons the gradient.
-
-    A probability is compared against zero exactly, without a tolerance. The
-    zero here is structural — a transition that does not go somewhere — not a
-    small number that rounded down, so its provenance is exact and a tolerance
-    would instead drop genuinely reachable targets of small probability.
-    """
-    unreachable = prob == 0.0
-    return jnp.where(unreachable, jnp.zeros_like(value), value)
 
 
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
