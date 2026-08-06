@@ -103,7 +103,7 @@ def validate_V(
                 age=float(age),
                 period=period,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logging.getLogger("lcm").warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
