@@ -461,24 +461,10 @@ def _get_compute_CE(
             # A node the target's own lottery gives zero probability is never
             # realized, so whatever a law names there -- a value off the target's
             # support, and so a NaN out of the interpolator -- is not part of the
-            # model. Liveness is established here, before support can enter any
-            # arithmetic: `0 * nan` is `nan`, so an impossible node left to be
-            # multiplied away would destroy the possible ones beside it.
-            live_lottery_node = (
-                joint_next_stochastic_states_weights > 0
-                if continuation.has_lottery_axes
-                else None
-            )
-
-            # A dependent law can land an impossible node off support
-            # without any basis being formed -- an interpolated coordinate read
-            # off that node is enough -- so the value is zeroed there too, and
-            # both the per-target and the lottery route see live nodes only.
-            if live_lottery_node is not None:
-                next_V_at_stochastic_states_arr = jnp.where(
-                    live_lottery_node, next_V_at_stochastic_states_arr, 0.0
-                )
-
+            # model. Both aggregation routes drop such a node rather than
+            # multiplying it by its zero weight, since `0 * nan` is `nan`: the
+            # per-target route in `_expectation_over_stochastic_nodes`, the
+            # lottery route in the certainty equivalent's own `aggregate`.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
             # A target carrying no mass here is never consulted, so whatever its
