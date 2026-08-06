@@ -595,11 +595,17 @@ def _get_compute_CE(
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
                 # Same rule, applied to the value rather than to a product: the
-                # aggregate reduces values and weights together, so an
-                # unreachable target's value has to be neutral before it is
-                # collected.
-                lottery_values.append(jnp.where(target_probability == 0, zero, values))
-                lottery_weights.append(target_probability * node_weights)
+                # aggregate reduces values and weights together, so a node that
+                # cannot occur has to be neutral before it is collected.
+                #
+                # The test is each node's *final* weight, not the target
+                # probability alone. A target reached with certainty still
+                # carries nodes of probability zero -- a Markov row with a zero
+                # entry beside a state where every action is infeasible -- and
+                # the aggregate cannot tell such a node from a live one.
+                final_weights = target_probability * node_weights
+                lottery_values.append(jnp.where(final_weights == 0, zero, values))
+                lottery_weights.append(final_weights)
 
         if reduces_per_target and (period_targets or scalar_targets):
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by

@@ -233,3 +233,24 @@ def test_massless_joint_lottery_aggregates_to_nan() -> None:
         params={},
     )
     assert bool(jnp.isnan(got))
+
+
+def test_a_null_node_inside_a_certain_target_is_a_null_event() -> None:
+    """A target reached with certainty still drops its zero-probability nodes.
+
+    The stateful collector hands values and weights to the aggregate together,
+    so a node that cannot occur has to be neutral before it is collected — the
+    target's own probability says nothing about it.
+    """
+    values = _array([-jnp.inf, 1.0, 2.0])
+    node_weights = _array([0.0, 0.5, 0.5])
+    target_probability = _float(1.0)
+
+    final_weights = target_probability * node_weights
+    collected = jnp.where(final_weights == 0, _float(0.0), values)
+
+    got = _InheritedLinearExpectation().aggregate(
+        values=collected, weights=final_weights, params={}
+    )
+
+    np.testing.assert_array_almost_equal(got, 1.5, decimal=DECIMAL_PRECISION)
