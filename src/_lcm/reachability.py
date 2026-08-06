@@ -28,7 +28,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 from _lcm.typing import RegimeName
 
@@ -157,7 +157,11 @@ def candidate_targets_from_transition(
     if transition is None:
         return ()
     if isinstance(transition, Mapping):
-        return tuple(sorted(transition))
+        # `transition` is deliberately `object` — the slot holds any of the
+        # transition forms. A mapping is the per-target form, whose keys are
+        # regime names by construction.
+        per_target = cast("Mapping[RegimeName, object]", transition)
+        return tuple(sorted(per_target))
     return tuple(sorted(all_regime_names))
 
 

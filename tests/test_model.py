@@ -5,6 +5,8 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearAggregator,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -135,7 +137,12 @@ def test_regime_overlapping_states_actions(binary_category_class):
         RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
-        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"regime": regime},
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_regime_transition_must_be_callable():

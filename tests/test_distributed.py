@@ -16,7 +16,7 @@ from _lcm.solution.backward_induction import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import fixed_transition
+from lcm import LinearAggregator, LinearExpectation, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -261,7 +261,7 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
     pending kernels leak from solve to simulate.
     """
     period_to_regime_to_V_arr = correct_distributed_model.solve(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
     )
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
@@ -280,7 +280,7 @@ def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model)
     `raw_results`) start with concrete arrays rather than pending kernels.
     """
     res = correct_distributed_model.simulate(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
         initial_conditions={
             "age": jnp.full(36, 0),
@@ -335,7 +335,7 @@ def test_save_load_preserves_sharding_and_dataframe(
     in-memory result.
     """
     res = correct_distributed_model.simulate(
-        log_level="off",
+        log_level="debug",
         params={"discount_factor": 0.95},
         initial_conditions={
             "age": jnp.full(36, 0),
@@ -564,7 +564,12 @@ def test_distributed_action_grid_raises_at_regime_init():
         transition=lambda age: age,
     )
     with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"regime": regime},
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 @_skip_pytest_parallel

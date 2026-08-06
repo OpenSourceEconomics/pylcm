@@ -11,6 +11,7 @@ from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
 )
 from _lcm.regime_building.processing import process_regimes
+from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
 from tests.conftest import build_prepared_structure
@@ -24,7 +25,10 @@ def test_get_next_state_function_with_solve_target():
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
-        user_regimes=user_regimes, derived_categoricals={}
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         user_regimes=finalized_user_regimes,

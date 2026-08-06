@@ -576,6 +576,7 @@ def _build_solution_phase(
 
     """
     core = _process_regime_core(
+        koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
         state_transitions=spec.solution.state_transitions,
@@ -667,6 +668,7 @@ def _build_solution_phase(
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
             co_map_state_names=co_map_state_names,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             grid_schedule=grid_schedule,
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -685,6 +687,7 @@ def _build_solution_phase(
             state_action_space=state_action_space,
             grids=all_grids[regime_name],
             enable_jit=enable_jit,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             # F4: diagnostics recompute on the SAME period-specific target grid as the
             # primary solve (not the representative grid).
@@ -824,6 +827,7 @@ def _build_simulation_phase(
         name: spec.solution.functions[name] for name in carried_only
     }
     core = _process_regime_core(
+        koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
         state_transitions=spec.simulation.state_transitions,
@@ -911,6 +915,7 @@ def _build_simulation_phase(
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
+            koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             grid_schedule=grid_schedule,
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -1014,11 +1019,16 @@ class _CoreResult:
     """Per-target regime transition probability functions (params renamed),
     or `None` when the regime transition is coarse or absent."""
 
+    koopmans_aggregator: EconFunction | None
+    """The Bellman aggregator with params renamed to qnames; `None` in a
+    terminal regime."""
+
 
 def _process_regime_core(
     *,
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, UserFunction],
+    koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -1036,6 +1046,8 @@ def _process_regime_core(
     Args:
         functions: Phase-resolved regime functions for this build.
         constraints: Phase-resolved constraint functions.
+        koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
+            terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
         nested_transitions: Per-target transition bundles for internal
@@ -1197,6 +1209,16 @@ def _process_regime_core(
         regime_params_template=regime_params_template,
     )
 
+    processed_koopmans_aggregator = (
+        None
+        if koopmans_aggregator is None
+        else _process_one_function(
+            func=koopmans_aggregator,
+            regime_params_template=regime_params_template,
+            param_key="koopmans_aggregator",
+        )
+    )
+
     return _CoreResult(
         functions=phase_functions,
         constraints=processed_constraints,
@@ -1204,6 +1226,7 @@ def _process_regime_core(
         stochastic_transition_names=stochastic_transition_names,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
+        koopmans_aggregator=processed_koopmans_aggregator,
     )
 
 
@@ -2236,8 +2259,9 @@ def _build_Q_and_F_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -2270,6 +2294,8 @@ def _build_Q_and_F_per_period(
         regime_to_v_interpolation_info: Mapping of regime names to representative
             V-interpolation info (the age-invariant fallback).
         flat_param_names: Frozenset of flat parameter names for the regime.
+        koopmans_aggregator: The regime's Bellman aggregator, with params
+            renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent, or `None`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
         period_to_regime_v_interp: Per-period continuation interpolation info
@@ -2327,6 +2353,7 @@ def _build_Q_and_F_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
+            koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
         )
 

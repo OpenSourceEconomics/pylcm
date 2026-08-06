@@ -27,13 +27,13 @@ from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.age_normalization import _regime_has_markers
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
-from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
     process_regimes,
 )
+from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -276,7 +276,8 @@ def _validate_all_variables_used(
     Each state or action must appear in at least one of:
     - The concurrent valuation (utility or constraints)
     - A transition function
-    - A regime function whose output H consumes at the Bellman step
+    - A regime function whose output the Koopmans aggregator consumes at
+      the Bellman step
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
@@ -343,7 +344,14 @@ def _validate_all_variables_used(
                 if name.startswith("next_")
                 and not getattr(user_functions[name], "_is_auto_identity", False)
             ),
-            *get_dag_targets_consumed_by_H(user_functions),
+            # Both phases, because a `Phased` aggregator may consume a variable
+            # in only one of them and the variable is used either way.
+            *get_dag_targets_consumed_by_W(
+                user_functions, user_regime.get_koopmans_aggregator(phase="solve")
+            ),
+            *get_dag_targets_consumed_by_W(
+                user_functions, user_regime.get_koopmans_aggregator(phase="simulate")
+            ),
         ]
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False

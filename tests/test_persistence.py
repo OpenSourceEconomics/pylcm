@@ -101,7 +101,7 @@ def model_and_params():
 @pytest.fixture
 def solved(model_and_params):
     model, params = model_and_params
-    return model.solve(params=params, log_level="off")
+    return model.solve(params=params, log_level="debug")
 
 
 # -- save_solution / load_solution ---------------------------------------------------
@@ -153,7 +153,7 @@ def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
 
 def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     model.simulate(
         params=params,
@@ -223,7 +223,7 @@ def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
 
 def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     model.simulate(
         params=params,
@@ -261,7 +261,7 @@ def test_snapshot_contains_environment_files(tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
     assert (snap_dir / "metadata.json").exists()
     assert (snap_dir / "REPRODUCE.md").exists()
@@ -281,7 +281,7 @@ def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
     assert (snap_dir / "pyproject.toml").exists()
     assert (snap_dir / "pixi.lock").exists()
@@ -291,7 +291,7 @@ def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
     assert (snap_dir / "arrays.h5").exists()
     assert (snap_dir / "model.pkl").exists()
     assert (snap_dir / "params.pkl").exists()
@@ -301,7 +301,7 @@ def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, ca
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
     with (
         patch("lcm.persistence._get_platform", return_value="fake_arch-FakeOS"),
@@ -315,7 +315,7 @@ def test_load_snapshot_with_exclude(tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
     snapshot = load_snapshot(snap_dir, exclude=["period_to_regime_to_V_arr"])
     assert isinstance(snapshot, SolveSnapshot)
@@ -330,14 +330,14 @@ def test_solve_snapshot_round_trip(tmp_path, model_and_params):
         params=params, log_level="debug", log_path=tmp_path
     )
 
-    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
     snapshot = load_snapshot(snap_dir)
 
     # Verify the loaded model can re-solve
     assert isinstance(snapshot.model, Model)
     assert snapshot.params is not None
     period_to_regime_to_V_arr_2 = snapshot.model.solve(
-        params=snapshot.params, log_level="off"
+        params=snapshot.params, log_level="debug"
     )
     for period in period_to_regime_to_V_arr:
         for regime_name in period_to_regime_to_V_arr[period]:

@@ -1,20 +1,21 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
-from _lcm.certainty_equivalent import CertaintyEquivalent, resolve_certainty_equivalent
-from _lcm.regime_building.h_dag import _get_build_H_kwargs
+from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
+from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     QAndFFunction,
     RegimeName,
@@ -39,8 +40,9 @@ def get_Q_and_F(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
-    certainty_equivalent: CertaintyEquivalent | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -52,19 +54,22 @@ def get_Q_and_F(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Graph targets whose continuation enters E[V] this period.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
             info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation V —
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -72,79 +77,20 @@ def get_Q_and_F(
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    state_transitions = {}
-    next_stochastic_states_weights = {}
-    joint_weights_from_marginals = {}
-    next_V = {}
-
-    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
-    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
-
-    for target_regime_name in period_targets:
-        # Transitions from the current regime to the target regime
-        bundle = transitions.get(target_regime_name, MappingProxyType({}))
-
-        # Functions required to calculate the expected continuation values
-        state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=functions,
-            transitions=bundle,
-        )
-        next_stochastic_states_weights[target_regime_name] = (
-            get_next_stochastic_weights_function(
-                functions=functions,
-                transitions=bundle,
-                stochastic_transition_names=stochastic_transition_names,
-                regime_name=target_regime_name,
-            )
-        )
-        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=bundle,
-            stochastic_transition_names=stochastic_transition_names,
-            regime_name=target_regime_name,
-        )
-        V_arr_name = "next_V_arr"
-        next_V_interpolator = get_V_interpolator(
-            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
-            state_prefix="next_",
-            V_arr_name=V_arr_name,
-            co_map_state_names=co_map_state_names,
-        )
-        # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
-        # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
-        next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
-        )
-        stochastic_variables = tuple(
-            key for key in bundle if key in stochastic_transition_names
-        )
-        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
-        next_V[target_regime_name] = productmap(
-            func=next_V_interpolator,
-            variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
-        )
-
-    # ----------------------------------------------------------------------------------
-    # Create the state-action value and feasibility function
-    # ----------------------------------------------------------------------------------
-
-    _build_H_kwargs = _get_build_H_kwargs(functions)
-    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
-        certainty_equivalent
+    compute_CE, continuation_deps = _get_compute_CE(
+        functions=functions,
+        period_targets=period_targets,
+        transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        certainty_equivalent=certainty_equivalent,
+        co_map_state_names=co_map_state_names,
     )
-
-    # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
-    # induction co-map, so their `next_`-prefixed coordinates are not passed to
-    # the interpolator (which no longer indexes those axes).
-    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        deps=[
-            U_and_F,
-            compute_regime_transition_probs,
-            *list(state_transitions.values()),
-            *list(next_stochastic_states_weights.values()),
-        ],
+        deps=[U_and_F, *continuation_deps],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
         exclude=frozenset(),
     )
@@ -167,77 +113,17 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-            compute_regime_transition_probs(**states_actions_params)
-        )
         U_arr, F_arr = U_and_F(**states_actions_params)
-        active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+        CE, _ = compute_CE(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=jnp.zeros_like(U_arr),
+            states_actions_params=states_actions_params,
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in period_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
-            )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](**states_actions_params)
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime_name
-            ](**marginal_next_stochastic_states_weights)
-
-            # As we productmap'd the value function over the stochastic variables, the
-            # resulting next value function gets a new dimension for each stochastic
-            # variable.
-            extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
-            }
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **{
-                    name: val
-                    for name, val in next_states.items()
-                    if name not in _co_map_next_names
-                },
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
-                **extra_kw,
-            )
-            if ce is not None:
-                next_V_at_stochastic_states_arr = ce.transform(
-                    value=next_V_at_stochastic_states_arr,
-                    **{
-                        arg: states_actions_params[flat_name]
-                        for arg, flat_name in ce_transform_flat_names.items()
-                    },
-                )
-
-            # We then take the weighted average of the next value function at the
-            # stochastic states to get the expected next value function.
-            if next_V_has_stochastic_states[target_regime_name]:
-                next_V_expected_arr = jnp.average(
-                    next_V_at_stochastic_states_arr,
-                    weights=joint_next_stochastic_states_weights,
-                )
-            else:
-                next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
-            )
-
-        if ce is not None:
-            E_next_V = ce.inverse(
-                value=E_next_V,
-                **{
-                    arg: states_actions_params[flat_name]
-                    for arg, flat_name in ce_inverse_flat_names.items()
-                },
-            )
-
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
-            E_next_V=E_next_V,
-            **_build_H_kwargs(states_actions_params),
+            CE=CE,
+            **_build_W_kwargs(states_actions_params),
         )
 
         # Handle cases when there is only one state.
@@ -257,7 +143,9 @@ def get_compute_intermediates(
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    certainty_equivalent: CertaintyEquivalent | None = None,
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
+    co_map_state_names: tuple[StateName, ...],
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -272,7 +160,8 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Graph targets whose continuation enters E[V] this period.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
@@ -281,71 +170,34 @@ def get_compute_intermediates(
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
+        koopmans_aggregator: The regime's Bellman aggregator, combining
+            utility and the certainty equivalent into `Q`.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None` for the linear expectation.
+        co_map_state_names: Tuple of state names co-mapped with the
+            continuation V in the solve kernel. The diagnostics pass an empty
+            tuple: they are handed the full, un-sliced value arrays and map
+            over every state, so no axis has been sliced off to compensate for.
 
     Returns:
-        Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
+        Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    state_transitions = {}
-    next_stochastic_states_weights = {}
-    joint_weights_from_marginals = {}
-    next_V = {}
-
-    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
-    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
-
-    for target_regime_name in period_targets:
-        bundle = transitions.get(target_regime_name, MappingProxyType({}))
-        state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=functions,
-            transitions=bundle,
-        )
-        next_stochastic_states_weights[target_regime_name] = (
-            get_next_stochastic_weights_function(
-                functions=functions,
-                transitions=bundle,
-                stochastic_transition_names=stochastic_transition_names,
-                regime_name=target_regime_name,
-            )
-        )
-        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            transitions=bundle,
-            stochastic_transition_names=stochastic_transition_names,
-            regime_name=target_regime_name,
-        )
-        V_arr_name = "next_V_arr"
-        next_V_interpolator = get_V_interpolator(
-            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
-            state_prefix="next_",
-            V_arr_name=V_arr_name,
-        )
-        next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
-        )
-        stochastic_variables = tuple(
-            key for key in bundle if key in stochastic_transition_names
-        )
-        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
-        next_V[target_regime_name] = productmap(
-            func=next_V_interpolator,
-            variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
-        )
-
-    ce, ce_transform_flat_names, ce_inverse_flat_names = resolve_certainty_equivalent(
-        certainty_equivalent
+    compute_CE, continuation_deps = _get_compute_CE(
+        functions=functions,
+        period_targets=period_targets,
+        transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        certainty_equivalent=certainty_equivalent,
+        co_map_state_names=co_map_state_names,
     )
+    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
-        deps=[
-            U_and_F,
-            compute_regime_transition_probs,
-            *list(state_transitions.values()),
-            *list(next_stochastic_states_weights.values()),
-        ],
+        deps=[U_and_F, *continuation_deps],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
         exclude=frozenset(),
     )
@@ -364,63 +216,20 @@ def get_compute_intermediates(
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
         """Compute all Q_and_F intermediates."""
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-            compute_regime_transition_probs(**states_actions_params)
-        )
         U_arr, F_arr = U_and_F(**states_actions_params)
-        active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+        CE, active_regime_probs = compute_CE(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            zero=jnp.zeros_like(U_arr),
+            states_actions_params=states_actions_params,
         )
 
-        E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in period_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
-            )
-            marginal = next_stochastic_states_weights[target_regime_name](
-                **states_actions_params,
-            )
-            joint = joint_weights_from_marginals[target_regime_name](**marginal)
-            extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
-            }
-            next_V_stoch = next_V[target_regime_name](
-                **next_states,
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
-                **extra_kw,
-            )
-            if ce is not None:
-                next_V_stoch = ce.transform(
-                    value=next_V_stoch,
-                    **{
-                        arg: states_actions_params[flat_name]
-                        for arg, flat_name in ce_transform_flat_names.items()
-                    },
-                )
-            contribution = (
-                jnp.average(next_V_stoch, weights=joint)
-                if next_V_has_stochastic_states[target_regime_name]
-                else jnp.average(next_V_stoch)
-            )
-            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
-
-        if ce is not None:
-            E_next_V = ce.inverse(
-                value=E_next_V,
-                **{
-                    arg: states_actions_params[flat_name]
-                    for arg, flat_name in ce_inverse_flat_names.items()
-                },
-            )
-
-        Q_arr = functions["H"](
+        Q_arr = koopmans_aggregator(
             utility=U_arr,
-            E_next_V=E_next_V,
-            **_get_build_H_kwargs(functions)(states_actions_params),
+            CE=CE,
+            **_build_W_kwargs(states_actions_params),
         )
 
-        return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
+        return U_arr, F_arr, CE, Q_arr, active_regime_probs
 
     return compute_intermediates
 
@@ -480,6 +289,315 @@ def get_Q_and_F_terminal(
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
+
+
+def _get_compute_CE(
+    *,
+    functions: EconFunctionsMapping,
+    period_targets: tuple[RegimeName, ...],
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    certainty_equivalent: CertaintyEquivalent | None,
+    co_map_state_names: tuple[StateName, ...],
+) -> tuple[
+    Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
+    tuple[Callable[..., Any], ...],
+]:
+    """Build the closure that aggregates next period's value into `CE`.
+
+    The single continuation-aggregation site of the engine: both the Bellman
+    `Q` and the NaN diagnostics call the closure this returns, so they cannot
+    disagree. The continuation is a lottery over the stochastic nodes of every
+    reachable target regime, weighted by that target's regime-transition
+    probability:
+
+    - Without a certainty equivalent, it is aggregated as the linear
+      expectation `Σ_r p_r · E_w[V'_r]`.
+    - With one, the whole joint lottery is handed to
+      `CertaintyEquivalent.aggregate` in one piece, which applies the
+      transform before every expectation and inverts exactly once. Flattening
+      before aggregating is what lets `PowerMean` anchor the transform, which
+      a per-target `transform -> reduce -> inverse` decomposition cannot.
+
+    Args:
+        functions: Immutable mapping of function names to internal user functions.
+        period_targets: Graph targets whose continuation enters the certainty
+            equivalent this period.
+        transitions: Immutable mapping of transition names to transition functions.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
+        compute_regime_transition_probs: Regime transition probability function
+            for solve.
+        regime_to_v_interpolation_info: Immutable mapping of regime names to
+            V-interpolation info.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None` for the linear expectation.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V.
+
+    Returns:
+        Tuple of the closure returning `(CE, active_regime_probs)` and the
+        dependencies whose arguments must enter the calling closure's signature.
+
+    """
+    state_transitions = {}
+    next_stochastic_states_weights = {}
+    joint_weights_from_marginals = {}
+    next_V = {}
+
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
+    next_V_has_stochastic_states: dict[RegimeName, bool] = {}
+
+    for target_regime_name in period_targets:
+        # Transitions from the current regime to the target regime
+        bundle = transitions.get(target_regime_name, MappingProxyType({}))
+
+        # Functions required to calculate the expected continuation values
+        state_transitions[target_regime_name] = get_next_state_function_for_solution(
+            functions=functions,
+            transitions=bundle,
+        )
+        next_stochastic_states_weights[target_regime_name] = (
+            get_next_stochastic_weights_function(
+                functions=functions,
+                transitions=bundle,
+                stochastic_transition_names=stochastic_transition_names,
+                regime_name=target_regime_name,
+            )
+        )
+        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
+            transitions=bundle,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_name=target_regime_name,
+        )
+        V_arr_name = "next_V_arr"
+        next_V_interpolator = get_V_interpolator(
+            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
+            co_map_state_names=co_map_state_names,
+        )
+        # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
+        # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
+        next_V_extra_param_names[target_regime_name] = frozenset(
+            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+        )
+        stochastic_variables = tuple(
+            key for key in bundle if key in stochastic_transition_names
+        )
+        next_V_has_stochastic_states[target_regime_name] = bool(stochastic_variables)
+        next_V[target_regime_name] = productmap(
+            func=next_V_interpolator,
+            variables=stochastic_variables,
+            batch_sizes=dict.fromkeys(stochastic_variables, 0),
+        )
+
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
+    ce_flat_param_names = (
+        MappingProxyType({})
+        if certainty_equivalent is None
+        else certainty_equivalent.flat_param_names
+    )
+
+    # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
+    # induction co-map, so their `next_`-prefixed coordinates are not passed to
+    # the interpolator (which no longer indexes those axes).
+    co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
+
+    def compute_CE(
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        zero: FloatND,
+        states_actions_params: Mapping[str, Any],
+    ) -> tuple[FloatND, MappingProxyType[RegimeName, FloatND]]:
+        """Aggregate the continuation lottery into `CE` at one state-action point.
+
+        Args:
+            next_regime_to_V_arr: Immutable mapping of target regime names to
+                next period's value function arrays.
+            zero: Zero at the shape and dtype of the value being built up.
+            states_actions_params: Mapping of states, actions, age, period, and
+                flat regime params. Forwarded verbatim to the transition and
+                probability functions, so it carries whatever the caller
+                supplies — including params that never passed through
+                `cast_params_to_canonical_dtypes`.
+
+        Returns:
+            Tuple of the aggregated continuation value and the regime transition
+            probabilities of the reachable targets.
+
+        """
+        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
+            compute_regime_transition_probs(**states_actions_params)
+        )
+        active_regime_probs = MappingProxyType(
+            {r: regime_transition_probs[r] for r in period_targets}
+        )
+
+        CE = zero
+        probability_mass = zero
+        lottery_values: list[FloatND] = []
+        lottery_weights: list[FloatND] = []
+        for target_regime_name in period_targets:
+            next_states = state_transitions[target_regime_name](
+                **states_actions_params,
+            )
+            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
+                target_regime_name
+            ](**states_actions_params)
+            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+                target_regime_name
+            ](**marginal_next_stochastic_states_weights)
+
+            # As we productmap'd the value function over the stochastic variables, the
+            # resulting next value function gets a new dimension for each stochastic
+            # variable.
+            extra_kw = {
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
+            }
+            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                **{
+                    name: val
+                    for name, val in next_states.items()
+                    if name not in co_map_next_names
+                },
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                **extra_kw,
+            )
+
+            target_probability = active_regime_probs[target_regime_name]
+            probability_mass = probability_mass + target_probability
+
+            if reduces_per_target:
+                # We then take the weighted average of the next value function at the
+                # stochastic states to get the expected next value function.
+                if next_V_has_stochastic_states[target_regime_name]:
+                    next_V_expected_arr = _expectation_over_stochastic_nodes(
+                        values=next_V_at_stochastic_states_arr,
+                        weights=joint_next_stochastic_states_weights,
+                    )
+                else:
+                    next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
+                CE = CE + target_probability * next_V_expected_arr
+            else:
+                values, node_weights = _as_lottery(
+                    values=next_V_at_stochastic_states_arr,
+                    weights=joint_next_stochastic_states_weights,
+                    has_stochastic_states=next_V_has_stochastic_states[
+                        target_regime_name
+                    ],
+                )
+                lottery_values.append(values)
+                lottery_weights.append(target_probability * node_weights)
+
+        # An empty retained target set is not "no continuation to aggregate": a
+        # non-terminal regime always emits unit mass, so retaining nothing means
+        # every bit of it was placed on a regime that is inactive next period.
+        # The represented mass is zero, and the backstop has to say so — leaving
+        # `CE` at its initialized zero would return a plausible, utility-only
+        # Bellman value for a model that cannot be solved.
+        if reduces_per_target:
+            # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
+            # the represented mass to state the same quantity as
+            # `LinearExpectation.aggregate`. Regime-transition validation accepts
+            # any mass within `jnp.allclose` of one, and at the top of that
+            # tolerance the undivided sum reverses the Bellman argmax. Dividing is
+            # exact whenever the mass is exactly one, so a well-formed lottery
+            # keeps its floating-point association.
+            CE = CE / _unit_regime_mass_or_nan(probability_mass)
+        elif certainty_equivalent is not None:
+            # `aggregate` normalizes by the weight sum itself, so the lottery
+            # route has no division to attach the check to. Selecting between
+            # the aggregate and NaN leaves the well-formed path free of any
+            # arithmetic at all, which a multiplication by `1.0` would not.
+            #
+            # With no node collected there is nothing to hand `aggregate` — it
+            # would reduce over an empty axis — so the selection falls back to
+            # the initialized `CE`. The mask is `False` there regardless, since
+            # a mass of zero is not unit mass.
+            CE = jnp.where(
+                _regime_mass_is_unit(probability_mass),
+                _aggregate_joint_lottery(
+                    certainty_equivalent=certainty_equivalent,
+                    lottery_values=lottery_values,
+                    lottery_weights=lottery_weights,
+                    ce_flat_param_names=ce_flat_param_names,
+                    states_actions_params=states_actions_params,
+                )
+                if lottery_values
+                else CE,
+                jnp.nan,
+            )
+
+        return CE, active_regime_probs
+
+    deps = (
+        compute_regime_transition_probs,
+        *state_transitions.values(),
+        *next_stochastic_states_weights.values(),
+    )
+    return compute_CE, deps
+
+
+def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+    """Return the weighted mean of one target's continuation over its nodes.
+
+    Normalized explicitly rather than with `jnp.average`, for the reason
+    `_as_lottery` states: a target whose joint weights carry no mass
+    contributes no branch, and must not contribute NaN either — every target
+    enters the same continuation, so a NaN here would destroy the
+    well-specified targets beside it.
+    """
+    weight_sum = jnp.sum(weights)
+    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    return jnp.sum(values * weights) / safe_weight_sum
+
+
+def _as_lottery(
+    *,
+    values: FloatND,
+    weights: FloatND,
+    has_stochastic_states: bool,
+) -> tuple[Float1D, Float1D]:
+    """Flatten one target regime's continuation into a unit-mass lottery.
+
+    Args:
+        values: Next period's value at this target's stochastic nodes.
+        weights: Joint weights over those nodes; ignored when the target has
+            no stochastic states.
+        has_stochastic_states: Whether the target's transition draws stochastic
+            states.
+
+    Returns:
+        Tuple of the flattened values and their probabilities, which sum to
+        one — or to zero for a target whose weights carry no mass at all.
+
+    """
+    flat_values = jnp.ravel(values)
+    if has_stochastic_states:
+        flat_weights = jnp.ravel(weights)
+        weight_sum = jnp.sum(flat_weights)
+        # A target whose joint weights carry no mass contributes no branch. It
+        # must not contribute NaN either: every target's nodes are concatenated
+        # into one lottery, so a NaN here would destroy the certainty
+        # equivalent of the well-specified targets alongside it.
+        safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+        return flat_values, flat_weights / safe_weight_sum
+    uniform = jnp.full(
+        flat_values.shape, 1.0 / flat_values.size, dtype=flat_values.dtype
+    )
+    return flat_values, uniform
 
 
 def _get_arg_names_of_Q_and_F(
@@ -564,7 +682,7 @@ def _get_U_and_F(
     """
     combined = {
         "feasibility": _get_feasibility(functions=functions, constraints=constraints),
-        **{k: v for k, v in functions.items() if k != "H"},
+        **functions,
     }
     return concatenate_functions(
         functions=combined,
@@ -605,3 +723,69 @@ def _get_feasibility(
             return True
 
     return cast("ConstraintFunction", combined_constraint)
+
+
+# Gross departures from unit regime mass are a specification error, not rounding:
+# every aggregation route divides the continuation by the mass it received, so the
+# lost mass is divided straight back out and the survivors renormalize. The solved
+# value function then comes back finite, plausible, and independent of what went
+# missing. `validate_transitions` catches it, but `log_level="off"` skips that, so
+# this poisons the arithmetic itself and cannot be gated away.
+#
+# The tolerance is deliberately loose. It is a backstop against a wrong model, not
+# a numerical check: `1e-3` never fires on accumulated float error over a handful
+# of targets, while a mass of 0.977 — small enough to look plausible, large enough
+# to move every value in the model — becomes NaN.
+_MAX_REGIME_MASS_DEVIATION = 1.0e-3
+
+
+def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
+    """Whether the represented regime mass is unit mass, within tolerance."""
+    return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+
+
+def _aggregate_joint_lottery(
+    *,
+    certainty_equivalent: CertaintyEquivalent,
+    lottery_values: Sequence[FloatND],
+    lottery_weights: Sequence[FloatND],
+    ce_flat_param_names: Mapping[str, str],
+    states_actions_params: Mapping[str, Any],
+) -> FloatND:
+    """Aggregate the continuation nodes of every retained target in one piece.
+
+    Args:
+        certainty_equivalent: The regime's certainty equivalent.
+        lottery_values: Sequence of per-target continuation values.
+        lottery_weights: Sequence of per-target node weights, already scaled by
+            the target's regime-transition probability.
+        ce_flat_param_names: Mapping of certainty-equivalent argument names to
+            their flat parameter names.
+        states_actions_params: Mapping of states, actions, age, period, and flat
+            regime params.
+
+    Returns:
+        The aggregated continuation value.
+
+    """
+    return certainty_equivalent.aggregate(
+        values=jnp.concatenate(list(lottery_values)),
+        weights=jnp.concatenate(list(lottery_weights)),
+        # The params template types every certainty-equivalent parameter as a
+        # float, so its runtime values are float arrays.
+        params=cast(
+            "Mapping[str, FloatND]",
+            {
+                arg: states_actions_params[flat_name]
+                for arg, flat_name in ce_flat_param_names.items()
+            },
+        ),
+    )
+
+
+def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
+    """Return the mass itself, or NaN where it is not unit mass.
+
+    For the per-target route, which divides by the mass it accumulated.
+    """
+    return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)

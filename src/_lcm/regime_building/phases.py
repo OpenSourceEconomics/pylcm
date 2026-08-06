@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 type _PhaseStateTransition = (
     UserFunction
     | MarkovTransition
-    | None
     | Mapping[RegimeName, UserFunction | MarkovTransition]
+    | None
 )
 type _PhaseRegimeTransition = (
     UserFunction
@@ -99,11 +99,31 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
         user_regime=user_regime
     )
+    aggregator = user_regime.koopmans_aggregator
+    aggregator_errors: list[str] = []
+    if isinstance(aggregator, Phased):
+        solve_aggregator, simulate_aggregator = aggregator.solve, aggregator.simulate
+        # A non-terminal regime needs an aggregator in both phases; `None` in a
+        # `Phased` slot means "terminal", which a single phase cannot be.
+        aggregator_errors = [
+            f"`koopmans_aggregator` is `Phased(...)` with `{phase}=None`. Both "
+            f"phases need an aggregator; pass a callable for each, or a bare "
+            f"callable to use one in both."
+            for phase, variant in (
+                ("solve", solve_aggregator),
+                ("simulate", simulate_aggregator),
+            )
+            if variant is None
+        ]
+    else:
+        solve_aggregator = simulate_aggregator = aggregator
     terminal = user_regime.transition is None
     terminal_errors = (
         [
-            f"Terminal regimes cannot declare carried states (no next period "
-            f"to carry {sorted(carried_only)} into)."
+            (
+                f"Terminal regimes cannot declare carried states (no next period "
+                f"to carry {sorted(carried_only)} into)."
+            )
         ]
         if terminal and carried_only
         else []
@@ -116,6 +136,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         + carried_errors
         + transition_errors
         + terminal_errors
+        + ([] if terminal else aggregator_errors)
     )
     if errors:
         raise RegimeInitializationError(format_messages(errors))
@@ -126,6 +147,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         grid_states: dict[StateName, Grid | AgeSpecializedGrid],
         state_transitions: dict[StateName, _PhaseStateTransition],
         regime_transition: _PhaseRegimeTransition,
+        koopmans_aggregator: UserFunction | None,
     ) -> RegimePhaseSpec:
         return RegimePhaseSpec(
             functions=MappingProxyType(functions),
@@ -136,6 +158,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             ),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
+            koopmans_aggregator=koopmans_aggregator,
             regime_transition=regime_transition,
             # A per-target dict is stochastic by construction (each cell is a
             # MarkovTransition-wrapped probability function).
@@ -150,12 +173,14 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grid_states=solve_grid_states,
             state_transitions=solve_state_transitions,
             regime_transition=solve_transition,
+            koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
         ),
         simulation=_phase_spec(
             functions=simulate_functions,
             grid_states=simulate_grid_states,
             state_transitions=simulate_state_transitions,
             regime_transition=simulate_transition,
+            koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
         ),
     )
 
@@ -240,6 +265,9 @@ class RegimePhaseSpec:
     state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
     """Phase-resolved laws of motion, restricted to this phase's grid states
     plus target-only entries."""
+
+    koopmans_aggregator: UserFunction | None
+    """Phase-resolved Bellman aggregator; `None` for terminal regimes."""
 
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.
@@ -362,8 +390,10 @@ def _normalize_phased_state(
             None,
             None,
             [
-                f"states['{name}']: stochastic-process grids have intrinsic "
-                f"transitions and cannot be phase-variant."
+                (
+                    f"states['{name}']: stochastic-process grids have intrinsic "
+                    f"transitions and cannot be phase-variant."
+                )
             ],
         )
     solve_is_grid = isinstance(solve_side, Grid)
@@ -436,14 +466,18 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     """
     if isinstance(law, MarkovTransition):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"stochastic (`MarkovTransition`) law of motion for it is not "
-            f"yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"stochastic (`MarkovTransition`) law of motion for it is not "
+                f"yet supported."
+            )
         ]
     if isinstance(law, Mapping):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"per-target dict law of motion for it is not yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"per-target dict law of motion for it is not yet supported."
+            )
         ]
     return []
 

@@ -187,6 +187,7 @@ unsafe-fixes = false
 select = [ "ALL" ]
 extend-ignore = [
   "COM812",  # Conflicts with ruff-format
+  "CPY001",  # Missing copyright notice
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
   "EM102",   # Exception must not use an f-string literal
@@ -197,6 +198,7 @@ extend-ignore = [
   "N806",    # Variable in function should be lowercase
   "N815",    # Variable in class scope should not be mixedCase
   "PLR0913", # Too many arguments in function definition
+  "PLR0917", # Too many positional arguments
   "TC001",   # Move application import into a type-checking block
   "TC002",   # Move third-party import into a type-checking block
   "TC003",   # Move standard library import into a type-checking block
@@ -263,6 +265,12 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/test_certainty_equivalent.py" = [
+  "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
+]
+per-file-ignores."tests/test_koopmans_aggregation.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
 per-file-ignores."tests/test_compilation_cache.py" = [
   "S603", # subprocess call with test-controlled input
 ]
@@ -287,7 +295,17 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "_lcm.utils.containers.Unset", "Unset" ]
+extend-immutable-calls = [
+  "_lcm.certainty_equivalent.LinearExpectation",
+  "_lcm.utils.containers.Unset",
+  "lcm.LinearExpectation",
+  "lcm.LinearAggregator",
+  "lcm.certainty_equivalent.LinearExpectation",
+  "lcm.koopmans_aggregation.LinearAggregator",
+  "LinearAggregator",
+  "LinearExpectation",
+  "Unset",
+]
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
@@ -295,7 +313,6 @@ known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 column_width = 88
 max_supported_python = "3.14"
 table_format = "long"
-collapse_tables = [ "tool.hatch", "tool.pytest", "tool.pytask", "tool.ty" ]
 expand_tables = [
   "tool.pixi.dependencies",
   "tool.pixi.environments",
@@ -306,10 +323,10 @@ expand_tables = [
   "tool.pixi.tasks",
   "tool.pixi.workspace",
 ]
+collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
-src.exclude = [ "docs/**/*.ipynb" ]
-src.include = [ "src/", "tests/" ]
+src.include = [ "docs/", "src/", "tests/" ]
 # ty resolves third-party imports from this pixi env (the ty-pre-commit hook runs
 # `uv check --no-project`, so uv neither creates a `.venv` nor resolves deps). Run
 # `pixi install` once.

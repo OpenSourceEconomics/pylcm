@@ -152,7 +152,7 @@ def test_solve_grid_excludes_carried_state() -> None:
 
 def _solve_pension_model(model: Model) -> Mapping[int, Mapping[str, FloatND]]:
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     return model.solve(params=params, log_level="debug")
 
 
@@ -169,7 +169,7 @@ def test_carried_state_solves_like_plain_function() -> None:
 
 def _simulate_pension(model: Model, *, pension_seed: list[float]) -> pd.DataFrame:
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     n = len(pension_seed)
     result = model.simulate(
         log_level="debug",
@@ -228,7 +228,7 @@ def test_simulate_aot_compiled_carries_carried_state() -> None:
         n_subjects=2,
     )
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
         log_level="debug",
         params=params,
@@ -331,8 +331,8 @@ def test_simulate_evolves_carried_state_across_carried_only_handover() -> None:
     """
     model = _build_handover_model()
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
-    params["retired"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
+    params["retired"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
         log_level="debug",
         params=params,
@@ -390,7 +390,7 @@ def test_additional_targets_read_carried_value() -> None:
         regime_id_class=RegimeId,
     )
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     result = model.simulate(
         log_level="debug",
         params=params,
@@ -435,7 +435,7 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
         regime_id_class=RegimeId,
     )
     params = cast("dict[str, Any]", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     # Imputed pension is aime * 0.1 = 2.0 (feasible); the carried value 5.0
     # violates the cap and must be rejected.
     with pytest.raises(InvalidInitialConditionsError):

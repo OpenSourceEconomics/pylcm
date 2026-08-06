@@ -112,8 +112,8 @@ A parameter cannot appear at multiple levels within the same subtree. pylcm rais
 
 ### `discount_factor`
 
-Used by the default aggregation function
-$H(\text{utility}, \text{continuation\_value}, \text{discount\_factor}) = \text{utility} + \text{discount\_factor} \cdot \text{continuation\_value}$.
+Used by the default Koopmans aggregator
+$W(\text{utility}, \text{CE}, \text{discount\_factor}) = \text{utility} + \text{discount\_factor} \cdot \text{CE}$.
 
 Typically set at model level:
 
@@ -121,7 +121,7 @@ Typically set at model level:
 params = {"discount_factor": 0.95}
 ```
 
-Not needed if you provide a custom `H` function in your regime's `functions` dict.
+Not needed if you supply a custom `koopmans_aggregator` that takes no `discount_factor`.
 
 ### Shock parameters
 

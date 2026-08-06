@@ -56,9 +56,9 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
             "U_nan_overall": jnp.array(0.0),
             "U_nan_by_wealth": jnp.zeros(n_wealth),
             "U_nan_by_consumption": jnp.zeros(n_consumption),
-            "E_nan_overall": jnp.array(0.0),
-            "E_nan_by_wealth": jnp.zeros(n_wealth),
-            "E_nan_by_consumption": jnp.zeros(n_consumption),
+            "CE_nan_overall": jnp.array(0.0),
+            "CE_nan_by_wealth": jnp.zeros(n_wealth),
+            "CE_nan_by_consumption": jnp.zeros(n_consumption),
             "Q_nan_overall": jnp.array(0.0),
             "Q_nan_by_wealth": jnp.zeros(n_wealth),
             "Q_nan_by_consumption": jnp.zeros(n_consumption),
@@ -151,7 +151,7 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     """Build a model whose utility is unconditionally NaN.
 
     Used to test that the NaN/Inf validation in `simulate` honours `log_level`.
-    At `log_level="off"` the NaN-bearing V_arr must flow through without
+    At `log_level="debug"` the NaN-bearing V_arr must flow through without
     raising; at `"warning"`/`"debug"` validation fires.
     """
 

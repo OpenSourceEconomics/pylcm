@@ -54,7 +54,7 @@ def test_model_solves_and_simulates():
         initial_conditions=ic_df,
         period_to_regime_to_V_arr=None,
         seed=12345,
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe()
     assert len(df) > 0
@@ -74,7 +74,7 @@ def simulation_result():
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=42,
-        log_level="off",
+        log_level="debug",
     )
     res = result.to_dataframe(additional_targets=_ADDITIONAL_TARGETS)
     return res[res["regime_name"] == "alive"].copy()

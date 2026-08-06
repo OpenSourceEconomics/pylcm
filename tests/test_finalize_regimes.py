@@ -1,7 +1,7 @@
 """`finalize_regimes` — the regimes as the model runs them.
 
 A user `Regime` validates only local, value-shape properties at construction;
-completeness (a `utility` entry, state-transition coverage, default-`H`
+completeness (a `utility` entry, state-transition coverage, aggregator
 injection, state/action overlap) is validated when the model finalizes its
 regimes. `model.user_regimes` exposes the finalized form: plain `Regime`
 instances, complete, immutable, still in user vocabulary.
@@ -12,7 +12,14 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinearAggregator,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
@@ -88,13 +95,13 @@ def test_model_with_uncovered_state_raises() -> None:
         _build_model(work)
 
 
-def test_user_regimes_are_finalized_with_default_h() -> None:
-    """`model.user_regimes` exposes finalized regimes: `H` injected, raw untouched."""
+def test_user_regimes_are_finalized_with_the_model_level_aggregator() -> None:
+    """`model.user_regimes` carries the model-level aggregator; the raw regime
+    does not."""
     work = _build_work_regime()
     model = _build_model(work)
-    finalized = model.user_regimes["work"]
-    assert "H" in finalized.functions
-    assert "H" not in work.functions
+    assert model.user_regimes["work"].koopmans_aggregator == LinearAggregator()
+    assert work.koopmans_aggregator is None
 
 
 def test_state_action_overlap_raises_at_model_time() -> None:

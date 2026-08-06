@@ -13,7 +13,15 @@ from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    DiscreteGrid,
+    LinearAggregator,
+    LinearExpectation,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import MarkovTransition
@@ -166,9 +174,12 @@ def test_regime_with_active_callable():
 
 def _finalize(regime: UserRegime) -> UserRegime:
     """Run the completeness validation the model applies to each regime."""
-    return finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})[
-        "regime"
-    ]
+    return finalize_regimes(
+        user_regimes={"regime": regime},
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )["regime"]
 
 
 def test_regime_requires_utility_in_functions():

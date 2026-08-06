@@ -18,6 +18,8 @@ from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearAggregator,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -317,7 +319,12 @@ def test_carried_state_without_law_of_motion_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth, "aime": lambda aime: aime},
     )
     with pytest.raises(RegimeInitializationError, match="state_transitions"):
-        finalize_regimes(user_regimes={"regime": regime}, derived_categoricals={})
+        finalize_regimes(
+            user_regimes={"regime": regime},
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+        )
 
 
 def test_carried_state_with_markov_law_is_rejected() -> None:
@@ -484,7 +491,7 @@ def _build_phased_law_model(*, phased_law: bool) -> Model:
 
 def _solve_params(model: Model) -> dict:
     params = cast("dict", model.get_params_template())
-    params["working"]["H"]["discount_factor"] = 0.95
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     return params
 
 
@@ -617,7 +624,7 @@ def _simulate_income_panel(
             "income": jnp.array([2.0, 4.0]),
             "regime_id": jnp.array([_RegimeId.working] * 2),
         },
-        log_level="off",
+        log_level="debug",
     )
     df = result.to_dataframe().query("regime_name == 'working'")
     return df.sort_values(["subject_id", "period"])["income"].to_numpy()

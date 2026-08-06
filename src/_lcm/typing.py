@@ -78,7 +78,7 @@ type Params = Mapping[
 
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are canonical-dtype JAX arrays or
+# "koopmans_aggregator__discount_factor"). Values are canonical-dtype JAX arrays or
 # canonical-narrow container leaves.
 type FlatRegimeParams = MappingProxyType[
     str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
@@ -105,7 +105,7 @@ class EconFunction(Protocol):
     """A numeric model function after processing into the engine signature.
 
     Covers the *value-side* user-supplied content of a regime: the period
-    utility, the Bellman aggregator `H`, and any helper / DAG functions
+    utility and any helper / DAG functions
     whose output is consumed by them. Returns a numeric array
     (`FloatND` or `IntND`). Feasibility predicates live in
     `ConstraintFunction`; state / regime / process transitions live in
