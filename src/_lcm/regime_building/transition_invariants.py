@@ -18,6 +18,7 @@ from dags import get_annotations
 from dags.tree.tree_utils import QNAME_DELIMITER
 
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseName
 from _lcm.transition_laws import TransitionLawInfo, TransitionLaws
 from _lcm.typing import (
     RegimeName,
@@ -36,6 +37,7 @@ def fail_if_transition_namespaces_are_mixed(
     transition_laws: TransitionLaws,
     processed_functions: MappingProxyType[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    phase_name: PhaseName,
 ) -> None:
     """Check one phase's transition laws against the two-namespace contract.
 
@@ -60,6 +62,10 @@ def fail_if_transition_namespaces_are_mixed(
         processed_functions: Immutable mapping of qualified function names to
             functions, carrying the synthesized weight laws.
         all_grids: Immutable mapping of regime names to Grid spec objects.
+        phase_name: Phase whose laws are being checked. A draw is realized in
+            simulation, where the realization is published under its
+            `next_<state>` name and may be read like any other producer; during
+            backward induction it has no value, so the read is rejected.
 
     Raises:
         ModelInitializationError: If any of the three conditions fails.
@@ -80,6 +86,7 @@ def fail_if_transition_namespaces_are_mixed(
             laws=laws,
             processed_functions=processed_functions,
             target_state_names=set(all_grids.get(target, MappingProxyType({}))),
+            draws_are_realized=phase_name == "simulation",
         )
 
 
@@ -160,6 +167,7 @@ def _fail_if_a_read_next_state_has_no_value(
     laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
     processed_functions: MappingProxyType[str, UserFunction],
     target_state_names: set[StateOrActionName],
+    draws_are_realized: bool,
 ) -> None:
     """Check that every `next_<state>` a law reads is produced and not a draw."""
     consumers: dict[str, UserFunction] = dict(bundle)
@@ -191,7 +199,7 @@ def _fail_if_a_read_next_state_has_no_value(
                     f"transition does produce."
                 )
                 raise ModelInitializationError(msg)
-            if laws[arg].stochastic:
+            if laws[arg].stochastic and not draws_are_realized:
                 msg = (
                     f"'{consumer_name}' of regime '{source_regime_name}' reads "
                     f"'{arg}' on the way into regime '{target}', but that law "

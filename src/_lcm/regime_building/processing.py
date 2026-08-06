@@ -1504,6 +1504,7 @@ def _process_regime_core(
     )
 
     fail_if_transition_namespaces_are_mixed(
+        phase_name=phase_name,
         source_regime_name=source_regime_name,
         transitions=transitions,
         transition_laws=transition_laws,
