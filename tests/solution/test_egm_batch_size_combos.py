@@ -35,13 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import X64_ENABLED
-
-# Splaying a combo axis only reschedules the `lax.map`; in float64 the solved V is
-# reproduced essentially exactly, in float32 the gather/reduce order shifts within
-# single-precision rounding.
-_INVARIANCE_RTOL = 1e-12 if X64_ENABLED else 1e-4
-_INVARIANCE_ATOL = 1e-12 if X64_ENABLED else 1e-4
+from tests.conftest import invariance_tolerances
 
 N_PERIODS = 4
 N_WEALTH = 12
@@ -201,11 +195,19 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
+            # An infeasible cell carries `-inf`; a tolerance cannot adjudicate
+            # it, so the finite/infinite split is compared exactly.
+            np.testing.assert_array_equal(
+                np.isfinite(got_V),
+                np.isfinite(ref_V),
+                err_msg=f"feasibility differs: period={period}, regime={regime_name}",
+            )
+            rtol, atol = invariance_tolerances(ref_V)
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=_INVARIANCE_RTOL,
-                atol=_INVARIANCE_ATOL,
+                rtol=rtol,
+                atol=atol,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 
@@ -294,10 +296,16 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
+            np.testing.assert_array_equal(
+                np.isfinite(got_V),
+                np.isfinite(ref_V),
+                err_msg=f"feasibility differs: period={period}",
+            )
+            rtol, atol = invariance_tolerances(ref_V)
             np.testing.assert_allclose(
                 got_V,
                 ref_V,
-                rtol=_INVARIANCE_RTOL,
-                atol=_INVARIANCE_ATOL,
+                rtol=rtol,
+                atol=atol,
                 err_msg=f"period={period}",
             )

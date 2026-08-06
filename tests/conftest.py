@@ -3,6 +3,7 @@ from dataclasses import make_dataclass
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import config as jax_config
 
@@ -22,6 +23,37 @@ X64_ENABLED: bool = True
 # across platforms. 12 is well within float64 guarantees (~15 significant digits)
 # while avoiding spurious failures. See commit cdd9ac3.
 DECIMAL_PRECISION: int = 12
+
+# Multiple of the working dtype's epsilon that a repartitioned reduction is
+# allowed to move a published value by. `batch_size` splits a computation whose
+# result does not depend on the split, but splitting reassociates the compiled
+# arithmetic, so the value array is owed agreement to the working precision
+# rather than bit identity. Measured across the batch-size suites, the worst
+# relative departure from the unsplayed solve is under 3 eps at either
+# precision; eight is that with headroom.
+INVARIANCE_EPS_MULTIPLE: float = 8.0
+
+
+def invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
+    """Return the `(rtol, atol)` a batch-size-repartitioned reduction is owed.
+
+    The absolute term is the relative one scaled by the magnitude actually
+    being compared, so a cell whose value sits near zero is not held to a
+    tighter standard than the arithmetic can deliver.
+
+    Args:
+        reference: Array of reference values; supplies both the dtype the
+            tolerance is derived from and the scale of the absolute term.
+
+    Returns:
+        Tuple of the relative and absolute tolerances.
+
+    """
+    values = np.asarray(reference)
+    rtol = INVARIANCE_EPS_MULTIPLE * float(np.finfo(values.dtype).eps)
+    finite = values[np.isfinite(values)]
+    scale = float(np.max(np.abs(finite))) if finite.size else 1.0
+    return rtol, rtol * scale
 
 
 def pytest_addoption(parser):
