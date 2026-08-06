@@ -50,7 +50,7 @@ def solve(
     enable_jit: bool,
     max_compilation_workers: int | None = None,
 ) -> BackwardInductionResult:
-    """Solve a model using grid search.
+    """Solve a model by backward induction, whatever solver each regime declares.
 
     Args:
         flat_params: Immutable mapping of regime names to flat parameter mappings.
