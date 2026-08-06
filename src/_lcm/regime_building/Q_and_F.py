@@ -903,6 +903,33 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     enters the same continuation, so a NaN here would destroy the
     well-specified targets beside it.
     """
+    # @pro: The paragraph above states a property this body does not deliver,
+    # and the gap is reachable here rather than hypothetical. The guard covers
+    # a target whose weights sum to zero. It does not cover a *single* node
+    # carrying zero probability beside admissible ones, because the product is
+    # formed before any masking: `0.0 * -inf` is NaN, and the sum then carries
+    # it. Measured against this function:
+    #
+    #     values  = [-inf, 1.0, 2.0]      weights = [0.0, 0.5, 0.5]
+    #     weight sum 1.0 (a well-formed lottery, so the guard never fires)
+    #     correct 1.5, returned nan
+    #
+    # `-inf` is the ordinary value of a state at which every action is
+    # infeasible -- `max_Q_over_a` masks with `-jnp.inf` -- so this needs only a
+    # zero-probability node beside such a state, which a Markov row with a zero
+    # entry or a binned process with an empty tail bin supplies.
+    #
+    # Please rule on all three.
+    # (1) Is dropping a zero-probability node the correct reading -- a null set
+    #     contributes nothing to an expectation, so the -inf is irrelevant -- or
+    #     does an admissible -inf beside it mean something the average must keep?
+    # (2) If dropping is correct, must the value be neutralized as well as the
+    #     weight? Masking only the product still evaluates `-inf * 0` in the
+    #     untaken `jnp.where` branch, which is primal-safe but poisons the
+    #     gradient; this project's JAX rules call that out specifically.
+    # (3) A sibling branch resolved the same question by keeping an older
+    #     `zero_safe_average` rather than adopting this function. If one of the
+    #     two is right, say which, so the two do not keep diverging.
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
     return jnp.sum(values * weights) / safe_weight_sum
