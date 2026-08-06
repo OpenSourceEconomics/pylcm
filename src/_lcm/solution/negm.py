@@ -106,6 +106,16 @@ class NEGM(Solver):
     distinct).
     """
 
+    outer_state: StateName
+    """The durable/illiquid state the outer margin moves.
+
+    `outer_post_decision` is this period's chosen level of it, so the two name
+    the same quantity at two points in time: the state is what the regime
+    carries in, the post-decision what the outer search picks. The keeper
+    candidate is a function of this state, and its position among the passive
+    continuous states fixes the carry layout.
+    """
+
     outer_post_decision: FunctionName
     """The outer post-decision function `s'` in `Regime.functions`.
 

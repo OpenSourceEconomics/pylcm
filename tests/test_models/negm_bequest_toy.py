@@ -153,6 +153,7 @@ NEGM_SOLVER = NEGM(
         savings_grid=SAVINGS_GRID,
     ),
     outer_action="illiquid_investment",
+    outer_state="illiquid",
     outer_post_decision="next_illiquid",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",

@@ -87,6 +87,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
             savings_grid=_grid(-5.0, 35.0, savings_n),
         ),
         outer_action="illiquid_investment",
+        outer_state="illiquid",
         outer_post_decision="next_illiquid",
         outer_grid=_grid(0.0, _ILLIQUID_MAX, outer_n),
         outer_no_adjustment_candidate="keep_illiquid",

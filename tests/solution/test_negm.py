@@ -54,6 +54,7 @@ def _negm(
     *,
     inner: DCEGM = _INNER,
     outer_action: str = "illiquid_investment",
+    outer_state: str = "illiquid",
     outer_post_decision: str = "next_illiquid",
     outer_grid: ContinuousGrid = _OUTER_GRID,
     outer_no_adjustment_candidate: str | None = None,
@@ -61,6 +62,7 @@ def _negm(
     return NEGM(
         inner=inner,
         outer_action=outer_action,
+        outer_state=outer_state,
         outer_post_decision=outer_post_decision,
         outer_grid=outer_grid,
         outer_no_adjustment_candidate=outer_no_adjustment_candidate,

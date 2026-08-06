@@ -410,6 +410,7 @@ def build_model(
             savings_grid=savings_grid,
         ),
         outer_action="housing_investment",
+        outer_state="housing",
         outer_post_decision="next_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
