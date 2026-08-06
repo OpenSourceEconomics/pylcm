@@ -18,6 +18,7 @@ from _lcm.typing import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.transition import MarkovTransition
 from lcm.typing import UserFunction
 
 
@@ -79,10 +80,17 @@ def create_regime_params_template(
         *user_regime.functions,
         *(f"next_{name}" for name in user_regime.states),
         *(f"next_{name}" for name in user_regime.state_transitions),
-        *(f"next_{name}" for name in other_regime_state_names),
         "period",
         "age",
         "CE",
+    }
+    # A target's state is next-period vocabulary only where next-period values
+    # exist: inside a transition, and inside whatever feeds one. `utility` and
+    # `constraints` are evaluated at this period's states, so `next_<state>`
+    # there names an ordinary parameter and stays one.
+    transition_role = _function_names_in_transition_role(user_regime)
+    variables_in_transition_role = variables | {
+        f"next_{name}" for name in other_regime_state_names
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
@@ -100,7 +108,12 @@ def create_regime_params_template(
         # exempt from param-template extraction: pylcm wires those values
         # through `states_actions_params` at call time, so they must not
         # surface as user-facing params in the template.
-        params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+        non_params = (
+            variables_in_transition_role
+            if tree_path_from_qname(name)[0] in transition_role
+            else variables
+        )
+        params = {k: v for k, v in sorted(tree.items()) if k not in non_params}
 
         # Per-target entries (`<func>__<target>`) nest under the target — the
         # target is a genuine tree level, mirroring the canonical transition
@@ -286,6 +299,47 @@ def _fail_if_runtime_grid_shadows_function(
             f"IrregSpacedGrid {kind} '{name}' (with runtime-supplied "
             f"points/params) conflicts with a function of the same name in the regime."
         )
+
+
+def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
+    """Return the names of functions that compute, or feed, a state transition.
+
+    Args:
+        user_regime: User-form `Regime` instance.
+
+    Returns:
+        Frozenset of the regime's transition function names together with every
+        regime function they read, directly or through other regime functions.
+
+    """
+    roots: list[UserFunction] = []
+    frontier_laws: list[object] = list(user_regime.state_transitions.values())
+    while frontier_laws:
+        law = frontier_laws.pop()
+        if isinstance(law, Phased):
+            frontier_laws.extend([law.solve, law.simulate])
+        elif isinstance(law, Mapping) and not isinstance(law, MarkovTransition):
+            frontier_laws.extend(law.values())
+        elif law is not None:
+            roots.append(cast("UserFunction", law))
+
+    functions = user_regime.functions
+    feeders: set[str] = set()
+    frontier = list(roots)
+    while frontier:
+        func = frontier.pop()
+        for arg in dt.create_tree_with_input_types({"_": func}):
+            arg_name = tree_path_from_qname(arg)[-1]
+            if arg_name in feeders or arg_name not in functions:
+                continue
+            feeders.add(arg_name)
+            frontier.append(cast("UserFunction", functions[arg_name]))
+
+    return frozenset(
+        {f"next_{name}" for name in user_regime.state_transitions}
+        | {"next_regime"}
+        | feeders
+    )
 
 
 def _collect_all_functions_for_template(
