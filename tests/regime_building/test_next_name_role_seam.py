@@ -1,19 +1,21 @@
-"""Which consumers of `next_<state>` are served by a law, and which by a parameter.
+"""When `next_<state>` is a law's output and when it is an ordinary parameter.
 
 `next_<state>` names next-period vocabulary only where a next-period value
-exists. A transition, and anything feeding one, always has one. Beyond that the
-two consumers evaluated within the period differ:
+exists. A transition, and anything feeding one, always has one. For everything
+evaluated within the period — utility, its helpers, constraints — the regime's
+own law decides, and only a law that is both deterministic and
+target-independent counts:
 
-- a **constraint** may cut on a next state the chosen action determines — the
-  NEGM/DC-EGM durable pattern, where the budget constraint bounds the next
-  durable stock — so a deterministic own-regime law for that state serves it;
-- **utility** and ordinary functions are evaluated at this period's states, so
-  an argument spelled that way there is a parameter the user supplies, whether
-  or not the regime happens to move a state of that name.
-
-Nothing decides this for the engine: the parameter template decides, and the
-decision DAG follows, since a name bound as a parameter never becomes a free
-argument the DAG could satisfy from a law.
+- a bare law is what this period's states and actions determine on their own,
+  so the decision evaluation can read it. This is the NEGM/DC-EGM durable
+  pattern: the service flow accrues from the newly chosen stock, and the budget
+  constraint bounds it;
+- a per-target law is a handover value, not well defined until the destination
+  is known — the same ground on which the decision evaluation refuses a
+  `next_<state>` whose law differs across targets;
+- a `MarkovTransition` names a draw that has not been realised yet;
+- a state this regime does not move at all has no law here, so an argument
+  spelled that way is a parameter whatever else the model does with the name.
 """
 
 import jax.numpy as jnp
@@ -30,6 +32,7 @@ from lcm.typing import (
 )
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+_CONSUMPTION = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 
 
 @categorical(ordered=False)
@@ -48,41 +51,44 @@ def _to_dead(period: ScalarInt) -> ScalarInt:
     return jnp.where(period >= 0, RegimeId.dead, RegimeId.alive)
 
 
-def _utility_reading_a_parameter(
-    consumption: ContinuousAction, next_wealth: ScalarFloat
+def _utility_reading_the_law(
+    consumption: ContinuousAction, next_wealth: ContinuousState
 ) -> FloatND:
-    """`next_wealth` here is a parameter, not the law's output."""
+    """`next_wealth` here is the bare law's output, at the chosen action."""
     return consumption + next_wealth
 
 
-def _utility(consumption: ContinuousAction) -> FloatND:
-    return consumption
+def _utility_reading_a_parameter(
+    consumption: ContinuousAction, next_wealth: ScalarFloat
+) -> FloatND:
+    """`next_wealth` here is a parameter: the law is per-target."""
+    return consumption + next_wealth
 
 
 def _constraint_reading_the_law(next_wealth: ContinuousState) -> BoolND:
-    """`next_wealth` here is the law's output, evaluated at the chosen action."""
     return next_wealth >= 0.0
 
 
-def _dead_utility() -> FloatND:
-    return jnp.array(0.0)
+def _dead_utility(wealth: ContinuousState) -> FloatND:
+    return wealth
 
 
-def _build(*, functions: dict, constraints: dict) -> Model:
+def _build(*, functions: dict, constraints: dict, state_transitions: dict) -> Model:
     return Model(
         regimes={
             "alive": Regime(
                 transition=_to_dead,
                 active=lambda age: age < 21,
                 states={"wealth": _WEALTH},
-                actions={"consumption": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
-                state_transitions={"wealth": _next_wealth},
+                actions={"consumption": _CONSUMPTION},
+                state_transitions=state_transitions,
                 functions=functions,
                 constraints=constraints,
             ),
             "dead": Regime(
                 transition=None,
                 active=lambda age: age >= 21,
+                states={"wealth": _WEALTH},
                 functions={"utility": _dead_utility},
             ),
         },
@@ -92,29 +98,37 @@ def _build(*, functions: dict, constraints: dict) -> Model:
 
 
 @pytest.fixture
-def model_with_constraint() -> Model:
+def bare_law_model() -> Model:
     return _build(
-        functions={"utility": _utility},
+        functions={"utility": _utility_reading_the_law},
         constraints={"affordable": _constraint_reading_the_law},
+        state_transitions={"wealth": _next_wealth},
     )
 
 
 @pytest.fixture
-def model_with_utility_parameter() -> Model:
-    return _build(functions={"utility": _utility_reading_a_parameter}, constraints={})
+def per_target_law_model() -> Model:
+    return _build(
+        functions={"utility": _utility_reading_a_parameter},
+        constraints={},
+        state_transitions={"wealth": {"dead": _next_wealth}},
+    )
 
 
-def test_a_constraint_reading_a_next_state_asks_for_no_parameter(
-    model_with_constraint: Model,
+def test_a_bare_law_serves_utility(bare_law_model: Model) -> None:
+    """Utility reading the durable-style law asks for no parameter."""
+    assert bare_law_model.get_params_template()["alive"]["utility"] == {}
+
+
+def test_a_bare_law_serves_a_constraint(bare_law_model: Model) -> None:
+    """A budget constraint cutting on the next stock asks for no parameter."""
+    assert bare_law_model.get_params_template()["alive"]["affordable"] == {}
+
+
+def test_a_per_target_law_leaves_utility_asking_for_the_parameter(
+    per_target_law_model: Model,
 ) -> None:
-    """The declared law serves the constraint, so nothing is left to supply."""
-    assert model_with_constraint.get_params_template()["alive"]["affordable"] == {}
-
-
-def test_utility_reading_a_next_name_still_asks_for_the_parameter(
-    model_with_utility_parameter: Model,
-) -> None:
-    """Declaring a wealth law does not turn utility's `next_wealth` into it."""
-    assert model_with_utility_parameter.get_params_template()["alive"]["utility"] == {
+    """A handover law is not a within-period value, so the argument stays a param."""
+    assert per_target_law_model.get_params_template()["alive"]["utility"] == {
         "next_wealth": "ScalarFloat"
     }
