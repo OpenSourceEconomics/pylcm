@@ -247,6 +247,11 @@ class NBEGM(Solver):
         return True
 
     @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """The case-piece step inverts the recursive Euler equation."""
+        return True
+
+    @property
     def carry_retains_discrete_action_rows(self) -> bool:
         """The case-piece carry publishes a value maxed over the continuous action."""
         return False

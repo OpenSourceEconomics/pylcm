@@ -492,3 +492,31 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
             ages=AgeGrid(start=60, stop=64, step="2Y"),
             regime_id_class=RegimeId,
         )
+
+
+def test_solved_V_is_accepted_back_by_simulate() -> None:
+    """A solved value function round-trips into `simulate` for a carried state.
+
+    A carried state is derived during backward induction, so it contributes no
+    axis to the solved value function. Handing that value function straight
+    back to `simulate` — the estimation loop's pattern, one solve reused across
+    many simulations — must be accepted rather than rejected for having one
+    axis fewer than the regime declares states.
+    """
+    model = _build_pension_model(pension_as_pair=True)
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        initial_conditions={
+            "wealth": jnp.full(1, 50.0),
+            "aime": jnp.full(1, 20.0),
+            "pension_wealth": jnp.asarray([2.0]),
+            "age": jnp.full(1, 60.0),
+            "regime_id": jnp.array([RegimeId.working]),
+        },
+    )
+    assert result.n_subjects == 1

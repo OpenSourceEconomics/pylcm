@@ -626,10 +626,13 @@ class Model:
         try:
             validate_supplied_V_shapes(
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                # The solve phase, not the user declaration: a carried state is
+                # derived during backward induction and contributes no axis, so
+                # the user's `states` would over-count the ranks it produced.
                 regime_to_state_names=MappingProxyType(
                     {
-                        name: tuple(regime.states)
-                        for name, regime in self.user_regimes.items()
+                        name: tuple(regime.solution.state_names)
+                        for name, regime in self._regimes.items()
                     }
                 ),
             )

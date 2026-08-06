@@ -458,6 +458,22 @@ def _compute_constrained_candidates(
     is capped at the publish range so a degenerate (huge) first endogenous
     point cannot stretch the sample beyond where queries land.
 
+    The span is the width of the interval the segment covers, so it is only a
+    segment at all when that width is a positive, finite number. It is not when
+
+    - the first endogenous point sits at or below the borrowing limit,
+    - the exogenous grid never rises above the limit, or
+    - either bound is not a finite number.
+
+    In each of those the constrained interval is empty and the segment
+    contributes no candidates, so its actions and values are NaN — the
+    candidate chain's absent form. Substituting a positive width instead would
+    sample a segment that does not exist: at a width of one smallest normal the
+    actions come out around the dtype's subnormal range, where a curved felicity
+    is astronomically negative or infinite. Such candidates are never an
+    optimum, and their magnitude defeats the exact upper envelope's certified
+    sign, poisoning the row that a dead segment would have left intact.
+
     Args:
         first_endogenous_point: The endogenous resources point of the lowest
             savings node.
@@ -475,13 +491,16 @@ def _compute_constrained_candidates(
 
     """
     dtype = publish_resources.dtype
-    span = jnp.maximum(
+    span = (
         jnp.minimum(first_endogenous_point, jnp.max(publish_resources))
-        - borrowing_limit,
-        jnp.finfo(dtype).tiny,
+        - borrowing_limit
     )
+    empty = ~((span > 0.0) & jnp.isfinite(span))
+    # A unit width only keeps the arithmetic below in range; the candidates it
+    # produces are discarded wholesale by the `empty` mask, never published.
+    safe_span = jnp.where(empty, jnp.ones_like(span), span)
     constrained_actions = (
-        span
+        safe_span
         * CONSTRAINED_OFFSET_FRACTION
         * constrained_ratio ** jnp.arange(n_constrained, dtype=dtype)
     )
@@ -489,7 +508,10 @@ def _compute_constrained_candidates(
         jax.vmap(utility_of_action)(constrained_actions)
         + discounted_expected_value_at_limit
     )
-    return constrained_actions, constrained_values
+    return (
+        jnp.where(empty, jnp.nan, constrained_actions),
+        jnp.where(empty, jnp.nan, constrained_values),
+    )
 
 
 def _publish_V_and_carry_rows(
