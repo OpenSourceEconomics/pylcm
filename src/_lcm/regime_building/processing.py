@@ -2270,7 +2270,19 @@ def _get_explicit_entry_weights_for_process(
     physical_annotation = law_annotations.get("return", "FloatND")
 
     if law_reads_nothing:
-        declared = float(jnp.asarray(entry_law()))
+        declared_arr = jnp.asarray(entry_law())
+        if declared_arr.ndim != 0:
+            msg = (
+                f"The entry law for stochastic process '{state_name}' of regime "
+                f"'{target}' returns an array of shape {declared_arr.shape}, but "
+                f"an entry law names one value: the point on the target's "
+                f"support the source hands over. A law naming several values is "
+                f"a distribution, which the process already carries — drop the "
+                f"law to enter at the process's own law, or return the single "
+                f"value to enter at."
+            )
+            raise ModelInitializationError(msg)
+        declared = float(declared_arr)
         if not lower <= declared <= upper:
             msg = (
                 f"The entry law for stochastic process '{state_name}' of regime "
