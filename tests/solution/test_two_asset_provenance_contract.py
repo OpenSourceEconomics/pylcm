@@ -21,6 +21,11 @@ from tests.solution.test_egm_continuation_grid_provenance import _CONTRACT
 
 _WORKLOADS = sorted(_CONTRACT["workloads"])
 _REQUIRED = ("median_value_regret", "p90_value_regret", "max_value_regret")
+_MEASUREMENTS = [
+    (workload, profile)
+    for workload in _WORKLOADS
+    for profile in sorted(_CONTRACT["workloads"][workload]["measured"])
+]
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
@@ -41,14 +46,16 @@ def test_every_declared_budget_can_bind(workload):
     )
 
 
-@pytest.mark.parametrize("workload", _WORKLOADS)
-@pytest.mark.parametrize("profile", ["float64", "float32"])
+@pytest.mark.parametrize(("workload", "profile"), _MEASUREMENTS)
 def test_recorded_measurements_sit_inside_the_declared_budget(workload, profile):
     """The measurements the contract reports satisfy the budgets it declares.
 
     A budget below its own recorded measurement would fail the moment it were
     enforced, so the inconsistency belongs in the contract's own gate rather
     than in a solve.
+
+    Every profile the contract records is checked, so a measurement added on a
+    new device or precision binds the budget instead of merely annotating it.
     """
     entry = _CONTRACT["workloads"][workload]
     measured = entry["measured"][profile]

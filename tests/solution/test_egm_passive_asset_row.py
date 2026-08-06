@@ -527,15 +527,64 @@ def _euler_last_flat(value_array: np.ndarray) -> np.ndarray:
     return moved.reshape(-1, moved.shape[-1])
 
 
+# Splaying the combo axis repartitions the compiled reduction, so the value
+# array is owed agreement to the working precision rather than bit identity.
+# Measured over this file's grids, across batch sizes 1, 2 and 4 and every
+# non-terminal period, the worst relative departure from the unsplayed solve is
+# 2.72 eps at float32 and 1.99 eps at float64. Eight eps is that measurement
+# with headroom, and is dtype-derived, so it tightens automatically at float64
+# instead of degrading into a bit-identity claim the way a fixed `1e-12` does.
+_INVARIANCE_EPS_MULTIPLE = 8.0
+
+
+def _invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
+    """Return the `(rtol, atol)` a repartitioned reduction is owed.
+
+    The absolute term is the relative one scaled by the magnitude actually
+    being compared, so a cell whose value sits near zero is not held to a
+    tighter standard than the arithmetic can deliver.
+    """
+    eps = float(np.finfo(reference.dtype).eps)
+    rtol = _INVARIANCE_EPS_MULTIPLE * eps
+    return rtol, rtol * float(np.max(np.abs(reference[np.isfinite(reference)])))
+
+
+def _simulated_choices(model: Model, solution: PeriodToRegimeToVArr):
+    """Simulate a fixed subject panel and return it keyed by subject and period.
+
+    The seed is pinned so the regime lottery draws the same shocks on both
+    sides; without that, subjects cross the survival threshold differently and
+    the comparison measures the draw rather than the schedule.
+    """
+    rng = np.random.default_rng(seed=925)
+    n_subjects = 400
+    initial_conditions = {
+        "age": jnp.full(n_subjects, float(_ages().period_to_age(0))),
+        "wealth": jnp.asarray(rng.uniform(2.0, 95.0, size=n_subjects)),
+        "aime": jnp.asarray(rng.uniform(0.0, AIME_MAX, size=n_subjects)),
+        "income": jnp.asarray(rng.uniform(-0.4, 0.4, size=n_subjects)),
+        "regime_id": jnp.full(n_subjects, PassiveAssetRowRegimeId.working_life),
+    }
+    simulated = model.simulate(
+        params=_params(),
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=solution,
+        seed=20260806,
+        log_level="debug",
+    ).to_dataframe(use_labels=False)
+    return simulated.set_index(["subject_id", "period"]).sort_index()
+
+
 @pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
 def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size: int):
-    """Splaying the passive AIME combo axis does not change the solved values.
+    """Splaying the passive AIME combo axis moves the values by at most a few ULP.
 
     `batch_size` on the passive `aime` grid only changes how the combo product
     is scheduled (per-axis `productmap` blocks instead of one fused vmap). The
     canonical layout reorders the continuous axes (batched ahead of unbatched,
-    matching the brute solver), but the solved values — compared with the Euler
-    axis moved last — match the unsplayed `batch_size=0` solve exactly, at every
+    matching the brute solver), so the comparison moves the Euler axis last. The
+    reduction is repartitioned, not redefined: which cells are feasible is
+    unchanged, and the surviving values agree to the working precision at every
     period, including a block size that does not divide the AIME grid.
     """
     reference = _model("dcegm").solve(params=_params(), log_level="debug")
@@ -544,32 +593,53 @@ def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size
     )
     # `working_life` is the asset-row regime carrying the splayed AIME axis;
     # it is inactive in the terminal period, so exclude that period.
-    # @pro: This assertion fails at `--precision=32` for `bs=1` only, and the
-    # failure is grid-resolution dependent rather than code dependent. Holding
-    # the source fixed and varying only the grids in this file:
-    #   wealth 120 / savings 120 nodes -> all three batch sizes pass
-    #   wealth  60 / savings  60 nodes -> bs=1 fails, bs=2 and bs=4 still pass
-    # At 60 nodes the splayed and unsplayed arrays differ on 597/1800 elements,
-    # max absolute 2.861023e-06, max relative 3.244783e-07, i.e. 2-3 ULP at
-    # float32. float64 passes at both resolutions. `rtol=atol=1e-12` is five
-    # orders below float32 epsilon, so at that precision this asserts
-    # bit-identity, and bit-identity held at the finer grid.
-    #
-    # Two questions, and please answer both rather than only the second.
-    # (1) Is the loss of bit-identity itself evidence of a defect -- does
-    #     splaying the combo axis change more than the schedule at the coarser
-    #     resolution -- or is it the expected consequence of a repartitioned
-    #     reduction, which happened to be order-preserving at 120 nodes?
-    # (2) What is the right object to assert here? This project's own rule says
-    #     batch-size invariance is required *exactly* but is to be "tested as
-    #     equality of the discrete choice"; this test asserts the value array,
-    #     which is the stronger claim. If the policy is the correct object,
-    #     say so, and say what the value array is then owed at each precision.
     for period in sorted(reference)[:-1]:
+        got = _euler_last_flat(np.asarray(splayed[period]["working_life"]))
+        want = _euler_last_flat(np.asarray(reference[period]["working_life"]))
+        # Feasibility is structural, so it is owed exact agreement: an
+        # infeasible cell carries `-inf`, and a tolerance cannot adjudicate it.
+        np.testing.assert_array_equal(
+            np.isfinite(got),
+            np.isfinite(want),
+            err_msg=f"feasibility differs: period={period}, bs={aime_batch_size}",
+        )
+        rtol, atol = _invariance_tolerances(want)
         np.testing.assert_allclose(
-            _euler_last_flat(np.asarray(splayed[period]["working_life"])),
-            _euler_last_flat(np.asarray(reference[period]["working_life"])),
-            rtol=1e-12,
-            atol=1e-12,
+            got,
+            want,
+            rtol=rtol,
+            atol=atol,
             err_msg=f"period={period}, bs={aime_batch_size}",
+        )
+
+
+@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
+def test_passive_aime_batch_size_leaves_the_discrete_choices_unchanged(
+    aime_batch_size: int,
+):
+    """Splaying the passive AIME combo axis does not move a single discrete choice.
+
+    Batch size partitions a computation whose result does not depend on the
+    partition, so the discrete objects are owed exact equality rather than a
+    tolerance: a labor-supply choice or a regime that flips is a defect, not
+    rounding. Simulating the same subject panel under both schedules with the
+    same seed reproduces the same choice for every subject in every period.
+    """
+    reference_model = _model("dcegm")
+    reference = _simulated_choices(
+        reference_model, reference_model.solve(params=_params(), log_level="debug")
+    )
+    splayed_model = _model_with_aime_batch(aime_batch_size)
+    splayed = _simulated_choices(
+        splayed_model, splayed_model.solve(params=_params(), log_level="debug")
+    )
+
+    assert list(splayed.index) == list(reference.index), (
+        f"subject/period panel differs, bs={aime_batch_size}"
+    )
+    for column in ("labor_supply", "regime_name"):
+        np.testing.assert_array_equal(
+            splayed[column].to_numpy(),
+            reference[column].to_numpy(),
+            err_msg=f"{column} differs, bs={aime_batch_size}",
         )

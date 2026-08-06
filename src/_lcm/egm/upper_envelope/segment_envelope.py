@@ -104,7 +104,9 @@ def refine_envelope_exact(
     n_runs = count_linked_runs(endog_grid=endog_grid, dead=dead, segment_id=segment_id)
 
     cell_left, cell_right, cell_live = _node_cells(endog_grid=endog_grid, dead=dead)
-    runs = _run_node_order(endog_grid=endog_grid, run_id=run_id, max_runs=max_runs)
+    runs = _run_node_order(
+        endog_grid=endog_grid, run_id=run_id, dead=dead, max_runs=max_runs
+    )
 
     sub_cells = _sub_cells_per_node_cell(
         cell_left=cell_left,
@@ -206,7 +208,9 @@ def _node_cells(
     return left, right, live
 
 
-def _run_node_order(*, endog_grid: Float1D, run_id: Int1D, max_runs: int) -> _RunNodes:
+def _run_node_order(
+    *, endog_grid: Float1D, run_id: Int1D, dead: BoolND, max_runs: int
+) -> _RunNodes:
     """Order the candidates by run, then by abscissa, and record each run's block.
 
     Locating the link a run contributes to a cell is a search in that run's own
@@ -215,13 +219,20 @@ def _run_node_order(*, endog_grid: Float1D, run_id: Int1D, max_runs: int) -> _Ru
     the whole candidate array is what keeps this linear in the candidates: a
     per-run order would carry a run axis alongside the candidate axis, and the
     row maps production adds would then multiply that product by the row count.
+
+    A candidate is absent from every run when the caller declared it dead, when
+    the run labelling gave it no run, or when its abscissa is not finite. All
+    three are asked here rather than re-deriving deadness from the abscissa
+    alone: a candidate carrying genuine poison keeps a finite abscissa, so an
+    abscissa test would read it as live and its NaN value would enter the node
+    list of whichever run its abscissa falls in.
     """
-    dead = ~jnp.isfinite(endog_grid)
+    absent = dead | (run_id < 0) | ~jnp.isfinite(endog_grid)
     # Candidates belonging to no run get a block of their own past the last run,
     # so they are outside every run's extent and can never be located.
-    block = jnp.where(dead, max_runs, jnp.clip(run_id, 0, max_runs))
+    block = jnp.where(absent, max_runs, jnp.clip(run_id, 0, max_runs))
     order = jnp.lexsort(
-        (jnp.where(dead, jnp.inf, endog_grid), block.astype(jnp.float32))
+        (jnp.where(absent, jnp.inf, endog_grid), block.astype(jnp.float32))
     ).astype(jnp.int32)
     n_nodes = jax.ops.segment_sum(
         jnp.ones_like(block, dtype=jnp.int32), block, num_segments=max_runs + 1

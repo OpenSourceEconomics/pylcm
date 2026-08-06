@@ -517,3 +517,19 @@ class Solver(ABC):
         closed-form continuations, without forking on the solver type.
         """
         return False
+
+    @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """Whether this solver's continuation step implements the EZ recursion.
+
+        Reading a continuation and assuming expected utility are separate
+        properties. An Euler inversion written against `E[V']` is only valid
+        under `LinearExpectation`, so by default a solver that reads a
+        continuation refuses a nonlinear certainty equivalent rather than
+        solving a recursion the regime does not declare. A solver whose step
+        inverts the recursive Euler equation instead — carrying the certainty
+        equivalent's transform through the marginal — overrides this to `True`
+        and is admitted. Grid search never consults it: reading only the value
+        array, it aggregates any certainty equivalent in concrete values.
+        """
+        return False

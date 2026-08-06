@@ -824,10 +824,12 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - `GridSearch` and `NBEGM` support a nonlinear certainty equivalent (the
-      Epstein-Zin recursion); the other endogenous-grid solvers' Euler inversion
-      assumes expected utility, so a declared certainty equivalent must be
-      rejected rather than silently ignored
+    - a solver that reads a continuation payload inverts the Euler equation
+      against it. That inversion assumes expected utility unless the solver
+      declares `supports_nonlinear_certainty_equivalent`, so a nonlinear
+      certainty equivalent is otherwise rejected rather than silently ignored;
+      a solver that reads only the value array (grid search) aggregates any
+      certainty equivalent in concrete values and is never subject to the rule
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
@@ -846,7 +848,10 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if not isinstance(regime.solver, (GridSearch, NBEGM, NNBEGM)):
+    if (
+        regime.solver.requires_continuation
+        and not regime.solver.supports_nonlinear_certainty_equivalent
+    ):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "

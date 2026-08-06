@@ -29,6 +29,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    FunctionName,
     NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
@@ -1687,6 +1688,17 @@ def _get_compute_CE(
                 # zero-safe contraction, value-ordered sum. See that helper for why
                 # this beats a sequential left-fold on accuracy (round-8) and why the
                 # order must not depend on regime LABELS (round-10 F1).
+                #
+                # Upstream's `_neutralize_where_unreachable` is deliberately NOT
+                # applied here, and not because the hazard is absent: it is the same
+                # `0 * -inf` from a zero-probability target carrying an admissible
+                # `-inf`. It is already handled one level in, by
+                # `zero_safe_weighted_term` inside `_sum_regime_mixture`, which masks
+                # the VALUE before the multiply on the same `weight == 0` predicate
+                # and for the reason upstream itself gives -- masking the product
+                # instead poisons the gradient. Neutralizing here too would multiply
+                # at the call site and put this term back outside the single
+                # value-ordered reduction, which is the point of the unmultiplied form.
                 mixture_terms.append(
                     (
                         target_regime_name,
@@ -1946,11 +1958,40 @@ def _scalar_target_contribution(
             weights.append(prob * jnp.ones_like(node))
         else:
             # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
-            # `p_r * V_r` once inside a single zero-safe contraction. Multiplying
-            # here would reintroduce `0 * -inf = nan` for a zero-mass stateless
-            # target and put this term outside the value-ordered reduction.
+            # `p_r * V_r` once inside a single zero-safe contraction, masking the
+            # VALUE before the multiply. That is the same neutralization upstream's
+            # `_neutralize_where_unreachable` performs, on the same `prob == 0`
+            # predicate, so applying it here as well would be redundant -- and
+            # multiplying here would reintroduce `0 * -inf = nan` for a zero-mass
+            # stateless target and put this term outside the value-ordered reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
     return mixture_terms, values, weights, probability_mass
+
+
+def _neutralize_where_unreachable(*, value: FloatND, prob: FloatND) -> FloatND:
+    """Return `value`, replaced by zero wherever the target carries no probability.
+
+    `-inf` is the ordinary value of a state at which every action is infeasible
+    (`max_Q_over_a` masks with `-jnp.inf`), and a regime transition may send
+    exactly zero probability to the regime carrying it. The product is then
+    `0 · -inf`, which floating point calls NaN and an expectation calls zero: an
+    event of probability zero carries no weight, whatever value sits on it.
+    Leaving the NaN in place would not merely mislabel that target — every
+    target enters the same certainty equivalent, so the states that *are*
+    reachable would lose their value because of one that is not.
+
+    The value is neutralized rather than the product, so neither operand of the
+    multiplication is infinite where the probability vanishes. Masking the
+    product instead would still evaluate `0 · -inf` in the untaken `jnp.where`
+    branch: primal-safe, but it poisons the gradient.
+
+    A probability is compared against zero exactly, without a tolerance. The
+    zero here is structural — a transition that does not go somewhere — not a
+    small number that rounded down, so its provenance is exact and a tolerance
+    would instead drop genuinely reachable targets of small probability.
+    """
+    unreachable = prob == 0.0
+    return jnp.where(unreachable, jnp.zeros_like(value), value)
 
 
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
@@ -2325,8 +2366,8 @@ def _get_U_and_F(
 
 def _fail_if_conflicting_transition_is_read(
     *,
-    combined: Mapping[str, Callable[..., Any]],
-    targets: list[str],
+    combined: Mapping[FunctionName, Callable[..., Any]],
+    targets: list[FunctionName],
     conflicting_deterministic_transition_names: frozenset[TransitionFunctionName],
 ) -> None:
     """Reject a model whose decision reads a target-dependent `next_<state>` law.
