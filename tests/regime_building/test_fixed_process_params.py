@@ -7,8 +7,11 @@ consumer — the target's own nodes, a source's entry weights, diagnostics, and
 simulation — reads one resolved process object.
 """
 
+from typing import Any, cast
+
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -19,7 +22,8 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.exceptions import InvalidParamsError
+from lcm.typing import ScalarFloat, ScalarInt, UserParams
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so the unconditional mean is `mu` and a dropped continuation
@@ -153,3 +157,50 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
         np.asarray(from_construction[0]["source"]),
         atol=1e-6,
     )
+
+
+def _model_with_law_value(value: Any) -> Model:
+    """Build the entered-process model with one law field set to `value`."""
+    return Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=lambda age: age < 22,
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _process(at_construction=False)},
+                functions={"utility": _shock_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params=cast(
+            "UserParams", {"target": {"shock": _PROCESS_LAW | {"mu": value}}}
+        ),
+        enable_jit=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(jnp.array([0.5, 1.0]), id="array"),
+        pytest.param(pd.Series([0.5, 1.0], index=[20, 21]), id="age_indexed_series"),
+    ],
+)
+def test_a_varying_law_field_names_the_supported_spelling(value: Any) -> None:
+    """An array-valued process law field is rejected, naming `AgeSpecializedGrid`."""
+    with pytest.raises(InvalidParamsError, match="AgeSpecializedGrid"):
+        _model_with_law_value(value)
+
+
+def test_the_rejection_names_the_field_and_its_shape() -> None:
+    """The message identifies which field was given a non-scalar, and its shape."""
+    with pytest.raises(InvalidParamsError) as excinfo:
+        _model_with_law_value(jnp.array([0.5, 1.0]))
+
+    message = str(excinfo.value)
+    assert "mu" in message
+    assert "(2,)" in message
