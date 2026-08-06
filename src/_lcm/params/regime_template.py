@@ -310,6 +310,39 @@ def _fail_if_runtime_grid_shadows_function(
         )
 
 
+def _callables_in(value: object) -> list[UserFunction]:
+    """Return the callables a regime slot value stands for.
+
+    A law and a regime function accept the same shapes, so one traversal serves
+    both and they cannot come to disagree about what is walkable:
+
+    - a plain callable stands for itself;
+    - a `Phased` entry is two implementations rather than one, so anything
+      reading a signature descends into both;
+    - a per-target dict holds one law per target, each walked in turn;
+    - `None` masks a model-level entry and stands for no implementation at all,
+      so there is no signature to read.
+
+    Args:
+        value: A `state_transitions` or `functions` entry.
+
+    Returns:
+        List of the callables it stands for, empty when it stands for none.
+
+    """
+    if value is None:
+        return []
+    if isinstance(value, Phased):
+        return [*_callables_in(value.solve), *_callables_in(value.simulate)]
+    if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
+        return [
+            callable_
+            for member in value.values()
+            for callable_ in _callables_in(member)
+        ]
+    return [cast("UserFunction", value)]
+
+
 def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
     """Return the names of functions that compute, or feed, a state transition.
 
@@ -321,20 +354,13 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
         regime function they read, directly or through other regime functions.
 
     """
-    roots: list[UserFunction] = []
-    frontier_laws: list[object] = list(user_regime.state_transitions.values())
-    while frontier_laws:
-        law = frontier_laws.pop()
-        if isinstance(law, Phased):
-            frontier_laws.extend([law.solve, law.simulate])
-        elif isinstance(law, Mapping) and not isinstance(law, MarkovTransition):
-            frontier_laws.extend(law.values())
-        elif law is not None:
-            roots.append(cast("UserFunction", law))
-
     functions = user_regime.functions
     feeders: set[str] = set()
-    frontier = list(roots)
+    frontier = [
+        variant
+        for law in user_regime.state_transitions.values()
+        for variant in _callables_in(law)
+    ]
     while frontier:
         func = frontier.pop()
         for arg in dt.create_tree_with_input_types({"_": func}):
@@ -342,7 +368,7 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.append(cast("UserFunction", functions[arg_name]))
+            frontier.extend(_callables_in(functions[arg_name]))
 
     return frozenset(
         {f"next_{name}" for name in user_regime.state_transitions}
