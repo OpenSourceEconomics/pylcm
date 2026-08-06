@@ -2308,7 +2308,12 @@ def _get_explicit_entry_weights_for_process(
         # Outside the support every hat is zero, which would read as a silent
         # zero continuation. Poison it instead, so the solve-time check names
         # the regime and period rather than publishing an unjustified value.
-        on_support = (coordinate >= 0.0) & (coordinate <= n_points - 1)
+        #
+        # The test is on the physical value, not its coordinate. A coordinate
+        # only stands in for the value where the map is invertible, which it is
+        # not on a support of one node: there every value shares the sole index,
+        # so a coordinate test would accept the whole real line.
+        on_support = (value >= lower) & (value <= upper)
         return jnp.where(on_support, weights, jnp.nan)
 
     return explicit_entry_weights

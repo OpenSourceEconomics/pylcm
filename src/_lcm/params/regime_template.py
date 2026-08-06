@@ -68,29 +68,38 @@ def create_regime_params_template(
         The regime parameter template with type annotations as values.
 
     """
-    # Every state the regime declares a law for produces a `next_<state>` in the
-    # target's bundle, so a law reading one reads a DAG value, not a parameter.
-    # Reading `state_transitions` and not only `states` is what makes that hold
-    # for a state the source hands over without carrying — a declared entry into
-    # a target's process is the case, and its physical value is available to its
-    # neighbours exactly as any other transition's output is.
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
-        *(f"next_{name}" for name in user_regime.states),
-        *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
         "CE",
     }
-    # A target's state is next-period vocabulary only where next-period values
-    # exist: inside a transition, and inside whatever feeds one. `utility` and
-    # `constraints` are evaluated at this period's states, so `next_<state>`
-    # there names an ordinary parameter and stays one.
+    # `next_<state>` names a transition's output only where next-period values
+    # exist: inside a transition, and inside whatever feeds one. The consumer's
+    # role decides this, never the spelling on its own — `utility` and
+    # `constraints` are evaluated at this period's states and never read a
+    # transition's output, so an argument spelled that way there is an ordinary
+    # parameter, whether or not this regime happens to move a state of that name.
+    #
+    # For a consumer that is in the transition role, three families of name are
+    # transition outputs rather than parameters:
+    #
+    # - `next_<state>` for a state this regime carries;
+    # - `next_<state>` for a state it declares a law for — which covers a state
+    #   handed over without being carried, a declared entry into a target's
+    #   process being the case;
+    # - `next_<state>` for a state some other regime declares, since the value
+    #   belongs to a target and is produced by the entry or is a draw.
     transition_role = _function_names_in_transition_role(user_regime)
     variables_in_transition_role = variables | {
-        f"next_{name}" for name in other_regime_state_names
+        f"next_{name}"
+        for name in (
+            *user_regime.states,
+            *user_regime.state_transitions,
+            *other_regime_state_names,
+        )
     }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
