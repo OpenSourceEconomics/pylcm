@@ -1,18 +1,26 @@
-"""Every declared accuracy budget can bind.
+"""The provenance contract declares a sentinel that can bind, on both statistics.
 
-`median <= p90 <= max` holds for any sample, because each statistic dominates
-the previous one by construction. A budget that declares them out of that order
-is not impossible to meet -- a sample inside the tighter bound satisfies both --
-but the tighter clause dominates, so the looser one can never bind. The contract
-then states a promise it never enforces, and the unenforced clause reads as
-though it were the operative one.
+The contract is a **coverage sentinel**, not an accuracy budget. It exists to
+catch a mask that stops covering its interior, or a backend that stops producing
+a comparable solution at all. It does not certify any backend's accuracy, and
+the levels it records must not be read as one — G2EGM's included.
 
-Ordering is therefore checked here rather than trusted: it is what makes each
-declared statistic a real constraint instead of decoration.
+That restricts which statistics may gate. A statistic can only be a sentinel if
+it is stable across the profiles the contract records, because a bound on a
+statistic that moves with the device is a bound on the device. Two qualify:
 
-Every workload must also declare all three statistics. A budget that names only
-a median cannot see a minority of badly wrong nodes, which is the shape a
-coverage failure takes.
+- the **median**, which moves when a solution degrades broadly;
+- the **maximum**, which moves first when a mask stops covering a node, since an
+  uncovered node is a large regret.
+
+Both are declared for every workload, and both are checked here rather than
+trusted:
+
+- `median <= max` holds for any sample by construction, so a budget declaring
+  them out of that order lets the tighter clause dominate and the looser one
+  never bind. The contract would then state a promise it never enforces.
+- Every workload declares both. A sentinel naming only a median cannot see a
+  minority of badly wrong nodes, which is the shape a coverage failure takes.
 """
 
 import pytest
@@ -20,7 +28,8 @@ import pytest
 from tests.solution.test_egm_continuation_grid_provenance import _CONTRACT
 
 _WORKLOADS = sorted(_CONTRACT["workloads"])
-_REQUIRED = ("median_value_regret", "p90_value_regret", "max_value_regret")
+_REQUIRED = ("median_value_regret", "max_value_regret")
+_STATISTICS = ("median", "max")
 _MEASUREMENTS = [
     (workload, profile)
     for workload in _WORKLOADS
@@ -29,36 +38,44 @@ _MEASUREMENTS = [
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
-def test_every_workload_declares_all_three_statistics(workload):
-    """A workload budgets its median, its p90 and its maximum."""
-    budget = _CONTRACT["workloads"][workload]["budget"]
-    assert set(budget) == set(_REQUIRED)
+def test_every_workload_declares_both_sentinel_statistics(workload):
+    """A workload declares its median and its maximum, and nothing else."""
+    sentinel = _CONTRACT["workloads"][workload]["sentinel"]
+    assert set(sentinel) == set(_REQUIRED)
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
-def test_every_declared_budget_can_bind(workload):
-    """`median <= p90 <= max`, so no declared statistic is dominated away."""
-    budget = _CONTRACT["workloads"][workload]["budget"]
-    assert (
-        budget["median_value_regret"]
-        <= budget["p90_value_regret"]
-        <= budget["max_value_regret"]
-    )
+def test_every_declared_sentinel_can_bind(workload):
+    """`median <= max`, so neither declared statistic is dominated away."""
+    sentinel = _CONTRACT["workloads"][workload]["sentinel"]
+    assert sentinel["median_value_regret"] <= sentinel["max_value_regret"]
+
+
+@pytest.mark.parametrize("workload", _WORKLOADS)
+def test_no_workload_records_a_statistic_it_does_not_gate(workload):
+    """Every statistic a profile records is one the sentinel bounds.
+
+    A recorded statistic that nothing gates is decoration: it invites being
+    refitted whenever a new device reports a different value, which is the
+    signature of a number that measures the device rather than the code.
+    """
+    for measured in _CONTRACT["workloads"][workload]["measured"].values():
+        assert set(measured) == set(_STATISTICS)
 
 
 @pytest.mark.parametrize(("workload", "profile"), _MEASUREMENTS)
-def test_recorded_measurements_sit_inside_the_declared_budget(workload, profile):
-    """The measurements the contract reports satisfy the budgets it declares.
+def test_recorded_measurements_sit_inside_the_declared_sentinel(workload, profile):
+    """The measurements the contract reports satisfy the sentinel it declares.
 
-    A budget below its own recorded measurement would fail the moment it were
+    A bound below its own recorded measurement would fail the moment it were
     enforced, so the inconsistency belongs in the contract's own gate rather
     than in a solve.
 
     Every profile the contract records is checked, so a measurement added on a
-    new device or precision binds the budget instead of merely annotating it.
+    new device or precision binds the sentinel instead of merely annotating it.
     """
     entry = _CONTRACT["workloads"][workload]
     measured = entry["measured"][profile]
-    budget = entry["budget"]
-    for statistic, field in zip(("median", "p90", "max"), _REQUIRED, strict=True):
-        assert measured[statistic] < budget[field]
+    sentinel = entry["sentinel"]
+    for statistic, field in zip(_STATISTICS, _REQUIRED, strict=True):
+        assert measured[statistic] < sentinel[field]
