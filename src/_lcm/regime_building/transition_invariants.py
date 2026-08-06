@@ -11,11 +11,14 @@ These checks run once per phase while the model builds, over Python-level
 descriptors and function signatures, so they cost nothing on the traced path.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
 from dags import get_annotations
+from dags.tree.tree_utils import QNAME_DELIMITER
 
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseName
 from _lcm.transition_laws import TransitionLawInfo, TransitionLaws
 from _lcm.typing import (
     RegimeName,
@@ -34,6 +37,7 @@ def fail_if_transition_namespaces_are_mixed(
     transition_laws: TransitionLaws,
     processed_functions: MappingProxyType[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    phase_name: PhaseName,
 ) -> None:
     """Check one phase's transition laws against the two-namespace contract.
 
@@ -58,6 +62,10 @@ def fail_if_transition_namespaces_are_mixed(
         processed_functions: Immutable mapping of qualified function names to
             functions, carrying the synthesized weight laws.
         all_grids: Immutable mapping of regime names to Grid spec objects.
+        phase_name: Phase whose laws are being checked. A draw is realized in
+            simulation, where the realization is published under its
+            `next_<state>` name and may be read like any other producer; during
+            backward induction it has no value, so the read is rejected.
 
     Raises:
         ModelInitializationError: If any of the three conditions fails.
@@ -78,7 +86,39 @@ def fail_if_transition_namespaces_are_mixed(
             laws=laws,
             processed_functions=processed_functions,
             target_state_names=set(all_grids.get(target, MappingProxyType({}))),
+            draws_are_realized=phase_name == "simulation",
         )
+
+
+def _functions_feeding(
+    *,
+    roots: Mapping[str, UserFunction],
+    candidates: Mapping[str, UserFunction],
+) -> dict[str, UserFunction]:
+    """Return the unqualified functions the roots read, directly or through others.
+
+    Args:
+        roots: Functions whose arguments start the walk.
+        candidates: Immutable mapping of function names to functions, searched for
+            each argument read. Target-qualified names are skipped: they belong to
+            another target's bundle, not to this regime's plain namespace.
+
+    Returns:
+        Dictionary of the reachable candidate functions, excluding the roots.
+
+    """
+    found: dict[str, UserFunction] = {}
+    frontier = list(roots.values())
+    while frontier:
+        func = frontier.pop()
+        for arg in get_annotations(func):
+            if arg == "return" or arg in roots or arg in found:
+                continue
+            if QNAME_DELIMITER in arg or arg not in candidates:
+                continue
+            found[arg] = candidates[arg]
+            frontier.append(candidates[arg])
+    return found
 
 
 def _fail_if_a_basis_law_is_incomplete(
@@ -127,6 +167,7 @@ def _fail_if_a_read_next_state_has_no_value(
     laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
     processed_functions: MappingProxyType[str, UserFunction],
     target_state_names: set[StateOrActionName],
+    draws_are_realized: bool,
 ) -> None:
     """Check that every `next_<state>` a law reads is produced and not a draw."""
     consumers: dict[str, UserFunction] = dict(bundle)
@@ -135,6 +176,12 @@ def _fail_if_a_read_next_state_has_no_value(
         for law in laws.values()
         if law.weight_name is not None and law.weight_name in processed_functions
     }
+    # A helper reads the draw just as a law does, and reaches the same place by
+    # feeding one -- but only if it feeds one. `next_<state>` on a function no
+    # law consumes, `utility` above all, names an ordinary parameter: utility is
+    # evaluated at this period's states, where no next-period value exists to
+    # confuse it with.
+    consumers |= _functions_feeding(roots=consumers, candidates=processed_functions)
 
     for consumer_name, consumer in consumers.items():
         for arg in get_annotations(consumer):
@@ -152,7 +199,7 @@ def _fail_if_a_read_next_state_has_no_value(
                     f"transition does produce."
                 )
                 raise ModelInitializationError(msg)
-            if laws[arg].stochastic:
+            if laws[arg].stochastic and not draws_are_realized:
                 msg = (
                     f"'{consumer_name}' of regime '{source_regime_name}' reads "
                     f"'{arg}' on the way into regime '{target}', but that law "
