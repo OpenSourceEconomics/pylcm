@@ -334,15 +334,24 @@ def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str
 
     functions = user_regime.functions
     feeders: set[str] = set()
-    frontier = list(roots)
+    frontier: list[object] = list(roots)
     while frontier:
         func = frontier.pop()
+        # A regime FUNCTION can be phase-variant too, not just a transition law.
+        # The loop above unwraps a `Phased` law; this one is reached once a law
+        # READS a `Phased` helper, and the wrapper is not callable, so
+        # `inspect.signature` inside `dags` rejects it. Both variants can feed
+        # the transition -- the role is a union over the phases, exactly as the
+        # law-side unwrapping above treats it -- so both are walked.
+        if isinstance(func, Phased):
+            frontier.extend([func.solve, func.simulate])
+            continue
         for arg in dt.create_tree_with_input_types({"_": func}):
             arg_name = tree_path_from_qname(arg)[-1]
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.append(cast("UserFunction", functions[arg_name]))
+            frontier.append(functions[arg_name])
 
     return frozenset(
         {f"next_{name}" for name in user_regime.state_transitions}
