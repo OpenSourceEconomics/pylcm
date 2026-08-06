@@ -135,8 +135,8 @@ def test_keeping_the_house_is_free():
     np.testing.assert_allclose(float(cost), 0.0, atol=_COST_ATOL)
 
 
-@pytest.mark.parametrize("next_housing", [6.0, 2.5])
-def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
+@pytest.mark.parametrize("new_housing", [6.0, 2.5])
+def test_adjusting_pays_the_eq12_round_trip_cost(new_housing: float):
     """Adjusting the house pays the DS eq. 12 round-trip cost.
 
     The adjuster sells the whole old house at `(1 + r_H)·H` and rebuys the whole
@@ -147,11 +147,11 @@ def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
     housing, tau, return_housing = 4.0, 0.07, 0.03
     cost = ds_app2_housing.housing_cost(
         housing=jnp.asarray(housing),
-        new_housing=jnp.asarray(next_housing),
+        new_housing=jnp.asarray(new_housing),
         return_housing=return_housing,
         tau=tau,
     )
-    expected = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
+    expected = (1.0 + tau) * new_housing - (1.0 + return_housing) * housing
     np.testing.assert_allclose(float(cost), expected, rtol=_COST_RTOL)
 
 
