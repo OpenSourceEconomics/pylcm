@@ -3041,6 +3041,7 @@ def _process_regime_core(
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
     coarse_state_law_names: frozenset[StateName],
