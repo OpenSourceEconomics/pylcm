@@ -102,7 +102,6 @@ from _lcm.solution.contract import (
 )
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
-    SupportAxes,
     TransitionLawInfo,
     TransitionLaws,
 )
@@ -512,7 +511,6 @@ def process_regimes(
             solve_functions=solution.functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
-            solve_support_axes=solution.support_axes,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
@@ -959,7 +957,6 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
-            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -978,7 +975,6 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
-            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_space,
@@ -1087,7 +1083,6 @@ def _build_solution_phase(
         constraints=core.constraints,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
-        support_axes=core.support_axes,
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
@@ -1375,7 +1370,6 @@ def _build_simulation_phase(
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_transition_laws: TransitionLaws,
-    solve_support_axes: SupportAxes,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
     solver: Solver,
@@ -1426,8 +1420,6 @@ def _build_simulation_phase(
             does not build — a declared entry law into a process is split into
             node indices plus weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
-        solve_support_axes: Immutable mapping of target regime names to their
-            private node axes, as the solution phase built them.
         solve_transition_laws: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
@@ -1566,7 +1558,6 @@ def _build_simulation_phase(
             constraints=constraints,
             transitions=solve_transitions,
             transition_laws=solve_transition_laws,
-            support_axes=solve_support_axes,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -1825,14 +1816,6 @@ class _CoreResult:
 
     transition_laws: TransitionLaws
     """Immutable mapping of target regime names to their transition laws."""
-
-    support_axes: SupportAxes
-    """Immutable mapping of target regime names to their private node axes.
-
-    One entry per `next_<state>` whose law is an interpolation basis: the node
-    index vector the target's value function is indexed by, which the physical
-    value the same law publishes is interpolated over. Empty in the simulate
-    phase, which stores physical process values and indexes nothing."""
 
     next_regime_func: TransitionFunction | None
     """The coarse regime transition function; `None` for terminal regimes and
@@ -2105,21 +2088,6 @@ def _process_regime_core(
         }
     )
 
-    # The node axis a declared entry is interpolated over. It is keyed by the
-    # public `next_<state>` name but is emphatically not that function: the
-    # public name produces the physical value every dependent law reads, and
-    # this array is what the target's value function is indexed by. Kept in its
-    # own mapping rather than in the transition bundle, so no builder that
-    # iterates transitions can mistake it for one.
-    axes_by_target: dict[RegimeName, dict[TransitionFunctionName, Int1D]] = {}
-    for (user_regime, process), grid in split_entry_process_grids.items():
-        axes_by_target.setdefault(user_regime, {})[f"next_{process}"] = jnp.arange(
-            grid.to_jax().shape[0], dtype=jnp.int32
-        )
-    support_axes: SupportAxes = MappingProxyType(
-        {target: MappingProxyType(axes) for target, axes in axes_by_target.items()}
-    )
-
     process_transition_keys = {
         f"{user_regime}__next_{process}"
         for user_regime, process in (*target_process_grids, *split_entry_process_grids)
@@ -2185,7 +2153,6 @@ def _process_regime_core(
         constraints=processed_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
@@ -3542,7 +3509,6 @@ def _build_Q_and_F_per_period(
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -3578,8 +3544,6 @@ def _build_Q_and_F_per_period(
         transitions: Immutable mapping of regime-to-regime transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function.
         regime_to_v_interpolation_info: Mapping of regime names to representative
             V-interpolation info (the age-invariant fallback).
@@ -3648,7 +3612,6 @@ def _build_Q_and_F_per_period(
             scalar_targets=scalar_targets,
             transitions=transitions,
             transition_laws=transition_laws,
-            support_axes=support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
