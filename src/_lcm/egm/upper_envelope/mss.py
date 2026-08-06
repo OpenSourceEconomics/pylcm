@@ -33,6 +33,33 @@ import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarInt
 
+# Band within which the dense envelope evaluated at a crossing abscissa and the
+# crossing's own value count as the same number. They are one mathematical
+# quantity reached by two routes -- a maximum over segment lines, and a two-line
+# intersection solve whose division amplifies the inputs' rounding -- so the band
+# is set by how far those routes can drift, not by the format's resolution.
+_ON_ENVELOPE_RTOL = 1e-5
+_ON_ENVELOPE_ATOL = 1e-7
+# ...but it can never be *narrower* than the format can resolve. The relative
+# term vanishes near zero, leaving the absolute term to decide there, and a
+# fixed `1e-7` sits below float32's epsilon (`1.19e-7`): two readings agreeing
+# to the last bit the format has would still fall outside it, so whether a
+# crossing is emitted would stop being a property of the geometry.
+_ON_ENVELOPE_EPS_MULTIPLE = 8.0
+
+
+def _on_envelope_atol(reference: FloatND) -> FloatND:
+    """Return the absolute band for "this crossing lies on the envelope".
+
+    The declared tolerance, floored at a small multiple of the working dtype's
+    epsilon. At double precision the floor never binds and the band is the
+    declared constant; at single precision the floor is what makes the
+    comparison decidable at all.
+    """
+    return jnp.maximum(
+        _ON_ENVELOPE_ATOL, _ON_ENVELOPE_EPS_MULTIPLE * jnp.finfo(reference.dtype).eps
+    )
+
 
 def refine_envelope(
     *,
@@ -176,7 +203,10 @@ def refine_envelope(
         segment_live=segment_live,
     )
     on_envelope = jnp.isfinite(crossing_envelope) & jnp.isclose(
-        crossing_envelope, crossing.value, atol=1e-7, rtol=1e-5
+        crossing_envelope,
+        crossing.value,
+        atol=_on_envelope_atol(crossing_envelope),
+        rtol=_ON_ENVELOPE_RTOL,
     )
     crossing_valid = crossing.valid & on_envelope
 
