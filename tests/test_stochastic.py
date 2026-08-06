@@ -24,6 +24,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -380,8 +381,10 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
         log_level="debug", params=params
     )
 
-    assert_allclose(
-        V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=1e-10
+    assert_array_almost_equal(
+        V_splayed[0]["working_life"],
+        V_unsplayed[0]["working_life"],
+        decimal=DECIMAL_PRECISION,
     )
 
 

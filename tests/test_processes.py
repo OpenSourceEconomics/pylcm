@@ -209,7 +209,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     expected = mu / (1 - rho)
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
@@ -357,7 +357,7 @@ def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     expected = mu / (1 - rho)
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_lognormal_correct_shape_without_params():
@@ -469,7 +469,7 @@ def test_tauchen_normal_mixture_centers_on_unconditional_mean():
     midpoint = (points[0] + points[-1]) / 2
     mean_eps = kwargs["p1"] * kwargs["mu1"] + (1 - kwargs["p1"]) * kwargs["mu2"]
     expected = (kwargs["mu"] + mean_eps) / (1 - kwargs["rho"])
-    aaae(midpoint, expected, decimal=10)
+    aaae(midpoint, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
