@@ -513,7 +513,7 @@ def _evaluate_envelope(
 
 
 def _value_decrease_past_noise(*, left_value: Float1D, right_value: Float1D) -> BoolND:
-    """Whether the value genuinely falls from one candidate to the next.
+    """Report whether the value genuinely falls from one candidate to the next.
 
     Without an explicit `segment_id` the branch boundaries have to be inferred, and
     a value decrease is the signal. Along a near-linear tail, though, the sign of

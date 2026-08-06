@@ -43,7 +43,7 @@ _VALUE_TIE_ATOL = 1e-12
 
 
 def _value_tie_band(reference: FloatND) -> FloatND:
-    """Scale-aware absolute tie band around a reference envelope value."""
+    """Return the scale-aware absolute tie band around a reference envelope value."""
     return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
 
 
@@ -203,7 +203,7 @@ def envelope_at_query(
 def _right_continuous_rank(
     *, near_max: BoolND, right_available: BoolND, slope: FloatND
 ) -> FloatND:
-    """One comparable scalar per segment for the right-continuous tie-break.
+    """Return one comparable scalar per segment for the right-continuous tie-break.
 
     Ranks a right-extending near-max segment above one that ends at the query, and
     among equally-eligible segments the larger value-slope. `arctan` bounds the slope
@@ -258,7 +258,7 @@ def _block_query_terms(
 def _envelope_at_query_blocked(
     *, links: _SegmentLinks, query: FloatND, block_size: int
 ) -> tuple[FloatND, FloatND, FloatND]:
-    """Two-pass blocked equivalent of the dense `(n_query, n_segment)` reduction.
+    """Evaluate the dense `(n_query, n_segment)` reduction in two blocked passes.
 
     Both passes are exact associative folds against a fixed target, so the result
     matches the dense path (up to floating-point reassociation between the two

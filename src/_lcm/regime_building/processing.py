@@ -512,7 +512,7 @@ def process_regimes(
 def _period_to_state_nodes(
     *, regime_name: RegimeName, grid_schedule: AgeGridSchedule | None
 ) -> MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None:
-    """This regime's age-specialized state nodes, per active period.
+    """Return this regime's age-specialized state nodes, per active period.
 
     `None` when the model has no age-specialized grid, or when this regime declares
     none, so an age-invariant regime hands its solver exactly what it handed before.
@@ -541,7 +541,7 @@ def _period_to_state_nodes(
 def _period_to_regime_grid_signature(
     *, grid_schedule: AgeGridSchedule | None
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None:
-    """Every regime's user-declared grid signature, per period.
+    """Return every regime's user-declared grid signature, per period.
 
     `None` for an age-invariant model, so its solvers group periods exactly as
     they did before.

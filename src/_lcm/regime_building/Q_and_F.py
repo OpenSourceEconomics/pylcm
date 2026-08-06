@@ -25,6 +25,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    FunctionName,
     NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
@@ -1095,8 +1096,8 @@ def _get_U_and_F(
 
 def _fail_if_conflicting_transition_is_read(
     *,
-    combined: Mapping[str, Callable[..., Any]],
-    targets: list[str],
+    combined: Mapping[FunctionName, Callable[..., Any]],
+    targets: list[FunctionName],
     conflicting_deterministic_transition_names: frozenset[TransitionFunctionName],
 ) -> None:
     """Reject a model whose decision reads a target-dependent `next_<state>` law.
