@@ -23,7 +23,6 @@ from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import GridSearch
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -501,10 +500,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - `GridSearch` supports a nonlinear certainty equivalent (the
-      Epstein-Zin recursion); the other endogenous-grid solvers' Euler inversion
-      assumes expected utility, so a declared certainty equivalent must be
-      rejected rather than silently ignored
+    - a solver that reads a continuation payload inverts the Euler equation
+      against it, and that inversion assumes expected utility, so a declared
+      nonlinear certainty equivalent must be rejected rather than silently
+      ignored; a solver that reads only the value array (grid search) supports
+      the Epstein-Zin recursion
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
@@ -523,7 +523,7 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
         )
     if isinstance(regime.certainty_equivalent, LinearExpectation):
         return error_messages
-    if not isinstance(regime.solver, GridSearch):
+    if regime.solver.requires_continuation:
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
