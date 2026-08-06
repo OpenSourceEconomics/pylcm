@@ -37,7 +37,15 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+)
 
 
 def get_Q_and_F(
@@ -473,47 +481,40 @@ def _get_compute_CE(
                 **extra_kw,
             )
 
+            # A node the target's own lottery gives zero probability is never
+            # realized, so whatever a law names there -- a value off the target's
+            # support, and so a NaN out of the interpolator -- is not part of the
+            # model. Liveness is established here, before support can enter any
+            # arithmetic: `0 * nan` is `nan`, so an impossible node left to be
+            # multiplied away would destroy the possible ones beside it.
+            live_lottery_node = (
+                joint_next_stochastic_states_weights > 0
+                if continuation.has_lottery_axes
+                else None
+            )
+
             if continuation.n_basis_axes:
-                # A declared entry names one value; the basis axes are only how
-                # the target's nodes can express it. Contracting them here states
-                # that value as the single number `Σ_j w_j · V(node_j)` -- the
-                # linear interpolation of the target's value function -- before
-                # any lottery is formed. The coefficients sum to one by
-                # construction, so normalizing here would mask a malformed basis
-                # rather than protect against one.
-                #
-                # An entry whose value depends on a sibling draw has different
-                # coefficients at each node of that draw, so its weights carry
-                # the lottery axes as well and the contraction is elementwise
-                # over the tail. Where they do not, the weights are one vector
-                # per basis axis and `tensordot` contracts them without ever
-                # forming the elementwise product — which is the whole surface,
-                # so building it would cost a copy of the continuation in both
-                # time and memory.
-                if continuation.joint_basis_weights_at_nodes is not None:
-                    basis = continuation.joint_basis_weights_at_nodes(
-                        **{
-                            name: value
-                            for name, value in states_actions_params.items()
-                            if name in continuation.basis_node_arg_names
-                        },
-                        **{
-                            name: next_states[name]
-                            for name in continuation.lottery_axis_names
-                        },
-                    )
-                    next_V_at_stochastic_states_arr = jnp.sum(
-                        next_V_at_stochastic_states_arr * basis,
-                        axis=tuple(range(-continuation.n_basis_axes, 0)),
-                    )
-                else:
-                    next_V_at_stochastic_states_arr = jnp.tensordot(
-                        next_V_at_stochastic_states_arr,
-                        continuation.joint_basis_weights(
-                            **continuation.basis_weights(**states_actions_params)
-                        ),
-                        axes=continuation.n_basis_axes,
-                    )
+                next_V_at_stochastic_states_arr = _contract_basis_axes(
+                    values=next_V_at_stochastic_states_arr,
+                    continuation=continuation,
+                    states_actions_params=states_actions_params,
+                    # `next_states` is typed by the simulation protocol, which
+                    # returns one mapping per target; solve calls it per target
+                    # and gets that target's mapping.
+                    next_states=cast(
+                        "Mapping[str, DiscreteState | ContinuousState]", next_states
+                    ),
+                    live_lottery_node=live_lottery_node,
+                )
+
+            # A dependent law can also land an impossible node off support
+            # without any basis being formed -- an interpolated coordinate read
+            # off that node is enough -- so the value is zeroed there too, and
+            # both the per-target and the lottery route see live nodes only.
+            if live_lottery_node is not None:
+                next_V_at_stochastic_states_arr = jnp.where(
+                    live_lottery_node, next_V_at_stochastic_states_arr, 0.0
+                )
 
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
@@ -1086,6 +1087,73 @@ def _build_target_continuation(
     )
 
 
+def _contract_basis_axes(
+    *,
+    values: FloatND,
+    continuation: _TargetContinuation,
+    states_actions_params: Mapping[str, Any],
+    next_states: Mapping[str, DiscreteState | ContinuousState],
+    live_lottery_node: BoolND | None,
+) -> FloatND:
+    """State a declared entry as one number on the target's value function.
+
+    A declared entry names one value; the basis axes are only how the target's
+    nodes can express it. Contracting them states that value as the single number
+    `Σ_j w_j · V(node_j)` — the linear interpolation of the target's value
+    function — before any lottery is formed. The coefficients sum to one by
+    construction, so normalizing here would mask a malformed basis rather than
+    protect against one.
+
+    Two shapes of coefficient, and the route differs because the cost does:
+
+    - an entry reading a sibling draw has different coefficients at each node of
+      that draw, so its weights carry the lottery axes too and the contraction is
+      elementwise over the tail;
+    - otherwise the weights are one vector per basis axis, and `tensordot`
+      contracts them without ever forming the elementwise product — which is the
+      whole surface, so building it would cost a copy of the continuation in both
+      time and memory.
+
+    Args:
+        values: The target's value function on its lottery and basis axes.
+        continuation: The target's continuation plan.
+        states_actions_params: This point's states, actions, age, period, params.
+        next_states: The transition's outputs, whose lottery axes the coefficients
+            of a draw-dependent entry are evaluated on.
+        live_lottery_node: Boolean mask over the lottery axes, `None` when the
+            target draws nothing. Both factors are replaced at an impossible node
+            rather than the product masked, so its NaN is never formed and the
+            derivative through it stays finite.
+
+    Returns:
+        The value with the basis axes contracted away.
+
+    """
+    if continuation.joint_basis_weights_at_nodes is None:
+        return jnp.tensordot(
+            values,
+            continuation.joint_basis_weights(
+                **continuation.basis_weights(**states_actions_params)
+            ),
+            axes=continuation.n_basis_axes,
+        )
+    basis = continuation.joint_basis_weights_at_nodes(
+        **{
+            name: value
+            for name, value in states_actions_params.items()
+            if name in continuation.basis_node_arg_names
+        },
+        **{name: next_states[name] for name in continuation.lottery_axis_names},
+    )
+    if live_lottery_node is not None:
+        live_for_basis = live_lottery_node[
+            (Ellipsis, *([None] * continuation.n_basis_axes))
+        ]
+        basis = jnp.where(live_for_basis, basis, 0.0)
+        values = jnp.where(live_for_basis, values, 0.0)
+    return jnp.sum(values * basis, axis=tuple(range(-continuation.n_basis_axes, 0)))
+
+
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
     """Return the weighted mean of one target's continuation over its nodes.
 
@@ -1094,10 +1162,15 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     contributes no branch, and must not contribute NaN either — every target
     enters the same continuation, so a NaN here would destroy the
     well-specified targets beside it.
+
+    The same holds one level down, at a single node of a target that does carry
+    mass: a node of probability zero contributes nothing whatever value stands
+    there, so it is dropped rather than multiplied by its zero weight.
     """
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    return jnp.sum(values * weights) / safe_weight_sum
+    weighted = jnp.where(weights > 0.0, values * weights, 0.0)
+    return jnp.sum(weighted) / safe_weight_sum
 
 
 def _as_lottery(

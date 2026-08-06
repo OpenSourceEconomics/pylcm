@@ -21,6 +21,7 @@ from lcm import (
     MarkovTransition,
     Model,
     NormalIIDProcess,
+    QuasiArithmeticMean,
     Regime,
     categorical,
 )
@@ -242,3 +243,145 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).max(), np.array(5.0 + 2.8), atol=1e-5
     )
+
+
+def _law_reading_a_shared_helper(shared: ScalarFloat) -> ScalarFloat:
+    return shared
+
+
+def _utility_of_a_shared_helper(
+    shared: ScalarFloat, wealth: ScalarFloat
+) -> ScalarFloat:
+    return shared + wealth
+
+
+def test_a_helper_feeding_a_law_may_not_also_be_read_by_this_period() -> None:
+    """Permission belongs to the path, not to the helper's name.
+
+    A helper reading a target's draw is legitimate where a law reaches it, since
+    the law is evaluated on the target's nodes. Utility reaching the same helper
+    is not, and one verdict per helper name would let the legitimate path license
+    the other silently.
+    """
+    with pytest.raises(InvalidNameError, match="utility"):
+        _build(
+            functions={
+                "utility": _utility_of_a_shared_helper,
+                "shared": _helper_reading_a_next_name,
+            },
+            state_transitions={"wealth": {"target": _law_reading_a_shared_helper}},
+        )
+
+
+def _outer_helper(inner: ScalarFloat) -> ScalarFloat:
+    return inner
+
+
+def _utility_of_an_outer_helper(outer: ScalarFloat) -> ScalarFloat:
+    return outer
+
+
+def test_a_next_name_is_found_however_deep_the_helper_chain() -> None:
+    """Depth does not hide the read; the message names the route to it."""
+    with pytest.raises(InvalidNameError, match=r"outer.*inner|inner"):
+        _build(
+            functions={
+                "utility": _utility_of_an_outer_helper,
+                "outer": _outer_helper,
+                "inner": _helper_reading_a_next_name,
+            },
+        )
+
+
+def _plain_helper(wealth: ScalarFloat) -> ScalarFloat:
+    return wealth
+
+
+def test_a_phased_helper_is_checked_in_each_phase_separately() -> None:
+    """A variant that reads a next-period value is rejected in its own phase.
+
+    The solve variant reads only this period's wealth, so a check that looked at
+    solve alone would accept the model and leave simulation reading a value that
+    does not exist there.
+    """
+    with pytest.raises(InvalidNameError, match="utility"):
+        _build(
+            functions={
+                "utility": _utility_of_a_helper,
+                "helper": Phased(
+                    solve=_plain_helper, simulate=_helper_reading_a_next_name
+                ),
+            },
+        )
+
+
+def _probability_reading_a_next_name(next_wealth: ScalarFloat) -> ScalarFloat:
+    return jnp.where(next_wealth >= 0.0, 1.0, 1.0)
+
+
+def test_a_regime_probability_may_not_read_a_next_name() -> None:
+    """The regime transition picks the target before that target's laws run.
+
+    Which regime next period's state belongs to is settled first; the state
+    itself is handed over afterwards. A probability reading `next_wealth` asks
+    for a value whose destination it is still choosing.
+    """
+    with pytest.raises(InvalidNameError, match=r"next_regime|next_wealth"):
+        Model(
+            regimes={
+                "source": Regime(
+                    transition={
+                        "target": MarkovTransition(_probability_reading_a_next_name)
+                    },
+                    active=lambda age: age < 22,
+                    states={"wealth": _WEALTH},
+                    state_transitions={"wealth": {"target": _keep_wealth}},
+                    functions={"utility": _plain_utility},
+                ),
+                "target": Regime(
+                    transition=None,
+                    states={"wealth": _WEALTH, "shock": _SHOCK},
+                    functions={"utility": _wealth_and_shock},
+                ),
+            },
+            ages=AgeGrid(start=20, stop=22, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
+def _transform_reading_a_next_name(
+    value: ScalarFloat, next_wealth: ScalarFloat
+) -> ScalarFloat:
+    return value + 0.0 * next_wealth
+
+
+def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> None:
+    """A certainty equivalent averages an already-formed lottery.
+
+    Its declared parameters are supplied at solve time like any other, so one
+    spelled `next_wealth` would hand the user a constant wearing the name of a
+    next-period value.
+    """
+    with pytest.raises(InvalidNameError, match=r"certainty_equivalent|next_wealth"):
+        Model(
+            regimes={
+                "source": Regime(
+                    transition={"target": MarkovTransition(_to_target)},
+                    active=lambda age: age < 22,
+                    states={"wealth": _WEALTH},
+                    state_transitions={"wealth": {"target": _keep_wealth}},
+                    functions={"utility": _plain_utility},
+                    certainty_equivalent=QuasiArithmeticMean(
+                        transform=_transform_reading_a_next_name,
+                        inverse=_transform_reading_a_next_name,
+                    ),
+                ),
+                "target": Regime(
+                    transition=None,
+                    states={"wealth": _WEALTH, "shock": _SHOCK},
+                    functions={"utility": _wealth_and_shock},
+                ),
+            },
+            ages=AgeGrid(start=20, stop=22, step="Y"),
+            regime_id_class=RegimeId,
+        )
