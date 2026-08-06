@@ -76,15 +76,12 @@ def create_regime_params_template(
         "age",
         "CE",
     }
-    # `next_<state>` names a transition's output only where next-period values
-    # exist: inside a transition, and inside whatever feeds one. The consumer's
-    # role decides this, never the spelling on its own — `utility` and
-    # `constraints` are evaluated at this period's states and never read a
-    # transition's output, so an argument spelled that way there is an ordinary
-    # parameter, whether or not this regime happens to move a state of that name.
+    # `next_<state>` names a value, never a parameter. Whether a consumer may
+    # read it is a question of whether that value exists where the consumer runs.
     #
-    # For a consumer that is in the transition role, three families of name are
-    # transition outputs rather than parameters:
+    # `next_<state>` names a value a transition produces, and only a transition —
+    # or a function feeding one — is evaluated where that value exists. Three
+    # families of name are transition outputs there:
     #
     # - `next_<state>` for a state this regime carries;
     # - `next_<state>` for a state it declares a law for — which covers a state
@@ -92,6 +89,10 @@ def create_regime_params_template(
     #   process being the case;
     # - `next_<state>` for a state some other regime declares, since the value
     #   belongs to a target and is produced by the entry or is a draw.
+    #
+    # Anywhere else the name has no value behind it, and admitting it as a
+    # parameter would answer a next-period question with a constant the user
+    # supplies. That is rejected rather than classified.
     transition_role = _function_names_in_transition_role(user_regime)
     variables_in_transition_role = variables | {
         f"next_{name}"
@@ -101,7 +102,6 @@ def create_regime_params_template(
             *other_regime_state_names,
         )
     }
-
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
 
@@ -123,6 +123,7 @@ def create_regime_params_template(
             else variables
         )
         params = {k: v for k, v in sorted(tree.items()) if k not in non_params}
+        _fail_if_a_param_is_next_prefixed(consumer_name=name, params=params)
 
         _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
 
@@ -183,6 +184,58 @@ def create_regime_params_template(
     )
 
 
+def _fail_if_a_param_is_next_prefixed(
+    *, consumer_name: FunctionName, params: Mapping[str, str]
+) -> None:
+    """Check that no argument left over as a parameter claims the reserved prefix.
+
+    `next_<name>` names a value, never a parameter. Every argument of that shape
+    denoting a value this consumer can see has already been removed by the time
+    this runs — a state the regime carries or declares a law for, and, for a
+    transition, a state belonging to a target. What remains would be handed to the
+    user as a parameter under a name that says it is a next-period value.
+
+    The prefix stays reserved outside a transition even for a quantity that is in
+    fact determined within the period, such as a post-decision stock. What
+    `next_<name>` denotes depends on where the value is going: with one law per
+    target it is target-specific, and with a stochastic law it is a distribution
+    rather than a number. Admitting the name wherever the declaration happens to
+    make it single-valued would make a utility function's legality depend on the
+    regime's transition topology, so that adding a second target invalidates a
+    payoff that never mentioned targets. A quantity a payoff or a constraint needs
+    is an ordinary function of this period's states and actions; the law reads that
+    function, and so does everything else.
+
+    Args:
+        consumer_name: Function whose parameters are being checked, named in the
+            message. `koopmans_aggregator` and `certainty_equivalent` enter under
+            their pseudo-function names.
+        params: Mapping of the consumer's parameter names to their annotations.
+
+    Raises:
+        InvalidNameError: If any parameter name starts with `next_`.
+
+    """
+    reserved = sorted(name for name in params if name.startswith("next_"))
+    if not reserved:
+        return
+    example = reserved[0].removeprefix("next_")
+    raise InvalidNameError(
+        f"'{consumer_name}' takes {reserved} as arguments, but the 'next_' prefix "
+        f"names the output of a state transition and is never a parameter. Only a "
+        f"transition law, and what feeds one, may read a next-period value; "
+        f"elsewhere the name would be bound to a constant supplied at solve time, "
+        f"answering a next-period question with a number that has nothing to do "
+        f"with next period. If the quantity is determined within this period — a "
+        f"post-decision stock, or next period's assets as this period's assets "
+        f"minus consumption — give it its own name as an ordinary function of this "
+        f"period's states and actions, and have both '{consumer_name}' and the law "
+        f"read that function: define `new_{example}(...)`, then declare "
+        f"`state_transitions={{'{example}': lambda new_{example}: new_{example}}}`. "
+        f"If a parameter was meant, rename the argument."
+    )
+
+
 def _add_koopmans_aggregator_params(
     function_params: dict[FunctionName, dict[str, str]],
     user_regime: UserRegime,
@@ -217,15 +270,16 @@ def _add_koopmans_aggregator_params(
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
-        *(f"next_{name}" for name in user_regime.states),
         "period",
         "age",
         "utility",
         "CE",
     }
-    function_params["koopmans_aggregator"] = {
-        k: v for k, v in sorted(tree.items()) if k not in variables
-    }
+    params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+    _fail_if_a_param_is_next_prefixed(
+        consumer_name="koopmans_aggregator", params=params
+    )
+    function_params["koopmans_aggregator"] = params
 
 
 def _add_certainty_equivalent_params(

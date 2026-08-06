@@ -54,6 +54,7 @@ def _negm(
     *,
     inner: DCEGM = _INNER,
     outer_action: str = "illiquid_investment",
+    outer_state: str = "illiquid",
     outer_post_decision: str = "next_illiquid",
     outer_grid: ContinuousGrid = _OUTER_GRID,
     outer_no_adjustment_candidate: str | None = None,
@@ -61,6 +62,7 @@ def _negm(
     return NEGM(
         inner=inner,
         outer_action=outer_action,
+        outer_state=outer_state,
         outer_post_decision=outer_post_decision,
         outer_grid=outer_grid,
         outer_no_adjustment_candidate=outer_no_adjustment_candidate,
@@ -187,7 +189,6 @@ def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
     transition = _durable_keeper_transition(
         no_adjustment_func=cast("EconFunction", keep),
         durable_state="car",
-        outer_post_decision="next_car",
     )
 
     assert set(inspect.signature(transition).parameters) == {"car", "growth"}
@@ -222,10 +223,11 @@ def test_keeper_outer_function_threads_every_declared_argument() -> None:
     )
     updated = _with_no_adjustment_outer_function(
         functions=functions,
-        outer_post_decision="next_car",
+        durable_state="car",
+        outer_post_decision="new_car",
         no_adjustment_func=cast("EconFunction", keep),
     )
-    injected = updated["next_car"]
+    injected = updated["new_car"]
 
     assert set(inspect.signature(injected).parameters) == {"car", "growth"}
     result = injected(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
@@ -248,10 +250,11 @@ def test_keeper_outer_function_identity_holds_the_durable_stock() -> None:
     functions = cast("EconFunctionsMapping", MappingProxyType({"resources": resources}))
     updated = _with_no_adjustment_outer_function(
         functions=functions,
-        outer_post_decision="next_car",
+        durable_state="car",
+        outer_post_decision="new_car",
         no_adjustment_func=None,
     )
-    injected = updated["next_car"]
+    injected = updated["new_car"]
 
     assert set(inspect.signature(injected).parameters) == {"car"}
     result = injected(car=jnp.asarray(42.0))

@@ -241,22 +241,36 @@ def _fail_if_outer_margin_euler_coupled(
     The post-decision and resources functions are removed from the DAG (they
     become leaves), so an ancestor hit on the outer post-decision is a genuine
     decision-time coupling, not the legitimate resources read.
+
+    The durable state's own law is exempt: carrying the chosen stock forward is
+    what the outer margin *is*, not a channel through which it could reach the
+    inner Euler equation. Coupling means some *other* savings-stage function
+    reads the outer choice.
     """
     inner = solver.inner
     opaque_functions = _without(
         functions=functions,
         names={inner.post_decision_function, inner.resources},
     )
+    # Two names carry the same value: the post-decision function, and the
+    # durable's own next-period value that its law of motion publishes. A
+    # savings-stage function reading either one reads the outer choice.
+    outer_margin_names = {
+        solver.outer_post_decision,
+        f"next_{solver.outer_state}",
+    }
     coupling_msg = (
         f"the outer margin '{solver.outer_post_decision}' is Euler-coupled to "
         f"the inner state '{inner.continuous_state}' of regime '{regime_name}' "
         "through the shared continuation"
     )
     for _role, label, func in _savings_stage_candidates(
-        user_regime=user_regime, continuous_state=inner.continuous_state
+        user_regime=user_regime,
+        solver=inner,
+        exclude_states=frozenset({solver.outer_state}),
     ):
         ancestors = _dag_ancestors(functions=opaque_functions, target_func=func)
-        if solver.outer_post_decision in ancestors:
+        if ancestors & outer_margin_names:
             msg = (
                 f"In regime '{regime_name}', the {label} reads the outer "
                 f"post-decision '{solver.outer_post_decision}', so {coupling_msg}: "
@@ -378,7 +392,7 @@ def _fail_if_outer_cost_contract_violated(
       keeper's axis; the shift is zero).
     """
     inner = solver.inner
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
 
     if solver.outer_cost is None:
         resources_func = functions.get(inner.resources)
@@ -410,7 +424,13 @@ def _fail_if_outer_cost_contract_violated(
         )
         raise ModelInitializationError(msg)
 
-    cost_ancestors = _dag_ancestors(functions=functions, target_func=cost_func)
+    # The outer post-decision is a leaf here: the lift holds it fixed per
+    # outer-grid node, so the states and actions it is *computed from* are not
+    # dependencies of the cost. Only what the cost reads beside it counts.
+    cost_ancestors = _dag_ancestors(
+        functions=_without(functions=functions, names={solver.outer_post_decision}),
+        target_func=cost_func,
+    )
     state_and_action_names = set(user_regime.states) | set(user_regime.actions)
     offenders = sorted((cost_ancestors & state_and_action_names) - {durable_state})
     if offenders:
@@ -462,7 +482,7 @@ def _fail_if_no_adjustment_candidate_not_unary(
     candidate_func = functions.get(solver.outer_no_adjustment_candidate)
     if candidate_func is None:
         return
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
     arg_names = set(inspect.signature(candidate_func).parameters)
     if arg_names != {durable_state}:
         msg = (
@@ -516,7 +536,7 @@ def _fail_if_carry_layout_unsupported(
             )
             raise ModelInitializationError(msg)
 
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
     passive_state_names = [
         name
         for name in _continuous_non_process_names(

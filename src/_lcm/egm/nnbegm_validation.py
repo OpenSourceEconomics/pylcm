@@ -118,19 +118,16 @@ def _fail_if_outer_margin_absent(
             "consumption-savings regime."
         )
         raise ModelInitializationError(msg)
-    transition_names = {f"next_{name}" for name in user_regime.states}
-    if (
-        solver.outer_post_decision not in functions
-        and solver.outer_post_decision not in transition_names
-    ):
+    if solver.outer_post_decision not in functions:
         msg = (
-            f"NNBEGM.outer_post_decision '{solver.outer_post_decision}' is "
-            f"neither a declared function of regime '{regime_name}' nor the "
-            "transition of one of its states. The outer post-decision (the "
-            "next-period durable stock) must be a regime function or the "
-            "durable state's `next_<state>` law that the inner budget and the "
-            "child-state index read; declare it, or use `NBEGM` for a pure 1-D "
-            "consumption-savings regime."
+            f"NNBEGM.outer_post_decision '{solver.outer_post_decision}' is not "
+            f"a declared function of regime '{regime_name}'. The outer "
+            "post-decision names this period's chosen level of the durable "
+            f"state '{solver.outer_state}' — an ordinary function of this "
+            "period's states and actions that the inner budget, the "
+            "child-state index, and the durable's own law of motion all read. "
+            "Declare it, or use `NBEGM` for a pure 1-D consumption-savings "
+            "regime."
         )
         raise ModelInitializationError(msg)
 

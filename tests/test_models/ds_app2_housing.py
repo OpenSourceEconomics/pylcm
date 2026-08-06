@@ -7,13 +7,13 @@ adjust/keep choice. It maps onto pylcm's nested-EGM solver:
 - the **inner** DC-EGM solves liquid consumption-savings, with the Euler
   equation inverting on `liquid` assets `a` — the clean inverse-Euler margin;
 - the **outer** durable margin is the next housing stock `H'` (`outer_action`
-  = `housing_investment`, `outer_post_decision` = `next_housing`), searched over
+  = `housing_investment`, `outer_post_decision` = `new_housing`), searched over
   a grid rather than inverted — the transaction cost makes the outer value
   non-concave, so a second inverse-Euler would be invalid;
 - the **keeper** (`d = 0`) holds the house (`H' = H`, no cost) and the
   **adjuster** (`d = 1`) chooses `H'` paying `(1 + τ)·H'` while selling the old
   house. NEGM builds both cores from one regime — the keeper as a passive
-  DC-EGM with `next_housing = housing`, the adjuster as the inner DC-EGM with
+  DC-EGM with `new_housing = housing`, the adjuster as the inner DC-EGM with
   the outer post-decision supplied per grid node — so the adjust/keep choice is
   *not* a user-declared discrete action.
 
@@ -24,7 +24,7 @@ dead (terminal, T = 70), with a working→retired regime transition.
 
 Utility is separable CES over non-durable consumption and the housing serviced
 this period (the new house if adjusting, else the held house). The serviced
-house reads the outer post-decision `next_housing`, additively separable from
+house reads the outer post-decision `new_housing`, additively separable from
 consumption, so the inner Euler inversion treats the housing term as a constant
 — the NEGM contract the housing margin must satisfy.
 
@@ -101,11 +101,11 @@ def wage_income(wage: ContinuousState) -> FloatND:
 
 def housing_cost(
     housing: ContinuousState,
-    next_housing: ContinuousState,
+    new_housing: ContinuousState,
     return_housing: float,
     tau: float,
 ) -> FloatND:
-    """Net liquid cost of moving the house from `H` to `next_housing` (`H'`).
+    """Net liquid cost of moving the house from `H` to `new_housing` (`H'`).
 
     The DS budget (eq. 12) gives the discrete adjust/keep choice `d ∈ {0, 1}` a
     round-trip transaction cost: adjusting (`d = 1`) sells the whole old house at
@@ -126,12 +126,12 @@ def housing_cost(
     kernel relies on: it holds the stock (`H' = H` is injected) and its
     `credited(H, H) = 0` makes the published cash-on-hand carry correct.
 
-    Reads only the held housing state and the outer post-decision `next_housing`
+    Reads only the held housing state and the outer post-decision `new_housing`
     — never the inner consumption action or the liquid Euler state — so it is a
     constant per outer-grid node, as the NEGM contract requires.
     """
-    round_trip_cost = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
-    return jnp.where(next_housing == housing, 0.0, round_trip_cost)
+    round_trip_cost = (1.0 + tau) * new_housing - (1.0 + return_housing) * housing
+    return jnp.where(new_housing == housing, 0.0, round_trip_cost)
 
 
 def resources_before_outer_cost(
@@ -166,17 +166,20 @@ def next_liquid(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def next_housing(
+def new_housing(
     housing: ContinuousState, housing_investment: ContinuousAction
 ) -> ContinuousState:
-    """Durable law of motion `H' = H + housing_investment`.
+    """The house chosen this period, `H' = H + housing_investment`.
 
-    Used as the `housing` state transition, so pylcm names its output the
-    auto-generated `next_housing`; the NEGM solver reads that value as its
-    `outer_post_decision`, bound per outer-grid node into the inner resources
-    DAG and the serviced-housing service flow.
+    The NEGM solver reads it as its `outer_post_decision`, bound per outer-grid
+    node into the inner resources DAG and the serviced-housing service flow.
     """
     return housing + housing_investment
+
+
+def next_housing(new_housing: ContinuousState) -> ContinuousState:
+    """Housing law of motion: the house chosen this period is next period's."""
+    return new_housing
 
 
 def keep_housing(housing: ContinuousState) -> FloatND:
@@ -184,7 +187,7 @@ def keep_housing(housing: ContinuousState) -> FloatND:
     return housing
 
 
-def serviced_housing(next_housing: ContinuousState) -> FloatND:
+def serviced_housing(new_housing: ContinuousState) -> FloatND:
     """The house lived in this period — the new house `H'`.
 
     For the adjuster this is the chosen house; for the keeper the injected
@@ -192,7 +195,7 @@ def serviced_housing(next_housing: ContinuousState) -> FloatND:
     post-decision, so the housing service flow is additively separable from the
     inner consumption action.
     """
-    return next_housing
+    return new_housing
 
 
 def utility(
@@ -357,20 +360,20 @@ def build_model(
     # (next-housing choice) grids at a small positive stock.
     housing_min = housing_max / (2.0 * n_grid)
 
-    def housing_stays_in_bounds(next_housing: ContinuousState) -> BoolND:
+    def housing_stays_in_bounds(new_housing: ContinuousState) -> BoolND:
         """The chosen next house must stay within `[housing_min, housing_max]`.
 
-        The NEGM solve searches `next_housing` on the floored, capped outer grid,
+        The NEGM solve searches `new_housing` on the floored, capped outer grid,
         but the forward simulation re-optimises over the symmetric
         `housing_investment` action grid `[-housing_max, housing_max]`, which can
-        drive `next_housing = housing + housing_investment` below the floor or
+        drive `new_housing = housing + housing_investment` below the floor or
         above the top outer node. Below the floor the CES service utility is NaN
         (a non-positive house) and above the top node the policy extrapolates off
         the solved outer grid; the budget feasibility mask catches neither, so the
         simulate argmax could select an out-of-bounds action. This cut mirrors the
         solve's floored, capped outer grid on both sides.
         """
-        return (next_housing >= housing_min) & (next_housing <= housing_max)
+        return (new_housing >= housing_min) & (new_housing <= housing_max)
 
     liquid_grid = LinSpacedGrid(
         start=0.0, stop=liquid_max, n_points=n_grid, batch_size=liquid_batch_size
@@ -400,7 +403,8 @@ def build_model(
             savings_grid=savings_grid,
         ),
         outer_action="housing_investment",
-        outer_post_decision="next_housing",
+        outer_state="housing",
+        outer_post_decision="new_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
         outer_cost="housing_cost",
@@ -409,6 +413,7 @@ def build_model(
 
     shared_functions = {
         "utility": utility,
+        "new_housing": new_housing,
         "housing_cost": housing_cost,
         "resources_before_outer_cost": resources_before_outer_cost,
         "savings": savings,

@@ -60,10 +60,15 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return 1.02 * liquid_savings
 
 
-def durable_transition(
+def new_illiquid(
     illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
+    """The durable stock chosen this period."""
     return illiquid + illiquid_investment
+
+
+def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
+    return new_illiquid
 
 
 def keep_illiquid(illiquid: ContinuousState) -> FloatND:
@@ -103,6 +108,7 @@ def _build_model(*, solver):
         transition=next_regime,
         functions={
             "utility": utility,
+            "new_illiquid": new_illiquid,
             "resources": resources,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,
@@ -137,7 +143,8 @@ def test_nnbegm_rejects_a_piece_that_hides_a_branch():
     solver = NNBEGM(
         inner=_inner_nbegm(),
         outer_action="illiquid_investment",
-        outer_post_decision="next_illiquid",
+        outer_state="illiquid",
+        outer_post_decision="new_illiquid",
         outer_grid=ILLIQUID_GRID,
         outer_no_adjustment_candidate="keep_illiquid",
     )
