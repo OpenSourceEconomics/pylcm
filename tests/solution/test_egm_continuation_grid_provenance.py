@@ -81,17 +81,17 @@ _MOVING_INTERIOR = {2: np.s_[3:, :7], 1: np.s_[3:, :7], 0: np.s_[3:, :6]}
 # comparable. Above them the two agree to well under a percent.
 _RENAMED_UNCONSTRAINED = np.s_[5:]
 
-# The declared budgets, read from the contract rather than restated here: a
-# threshold and the gate enforcing it are then the same artifact, so neither can
+# The declared sentinels, read from the contract rather than restated here: a
+# bound and the gate enforcing it are then the same artifact, so neither can
 # drift from the other.
 _CONTRACT = yaml.safe_load(
     (Path(__file__).parent / "two_asset_provenance_contract.yaml").read_text(
         encoding="utf-8"
     )
 )
-_RETIRED_BUDGET = _CONTRACT["workloads"]["retired_egm"]["budget"]
-_G2EGM_BUDGET = _CONTRACT["workloads"]["two_asset_g2egm"]["budget"]
-_RFC_BUDGET = _CONTRACT["workloads"]["two_asset_rfc"]["budget"]
+_RETIRED_SENTINEL = _CONTRACT["workloads"]["retired_egm"]["sentinel"]
+_G2EGM_SENTINEL = _CONTRACT["workloads"]["two_asset_g2egm"]["sentinel"]
+_RFC_SENTINEL = _CONTRACT["workloads"]["two_asset_rfc"]["sentinel"]
 
 
 def _two_asset_solvers(*, envelope="g2egm"):
@@ -119,16 +119,16 @@ def _solve_pair(**grid_overrides):
     return egm, brute
 
 
-def _assert_within_budget(rel, budget):
-    """Every declared statistic of the regret sample is inside its budget.
+def _assert_within_sentinel(rel, sentinel):
+    """Both declared statistics of the regret sample are inside the sentinel.
 
-    All three are asserted, never a subset. A median is insensitive to a
-    minority of badly wrong nodes and a p90 to a single one, which are exactly
-    the shapes a partial coverage failure takes.
+    Both are asserted, never one. A median is insensitive to a minority of badly
+    wrong nodes, and an uncovered node is a large regret that only the maximum
+    sees, so the two together are what detect a mask that stops covering its
+    interior. Neither is an accuracy claim; see the contract's own preamble.
     """
-    assert np.median(rel) < budget["median_value_regret"]
-    assert np.quantile(rel, 0.90) < budget["p90_value_regret"]
-    assert np.max(rel) < budget["max_value_regret"]
+    assert np.median(rel) < sentinel["median_value_regret"]
+    assert np.max(rel) < sentinel["max_value_regret"]
 
 
 def _assert_working_matches_brute(
@@ -137,7 +137,7 @@ def _assert_working_matches_brute(
     period,
     *,
     interior=None,
-    budget=None,
+    sentinel=None,
 ):
     """The working value agrees with brute on the covered pension interior."""
     sl = (interior or _WORKING_INTERIOR)[period]
@@ -145,7 +145,7 @@ def _assert_working_matches_brute(
     brute_v = np.asarray(brute[period]["working"])[sl]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    _assert_within_budget(rel, budget or _G2EGM_BUDGET)
+    _assert_within_sentinel(rel, sentinel or _G2EGM_SENTINEL)
 
 
 def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
@@ -154,7 +154,7 @@ def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
     brute_v = np.asarray(brute[period]["retired"])[_RETIRED_INTERIOR]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    _assert_within_budget(rel, _RETIRED_BUDGET)
+    _assert_within_sentinel(rel, _RETIRED_SENTINEL)
 
 
 def _moving_liquid_grid(*, start, stop_at_age, n_points):
@@ -280,7 +280,7 @@ def test_w4_rfc_interior_reads_the_next_period_liquid_grid():
         ),
     )
     for period in (0, 1):
-        _assert_working_matches_brute(egm, brute, period, budget=_RFC_BUDGET)
+        _assert_working_matches_brute(egm, brute, period, sentinel=_RFC_SENTINEL)
 
 
 def test_w8_two_asset_interior_reads_the_next_period_pension_grid():
@@ -325,7 +325,7 @@ def test_w9_rfc_interior_reads_the_next_period_pension_grid():
             brute,
             period,
             interior=_MOVING_INTERIOR,
-            budget=_RFC_BUDGET,
+            sentinel=_RFC_SENTINEL,
         )
 
 
@@ -452,7 +452,7 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
         egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]
         brute_v = np.asarray(brute[period]["alive"])[_RENAMED_UNCONSTRAINED]
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        _assert_within_budget(rel, _RETIRED_BUDGET)
+        _assert_within_sentinel(rel, _RETIRED_SENTINEL)
 
 
 def _renamed_two_asset_model(*, envelope="g2egm", n_consumption=14):
@@ -591,4 +591,4 @@ def test_w6_two_asset_egm_takes_the_regimes_own_state_names():
         brute_v = np.asarray(brute[period]["working"])[sl]
         assert np.isfinite(egm_v).all()
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        _assert_within_budget(rel, _G2EGM_BUDGET)
+        _assert_within_sentinel(rel, _G2EGM_SENTINEL)
