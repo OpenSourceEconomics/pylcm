@@ -41,7 +41,7 @@ N_AZ = 12
 N_PERIODS = 3
 
 ILLIQUID_FLOW = 0.05  # iota: service flow from the held durable
-WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (next_illiquid < illiquid)
+WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (new_durable < illiquid)
 SAVE_RATE = 0.03  # single interest rate on liquid savings
 RISK_AVERSION = 2.0
 LABOUR_INCOME = 5.0
@@ -55,9 +55,21 @@ class RegimeId:
     dead: ScalarInt
 
 
-def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
-    """Net liquid cost of moving the durable to `next_illiquid` (`s'`)."""
-    investment = next_illiquid - illiquid
+def new_durable(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """The durable stock chosen this period, `s' = Z + Iz`.
+
+    The outer post-decision margin: an ordinary function of this period's state
+    and action, so the credited cost and the `illiquid` law of motion read one
+    value.
+    """
+    return illiquid + illiquid_investment
+
+
+def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
+    """Net liquid cost of moving the durable to `new_durable` (`s'`)."""
+    investment = new_durable - illiquid
     return jnp.where(
         investment < 0.0,
         (1.0 - WITHDRAWAL_PENALTY) * investment,
@@ -85,11 +97,9 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return (1.0 + SAVE_RATE) * liquid_savings
 
 
-def durable_transition(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
-) -> ContinuousState:
-    """Durable law of motion `s' = Z + Iz`, the `illiquid` state transition."""
-    return illiquid + illiquid_investment
+def durable_transition(new_durable: ContinuousState) -> ContinuousState:
+    """Durable law of motion: the stock chosen this period is next period's."""
+    return new_durable
 
 
 def keep_illiquid(illiquid: ContinuousState) -> FloatND:
@@ -154,7 +164,7 @@ NEGM_SOLVER = NEGM(
     ),
     outer_action="illiquid_investment",
     outer_state="illiquid",
-    outer_post_decision="next_illiquid",
+    outer_post_decision="new_durable",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
     outer_cost="credited",
@@ -184,6 +194,7 @@ def build_negm_model() -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
+            "new_durable": new_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,

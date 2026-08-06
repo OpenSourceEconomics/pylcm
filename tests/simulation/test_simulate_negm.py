@@ -71,7 +71,7 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     next_illiquid = illiquid + investment
     resources = np.asarray(
         negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
-        - negm_kinked_toy.credited(illiquid=illiquid, next_illiquid=next_illiquid)
+        - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
     )
     borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])
     budget = resources - borrowing_limit
@@ -105,7 +105,7 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
     next_illiquid = illiquid + investment
     resources = np.asarray(
         negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
-        - negm_kinked_toy.credited(illiquid=illiquid, next_illiquid=next_illiquid)
+        - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
     )
     borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])
     assert (consumption <= resources - borrowing_limit + 1e-9).all()

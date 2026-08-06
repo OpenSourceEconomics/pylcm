@@ -33,7 +33,7 @@ value over the grid's neighbouring nodes, `credited(h, h(1 - delta)) = 0` making
 the hold free. The model is therefore faithful at any `delta`.
 
 The brute grid-search twin is a valid oracle only at `delta = 0`: it searches
-`next_housing` on the housing grid, so the free-keep level `h(1 - delta)` is on the
+`new_housing` on the housing grid, so the free-keep level `h(1 - delta)` is on the
 grid only when `delta = 0`. At `delta > 0` the brute cannot represent the off-grid
 free keep, so the `delta > 0` keeper is validated against a dense host VFI oracle
 that includes the free-keep candidate explicitly.
@@ -149,12 +149,12 @@ def _make_keep_housing(delta: float) -> Callable[[ContinuousState], FloatND]:
 
 def housing_cost(
     housing: ContinuousState,
-    next_housing: ContinuousState,
+    new_housing: ContinuousState,
     delta: float,
     return_housing: float,
     tau: float,
 ) -> FloatND:
-    """Net liquid cost of moving the house from `h` to `next_housing` (`H'`).
+    """Net liquid cost of moving the house from `h` to `new_housing` (`H'`).
 
     - keep (`H' = h(1 - delta)`): cost `0` — the house is retained, no trade;
     - adjust (`H' != h(1 - delta)`): cost `(1 + tau)·H' - (1 + r_H)·h(1 - delta)`
@@ -164,12 +164,12 @@ def housing_cost(
     The proportional cost falls on the whole new stock, so any adjustment pays a
     discrete wedge over keeping (adjusting even to the keep level `h(1 - delta)`
     costs `h(1 - delta)·(tau - r_H)`), opening the (S, s) inaction band. Reads only
-    the held housing state and the outer post-decision `next_housing` — a constant
+    the held housing state and the outer post-decision `new_housing` — a constant
     per outer-grid node, as the NEGM contract requires.
     """
     depreciated = housing * (1.0 - delta)
-    round_trip = (1.0 + tau) * next_housing - (1.0 + return_housing) * depreciated
-    return jnp.where(next_housing == depreciated, 0.0, round_trip)
+    round_trip = (1.0 + tau) * new_housing - (1.0 + return_housing) * depreciated
+    return jnp.where(new_housing == depreciated, 0.0, round_trip)
 
 
 def resources_before_outer_cost(
@@ -199,25 +199,29 @@ def next_liquid(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def next_housing(
+def new_housing(
     housing: ContinuousState, housing_investment: ContinuousAction
 ) -> ContinuousState:
-    """Durable law `H' = H + housing_investment`.
+    """The house chosen this period, `H' = H + housing_investment`.
 
-    The adjuster's outer search ranges `next_housing` over the outer house-level
+    The adjuster's outer search ranges `new_housing` over the outer house-level
     grid (and the brute twin searches it directly via `housing_investment`). The
     keeper's no-adjustment map is the separate `keep_housing` (`H' = h(1 - delta)`),
-    injected by the NEGM solver as the keeper's durable transition, so this law is
-    the adjuster branch only. The durable transition carries no params (it is read
-    within-period by the service flow, so a param would bind per target); the
-    depreciation enters through `keep_housing`, the adjust cost, and the bequest.
+    injected by the NEGM solver as the keeper's durable transition, so this is the
+    adjuster branch only. The depreciation enters through `keep_housing`, the
+    adjust cost, and the bequest.
     """
     return housing + housing_investment
 
 
-def serviced_housing(next_housing: ContinuousState) -> FloatND:
+def next_housing(new_housing: ContinuousState) -> ContinuousState:
+    """Housing law of motion: the house chosen this period is next period's."""
+    return new_housing
+
+
+def serviced_housing(new_housing: ContinuousState) -> FloatND:
     """The house serviced this period — the chosen `H'` (keep or adjust)."""
-    return next_housing
+    return new_housing
 
 
 def utility(
@@ -345,9 +349,9 @@ def build_model(
         start=housing_min, stop=liquid_max + housing_max, n_points=n_savings
     )
 
-    def housing_stays_in_bounds(next_housing: ContinuousState) -> BoolND:
+    def housing_stays_in_bounds(new_housing: ContinuousState) -> BoolND:
         """The chosen next house must stay within `[housing_min, housing_max]`."""
-        return (next_housing >= housing_min) & (next_housing <= housing_max)
+        return (new_housing >= housing_min) & (new_housing <= housing_max)
 
     dead = UserRegime(
         transition=None,
@@ -388,6 +392,7 @@ def build_model(
             },
             functions={
                 "utility": utility,
+                "new_housing": new_housing,
                 "housing_cost": housing_cost,
                 "keep_housing": keep_housing,
                 "serviced_housing": serviced_housing,
@@ -411,7 +416,7 @@ def build_model(
         ),
         outer_action="housing_investment",
         outer_state="housing",
-        outer_post_decision="next_housing",
+        outer_post_decision="new_housing",
         outer_grid=outer_grid,
         outer_no_adjustment_candidate="keep_housing",
         outer_cost="housing_cost",
@@ -437,6 +442,7 @@ def build_model(
         constraints={"housing_stays_in_bounds": housing_stays_in_bounds},
         functions={
             "utility": utility,
+            "new_housing": new_housing,
             "housing_cost": housing_cost,
             "resources_before_outer_cost": resources_before_outer_cost,
             "savings": savings,

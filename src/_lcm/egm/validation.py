@@ -648,11 +648,19 @@ def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
     solver: DCEGM,
+    exclude_states: frozenset[StateName] = frozenset(),
 ) -> list[tuple[str, str, UserFunction]]:
     """Enumerate every savings-stage function variant of a regime.
 
     Coarse, `MarkovTransition`-wrapped, `Phased`, and granular per-target
     forms all unpack to plain callables via `_transition_variants`.
+
+    Args:
+        user_regime: The regime whose savings-stage functions are enumerated.
+        solver: The inner DC-EGM config naming the Euler state.
+        exclude_states: States whose laws of motion are left out. A caller
+            excludes a state when its law is part of the margin under test
+            rather than something that might couple to it.
 
     Returns:
         List of `(role, label, func)` triples, with role one of
@@ -682,7 +690,11 @@ def _savings_stage_candidates(
                 )
             )
     for state_name, value in user_regime.state_transitions.items():
-        if state_name == solver.continuous_state or value is None:
+        if (
+            state_name == solver.continuous_state
+            or state_name in exclude_states
+            or value is None
+        ):
             continue
         for label, transition_func in _transition_variants(value=value):
             candidates.append(
