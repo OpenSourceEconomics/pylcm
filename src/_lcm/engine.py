@@ -615,7 +615,7 @@ class SimulationPhase:
 
     Present only where replaying the solve-phase policy is valid:
     - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
-    - the temporal aggregator `H` is phase-invariant (a phase-variant `H`
+    - the Koopmans aggregator `W` is phase-invariant (a phase-variant `W`
       changes the simulate-phase FOC, so the stored policy is wrong there);
     - the regime declares no taste shocks.
     `None` keeps the grid-argmax decision path for the continuous action.
