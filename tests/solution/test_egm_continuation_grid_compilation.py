@@ -122,8 +122,8 @@ def test_the_static_model_solves_reproducibly():
         "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     model = get_model(n_periods=_N_PERIODS, solvers=solvers)
-    first = model.solve(params=get_params(), log_level="off")
-    second = model.solve(params=get_params(), log_level="off")
+    first = model.solve(params=get_params(), log_level="debug")
+    second = model.solve(params=get_params(), log_level="debug")
     for period, regime_to_V in first.items():
         for regime_name, V_arr in regime_to_V.items():
             np.testing.assert_array_equal(
