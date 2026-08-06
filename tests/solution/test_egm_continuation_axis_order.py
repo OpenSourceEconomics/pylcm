@@ -35,10 +35,10 @@ from tests.solution.test_egm_continuation_grid_provenance import (
     _A_GRID,
     _B_GRID,
     _CONSUMPTION_GRID,
-    _G2EGM_BUDGET,
+    _G2EGM_SENTINEL,
     _N_PERIODS,
     _SAVINGS_GRID,
-    _assert_within_budget,
+    _assert_within_sentinel,
 )
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
@@ -229,4 +229,4 @@ def test_a_pension_first_two_asset_solve_matches_dense_grid_search():
         brute_v = np.asarray(brute[period]["working"])[:pension_stop, 3:]
         assert np.isfinite(egm_v).all()
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        _assert_within_budget(rel, _G2EGM_BUDGET)
+        _assert_within_sentinel(rel, _G2EGM_SENTINEL)
