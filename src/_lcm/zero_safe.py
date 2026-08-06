@@ -26,9 +26,41 @@ the spelling their operation is known by and take their operands positionally
 rather than keyword-only.
 """
 
+import jax
 import jax.numpy as jnp
 
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
+
+_FLOAT32_BYTES = 4
+
+
+def has_nonzero_subnormal(values: FloatND) -> BoolND:
+    """Return whether any entry is a represented subnormal other than zero.
+
+    Such a value is outside the probability contract this module can honour.
+    A subnormal survives in memory, but XLA:CPU treats it as zero in *both*
+    the comparison that decides nullity and the multiplication that would form
+    its contribution — so a weight of that size is silently dropped rather
+    than either respected or refused. Reading the bits is the only way to see
+    it: every arithmetic test is subject to the same flush, so `0 < p < tiny`
+    evaluates as `0 < 0`.
+
+    Args:
+        values: Array to inspect, of any floating dtype.
+
+    Returns:
+        Scalar boolean, true if some entry is subnormal and not zero.
+
+    """
+    arr = jnp.asarray(values)
+    int_dtype = jnp.int32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.int64
+    magnitude = jax.lax.bitcast_convert_type(arr, int_dtype) & jnp.asarray(
+        (1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype
+    )
+    smallest_normal = jax.lax.bitcast_convert_type(
+        jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), int_dtype
+    )
+    return jnp.any((magnitude > 0) & (magnitude < smallest_normal))
 
 
 def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
