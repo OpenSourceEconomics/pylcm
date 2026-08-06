@@ -463,7 +463,6 @@ def _build_two_target_closure(
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),
         transition_laws=MappingProxyType({}),
-        support_axes=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
             functions={"regime_transition_probs": probs_function},
             targets="regime_transition_probs",
