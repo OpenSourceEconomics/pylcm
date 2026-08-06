@@ -1305,6 +1305,12 @@ def _process_regime_core(
         )
 
     for func_name, func in stochastic_transition_functions.items():
+        _fail_if_a_markov_law_names_a_continuous_state(
+            func_name=func_name,
+            grid=flat_grids[func_name.replace("next_", "")],
+            state_transitions=state_transitions,
+            source_regime_name=source_regime_name,
+        )
         processed_functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -1987,6 +1993,64 @@ def _extract_template_names_key(
             return func_name
         return suffix
     return func_name
+
+
+def _fail_if_a_markov_law_names_a_continuous_state(
+    *,
+    func_name: TransitionFunctionName,
+    grid: Grid,
+    state_transitions: Mapping[StateName, object],
+    source_regime_name: RegimeName,
+) -> None:
+    """Reject a `MarkovTransition` law written for a state with a continuous grid.
+
+    `MarkovTransition` declares a probability vector over a discrete outcome space,
+    which only exists for a `DiscreteGrid`. A continuous stochastic process carries
+    its own transition mechanism and needs no law at all; an entry into one is a
+    deterministic function of the source's variables. Both mistakes reach the same
+    place, so both are named here.
+
+    Intrinsic process transitions are synthesized rather than written by the user
+    and never carry a law in `state_transitions`, so they do not reach this check.
+
+    Args:
+        func_name: The transition function name, e.g. `"next_shock"`.
+        grid: Grid spec of the state the law names.
+        state_transitions: This phase's `state_transitions` slice, read to
+            distinguish a user-written law from a synthesized process transition
+            and to name the targets a per-target law was written for.
+        source_regime_name: Regime whose law is being checked, named in the message.
+
+    Raises:
+        ModelInitializationError: If the law is a `MarkovTransition` and the state's
+            grid is not a `DiscreteGrid`.
+
+    """
+    if isinstance(grid, DiscreteGrid):
+        return
+
+    tree_path = tree_path_from_qname(func_name)
+    target = tree_path[0] if len(tree_path) > 1 else None
+    state_name = tree_path[-1].replace("next_", "")
+    raw = state_transitions.get(state_name)
+    if isinstance(raw, MarkovTransition):
+        written_for = "every target it reaches"
+    elif isinstance(raw, Mapping) and isinstance(raw.get(target), MarkovTransition):
+        written_for = f"target '{target}'"
+    else:
+        return
+
+    msg = (
+        f"The law for state '{state_name}' of regime '{source_regime_name}' toward "
+        f"{written_for} is wrapped in `MarkovTransition`, but '{state_name}' has a "
+        f"{type(grid).__name__}, not a DiscreteGrid. `MarkovTransition` declares a "
+        f"probability vector over a discrete outcome space, which a continuous grid "
+        f"does not have. A continuous stochastic process already carries its own "
+        f"transition mechanism and needs no law; write the law as a plain function "
+        f"returning the state's value, or drop it and let the process transition "
+        f"itself."
+    )
+    raise ModelInitializationError(msg)
 
 
 def _get_discrete_markov_next_function(
