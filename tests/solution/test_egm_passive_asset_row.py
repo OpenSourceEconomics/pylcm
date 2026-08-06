@@ -544,6 +544,27 @@ def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size
     )
     # `working_life` is the asset-row regime carrying the splayed AIME axis;
     # it is inactive in the terminal period, so exclude that period.
+    # @pro: This assertion fails at `--precision=32` for `bs=1` only, and the
+    # failure is grid-resolution dependent rather than code dependent. Holding
+    # the source fixed and varying only the grids in this file:
+    #   wealth 120 / savings 120 nodes -> all three batch sizes pass
+    #   wealth  60 / savings  60 nodes -> bs=1 fails, bs=2 and bs=4 still pass
+    # At 60 nodes the splayed and unsplayed arrays differ on 597/1800 elements,
+    # max absolute 2.861023e-06, max relative 3.244783e-07, i.e. 2-3 ULP at
+    # float32. float64 passes at both resolutions. `rtol=atol=1e-12` is five
+    # orders below float32 epsilon, so at that precision this asserts
+    # bit-identity, and bit-identity held at the finer grid.
+    #
+    # Two questions, and please answer both rather than only the second.
+    # (1) Is the loss of bit-identity itself evidence of a defect -- does
+    #     splaying the combo axis change more than the schedule at the coarser
+    #     resolution -- or is it the expected consequence of a repartitioned
+    #     reduction, which happened to be order-preserving at 120 nodes?
+    # (2) What is the right object to assert here? This project's own rule says
+    #     batch-size invariance is required *exactly* but is to be "tested as
+    #     equality of the discrete choice"; this test asserts the value array,
+    #     which is the stronger claim. If the policy is the correct object,
+    #     say so, and say what the value array is then owed at each precision.
     for period in sorted(reference)[:-1]:
         np.testing.assert_allclose(
             _euler_last_flat(np.asarray(splayed[period]["working_life"])),
