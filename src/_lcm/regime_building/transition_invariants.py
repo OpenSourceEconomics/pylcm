@@ -14,6 +14,7 @@ descriptors and function signatures, so they cost nothing on the traced path.
 from types import MappingProxyType
 
 from dags import get_annotations
+from dags.tree.tree_utils import QNAME_DELIMITER
 
 from _lcm.grids import Grid
 from _lcm.transition_laws import TransitionLawInfo, TransitionLaws
@@ -134,6 +135,15 @@ def _fail_if_a_read_next_state_has_no_value(
         law.weight_name: processed_functions[law.weight_name]
         for law in laws.values()
         if law.weight_name is not None and law.weight_name in processed_functions
+    }
+    # A helper reads the draw just as a law does, and reaches the same place by
+    # feeding one. Helpers carry no target qualification, so they are checked
+    # against every target; a read naming a state the target does not carry is
+    # skipped below and the check stays target-local.
+    consumers |= {
+        name: func
+        for name, func in processed_functions.items()
+        if QNAME_DELIMITER not in name and name not in consumers
     }
 
     for consumer_name, consumer in consumers.items():

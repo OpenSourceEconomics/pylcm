@@ -348,7 +348,15 @@ def process_regimes(
         spec = specs[regime_name]
         # The representative regime already carries first-active concrete functions,
         # so the parameter template no longer needs to know about age specialization.
-        regime_params_template = create_regime_params_template(user_regime)
+        regime_params_template = create_regime_params_template(
+            user_regime,
+            other_regime_state_names=frozenset(
+                state_name
+                for other_name, other in representative_user_regimes.items()
+                if other_name != regime_name
+                for state_name in other.states
+            ),
+        )
         granular_param_expansions = _granular_param_expansions(
             nested_transitions_by_phase=(
                 solve_nested_transitions[regime_name],

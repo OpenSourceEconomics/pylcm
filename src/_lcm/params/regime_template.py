@@ -12,6 +12,7 @@ from _lcm.typing import (
     FunctionName,
     RegimeName,
     RegimeParamsTemplate,
+    StateName,
     TransitionFunctionName,
 )
 from lcm.exceptions import InvalidNameError
@@ -20,12 +21,24 @@ from lcm.regime import Regime as UserRegime
 from lcm.typing import UserFunction
 
 
-def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTemplate:
+def create_regime_params_template(
+    user_regime: UserRegime,
+    *,
+    other_regime_state_names: frozenset[StateName] = frozenset(),
+) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Discover parameters from function signatures via `dags.tree`. Parameters
     are function arguments that are not states, actions, regime functions,
     `next_<state>` outputs, or special variables (`period`, `age`, `CE`).
+
+    `next_<state>` is reserved vocabulary for a transition's output, so an
+    argument of that shape is never a parameter — not even when this regime
+    neither carries the state nor declares a law for it. Such an argument names
+    a value belonging to a target regime, which is either produced by a declared
+    entry or is a draw with no realized value; the transition invariants decide
+    which and say so. Classifying it as a parameter instead would ask the user
+    to supply a scalar in place of a random draw.
 
     Age specialization is already resolved by `normalize_age_specialization`
     before this runs: the regime passed here carries concrete first-active-age
@@ -45,6 +58,10 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
 
     Args:
         user_regime: User-form `Regime` instance.
+        other_regime_state_names: State names declared by any other regime of the
+            model. Their `next_<state>` forms are withheld from the parameter
+            namespace so that a law reading one is adjudicated as a transition
+            value rather than silently rebound to a parameter.
 
     Returns:
         The regime parameter template with type annotations as values.
@@ -62,6 +79,7 @@ def create_regime_params_template(user_regime: UserRegime) -> RegimeParamsTempla
         *user_regime.functions,
         *(f"next_{name}" for name in user_regime.states),
         *(f"next_{name}" for name in user_regime.state_transitions),
+        *(f"next_{name}" for name in other_regime_state_names),
         "period",
         "age",
         "CE",
