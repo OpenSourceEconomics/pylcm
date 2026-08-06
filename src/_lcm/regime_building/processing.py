@@ -349,6 +349,23 @@ def process_regimes(
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
+    # Only a state can be entered: entry places a next-period value on the
+    # target's support, and an action is chosen inside the target's own period,
+    # so it has no axis in that regime's value function to place anything on.
+    # Every consumer that asks what a target offers a source therefore reads
+    # this, never `all_grids`.
+    state_grids = MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    name: grid
+                    for name, grid in grids.items()
+                    if name in regime_to_variables[regime_name].state_names
+                }
+            )
+            for regime_name, grids in all_grids.items()
+        }
+    )
 
     _fail_if_action_has_batch_size(user_regimes)
 
@@ -442,6 +459,7 @@ def process_regimes(
             phase_reachability=reachability.solution,
             nested_transitions=solve_nested_transitions[regime_name],
             all_grids=all_grids,
+            state_grids=state_grids,
             regime_params_template=regime_params_template,
             granular_param_expansions=granular_param_expansions,
             regime_to_flat_param_names=regime_to_flat_param_names,
@@ -468,6 +486,7 @@ def process_regimes(
             simulation_reachability=reachability.simulation,
             nested_transitions=simulate_nested_transitions[regime_name],
             all_grids=all_grids,
+            state_grids=state_grids,
             regime_params_template=regime_params_template,
             granular_param_expansions=granular_param_expansions,
             regime_names_to_ids=regime_names_to_ids,
@@ -773,6 +792,7 @@ def _build_solution_phase(
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
@@ -804,6 +824,8 @@ def _build_solution_phase(
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
+        state_grids: Immutable mapping of regime names to the Grid spec objects
+            of their states only, which is what a target offers a source to enter.
         regime_params_template: The regime's parameter template.
         granular_param_expansions: Immutable mapping of coarse-template law
             keys to granular qname prefixes.
@@ -840,6 +862,7 @@ def _build_solution_phase(
         state_transitions=spec.solution.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
+        state_grids=state_grids,
         regime_params_template=regime_params_template,
         variables=variables,
         phase_reachability=phase_reachability,
@@ -1321,6 +1344,7 @@ def _build_simulation_phase(
     simulation_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_names_to_ids: RegimeNamesToIds,
@@ -1370,6 +1394,8 @@ def _build_simulation_phase(
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
+        state_grids: Immutable mapping of regime names to the Grid spec objects
+            of their states only, which is what a target offers a source to enter.
         regime_params_template: The regime's parameter template.
         granular_param_expansions: Immutable mapping of coarse-template law
             keys to granular qname prefixes.
@@ -1415,6 +1441,7 @@ def _build_simulation_phase(
         state_transitions=spec.simulation.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
+        state_grids=state_grids,
         regime_params_template=regime_params_template,
         variables=variables,
         phase_reachability=simulation_reachability,
@@ -1815,6 +1842,7 @@ def _process_regime_core(
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
+    state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
     phase_reachability: PhaseReachability,
@@ -1837,6 +1865,8 @@ def _process_regime_core(
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
+        state_grids: Immutable mapping of regime names to the Grid spec objects
+            of their states only, which is what a target offers a source to enter.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
         phase_reachability: This phase's static regime graph, the sole source
@@ -1940,20 +1970,23 @@ def _process_regime_core(
 
     # Transitions of continuous stochastic processes bypass the stub pipeline
     # entirely. Build weight and next functions for every graph-retained
-    # continuation target's grid. Scope to the phase reachability graph's
+    # continuation target's state grid. Scope to the phase reachability graph's
     # retained targets for this source — not to whichever targets happen to
     # have a non-process law bundle — so a target reached solely by carrying
     # a shared process state (no other law) still gets its intrinsic
     # process transition synthesized. Read the process names off the target's
-    # own grids rather than the source's variables: an IID process the source
+    # own states rather than the source's variables: an IID process the source
     # does not carry is entered at its unconditional law, so it needs its
-    # intrinsic transition built here too.
+    # intrinsic transition built here too. Read *states* rather than every grid:
+    # a process declared as an action is chosen inside the target's own period
+    # and has no axis in that regime's value function, so there is nothing for
+    # a source to place a next-period value on.
     continuation_targets = phase_reachability.union_targets(source=source_regime_name)
     target_process_grids: dict[
         tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
     ] = {
         (user_regime, process): grid
-        for user_regime, grids in all_grids.items()
+        for user_regime, grids in state_grids.items()
         if user_regime in continuation_targets
         for process, grid in grids.items()
         if isinstance(grid, _ContinuousStochasticProcess)
