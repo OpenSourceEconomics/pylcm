@@ -928,10 +928,21 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     The same holds one level down, at a single node of a target that does carry
     mass: a node of probability zero contributes nothing whatever value stands
     there, so it is dropped rather than multiplied by its zero weight.
+
+    Two details of how that node is dropped:
+
+    - the mask sits on the **value**, so the multiplication stays a bare
+      operation feeding the sum and can be contracted into a fused
+      multiply-add. Selecting on the product instead forces it to round before
+      the sum rounds again, which every well-specified node pays for;
+    - the test is `== 0`, not `> 0`. A negative weight is a malformed
+      specification and a `NaN` weight is not a probability at all; `> 0` is
+      false for both and would launder either into a zero contribution, turning
+      a broken transition into a plausible number.
     """
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    weighted = jnp.where(weights > 0.0, values * weights, 0.0)
+    weighted = weights * jnp.where(weights == 0.0, 0.0, values)
     return jnp.sum(weighted) / safe_weight_sum
 
 

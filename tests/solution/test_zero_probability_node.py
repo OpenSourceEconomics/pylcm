@@ -162,3 +162,28 @@ def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
+
+
+def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
+    """A weight below zero is a malformed transition, not an impossible node.
+
+    Values `[1, 2]` at weights `[1, -1]` give `1 - 2 = -1`. Dropping the
+    negative node instead would give `1`, a value that looks like the answer to
+    a well-posed question, so the malformed weight has to carry through.
+    """
+    got = _expectation_over_stochastic_nodes(
+        values=jnp.asarray([1.0, 2.0]),
+        weights=jnp.asarray([1.0, -1.0]),
+    )
+
+    np.testing.assert_allclose(np.asarray(got), np.asarray(-1.0))
+
+
+def test_a_nan_weight_stays_poison() -> None:
+    """A weight that is not a number is not a probability of zero either."""
+    got = _expectation_over_stochastic_nodes(
+        values=jnp.asarray([1.0, 2.0]),
+        weights=jnp.asarray([1.0, jnp.nan]),
+    )
+
+    assert bool(jnp.isnan(jnp.asarray(got)))
