@@ -13,6 +13,9 @@ import pandas as pd
 from jax import vmap
 
 from _lcm.egm.interp import interp_on_padded_grid
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
+from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import (
     EGMPolicyRead,
@@ -231,6 +234,16 @@ def simulate(
             original_n_subjects=original_n_subjects,
         )
 
+    # Which regimes can publish a nested continuous-outer read. A solve-time
+    # property of the model, so the `nested_policy_fallback` column it gates is
+    # not data-dependent.
+    nested_policy_regimes = frozenset(
+        regime_name
+        for regime_to_policy in (period_to_regime_to_sim_policy or {}).values()
+        for regime_name, policy in regime_to_policy.items()
+        if isinstance(policy, NestedEGMSimPolicy)
+    )
+
     return SimulationResult(
         raw_results=wrapped_results,
         regimes=regimes,
@@ -239,6 +252,7 @@ def simulate(
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
         subject_batch_size=subject_batch_size,
+        nested_policy_regimes=nested_policy_regimes,
     )
 
 
@@ -418,6 +432,9 @@ def _concatenate_chunk_results(
                     }
                 ),
                 in_regime=jnp.concatenate([data.in_regime for data in per_chunk]),
+                nested_policy_fallback=jnp.concatenate(
+                    [data.nested_policy_fallback for data in per_chunk]
+                ),
             )
     return combined
 
@@ -484,7 +501,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
-    sim_policy: EGMSimPolicy | None = None,
+    sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -598,7 +615,7 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
-    optimal_actions = _replace_continuous_action_with_policy_read(
+    optimal_actions, nested_fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=optimal_actions,
         regime=regime,
         sim_policy=sim_policy,
@@ -618,11 +635,21 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 
+    # F4: `None` from the reader means no nested continuous-outer read ran for
+    # this regime-period (no payload, the flat single-EGM path, passive rows,
+    # the discrete-branch redecide), so no subject fell back on that path.
+    nested_policy_fallback = (
+        jnp.zeros(n_chunk_subjects, dtype=bool)
+        if nested_fallback is None
+        else nested_fallback
+    )
+
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
         in_regime=subject_ids_in_regime,
+        nested_policy_fallback=nested_policy_fallback,
     )
 
     # Update states and regime membership for next period
@@ -672,7 +699,7 @@ def _replace_continuous_action_with_policy_read(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
-    sim_policy: EGMSimPolicy | None,
+    sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None,
     states: Mapping[StateOrActionName, FloatND | IntND],
     flat_params: FlatRegimeParams,
     period: int,
@@ -681,7 +708,7 @@ def _replace_continuous_action_with_policy_read(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
     Replaces the grid-argmax value of the EGM continuous action with the
@@ -703,12 +730,33 @@ def _replace_continuous_action_with_policy_read(
       incomplete value comparison cannot pick the winner), or whose winning
       read is non-finite, non-positive, or outside the intrinsic budget
       (`action <= resources - savings_lower_bound`).
+
+    Returns the recovered actions and a nested-fallback flag: the per-subject
+    Boolean array from `_read_nested_policy` on the continuous-outer path, or
+    `None` on every other path (no policy, the flat single-EGM read, passive
+    rows, the discrete-branch redecide). The caller resolves `None` to all-False
+    where the regime's subject count is known (F4).
     """
+    if sim_policy is None:
+        return optimal_actions, None
+    if isinstance(sim_policy, NestedEGMSimPolicy):
+        # The nested (continuous-outer) payload is self-describing (it names
+        # both actions, the liquid state, and the search settings), so it
+        # needs no build-time `egm_policy_read` qualification of its own.
+        return _read_nested_policy(
+            payload=sim_policy,
+            optimal_actions=optimal_actions,
+            regime=regime,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
     read = regime.simulation.egm_policy_read
-    if sim_policy is None or read is None:
-        return optimal_actions
+    if read is None:
+        return optimal_actions, None
     if sim_policy.row_passive_state_names:
-        return optimal_actions
+        return optimal_actions, None
 
     n_subjects = next(iter(states.values())).shape[0]
 
@@ -735,19 +783,22 @@ def _replace_continuous_action_with_policy_read(
     )
 
     if sim_policy.row_discrete_action_names:
-        return _redecide_branch_and_read_policy(
-            score_actions=score_actions,
-            grid_values=grid_values,
-            optimal_actions=optimal_actions,
-            regime=regime,
-            sim_policy=sim_policy,
-            states=states,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            read=read,
-            n_subjects=n_subjects,
-            state_positions=state_positions,
+        return (
+            _redecide_branch_and_read_policy(
+                score_actions=score_actions,
+                grid_values=grid_values,
+                optimal_actions=optimal_actions,
+                regime=regime,
+                sim_policy=sim_policy,
+                states=states,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+                read=read,
+                n_subjects=n_subjects,
+                state_positions=state_positions,
+            ),
+            None,
         )
 
     resources = _resources_at_subjects(
@@ -793,7 +844,9 @@ def _replace_continuous_action_with_policy_read(
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
 
-    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
+    return MappingProxyType(
+        {**optimal_actions, read.action_name: off_grid_action}
+    ), None
 
 
 def _redecide_branch_and_read_policy(
@@ -941,6 +994,411 @@ def _redecide_branch_and_read_policy(
             accepted, grid[positions].astype(current.dtype), current
         )
     return MappingProxyType(new_actions)
+
+
+# Numerical tolerance certifying the outer transition's unit action slope
+# (the affine inversion contract of the nested policy read).
+_UNIT_SLOPE_ATOL = 1e-8
+
+# Per-subject residual tolerance (relative to the post-decision scale) certifying
+# that the recovered outer action actually reproduces the winning post-decision
+# through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
+# A two-point 0/1 slope probe cannot see a non-affine transition that merely
+# happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
+# the ACTUAL recovered action and rejects the subject otherwise (round-3 F3).
+_TRANSITION_RESIDUAL_RTOL = 1e-6
+
+
+def _interp_across_outer_axis(
+    *, nodes: Float1D, values: FloatND, query: FloatND
+) -> FloatND:
+    """Linear read of per-candidate subject values `(C, n)` at `query` `(n,)`."""
+    hi = jnp.clip(jnp.searchsorted(nodes, query), 1, nodes.shape[0] - 1)
+    lo = hi - 1
+    weight = jnp.clip((query - nodes[lo]) / (nodes[hi] - nodes[lo]), 0.0, 1.0)
+    subject_axis = jnp.arange(query.shape[0])
+    return values[lo, subject_axis] * (1.0 - weight) + values[hi, subject_axis] * weight
+
+
+def _read_nested_policy(
+    *,
+    payload: NestedEGMSimPolicy,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
+    """Replay the continuous-outer keeper/adjuster decision off-grid.
+
+    Reconstructs, per subject, exactly the solve's decision problem in the
+    solve's own policy class: read every branch's conditional value row at
+    the subject's liquid state (cubic Hermite with the published marginal as
+    slope — the solve's read convention), rebuild the outer-value surrogate
+    across the shared mesh (`LocalCubicOuterInterpolant`), refine it with the
+    same globally safeguarded search the solve used (exact nodes always
+    compete; golden section only inside brackets around node-local maxima),
+    and let the exact keeper win ties. The winning candidate's inner
+    consumption is the per-candidate policy read interpolated across the
+    outer axis at the refined optimum; the outer *action* is recovered from
+    the winning post-decision through the transition's affine-unit-slope
+    inversion (verified numerically, refused otherwise).
+
+    Subjects off the passive (durable) grid — the normal case after a
+    continuous adjustment — blend the two bracketing rows linearly, on both
+    sides of the comparison.
+
+    Falls back to the grid-argmax pair (both actions) for the whole regime
+    when the payload shape is outside the v1 scope (discrete-action rows,
+    more than one passive axis, a non-affine or unresolvable outer
+    transition), and per subject when any branch read leaves its live row
+    support, or the winning consumption is non-finite, non-positive, or
+    outside the intrinsic budget (`c <= resources - savings_lower_bound`).
+
+    Returns the recovered actions and a per-subject Boolean `fallback` flag
+    (True where the off-grid read was refused and the grid-argmax pair kept):
+    all-True on the whole-regime fallbacks above, `~accepted` on the normal
+    path. Inference must refuse whenever any entry is True (see F4).
+    """
+    keeper_pol = payload.keeper
+    bank = payload.adjuster
+    n_subjects = next(iter(states.values())).shape[0]
+    if (
+        keeper_pol.row_discrete_action_names
+        or bank.policies.row_discrete_action_names
+        or len(keeper_pol.row_passive_state_names) > 1
+    ):
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+    liquid = jnp.asarray(states[payload.liquid_state_name])
+
+    def grid_position(name: StateOrActionName) -> IntND:
+        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
+        return jnp.clip(
+            jnp.searchsorted(grid_values, jnp.asarray(states[name])),
+            0,
+            grid_values.shape[0] - 1,
+        )
+
+    discrete_idx = tuple(
+        grid_position(name) for name in keeper_pol.row_discrete_state_names
+    )
+
+    passive_bracket: tuple[IntND, IntND, FloatND] | None = None
+    if keeper_pol.row_passive_state_names:
+        name = keeper_pol.row_passive_state_names[0]
+        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
+        x = jnp.asarray(states[name])
+        hi = jnp.clip(jnp.searchsorted(grid_values, x), 1, grid_values.shape[0] - 1)
+        lo = hi - 1
+        weight = jnp.clip(
+            (x - grid_values[lo]) / (grid_values[hi] - grid_values[lo]), 0.0, 1.0
+        )
+        passive_bracket = (lo, hi, weight)
+
+    def blended_read(
+        pol: EGMSimPolicy, field: Literal["policy", "value"]
+    ) -> tuple[FloatND, BoolND]:
+        if passive_bracket is None:
+            return _interp_rows_with_support(
+                sim_policy=pol,
+                field=field,
+                index=discrete_idx,
+                resources=liquid,
+                n_subjects=n_subjects,
+            )
+        lo, hi, weight = passive_bracket
+        value_lo, support_lo = _interp_rows_with_support(
+            sim_policy=pol,
+            field=field,
+            index=(*discrete_idx, lo),
+            resources=liquid,
+            n_subjects=n_subjects,
+        )
+        value_hi, support_hi = _interp_rows_with_support(
+            sim_policy=pol,
+            field=field,
+            index=(*discrete_idx, hi),
+            resources=liquid,
+            n_subjects=n_subjects,
+        )
+        return (
+            value_lo * (1.0 - weight) + value_hi * weight,
+            support_lo & support_hi,
+        )
+
+    keeper_value, keeper_support = blended_read(keeper_pol, "value")
+    keeper_action, _ = blended_read(keeper_pol, "policy")
+
+    def candidate_read(pol: EGMSimPolicy) -> tuple[FloatND, BoolND, FloatND]:
+        value, support = blended_read(pol, "value")
+        action, _ = blended_read(pol, "policy")
+        return value, support, action
+
+    candidate_values, candidate_support, candidate_actions = vmap(candidate_read)(
+        bank.policies
+    )
+
+    # The same surrogate class and safeguarded search as the solve's collapse:
+    # exact node values compete directly, golden section refines only inside
+    # brackets around node-local maxima of the interpolated profile.
+    outer_nodes = bank.outer_nodes
+    profile = jnp.where(candidate_support, candidate_values, -jnp.inf)
+    interpolant = LocalCubicOuterInterpolant()
+    search = safeguarded_continuous_argmax(
+        lambda query: interpolant.evaluate(
+            nodes=outer_nodes, values=profile, query=query
+        ),
+        nodes=outer_nodes,
+        node_values=profile,
+        golden_iterations=payload.golden_iterations,
+    )
+    adjust = search.value > keeper_value  # exact keeper wins ties
+
+    # Inner action of the adjusting branch: the per-candidate policy reads,
+    # interpolated linearly across the outer axis at the refined optimum
+    # (policy rows carry no slope data — matching the flat read's convention).
+    adjuster_action = _interp_across_outer_axis(
+        nodes=outer_nodes, values=candidate_actions, query=search.x
+    )
+
+    outer_offset_slope = _outer_transition_offset_and_slope(
+        payload=payload,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    if outer_offset_slope is None:
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+    offset, slope_is_unit, transition_at = outer_offset_slope
+    keep_value = _keeper_post_decision(
+        payload=payload,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    if keep_value is None:
+        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+
+    chosen_post_decision = jnp.where(adjust, search.x, keep_value)
+    outer_action = chosen_post_decision - offset
+    inner_action = jnp.where(adjust, adjuster_action, keeper_action)
+    winner_value = jnp.where(adjust, search.value, keeper_value)
+
+    resources = _nested_resources(
+        payload=payload,
+        regime=regime,
+        states=states,
+        outer_action=outer_action,
+        outer_post_decision=chosen_post_decision,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+
+    # F3: certify the affine inversion per subject AT the recovered action, not
+    # only through the 0/1 slope probe. `outer_action = s' - offset`, so an
+    # affine-unit transition reproduces `T(states, outer_action) == s'` exactly;
+    # a non-affine transition that happened to pass the two-point slope test
+    # leaves a residual here and the subject falls back to the grid argmax.
+    residual_ok = jnp.abs(
+        transition_at(outer_action) - chosen_post_decision
+    ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
+    accepted = (
+        slope_is_unit
+        & residual_ok
+        & keeper_support
+        & jnp.all(candidate_support, axis=0)
+        & jnp.isfinite(winner_value)
+        & jnp.isfinite(outer_action)
+        & jnp.isfinite(inner_action)
+        & (inner_action > 0.0)
+        & (inner_action <= resources - payload.savings_lower_bound)
+    )
+
+    new_actions = dict(optimal_actions)
+    new_actions[payload.inner_action_name] = jnp.where(
+        accepted, inner_action, jnp.asarray(optimal_actions[payload.inner_action_name])
+    )
+    new_actions[payload.outer_action_name] = jnp.where(
+        accepted, outer_action, jnp.asarray(optimal_actions[payload.outer_action_name])
+    )
+    return MappingProxyType(new_actions), ~accepted
+
+
+def _nested_resources(
+    *,
+    payload: NestedEGMSimPolicy,
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    outer_action: FloatND,
+    outer_post_decision: FloatND,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> FloatND:
+    """The chosen branch's resources through the simulate DAG (subject axis kept).
+
+    The outer post-decision is bound as data: it is a *transition* in the
+    simulate DAG, so the target computation cannot derive it from the action.
+    """
+    data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
+        **dict(states),
+        payload.outer_action_name: outer_action,
+        payload.outer_post_decision_name: outer_post_decision,
+        "period": jnp.full(n_subjects, period, dtype=jnp.int32),
+        "age": jnp.full(n_subjects, age),
+    }
+    return jnp.reshape(
+        jnp.asarray(
+            _compute_targets(
+                data=data,
+                targets=[payload.resources_target_name],
+                regime=regime,
+                regime_params=flat_params,
+            )[payload.resources_target_name]
+        ),
+        (n_subjects,),
+    )
+
+
+def _resolve_function_kwargs(
+    func: Callable[..., FloatND],
+    *,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    bindings: Mapping[str, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> dict[str, FloatND | IntND] | None:
+    """Bind a simulate-phase function's parameters, or `None` if any is unmet."""
+    import inspect  # noqa: PLC0415
+
+    kwargs: dict[str, FloatND | IntND] = {}
+    for name in inspect.signature(func).parameters:
+        if name in bindings:
+            kwargs[name] = jnp.asarray(bindings[name])
+        elif name in states:
+            kwargs[name] = jnp.asarray(states[name])
+        elif name == "period":
+            kwargs[name] = jnp.full(n_subjects, period, dtype=jnp.int32)
+        elif name == "age":
+            kwargs[name] = jnp.full(n_subjects, age)
+        elif name in flat_params:
+            kwargs[name] = jnp.asarray(flat_params[name])
+        else:
+            return None
+    return kwargs
+
+
+def _outer_transition_offset_and_slope(
+    *,
+    payload: NestedEGMSimPolicy,
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> tuple[FloatND, BoolND, Callable[[FloatND], FloatND]] | None:
+    """Per-subject offset of the outer post-decision, with a unit-slope check.
+
+    The winning outer post-decision `s'` is the value of the regime's
+    `outer_post_decision` function; the recorded action must invert
+    `s' = P(states, a)`. The nested v1 scope supports the affine-unit-slope
+    contract `P(states, a) = offset(states) + a`, verified numerically per
+    subject by probing `P` at `a = 0` and `a = 1`. Returns `None`
+    (whole-regime fallback) when it is absent or its arguments cannot be
+    resolved.
+
+    `P` is an ordinary regime FUNCTION of this period's states and actions --
+    the stock chosen NOW -- not a state transition. The durable's law reads it
+    and carries it forward, so the law itself does not mention the outer action
+    and inverting the law could not recover one.
+    """
+    functions = regime.simulation.functions
+    if payload.outer_post_decision_name not in functions:
+        return None
+    transition = functions[payload.outer_post_decision_name]
+
+    def probe(action_value: FloatND) -> FloatND | None:
+        kwargs = _resolve_function_kwargs(
+            transition,
+            states=states,
+            bindings={payload.outer_action_name: action_value},
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            n_subjects=n_subjects,
+        )
+        if kwargs is None:
+            return None
+        return jnp.reshape(jnp.asarray(transition(**kwargs)), (n_subjects,))
+
+    zeros = jnp.zeros(n_subjects)
+    offset = probe(zeros)
+    at_one = probe(zeros + 1.0)
+    if offset is None or at_one is None:
+        return None
+    slope_is_unit = jnp.abs((at_one - offset) - 1.0) <= _UNIT_SLOPE_ATOL
+
+    def evaluate_at(action: FloatND) -> FloatND:
+        # Argument resolvability is already established by the 0/1 probes above,
+        # so `probe` cannot return None here; the transition is re-evaluated at
+        # the recovered action for the per-subject affine-residual certificate.
+        result = probe(action)
+        return result if result is not None else jnp.full(n_subjects, jnp.nan)
+
+    return offset, slope_is_unit, evaluate_at
+
+
+def _keeper_post_decision(
+    *,
+    payload: NestedEGMSimPolicy,
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> FloatND | None:
+    """The keeper branch's outer post-decision `s' = keep(Z)` per subject.
+
+    Uses the solver's declared no-adjustment candidate; without one, keeping
+    means holding the current durable (the state the outer post-decision is
+    the next-period value of) unchanged. Returns `None` (whole-regime
+    fallback) when the candidate's arguments cannot be resolved.
+    """
+    if payload.outer_no_adjustment_name is None:
+        durable_name = payload.outer_post_decision_name.removeprefix("next_")
+        durable = states.get(durable_name)
+        if durable is None:
+            return None
+        return jnp.asarray(durable)
+    keep_func = regime.simulation.functions.get(payload.outer_no_adjustment_name)
+    if keep_func is None:
+        return None
+    kwargs = _resolve_function_kwargs(
+        keep_func,
+        states=states,
+        bindings={},
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    if kwargs is None:
+        return None
+    return jnp.reshape(jnp.asarray(keep_func(**kwargs)), (n_subjects,))
 
 
 def _interp_rows_with_support(

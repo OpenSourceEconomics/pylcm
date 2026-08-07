@@ -38,6 +38,16 @@ class ResultMetadata:
     regime_to_actions: MappingProxyType[RegimeName, tuple[ActionName, ...]]
     """Immutable mapping of regime names to their action variable names."""
 
+    regime_to_publishes_nested_policy: MappingProxyType[RegimeName, bool]
+    """Whether each regime can publish a nested continuous-outer policy read.
+
+    True exactly for regimes solved by NNBEGM, the only solver that constructs a
+    `NestedEGMSimPolicy`. The `nested_policy_fallback` column (round-3 audit F4)
+    is emitted only for those regimes: elsewhere it would be a constant-False
+    column in every user's dataframe, which is what it silently became when the
+    flag was first surfaced.
+    """
+
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
     """Immutable mapping of discrete variable names to their category labels."""
 
@@ -93,8 +103,14 @@ def _compute_metadata(
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ages: AgeGrid,
+    nested_policy_regimes: frozenset[RegimeName] = frozenset(),
 ) -> ResultMetadata:
-    """Compute metadata from canonical regimes, raw results, and output dtypes."""
+    """Compute metadata from canonical regimes, raw results, and output dtypes.
+
+    `nested_policy_regimes` names the regimes whose solve published a
+    `NestedEGMSimPolicy`. It is a property of the solved MODEL, not of the
+    simulated subjects, so the dataframe schema it gates stays data-independent.
+    """
     regime_names = list(regimes.keys())
 
     all_states: set[StateName] = set()
@@ -102,11 +118,16 @@ def _compute_metadata(
     regime_to_states: dict[RegimeName, tuple[StateName, ...]] = {}
     regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
+    regime_to_publishes_nested_policy: dict[RegimeName, bool] = {}
+
     for regime_name, regime in regimes.items():
         regime_to_states[regime_name] = regime.simulation.state_names
         regime_to_actions[regime_name] = regime.simulation.action_names
         all_states.update(regime.simulation.state_names)
         all_actions.update(regime.simulation.action_names)
+        regime_to_publishes_nested_policy[regime_name] = (
+            regime_name in nested_policy_regimes
+        )
 
     # Extract categories and ordered flags from simulation_output_dtypes
     discrete_categories: dict[str, tuple[str, ...]] = {}
@@ -136,6 +157,9 @@ def _compute_metadata(
         n_subjects=n_subjects,
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),
+        regime_to_publishes_nested_policy=MappingProxyType(
+            regime_to_publishes_nested_policy
+        ),
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),

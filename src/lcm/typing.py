@@ -15,7 +15,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Scalar
+from jaxtyping import Bool, Float, Int, Int32, Scalar
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 
@@ -42,6 +42,16 @@ type ScalarBool = Bool[Scalar, ""]
 
 type Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
+
+# `jax.lax.fori_loop` body index. BOTH forms are admitted deliberately: with
+# static Python-int bounds the loop really runs in Python under
+# `jax.disable_jit()` and hands the body a plain `int`; only under trace does the
+# index become a tracer. Since `beartype_package` is registered unconditionally
+# (see `lcm/__init__.py`), an array-only hint makes every EAGER call raise a type
+# violation rather than compute a wrong answer. The traced counter is also
+# materialized at JAX's default int dtype (weak int64 under x64), not pylcm's
+# canonical int32, so the array arm stays dtype-agnostic rather than `ScalarInt`.
+type LoopIndex = int | Int[Scalar, ""]
 
 
 # String-label aliases. Runtime-equivalent to `str`; they exist purely to make

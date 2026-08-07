@@ -51,12 +51,12 @@ from _lcm.egm.ez_kernel import (
     ez_period_value,
 )
 from _lcm.egm.nbegm_crra import crra_utility
-from _lcm.egm.nbegm_segments import (
-    affords_an_action,
-    mask_dead_candidates,
-    segment_ids_from_folds,
+from _lcm.egm.nbegm_segments import mask_dead_candidates, segment_ids_from_folds
+from _lcm.egm.upper_envelope.query import (
+    _binade_exponent,
+    _framed_difference,
+    envelope_at_query,
 )
-from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -258,6 +258,54 @@ def nbegm_multi_interval_step(
     return value, marginal, policy
 
 
+def _linear_extension(
+    *,
+    x: Float1D,
+    x_node: ScalarFloat,
+    x_next: ScalarFloat,
+    y_node: ScalarFloat,
+    y_next: ScalarFloat,
+) -> Float1D:
+    """`y_node + (x - x_node) * (y_next - y_node) / (x_next - x_node)`.
+
+    Every difference is FRAMED — divided by its own pair's `2**max(e_a, e_b)`
+    before being formed — so none of them can overflow on operands the format
+    holds. The three magnitudes are then recombined through integer exponents and
+    applied once, at the end.
+
+    The result may still be infinite, and legitimately so: this is an
+    EXTRAPOLATION, and continuing a steep boundary slope far past the sampled
+    range genuinely leaves the format. What it can no longer do is report `inf`
+    or `NaN` for an extension whose true value is representable.
+
+    A degenerate `x_next == x_node` divides by a unit width rather than by zero.
+    The caller discards that lane, but the divisor is guarded here so no NaN is
+    computed in a branch `jnp.where` would only later drop — which would poison
+    the reverse-mode gradient through the live branch.
+    """
+    tx_head, _, tx_frame = _framed_difference(x, x_node)
+    dy_head, _, dy_frame = _framed_difference(y_next, y_node)
+    dx_head, _, dx_frame = _framed_difference(x_next, x_node)
+
+    degenerate = x_next == x_node
+    dx_head = jnp.where(degenerate, jnp.ones_like(dx_head), dx_head)
+    dx_frame = jnp.where(degenerate, jnp.zeros_like(dx_frame), dx_frame)
+
+    tx_shift = _binade_exponent(jnp.abs(tx_head))
+    dx_shift = _binade_exponent(jnp.abs(dx_head))
+    dy_shift = _binade_exponent(jnp.abs(dy_head))
+
+    # Each factor is now a significand in `[0.5, 1)`, so the product is O(1) and
+    # the whole magnitude lives in the exponent sum.
+    significand = (
+        jnp.ldexp(tx_head, -tx_shift)
+        / jnp.ldexp(dx_head, -dx_shift)
+        * jnp.ldexp(dy_head, -dy_shift)
+    )
+    exponent = (tx_frame + tx_shift) - (dx_frame + dx_shift) + (dy_frame + dy_shift)
+    return y_node + jnp.ldexp(significand, exponent)
+
+
 def _invert_coh_with_linear_extension(
     *, coh_endog: Float1D, coh_case_grid: Float1D, liquid_grid: Float1D
 ) -> Float1D:
@@ -271,18 +319,37 @@ def _invert_coh_with_linear_extension(
     per-case interval mask still bounds where its candidates may live.
     """
     inner = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
-    lower_width = coh_case_grid[1] - coh_case_grid[0]
-    upper_width = coh_case_grid[-1] - coh_case_grid[-2]
-    lower_slope = (liquid_grid[1] - liquid_grid[0]) / jnp.where(
-        lower_width > 0.0, lower_width, 1.0
+    # Every difference here is framed rather than formed in the working dtype,
+    # for the reason given in `_framed_difference`: a raw `a - b` overflows on
+    # opposite-signed top-binade operands even though both are finite normals,
+    # and one `inf` in a boundary width poisons the whole inversion with NaN
+    # (round-13 audit F2, the same defect class as in the envelope query).
+    #
+    # The two guards are direct float comparisons on the stored nodes. They used
+    # to test a materialized width against zero, which needs the very difference
+    # that can overflow; `a > b` is exact for finite floats and forms nothing.
+    below = jnp.where(
+        coh_case_grid[1] > coh_case_grid[0],
+        _linear_extension(
+            x=coh_endog,
+            x_node=coh_case_grid[0],
+            x_next=coh_case_grid[1],
+            y_node=liquid_grid[0],
+            y_next=liquid_grid[1],
+        ),
+        inner,
     )
-    upper_slope = (liquid_grid[-1] - liquid_grid[-2]) / jnp.where(
-        upper_width > 0.0, upper_width, 1.0
+    above = jnp.where(
+        coh_case_grid[-1] > coh_case_grid[-2],
+        _linear_extension(
+            x=coh_endog,
+            x_node=coh_case_grid[-1],
+            x_next=coh_case_grid[-2],
+            y_node=liquid_grid[-1],
+            y_next=liquid_grid[-2],
+        ),
+        inner,
     )
-    below = liquid_grid[0] + (coh_endog - coh_case_grid[0]) * lower_slope
-    above = liquid_grid[-1] + (coh_endog - coh_case_grid[-1]) * upper_slope
-    below = jnp.where(lower_width > 0.0, below, inner)
-    above = jnp.where(upper_width > 0.0, above, inner)
     return jnp.where(
         coh_endog < coh_case_grid[0],
         below,
@@ -488,7 +555,7 @@ def nbegm_multi_interval_step_savings(
     # with a distinct segment id (below), so a node feasible at a single liquid
     # point stays bracketable by the link-only envelope at its own abscissa.
     node_consumption = coh_grid[None, :] - savings_grid[:, None]
-    node_feasible = affords_an_action(node_consumption)
+    node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     if inverse_eis is not None:
         node_value_safe = ez_period_value(
@@ -583,7 +650,7 @@ def _interval_corner_candidates(
     # degenerate Euler inversion. Where the budget slopes it is the ordinary no-save
     # candidate `u(coh(liquid)) + beta * V'(0)`.
     floor_consumption = coh_intercept - savings_grid
-    floor_feasible = affords_an_action(floor_consumption)
+    floor_feasible = floor_consumption > 0.0
     floor_node_value = jnp.where(
         floor_feasible,
         jax.vmap(utility_of_action)(jnp.where(floor_feasible, floor_consumption, 1.0))
@@ -601,8 +668,7 @@ def _interval_corner_candidates(
     # point where the budget is defined; the positivity guard drops any point where an
     # undeclared kink still leaves it non-positive rather than letting `u(<=0)` = NaN
     # leak into the envelope as a live candidate.
-    s0_feasible = affords_an_action(corner_coh_grid)
-    s0_consumption_safe = jnp.where(s0_feasible, corner_coh_grid, 1.0)
+    s0_consumption_safe = jnp.where(corner_coh_grid > 0.0, corner_coh_grid, 1.0)
     s0 = mask_dead_candidates(
         endog_grid=liquid_grid,
         value=jnp.where(
@@ -613,7 +679,7 @@ def _interval_corner_candidates(
         ),
         policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
         marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption_safe),
-        valid=in_interval & jnp.where(flat, floor_affordable, s0_feasible),
+        valid=in_interval & jnp.where(flat, floor_affordable, corner_coh_grid > 0.0),
     )
 
     # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
@@ -622,7 +688,7 @@ def _interval_corner_candidates(
     # reaches. Feasible only where residual consumption is positive; redundant on a flat
     # interval, whose dense floor search already spans the whole savings grid.
     smax_consumption = corner_coh_grid - savings_grid[-1]
-    smax_feasible = affords_an_action(smax_consumption) & (~flat) & in_interval
+    smax_feasible = (smax_consumption > 0.0) & (~flat) & in_interval
     smax_consumption_safe = jnp.where(smax_feasible, smax_consumption, 1.0)
     smax = mask_dead_candidates(
         endog_grid=liquid_grid,
@@ -2397,7 +2463,7 @@ def _no_save_corner(
         channels, each NaN where the corner has no feasible action.
 
     """
-    feasible = affords_an_action(coh)
+    feasible = coh > 0.0
     safe = jnp.where(feasible, coh, 1.0)
     return mask_dead_candidates(
         endog_grid=endog_grid,

@@ -15,6 +15,7 @@ from jax import Array
 from jaxtyping import Key
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
@@ -101,11 +102,11 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
 # Sparse over regimes: the inner mapping carries an entry only for regimes
-# whose kernels publish a simulation policy. Regimes that publish none are
-# absent — callers must not assume the full regime keyset. (`EGMSimPolicy` is
-# the sole concrete policy artifact today.)
+# whose kernels publish a simulation policy (DC-EGM's flat `EGMSimPolicy`,
+# the continuous-outer NNBEGM's `NestedEGMSimPolicy`). Regimes that publish
+# none are absent — callers must not assume the full regime keyset.
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
-    int, MappingProxyType[RegimeName, EGMSimPolicy]
+    int, MappingProxyType[RegimeName, EGMSimPolicy | NestedEGMSimPolicy]
 ]
 
 

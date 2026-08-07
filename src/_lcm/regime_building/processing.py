@@ -975,11 +975,11 @@ def _build_solution_phase(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             grid_schedule=grid_schedule,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
             active_periods=regimes_to_active_periods[regime_name],
@@ -1605,11 +1605,11 @@ def _build_simulation_phase(
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
+            period_to_regime_v_interp=period_to_regime_v_interp,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
-            period_to_regime_v_interp=period_to_regime_v_interp,
         )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
@@ -3834,12 +3834,12 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[str],
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
-    co_map_state_names: tuple[StateName, ...] = (),
-    continuation_functions: EconFunctionsMapping | None = None,
-    grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
+    co_map_state_names: tuple[StateName, ...] = (),
+    continuation_functions: EconFunctionsMapping | None = None,
+    grid_schedule: AgeGridSchedule | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each active period of a non-terminal regime.
 
