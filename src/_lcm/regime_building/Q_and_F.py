@@ -1318,9 +1318,11 @@ def _aggregate_joint_lottery(
         The aggregated continuation value.
 
     """
+    values = jnp.concatenate(list(lottery_values))
+    weights = jnp.concatenate(list(lottery_weights))
     return certainty_equivalent.aggregate(
-        values=jnp.concatenate(list(lottery_values)),
-        weights=jnp.concatenate(list(lottery_weights)),
+        values=_values_without_impossible_nodes(values=values, weights=weights),
+        weights=weights,
         # The params template types every certainty-equivalent parameter as a
         # float, so its runtime values are float arrays.
         params=cast(
@@ -1331,6 +1333,37 @@ def _aggregate_joint_lottery(
             },
         ),
     )
+
+
+def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+    """Replace the value at every zero-probability node with a live node's.
+
+    `aggregate` is a public interface, and its implementations are entitled to
+    multiply rather than mask: the ordinary weighted mean is written
+    `sum(w * v) / sum(w)`. A node carrying no probability may name anything at
+    all -- an entry law evaluated off the target's support returns NaN there --
+    and `0 * nan` is `nan`, which would destroy every well-specified node
+    beside it. Neutralizing such a node here makes that guarantee the engine's
+    rather than something each certainty equivalent has to rediscover.
+
+    The stand-in is copied from the largest-weight node rather than being a
+    constant, because `aggregate` may transform the values before averaging and
+    an arbitrary constant need not lie in the transform's domain -- `log` at
+    zero is the ordinary case. A value already in the lottery always does.
+
+    Only an exactly-zero weight is replaced. A negative or NaN weight is not a
+    node that cannot occur, and both stay visible.
+
+    Args:
+        values: Continuation values of the joint lottery.
+        weights: Their weights, over the same axis.
+
+    Returns:
+        The values, with every zero-weight entry replaced by a live one.
+
+    """
+    stand_in = jnp.take(values, jnp.argmax(weights, axis=-1), axis=-1)
+    return jnp.where(weights == 0.0, stand_in, values)
 
 
 def _unit_regime_mass_or_nan(
