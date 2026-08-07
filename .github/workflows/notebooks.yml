@@ -16,7 +16,7 @@ on:
     branches:
       - '**'
 jobs:
-  notebooks:
+  run:
     name: Run explanation notebooks for docs
     runs-on: ubuntu-latest
     steps:
@@ -31,3 +31,19 @@ jobs:
       - name: Run explanation notebooks
         shell: bash {0}
         run: pixi run -e docs explanation-notebooks
+  # A required status check matches by exact check-run name, and `name:` above
+  # overrides what gets reported -- so branch protection's context `notebooks`
+  # never matched `Run explanation notebooks for docs` and sat "Expected --
+  # Waiting for status to be reported" forever, even after `run` passed.
+  # Mirrors `cpu`'s gate job in cpu.yml, which is why that one already worked.
+  notebooks:
+    name: notebooks
+    needs:
+      - run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless the check succeeded
+        run: |-
+          echo "run: ${{ needs.run.result }}"
+          test "${{ needs.run.result }}" = "success"
