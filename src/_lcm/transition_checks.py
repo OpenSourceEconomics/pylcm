@@ -162,12 +162,12 @@ def validate_regime_transitions_all_periods(
             invalid probabilities and the logger implies raise mode.
 
     """
-    # Skipped entirely at `log_level="off"`, which is why a model has to be run
-    # at `"debug"` at least once: unrepresented mass leaves no trace in the
-    # output. Every aggregation route normalizes by the mass it receives, so
-    # mass assigned to a target that cannot receive it is divided back out and
-    # the survivors renormalize to look well-formed — the solved values come
-    # out plausible and bit-identical however much mass went missing.
+    # Skipped entirely at `log_level="off"`. What that costs is the diagnosis
+    # rather than the answer: the continuation aggregator measures the mass its
+    # retained targets represent and returns NaN unless it is one and no weight
+    # is negative, so a misspecification survives as a NaN rather than as a
+    # plausible number. These checks name the regime, the period and the
+    # offending target instead, which a NaN cannot.
     if not validation_enabled(logger):
         return
 
@@ -376,10 +376,11 @@ def _validate_regime_transition_probs(
             raise InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is inactive at age {next_age} but has positive "
                 f"transition probability from '{regime_name}' between ages {age} and "
-                f"{next_age}{period_detail}. Its mass is dropped from the "
-                f"continuation and the remaining targets are renormalized, so the "
-                f"solved values would not depend on it at all. Either make '{r}' "
-                f"active at that age or give it probability 0 there."
+                f"{next_age}{period_detail}. Its mass is not represented in the "
+                f"continuation, so what the remaining targets carry is less than "
+                f"unit mass and the solve returns NaN rather than a value that "
+                f"does not depend on '{r}' at all. Either make '{r}' active at "
+                f"that age or give it probability 0 there."
             )
 
 
@@ -634,6 +635,20 @@ def _check_state_probs(
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned values outside [0, 1]."
+        )
+
+    # A subnormal passes every test above -- it is in range, and the row still
+    # sums to one -- but the arithmetic downstream cannot carry it: it compares
+    # equal to zero and multiplies to zero, so its node would be priced as one
+    # that cannot occur. The solve refuses it either way; naming the state and
+    # the age here is what a NaN cannot do.
+    if has_nonzero_subnormal(probs):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned a subnormal probability. A value below "
+            f"{float(jnp.finfo(probs.dtype).tiny):.3e} cannot be weighted at "
+            f"this precision, so the outcome would be dropped as impossible "
+            f"rather than counted. Use exactly 0 if the outcome cannot occur."
         )
 
     row_sums = jnp.sum(probs, axis=-1)

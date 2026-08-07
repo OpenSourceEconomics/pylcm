@@ -17,6 +17,8 @@ declares no breakpoints, so the inner NB-EGM partition is a single interval —
 the degenerate plain-EGM case.
 """
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
@@ -235,6 +237,7 @@ def build_model(
     illiquid_grid: Grid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     branch_aggregator: OuterBranchAggregator | None = None,
+    durable_law: Callable[..., object] | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -243,6 +246,9 @@ def build_model(
     horizons chain published nested carries between alive periods.
 
     `illiquid_grid` overrides the durable state's grid in both regimes.
+    `durable_law` overrides the durable's law of motion; every variant reads the
+    chosen stock through `new_illiquid`, so one law serves them all and the
+    variants keep solving the same model.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -270,7 +276,10 @@ def build_model(
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
-        state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
+        state_transitions={
+            "wealth": next_wealth,
+            "illiquid": durable_law if durable_law is not None else durable_transition,
+        },
         actions={
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,

@@ -69,6 +69,7 @@ from _lcm.egm.validation import (
     _resolve_solve_functions,
     _savings_stage_candidates,
     _solve_grids,
+    _transition_variants,
     _without,
 )
 from _lcm.grids import ContinuousGrid
@@ -242,10 +243,11 @@ def _fail_if_outer_margin_euler_coupled(
     become leaves), so an ancestor hit on the outer post-decision is a genuine
     decision-time coupling, not the legitimate resources read.
 
-    The durable state's own law is exempt: carrying the chosen stock forward is
-    what the outer margin *is*, not a channel through which it could reach the
-    inner Euler equation. Coupling means some *other* savings-stage function
-    reads the outer choice.
+    The durable state's own law is held out of this loop: reading the outer
+    choice is what that law is *for*, not a channel through which the outer
+    margin reaches the inner Euler equation. It is checked separately, against
+    the inner margin rather than the outer one, because the solver evaluates it
+    as written — see `_fail_if_outer_law_reads_the_inner_margin`.
     """
     inner = solver.inner
     opaque_functions = _without(
@@ -280,6 +282,13 @@ def _fail_if_outer_margin_euler_coupled(
             )
             raise ModelInitializationError(msg)
 
+    _fail_if_outer_law_reads_the_inner_margin(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+
     # Utility may carry the outer margin only additively-separably from the
     # inner action: a cross-term in (consumption, outer post-decision) makes the
     # inner marginal utility depend on the outer choice, so the inner Euler
@@ -289,6 +298,65 @@ def _fail_if_outer_margin_euler_coupled(
         functions=functions,
         solver=solver,
     )
+
+
+def _fail_if_outer_law_reads_the_inner_margin(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """Reject an outer-state law of motion that reaches into the inner margin.
+
+    The solver evaluates the durable's declared law as written, so what that law
+    reads decides whether the outer margin stays a plain search. Reading the
+    outer post-decision, the durable state, other states, or params is the
+    ordinary case — a depreciating `next_z = (1 - delta) s'` is exactly that.
+    Reading the inner continuous action or the inner post-decision is not: the
+    stock carried forward would then depend on the consumption the inner Euler
+    inversion is solving for, so the outer `max` no longer ranges over
+    independent problems.
+
+    The outer post-decision is made opaque first, so a law reading the chosen
+    stock is not charged with reading the outer action it is computed from.
+
+    Args:
+        regime_name: Name of the regime being validated.
+        user_regime: The regime whose outer-state law is inspected.
+        functions: Mapping of function names to the regime's solve functions.
+        solver: The regime's `NEGM` solver config.
+
+    Raises:
+        ModelInitializationError: If the law reads the inner action or the inner
+            post-decision.
+
+    """
+    law = user_regime.state_transitions.get(solver.outer_state)
+    if law is None:
+        return
+    inner = solver.inner
+    inner_margin_names = {inner.continuous_action, inner.post_decision_function}
+    opaque_functions = _without(functions=functions, names={solver.outer_post_decision})
+    for label, transition_func in _transition_variants(value=law):
+        ancestors = _dag_ancestors(
+            functions=opaque_functions, target_func=transition_func
+        )
+        coupled = ancestors & inner_margin_names
+        if coupled:
+            msg = (
+                f"In regime '{regime_name}', the transition of the outer state "
+                f"'{solver.outer_state}'{label} reads {sorted(coupled)!r}, which "
+                f"belongs to the inner margin. NEGM evaluates that law to find "
+                f"what the next period carries, so the stock carried forward "
+                f"would depend on the inner consumption-savings choice and the "
+                f"outer max would no longer range over independent problems. "
+                f"Let the law read the outer post-decision "
+                f"'{solver.outer_post_decision}', states, or params; if the two "
+                f"margins genuinely interact, use the 2-D EGM foundation "
+                f"(G2EGM / multidim-RFC), not NEGM."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_utility_couples_action_and_outer_margin(
