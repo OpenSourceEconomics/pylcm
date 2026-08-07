@@ -39,7 +39,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import joint_weight, usable_weight, zero_safe_weighted_term
+from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -625,8 +625,8 @@ def _get_compute_CE(
                 # target reached with certainty still carries nodes of
                 # probability zero -- a Markov row with a zero entry beside a
                 # state where every action is infeasible -- and one that merely
-                # underflowed arrives at the smallest normal instead, so it is
-                # not mistaken for that null event.
+                # underflowed arrives as the smallest representable magnitude
+                # instead, so it is not mistaken for that null event.
                 lottery_weights.append(
                     joint_weight(
                         jnp.stack(
@@ -1108,21 +1108,24 @@ def _scalar_target_contribution(
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
         smallest_probability = jnp.minimum(smallest_probability, prob)
-        # Whether such a target contributes nothing to the *continuation*
-        # depends on the value standing at it, so it is settled per term. A
-        # stateless target has no stochastic node to multiply against, so its
-        # regime probability is the whole weight: what `joint_weight` does for a
-        # node of the stateful route, `usable_weight` does here.
+        # A stateless target has no stochastic node to multiply against, so its
+        # regime probability is already the whole weight. There is no product to
+        # underflow, which is what `joint_weight` guards on the stateful route,
+        # so the probability is collected as it stands.
         #
-        # The value is handed over as it stands. A node that cannot occur is
-        # neutralized once, downstream in `_aggregate_joint_lottery`, against
-        # the same final weights -- and a weight raised to the smallest normal
-        # is not zero there, so `-inf`, the ordinary value of a state where
-        # every action is infeasible, still reaches the answer.
+        # Both the weight and the value are handed over unmodified, because
+        # whether a weight too small for the dtype matters is decided by the
+        # value it meets. That decision belongs to `zero_safe_weighted_term`,
+        # downstream in `_aggregate_joint_lottery`, where the concatenated
+        # weights are final: against a finite value the weight stands and the
+        # node may drop, while against `-inf` -- the ordinary value of a state
+        # where every action is infeasible -- it is raised so the infinity
+        # reaches the answer. Pre-adjusting the weight here would take that
+        # decision away before the value is known.
         if as_lottery:
             node = jnp.ravel(scalar_V)
             values.append(node)
-            weights.append(usable_weight(prob) * jnp.ones_like(node))
+            weights.append(prob * jnp.ones_like(node))
         else:
             CE = CE + zero_safe_weighted_term(prob, scalar_V)
     return CE, values, weights, probability_mass, smallest_probability
