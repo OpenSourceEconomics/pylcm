@@ -20,6 +20,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
@@ -121,3 +122,66 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
         np.asarray([7.75, 15.5, 23.25, 31.0]),
         rtol=1e-6,
     )
+
+
+@categorical(ordered=False)
+class RegimeIdWithInactiveTargets:
+    source: ScalarInt
+    live: ScalarInt
+    gone_a: ScalarInt
+    gone_b: ScalarInt
+
+
+def test_a_signed_cell_on_a_target_that_drops_out_is_refused() -> None:
+    """A declared cell is checked even where its target never carries mass.
+
+    Targets inactive next period are pruned before the continuation is built,
+    so the arithmetic backstop never sees their cells: `+0.5` and `-0.5` on two
+    of them cancel, and the live target's `1.0` is left looking like a
+    well-formed lottery. Validation reads the transition as declared and
+    refuses it, which is why a model has to be run with validation on.
+    """
+
+    def _all_mass_to_live() -> ScalarFloat:
+        return jnp.float32(1.0)
+
+    def _positive_on_a_dropped_target() -> ScalarFloat:
+        return jnp.float32(0.5)
+
+    def _negative_on_a_dropped_target() -> ScalarFloat:
+        return jnp.float32(-0.5)
+
+    def _terminal(name: str) -> Regime:
+        active = None if name == "live" else (lambda age: age < 21)
+        return Regime(
+            transition=None,
+            active=active if active is not None else (lambda _age: True),
+            states={"wealth": _WEALTH},
+            functions={"utility": _pays_wealth},
+        )
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={
+                    "live": MarkovTransition(_all_mass_to_live),
+                    "gone_a": MarkovTransition(_positive_on_a_dropped_target),
+                    "gone_b": MarkovTransition(_negative_on_a_dropped_target),
+                },
+                active=lambda age: age < 21,
+                states={"wealth": _WEALTH},
+                state_transitions={"wealth": _keep},
+                functions={"utility": _no_utility},
+            ),
+            "live": _terminal("live"),
+            "gone_a": _terminal("gone_a"),
+            "gone_b": _terminal("gone_b"),
+        },
+        ages=AgeGrid(start=20, stop=21, step="Y"),
+        regime_id_class=RegimeIdWithInactiveTargets,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+    ):
+        model.solve(params=_PARAMS, log_level="debug")

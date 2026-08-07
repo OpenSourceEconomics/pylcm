@@ -209,6 +209,12 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         # infinity: `0 * inf` is NaN, which would take the well-specified nodes
         # down with it. Transforming a stand-in value instead keeps the
         # reduction finite and changes nothing, the node's weight being zero.
+        # A negative weight is not a lottery. Mapping it to NaN makes it
+        # propagate like any other malformed weight instead of being read as
+        # "dead" by the `> 0` test below and silently dropped — which would
+        # return the surviving nodes' mean as though the caller had asked for
+        # it. `weighted_power_mean` opens the same way, for the same reason.
+        weights = jnp.where(weights < 0.0, jnp.nan, weights)
         live = weights > 0.0
         safe_values = jnp.where(live, values, jnp.ones_like(values))
         transformed = self.transform(
