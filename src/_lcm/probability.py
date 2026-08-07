@@ -26,8 +26,10 @@ subnormal operand, and the ratio between any two weights is the one the
 caller supplied, bit for bit.
 """
 
+import dataclasses
 import functools
 from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -125,7 +127,41 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
     """
     arr = jnp.asarray(weights)
     shift = jnp.max(_shift_to_normal(arr), axis=axis, keepdims=True)
-    return _scaled_by_power_of_two(arr, shift)
+    return scaled_by_power_of_two(arr, shift)
+
+
+def on_common_scale(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
+    """Return weights carrying per-entry scales brought onto one shared scale.
+
+    Each entry stands for `values * 2**-shifts`, which is how a joint product
+    too small for the normal range travels. Read together they have to mean one
+    thing, so every entry is lifted onto the largest scale present.
+
+    The shared scale is capped at what the entry with the least headroom can
+    absorb, because lifting one past the top of the range would replace a
+    finite weight with an infinite one. Where the spread is wider than the
+    exponent range — the entries then differ by more than the format can hold
+    on any one scale — the smallest keep a scale of their own and are
+    understated by the difference. Reaching that cap means one weight is
+    smaller than another by more binades than the largest representable value
+    has, so its contribution cannot change a sum of the two.
+
+    Args:
+        values: The scaled weights.
+        shifts: Each one's own base-two scale.
+
+    Returns:
+        Tuple of the weights on one scale and the scale they now carry.
+
+    """
+    arr = jnp.asarray(values)
+    shifts = jnp.asarray(shifts)
+    largest = jnp.max(shifts).astype(jnp.int32)
+    room = shifts + (_exponent_bias(arr) - 1) - _unbiased_exponent(arr)
+    liftable = jnp.where(is_live(arr) & jnp.isfinite(arr), room, largest)
+    common = jnp.minimum(largest, jnp.min(liftable)).astype(jnp.int32)
+    lift = jnp.maximum(common - shifts, jnp.zeros_like(shifts))
+    return scaled_by_power_of_two(arr, lift), common
 
 
 def rescaled_weight_pair(
@@ -140,8 +176,8 @@ def rescaled_weight_pair(
     second = jnp.asarray(second_weight)
     shift = jnp.maximum(_shift_to_normal(first), _shift_to_normal(second))
     return (
-        _scaled_by_power_of_two(first, shift),
-        _scaled_by_power_of_two(second, shift),
+        scaled_by_power_of_two(first, shift),
+        scaled_by_power_of_two(second, shift),
     )
 
 
@@ -181,7 +217,7 @@ def rescaled_weight_group(
     shift = functools.reduce(jnp.maximum, needed)
     headroom = functools.reduce(jnp.minimum, [_binades_of_headroom(w) for w in weights])
     shift = jnp.minimum(shift, headroom)
-    return tuple(_scaled_by_power_of_two(jnp.asarray(w), shift) for w in weights)
+    return tuple(scaled_by_power_of_two(jnp.asarray(w), shift) for w in weights)
 
 
 def scaled_exact_product(factors: FloatND) -> tuple[FloatND, _BitsND]:
@@ -217,20 +253,20 @@ def scaled_exact_product(factors: FloatND) -> tuple[FloatND, _BitsND]:
 
     """
     arr = jnp.asarray(factors)
-    significand = jnp.prod(_significand_in_unit_range(arr), axis=0)
-    exponent = jnp.sum(_unbiased_exponent(arr), axis=0) + _unbiased_exponent(
-        significand
-    )
-    negative = jnp.sum(jnp.where(is_negative(arr), 1, 0), axis=0) % 2 == 1
-    ordinary = jnp.any(is_represented_zero(arr) | ~jnp.isfinite(arr), axis=0)
+    parts = _product_parts(arr)
     # One shift for the whole array, so every entry keeps its size relative to
     # every other, and large enough that the smallest of them clears the
     # subnormal range.
-    smallest = jnp.min(jnp.where(ordinary, jnp.zeros_like(exponent), exponent))
-    shift = jnp.maximum((1 - _exponent_bias(arr)) - smallest, jnp.zeros((), jnp.int32))
-    scaled = _encoded(significand, exponent + shift, negative=negative)
-    plain = jnp.prod(arr, axis=0)
-    return jnp.where(ordinary, plain, scaled), shift
+    smallest = jnp.min(
+        jnp.where(parts.ordinary, jnp.zeros_like(parts.exponent), parts.exponent)
+    )
+    shift = jnp.maximum(
+        (1 - _exponent_bias(arr)) - smallest, jnp.zeros((), jnp.int32)
+    ).astype(jnp.int32)
+    scaled = _encoded(
+        parts.significand, parts.exponent + shift, negative=parts.negative
+    )
+    return jnp.where(parts.ordinary, parts.plain, scaled), shift
 
 
 def exact_product(factors: FloatND) -> FloatND:
@@ -248,7 +284,7 @@ def exact_product(factors: FloatND) -> FloatND:
     multiply, exponents add, and the result is written into its bit pattern,
     subnormal or not. Nothing is lost that the format can hold, and what the
     format cannot hold — a product below the smallest subnormal — comes back as
-    zero for `joint_weight` to mark.
+    zero. `nonzero_exact_product` is the form that marks that case.
 
     A zero factor is the genuine null event and a non-finite one is not a
     probability; both take the ordinary product, which says the right thing
@@ -262,18 +298,48 @@ def exact_product(factors: FloatND) -> FloatND:
         Their product over the leading axis.
 
     """
-    arr = jnp.asarray(factors)
-    plain = jnp.prod(arr, axis=0)
-    significand = jnp.prod(_significand_in_unit_range(arr), axis=0)
-    exponent = jnp.sum(_unbiased_exponent(arr), axis=0) + _unbiased_exponent(
-        significand
-    )
-    negative = jnp.sum(jnp.where(is_negative(arr), 1, 0), axis=0) % 2 == 1
-    ordinary = jnp.any(is_represented_zero(arr) | ~jnp.isfinite(arr), axis=0)
+    parts = _product_parts(jnp.asarray(factors))
     return jnp.where(
-        ordinary,
-        plain,
-        _encoded(significand, exponent, negative=negative),
+        parts.ordinary,
+        parts.plain,
+        _encoded(parts.significand, parts.exponent, negative=parts.negative),
+    )
+
+
+def nonzero_exact_product(factors: FloatND) -> FloatND:
+    """Return `exact_product`, never zero where every factor can occur.
+
+    A product below the smallest representable magnitude is the one case the
+    format genuinely cannot hold, and it comes back as the smallest
+    representable magnitude of the same sign rather than as zero, so an event
+    that can occur is never spelled the way one that cannot is.
+
+    Whether that substitution applies is read off the exponent the product
+    would need, not off the encoded number. A subnormal that exists only as an
+    intermediate cannot be classified: XLA:CPU answers a bit-level test of one
+    differently depending on whether the answer leaves the fused region or
+    merely selects inside it, so a float round-trip here would replace
+    perfectly representable products with the substitute.
+
+    Args:
+        factors: The factors stacked along the leading axis. Trailing axes
+            broadcast.
+
+    Returns:
+        Their product over the leading axis, with a vanished product replaced.
+
+    """
+    arr = jnp.asarray(factors)
+    parts = _product_parts(arr)
+    encoded = _encoded(parts.significand, parts.exponent, negative=parts.negative)
+    smallest_magnitude = jnp.asarray(
+        jnp.finfo(arr.dtype).smallest_subnormal, dtype=arr.dtype
+    )
+    substitute = jnp.where(parts.negative, -smallest_magnitude, smallest_magnitude)
+    binades_below = (1 - _exponent_bias(arr)) - parts.exponent
+    vanished = ~parts.ordinary & (binades_below > _mantissa_bits(arr))
+    return jnp.where(
+        parts.ordinary, parts.plain, jnp.where(vanished, substitute, encoded)
     )
 
 
@@ -309,8 +375,41 @@ def balanced_product(weight: FloatND, value: FloatND) -> FloatND:
     shift = jnp.minimum(_shift_to_normal(weight_arr), give)
     movable = jnp.isfinite(value_arr) & ~is_represented_zero(value_arr)
     shift = jnp.where(movable, shift, jnp.zeros_like(shift))
-    return _scaled_by_power_of_two(weight_arr, shift) * _scaled_by_power_of_two(
+    return scaled_by_power_of_two(weight_arr, shift) * scaled_by_power_of_two(
         value_arr, -shift
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _ProductParts:
+    """A product over the leading axis, held apart as significand and exponent."""
+
+    significand: FloatND
+    """The product of the factors' significands, reduced to `[1, 2)`."""
+    exponent: _BitsND
+    """Where that significand belongs, as an unbiased power of two."""
+    negative: BoolND
+    """Whether an odd number of factors carried a sign."""
+    ordinary: BoolND
+    """Whether some factor is a zero or is not finite, so `plain` is the answer."""
+    plain: FloatND
+    """The multiplied product, correct wherever `ordinary` holds."""
+
+
+def _product_parts(values: FloatND) -> _ProductParts:
+    """Return the product over the leading axis, before it is written to bits."""
+    arr = jnp.asarray(values)
+    raw_significand = jnp.prod(_significand_in_unit_range(arr), axis=0)
+    # Each factor's significand lies in `[1, 2)`, so their product can carry a
+    # binade of its own. It has to move to the exponent rather than be counted
+    # in both places, which is what `_encoded` assumes of what it is handed.
+    return _ProductParts(
+        significand=_significand_in_unit_range(raw_significand),
+        exponent=jnp.sum(_unbiased_exponent(arr), axis=0)
+        + _unbiased_exponent(raw_significand),
+        negative=jnp.sum(jnp.where(is_negative(arr), 1, 0), axis=0) % 2 == 1,
+        ordinary=jnp.any(is_represented_zero(arr) | ~jnp.isfinite(arr), axis=0),
+        plain=jnp.prod(arr, axis=0),
     )
 
 
@@ -368,14 +467,20 @@ def _significand_in_unit_range(values: FloatND) -> FloatND:
     return jax.lax.bitcast_convert_type(normalized | unit_exponent, arr.dtype)
 
 
-def _scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
-    """Return `values * 2**shift`, exactly, for a nonnegative integer `shift`.
+def scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
+    """Return `values * 2**shift`, exactly, for an integer `shift`.
 
     Written entirely on the bit pattern, with no floating-point arithmetic
     anywhere. Multiplying is not available: a subnormal is flushed as an
     operand, and carrying the factor as two normal ones does not survive
     either, because the compiler is free to reassociate them back into the
     single subnormal constant it started from.
+
+    Bit manipulation carries no derivative of its own, so the one this stands
+    for is supplied: the map is linear in `values` with slope `2**shift`, which
+    is the same scaling applied to the tangent. Without it every consumer that
+    rescales a weight — the interpolation read, the certainty equivalent, the
+    power mean — would report a slope of exactly zero.
 
     A normal number scales by adding to its exponent field. A subnormal has no
     exponent field to add to, so it is re-encoded: its significand's leading
@@ -387,6 +492,11 @@ def _scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     Zeros, infinities and NaNs come back untouched — none of them has a scale
     to change, and adding to an all-ones exponent field would manufacture one.
     """
+    return _scaled_with_tangent(jnp.asarray(values), shift)
+
+
+def _scaled_bits(values: FloatND, shift: _BitsND) -> FloatND:
+    """Write `values * 2**shift` straight into the bit pattern."""
     arr = jnp.asarray(values)
     int_dtype = _int_dtype(arr)
     mantissa_bits = _mantissa_bits(arr)
@@ -414,6 +524,35 @@ def _scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     scaled = jnp.where(is_subnormal, subnormal_bits, normal_bits)
     keep = is_represented_zero(arr) | ~jnp.isfinite(arr)
     return jax.lax.bitcast_convert_type(jnp.where(keep, bits, sign | scaled), arr.dtype)
+
+
+def _scaled_bits_jvp(
+    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
+) -> tuple[FloatND, FloatND]:
+    """Scale the tangent by the same power of two the value is scaled by.
+
+    The tangent is an ordinary multiplication by the slope rather than the same
+    bit-level scaling, because reverse mode has to transpose it and a bitcast
+    has no transpose. The slope is exact wherever it is representable; past
+    that it is the infinity the true slope has overflowed to, which is the
+    honest answer for a map that has lifted a subnormal across the whole range.
+    """
+    values, shift = primals
+    values_dot, _ = tangents
+    arr = jnp.asarray(values)
+    slope = jnp.where(
+        shift <= _exponent_bias(arr),
+        _scaled_bits(jnp.ones_like(arr), shift),
+        jnp.asarray(jnp.inf, dtype=arr.dtype),
+    )
+    return _scaled_with_tangent(values, shift), values_dot * slope
+
+
+# Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
+# instance, and the package's beartype claw rebinds one of those to its own
+# `__call__`, which loses `defjvp` along with everything else the object knows.
+_scaled_with_tangent = jax.custom_jvp(_scaled_bits)
+_scaled_with_tangent.defjvp(_scaled_bits_jvp)
 
 
 def _shift_to_keep_product_normal(weight: FloatND, cofactor: FloatND) -> _BitsND:

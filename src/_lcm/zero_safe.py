@@ -67,9 +67,9 @@ import jax.numpy as jnp
 
 from _lcm.probability import (
     balanced_product,
-    exact_product,
     is_below_smallest_normal,
     is_represented_zero,
+    nonzero_exact_product,
     scaled_exact_product,
 )
 from lcm.typing import FloatND, IntND
@@ -121,17 +121,7 @@ def joint_weight(factors: FloatND) -> FloatND:
         representable magnitude of the same sign.
 
     """
-    arr = jnp.asarray(factors)
-    product = exact_product(arr)
-    every_factor_can_occur = ~jnp.any(is_represented_zero(arr), axis=0)
-    smallest_magnitude = jnp.asarray(
-        jnp.finfo(product.dtype).smallest_subnormal, dtype=product.dtype
-    )
-    return jnp.where(
-        every_factor_can_occur & is_represented_zero(product),
-        jnp.copysign(smallest_magnitude, product),
-        product,
-    )
+    return nonzero_exact_product(jnp.asarray(factors))
 
 
 def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
@@ -150,10 +140,10 @@ def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
     it entirely. A consumer that concatenates weights from several calls has to
     bring them onto a common scale first, which is what the shift is for.
 
-    A product still below the format after scaling — every factor nonzero, the
-    true product below the smallest representable magnitude at that scale —
-    keeps the smallest representable magnitude, so a node that can occur is
-    never spelled the same way as one that cannot.
+    The shift is whatever the smallest product in the array needs, so nothing
+    that can occur is left below the format and none of `joint_weight`'s
+    substitution applies. A node that can occur therefore keeps its exact
+    probability, not an approximation of it.
 
     Args:
         factors: The factors stacked along the leading axis, one entry per
@@ -163,20 +153,7 @@ def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
         Tuple of the scaled product and the base-two scale it carries.
 
     """
-    arr = jnp.asarray(factors)
-    scaled, shift = scaled_exact_product(arr)
-    every_factor_can_occur = ~jnp.any(is_represented_zero(arr), axis=0)
-    smallest_magnitude = jnp.asarray(
-        jnp.finfo(scaled.dtype).smallest_subnormal, dtype=scaled.dtype
-    )
-    return (
-        jnp.where(
-            every_factor_can_occur & is_represented_zero(scaled),
-            jnp.copysign(smallest_magnitude, scaled),
-            scaled,
-        ),
-        shift,
-    )
+    return scaled_exact_product(jnp.asarray(factors))
 
 
 def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:

@@ -203,9 +203,10 @@ def test_get_multiply_weights():
     a = jnp.array([1.0, 2.0])
     b = jnp.array([3.0, 4.0])
 
-    got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
+    got, shift = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3.0, 4.0], [6.0, 8.0]])
     assert_array_equal(got, expected)
+    assert int(shift) == 0
 
 
 def test_joint_weights_axes_follow_the_declared_variable_order():
@@ -217,10 +218,10 @@ def test_joint_weights_axes_follow_the_declared_variable_order():
     a = jnp.array([1.0, 2.0])
     b = jnp.array([3.0, 4.0, 5.0])
 
-    forward = _get_joint_weights_function(
+    forward, _ = _get_joint_weights_function(
         regime_name="test", variables=("next_a", "next_b")
     )(weight_test__next_a=a, weight_test__next_b=b)
-    reversed_order = _get_joint_weights_function(
+    reversed_order, _ = _get_joint_weights_function(
         regime_name="test", variables=("next_b", "next_a")
     )(weight_test__next_a=a, weight_test__next_b=b)
 

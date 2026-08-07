@@ -30,6 +30,7 @@ from _lcm.probability import (
     rescaled_lottery_weights,
     rescaled_weight_group,
     rescaled_weight_pair,
+    scaled_by_power_of_two,
 )
 
 
@@ -208,3 +209,24 @@ def test_a_group_of_branches_is_rescaled_by_one_common_factor() -> None:
         np.asarray(scaled[0])
     ) == np.longdouble(_smallest_subnormal())
     assert bool(is_represented_zero(scaled[2]))
+
+
+@pytest.mark.parametrize("shift", [0, 1, 7], ids=["none", "one", "several"])
+@pytest.mark.parametrize("mode", ["forward", "reverse"])
+def test_scaling_carries_the_slope_it_stands_for(shift: int, mode: str) -> None:
+    """Scaling by a power of two differentiates to that power of two.
+
+    The scaling is written on the bit pattern, which carries no derivative of
+    its own, so every consumer that rescales a weight — the interpolation read,
+    the certainty equivalent, the power mean — would otherwise report a slope
+    of exactly zero wherever a weight passes through it.
+    """
+    dtype = _dtype()
+
+    def scale(value: Any) -> Any:
+        return scaled_by_power_of_two(value, jnp.asarray(shift, dtype=jnp.int32))
+
+    at = jnp.asarray(0.75, dtype=dtype)
+    differentiate = jax.jacfwd if mode == "forward" else jax.grad
+
+    np.testing.assert_allclose(float(differentiate(scale)(at)), float(2**shift))

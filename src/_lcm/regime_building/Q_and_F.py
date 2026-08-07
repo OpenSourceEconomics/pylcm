@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
@@ -10,8 +11,10 @@ from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
     is_negative,
     is_represented_zero,
+    on_common_scale,
     rescaled_lottery_weights,
     rescaled_weight_group,
+    scaled_by_power_of_two,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -40,7 +43,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -442,14 +445,24 @@ def _get_compute_CE(
         # probability — the regime's and the node's. A regime probability lifted
         # only into the normal range lands back under it as soon as a quadrature
         # weight of a sixth multiplies it.
-        target_node_weights = {
-            target_regime_name: continuations[target_regime_name].joint_lottery_weights(
-                **continuations[target_regime_name].lottery_weights(
-                    **states_actions_params
+        #
+        # Each target's nodes arrive carrying their own scales — a joint
+        # product below the normal range travels as a number and a shift — so
+        # they are put on one scale per target first. Within a target that
+        # scale is invisible to any consumer that normalizes by the target's
+        # own mass; across targets it is not, and the loop below carries it.
+        target_lotteries = {
+            target_regime_name: on_common_scale(
+                *continuations[target_regime_name].joint_lottery_weights(
+                    **continuations[target_regime_name].lottery_weights(
+                        **states_actions_params
+                    )
                 )
             )
             for target_regime_name in period_targets
         }
+        target_node_weights = {r: target_lotteries[r][0] for r in period_targets}
+        target_node_shifts = {r: target_lotteries[r][1] for r in period_targets}
         # The unscaled probabilities stay in `active_regime_probs` — they are
         # published, and the mass guard has to see the mass the model actually
         # specified rather than a rescaled one.
@@ -487,6 +500,7 @@ def _get_compute_CE(
         weighting_mass = zero
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
+        lottery_shifts: list[IntND] = []
         for target_regime_name in period_targets:
             continuation = continuations[target_regime_name]
             next_states = continuation.next_states(**states_actions_params)
@@ -558,14 +572,26 @@ def _get_compute_CE(
                 lottery_values.append(values)
                 # The regime probability and the node weight are two more
                 # factors of the same joint event, so their product carries the
-                # same refusal as the product across the stochastic axes.
-                lottery_weights.append(
-                    joint_weight(
+                # same refusal as the product across the stochastic axes — and
+                # the same scale, which is this target's own until the arms are
+                # brought together below.
+                weighted_nodes, product_shift = on_common_scale(
+                    *scaled_joint_weight(
                         jnp.stack(
                             jnp.broadcast_arrays(weighting_probability, node_weights)
                         )
                     )
                 )
+                lottery_weights.append(weighted_nodes)
+                # A target with no stochastic axes contributes one node whose
+                # weight `_as_lottery` fabricates, so the scale its own lottery
+                # would have carried is not part of this arm.
+                own_shift = (
+                    target_node_shifts[target_regime_name]
+                    if continuation.has_lottery_axes
+                    else jnp.zeros((), jnp.int32)
+                )
+                lottery_shifts.append(product_shift + own_shift)
 
         # An empty retained target set is not "no continuation to aggregate": a
         # non-terminal regime always emits unit mass, so retaining nothing means
@@ -612,6 +638,7 @@ def _get_compute_CE(
                     certainty_equivalent=certainty_equivalent,
                     lottery_values=lottery_values,
                     lottery_weights=lottery_weights,
+                    lottery_shifts=lottery_shifts,
                     ce_flat_param_names=ce_flat_param_names,
                     states_actions_params=states_actions_params,
                 )
@@ -640,7 +667,7 @@ class _TargetContinuation:
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
     """Marginal probabilities of the target's stochastic laws."""
 
-    joint_lottery_weights: Callable[..., FloatND]
+    joint_lottery_weights: Callable[..., tuple[FloatND, IntND]]
     """Outer product of the lottery marginals, over the node axes."""
 
     next_V: Callable[..., FloatND]
@@ -1097,7 +1124,7 @@ def _get_joint_weights_function(
     *,
     regime_name: RegimeName,
     variables: tuple[TransitionFunctionName, ...],
-) -> Callable[..., FloatND]:
+) -> Callable[..., tuple[FloatND, IntND]]:
     """Get function that calculates the joint weights over one group of laws.
 
     This function takes the weights of the individual variables and multiplies
@@ -1114,22 +1141,35 @@ def _get_joint_weights_function(
             multiply, in the order their axes appear on the value surface.
 
     Returns:
-        A function that computes the outer product of the variables' weights.
+        A function that computes the outer product of the variables' weights,
+        with the one base-two scale those weights are held at.
 
     """
     arg_names = [f"weight_{regime_name}__{key}" for key in variables]
 
     @with_signature(args=arg_names)
-    def _outer(**kwargs: Float1D) -> FloatND:
+    def _outer(**kwargs: Float1D) -> tuple[FloatND, IntND]:
         # One factor per stochastic axis. Their product is the node's
-        # probability, and it is refused rather than rounded to impossible
-        # where every factor can occur but the product cannot be represented.
-        return joint_weight(jnp.array(list(kwargs.values())))
+        # probability, and it comes back with its own scale rather than as a
+        # plain float, because a product below the normal range is not
+        # something a float can carry through a fused region here.
+        return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
-    return productmap(
+    over_the_product_space = productmap(
         func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
     )
+
+    @with_signature(args=arg_names)
+    def _joint(**kwargs: Float1D) -> tuple[FloatND, IntND]:
+        # Each node picks the scale its own product needs, so the array comes
+        # back holding one number per node in a different currency. The nodes
+        # are a single lottery and only their ratios mean anything, so they go
+        # onto one scale before anyone reads them together.
+        node_weights, node_shifts = over_the_product_space(**kwargs)
+        return on_common_scale(node_weights, node_shifts)
+
+    return _joint
 
 
 def _get_U_and_F(
@@ -1250,6 +1290,7 @@ def _aggregate_joint_lottery(
     certainty_equivalent: CertaintyEquivalent,
     lottery_values: Sequence[FloatND],
     lottery_weights: Sequence[FloatND],
+    lottery_shifts: Sequence[IntND],
     ce_flat_param_names: Mapping[str, str],
     states_actions_params: Mapping[str, Any],
 ) -> FloatND:
@@ -1260,6 +1301,8 @@ def _aggregate_joint_lottery(
         lottery_values: Sequence of per-target continuation values.
         lottery_weights: Sequence of per-target node weights, already scaled by
             the target's regime-transition probability.
+        lottery_shifts: Each target's own base-two scale, so the arms can be
+            read against one another.
         ce_flat_param_names: Mapping of certainty-equivalent argument names to
             their flat parameter names.
         states_actions_params: Mapping of states, actions, age, period, and flat
@@ -1276,7 +1319,15 @@ def _aggregate_joint_lottery(
     # public interface and may multiply by the weights it is handed, so it is
     # handed weights the dtype can multiply — including a `aggregate` written
     # by a user, which this file cannot inspect.
-    weights = rescaled_lottery_weights(jnp.concatenate(list(lottery_weights)))
+    common = functools.reduce(jnp.maximum, list(lottery_shifts))
+    weights = rescaled_lottery_weights(
+        jnp.concatenate(
+            [
+                scaled_by_power_of_two(w, common - s)
+                for w, s in zip(lottery_weights, lottery_shifts, strict=True)
+            ]
+        )
+    )
     return certainty_equivalent.aggregate(
         values=_values_without_impossible_nodes(values=values, weights=weights),
         weights=weights,
