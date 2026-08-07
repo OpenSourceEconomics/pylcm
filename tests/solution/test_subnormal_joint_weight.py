@@ -76,11 +76,20 @@ def _assert_carries_an_unrepresentable_probability(
     backend, not of the contract: XLA:CPU flushes such a product and receives
     the substitute, while CUDA represents it and keeps its own magnitude. Both
     satisfy the same three statements, so those are what is asserted.
+
+    The agreement bound is two-sided. A product can underflow *below* the
+    smallest representable magnitude — two float32 factors of `1e-30` multiply
+    to `1e-60` — and the substitute then overstates it. What is bounded is the
+    absolute difference, by that same smallest magnitude, which is far below
+    every declared tolerance.
     """
+    smallest = abs(exact_product) * 0.0 + float(np.finfo(np.float32).smallest_subnormal)
     assert weight != 0.0, (
         "a node that can occur must stay distinguishable from one that cannot"
     )
-    assert abs(weight) <= abs(exact_product), "a weight may never overstate its node"
+    assert abs(abs(weight) - abs(exact_product)) <= max(abs(exact_product), smallest), (
+        "the weight agrees with its node to within the smallest representable magnitude"
+    )
     assert abs(weight) < tiny, "the weight is below the normal range either way"
 
 
@@ -101,6 +110,27 @@ def test_normal_factors_with_an_unrepresentable_product_stay_nonzero(
         float(joint_weight(factors)),
         exact_product=factor**n_factors,
         tiny=float(np.finfo(np.float32).tiny),
+    )
+
+
+def test_a_product_below_the_smallest_magnitude_is_overstated_but_bounded() -> None:
+    """A product too small even to substitute for is bounded, not faithful.
+
+    Two float32 factors of `1e-30` multiply to `1e-60`, far below the smallest
+    representable magnitude. The substitute is therefore larger than the true
+    probability, and the guarantee is the absolute bound rather than a direction:
+    the node is still priced below every tolerance, and still distinguishable
+    from one that cannot occur.
+    """
+    factors = jnp.asarray([1e-30, 1e-30], dtype=jnp.float32)
+    smallest = float(np.finfo(np.float32).smallest_subnormal)
+
+    weight = float(joint_weight(factors))
+
+    assert weight != 0.0
+    assert weight > 1e-60, "the substitute is larger than the true product here"
+    assert weight <= smallest, (
+        "and never larger than the smallest representable magnitude"
     )
 
 

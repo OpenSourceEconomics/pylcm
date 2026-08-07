@@ -102,7 +102,11 @@ def _exact_lottery_value(weight: ScalarFloat, rare_value: ScalarFloat) -> float:
 def test_a_subnormal_weight_never_contributes_more_than_its_true_share(
     weight_at: float,
 ) -> None:
-    """Across the subnormal range, the answer never exceeds the exact one."""
+    """Across the subnormal range, a supplied weight never gains mass.
+
+    A weight that arrives representable is passed through untouched, so the
+    answer is either exact or short by the dropped node — never above it.
+    """
     weight = _subnormal_at(weight_at)
     value = _largest_finite()
 

@@ -26,8 +26,11 @@ The residual is an approximation, declared rather than hidden: a node whose
 probability the format cannot hold may contribute less than its true share, by
 at most `tiny * |value|`. That is below every declared tolerance for any value
 function a model can also add utility to, and it is the floor for arithmetic
-that cannot multiply subnormals. What the module does guarantee is the
-direction — such a node never contributes *more* than its true share.
+that cannot multiply subnormals. The bound is two-sided: a weight arriving
+already representable is never enlarged, but a product that vanished is
+substituted by the smallest representable magnitude, which overstates a product
+that underflowed below even that. What is guaranteed is the size of the
+disagreement, not its direction.
 
 That residual is **backend-visible**, and deliberately so. Leaving the weight
 alone against a finite value means a backend that flushes subnormals drops the
