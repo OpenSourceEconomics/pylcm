@@ -16,11 +16,8 @@ on:
     branches:
       - '**'
 jobs:
-  notebooks:
-    # Named for the workflow, not for what it runs: this is the context branch
-    # protection requires, so rewording the step must not rename it and drop it
-    # out of the required set.
-    name: notebooks
+  run:
+    name: Run explanation notebooks for docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -34,3 +31,19 @@ jobs:
       - name: Run explanation notebooks
         shell: bash {0}
         run: pixi run -e docs explanation-notebooks
+  # A required status check matches by exact check-run name, and `name:` above
+  # overrides what gets reported -- so branch protection's context `notebooks`
+  # never matched `Run explanation notebooks for docs` and sat "Expected --
+  # Waiting for status to be reported" forever, even after `run` passed.
+  # Mirrors `cpu`'s gate job in cpu.yml, which is why that one already worked.
+  notebooks:
+    name: notebooks
+    needs:
+      - run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless the check succeeded
+        run: |-
+          echo "run: ${{ needs.run.result }}"
+          test "${{ needs.run.result }}" = "success"
