@@ -251,7 +251,14 @@ def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> No
 
     Promoting the weight to `tiny` would add about four units here. Omitting it
     costs at most `tiny * |V|`, which is the declared accepted approximation, so
-    the assertion is one-sided: the answer must not exceed the exact one.
+    the bound is one-sided.
+
+    The comparison is against the exact answer computed in long double, while
+    the engine publishes at the active precision, so the upper bound carries one
+    representable step: a backend that prices the node returns the nearest
+    representable value to the exact one, which lies above it half the time.
+    That step is smaller than the substitution error being tested by many orders
+    of magnitude, so it cannot hide one.
     """
     dtype = _active_dtype()
     p = np.longdouble(np.asarray(_smallest_subnormal(), dtype=dtype))
@@ -265,8 +272,9 @@ def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> No
             )
         )
     )
+    rounding = np.longdouble(np.spacing(np.asarray(got, dtype=dtype)))
 
-    assert got <= exact
+    assert got <= exact + rounding
     assert got >= exact - np.longdouble(np.finfo(dtype).tiny) * value
 
 
