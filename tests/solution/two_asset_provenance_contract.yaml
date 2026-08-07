@@ -1,96 +1,109 @@
 ---
-# Accuracy budgets for the two-asset continuation-provenance witnesses.
+# Coverage sentinel for the two-asset continuation-provenance witnesses.
 #
 # This file is the source the executable gate reads: `test_egm_continuation_grid_
-# provenance.py` asserts against these fields directly, so a budget and the gate
+# provenance.py` asserts against these fields directly, so a bound and the gate
 # enforcing it cannot drift apart. An audit bundle that quotes these numbers is a
 # copy, and must be regenerated from here rather than edited alongside it.
 #
-# `value_regret` is the relative deviation of a solver's published V from a dense
-# grid-search solve of the same model, node-by-node on the workload's stated
-# interior mask: `|V_egm - V_brute| / |V_brute|`. `median`, `p90` and `max` are
-# the median, the 0.90 quantile, and the maximum over the masked nodes.
+# WHAT THIS IS NOT. These numbers are not an accuracy budget, and that holds for
+# every backend here — the default `g2egm` as much as the opt-in `rfc`. A solver
+# whose median value regret against a dense sweep is a percent or two has not
+# been certified accurate by sitting inside a bound of three; it has been
+# observed not to have changed. Read the levels as "the same solution the
+# reference produced last time", never as "this is how accurate the method is".
+# Establishing what the reference itself is worth — how dense the brute sweep
+# has to be, and whether the interior masks reach nodes where every method is
+# poor — is open work, and until it is done no level here supports an accuracy
+# claim.
 #
-# A budget must satisfy `max >= p90 >= median`, since each statistic dominates
-# the previous one by construction. Declaring them out of that order does not make
+# WHAT IT IS. A regression sentinel over one failure shape: a mask that stops
+# covering its interior, or a backend that stops producing a comparable solution
+# at all. `value_regret` is the relative deviation of a solver's published V from
+# a dense grid-search solve of the same model, node-by-node on the workload's
+# stated interior mask: `|V_egm - V_brute| / |V_brute|`.
+#
+# WHICH STATISTICS MAY GATE. Only ones that are stable across the profiles
+# recorded below, because a bound on a statistic that moves with the device is a
+# bound on the device. Two qualify and both are declared:
+#
+# - `median` — moves when a solution degrades broadly.
+# - `max` — moves first when a mask stops covering a node, since an uncovered
+#   node is a large regret. Node counts are small (9 for retired, 54-81 for
+#   working), so this is a one-node statistic and moves discontinuously with the
+#   mask. It is declared anyway: a single badly wrong node is the shape a
+#   coverage failure takes, and a median cannot see it.
+#
+# A tail quantile does not qualify and is deliberately absent. On the rooftop cut
+# it is rounding-chaotic — the keep/delete verdict on a candidate sitting within
+# an ulp of a neighbour's tangent plane flips with the order the value arithmetic
+# is evaluated in, and a flipped verdict removes a whole candidate, moving the
+# published value at nearby targets by a finite amount. Such a statistic differs
+# between float32 and float64, and between CPU and GPU at one precision, by more
+# than either format's resolution, so any bound on it has to be widened whenever
+# a new device reports a value. A number that is refitted to each device measures
+# the device. It is neither gated nor recorded.
+#
+# A sentinel must satisfy `max >= median`, since each statistic dominates the
+# previous one by construction. Declaring them out of that order does not make
 # the contract impossible to meet, but it lets the tighter clause dominate so the
-# looser one never binds. Budgets are set above every measured value recorded
-# under `measured` and apply to all of them; the measurements are reported per
-# profile because they differ.
+# looser one never binds.
 #
 # A profile is a device and a precision (`cpu_float32`, `gpu_float32`, ...),
-# because reduction order and library kernels vary with the device and a
-# statistic sensitive to them varies too. Every recorded profile is gated, so
-# adding a measurement here tightens the contract rather than annotating it.
-# A profile is recorded where it has been measured; a workload need not carry
-# all of them.
-#
-# Node counts are small (9 for retired, 54-81 for working), so `max` is a
-# one-node statistic and moves discontinuously with the mask. It is declared
-# anyway: a single badly wrong node is the shape a coverage failure takes, and a
-# median cannot see it.
-contract_version: 3
+# because reduction order and library kernels vary with the device. Every
+# recorded profile is gated, and every statistic recorded is one the sentinel
+# bounds, so adding a measurement here tightens the contract rather than
+# annotating it. A profile is recorded where it has been measured; a workload
+# need not carry all of them.
+contract_version: 4
 workloads:
   retired_egm:
     description: >-
       The 1-D EGM solver's retired value on the unconstrained liquid interior.
       Covers W1 (reading the terminal regime on the terminal regime's own grid)
       and the matched-grid control.
-    budget:
+    sentinel:
       median_value_regret: 0.01
-      p90_value_regret: 0.02
       max_value_regret: 0.03
     measured:
-      cpu_float64: {median: 0.0027, p90: 0.0108, max: 0.0199}
-      cpu_float32: {median: 0.0027, p90: 0.0108, max: 0.0199}
+      cpu_float64: {median: 0.0027, max: 0.0199}
+      cpu_float32: {median: 0.0027, max: 0.0199}
   two_asset_g2egm:
     description: >-
       The default two-asset backend (`TwoAssetEGM(envelope="g2egm")`) on the
       covered pension interior. Covers W2, W3, W7 and W8 -- matched grids, a
       moving liquid grid, a moving pension grid, and the retirement boundary.
-    budget:
+    sentinel:
       median_value_regret: 0.03
-      p90_value_regret: 0.15
       max_value_regret: 0.25
     measured:
-      cpu_float64: {median: 0.0158, p90: 0.1138, max: 0.2193}
-      cpu_float32: {median: 0.0159, p90: 0.1137, max: 0.2193}
+      cpu_float64: {median: 0.0158, max: 0.2193}
+      cpu_float32: {median: 0.0159, max: 0.2193}
   two_asset_rfc:
     description: >-
       The non-default rooftop-cut backend (`TwoAssetEGM(envelope="rfc")`) on the
       same masks. Covers W4 and W9.
       These numbers bound a known deficit; they are not an accuracy promise. The
-      rooftop cut misses the G2EGM budget on this benchmark whatever the grids
-      do -- its median is unmoved by a moving grid, but its tail and its worst
-      node are not, and its worst node is roughly a factor of six worse than
-      G2EGM's. What degrades is the cut's selection among candidates, not which
-      grid the candidates were read on: G2EGM stays inside its own budget on the
+      rooftop cut sits outside the G2EGM sentinel on this benchmark whatever the
+      grids do -- its median is unmoved by a moving grid, but its worst node is
+      not, and that node is roughly a factor of six worse than G2EGM's. What
+      degrades is the cut's selection among candidates, not which grid the
+      candidates were read on: G2EGM stays inside its own sentinel on the
       identical configurations, and the retirement-boundary period, where both
       backends run the same step, is bit-identical between them. Whether the
       worst node is an intrinsic property of the method or a defect in this
-      implementation is open.
-      The tail is also rounding-chaotic, in a way the median and the worst node
-      are not: the cut's keep/delete verdict on a candidate that sits within an
-      ulp of a neighbour's tangent plane flips with the order the value
-      arithmetic is evaluated in, and a flipped verdict removes a whole
-      candidate, moving the published value at nearby targets by a finite
-      amount. The p90 therefore differs between float32 and float64, and between
-      CPU and GPU at one precision, by more than either format's resolution, and
-      the bound on it is a coverage guard -- it catches a mask that stops
-      covering its interior -- not a claim about accuracy at any particular node.
-      The recorded profiles bear that out: across all three the median stays
-      within a third of its bound and the worst node sits at 1.30 to three
-      digits, while the p90 spans 0.21 to 0.41. A mask that stopped covering its
-      interior would move the maximum first, since an uncovered node is a large
-      regret; the maximum is what does not move.
-    budget:
+      implementation is open, and is not a question this file answers.
+      The recorded profiles are what make the sentinel readable: across all
+      three the median stays within a third of its bound and the worst node sits
+      at 1.30 to three digits. A mask that stopped covering its interior would
+      move the maximum first, and the maximum is what does not move.
+    sentinel:
       median_value_regret: 0.06
-      p90_value_regret: 0.47
       max_value_regret: 1.40
     measured:
-      cpu_float64: {median: 0.0362, p90: 0.2085, max: 1.3022}
-      cpu_float32: {median: 0.0510, p90: 0.3475, max: 1.3025}
-      gpu_float32: {median: 0.0336, p90: 0.4062, max: 1.3022}
+      cpu_float64: {median: 0.0362, max: 1.3022}
+      cpu_float32: {median: 0.0510, max: 1.3025}
+      gpu_float32: {median: 0.0336, max: 1.3022}
 candidate_set:
   description: >-
     The one-asset EGM's candidate-set regret against a dense sweep, on the
