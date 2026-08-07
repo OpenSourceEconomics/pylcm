@@ -39,7 +39,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import joint_weight_or_nan, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -567,6 +567,12 @@ def _get_compute_CE(
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
+                # The regime probability and the node weight are two more
+                # factors of the same joint event, so their product carries the
+                # same refusal as the product across the stochastic axes.
+                final_weights = joint_weight_or_nan(
+                    jnp.stack(jnp.broadcast_arrays(target_probability, node_weights))
+                )
                 # Same rule, applied to the value rather than to a product: the
                 # aggregate reduces values and weights together, so a node that
                 # cannot occur has to be neutral before it is collected.
@@ -575,8 +581,9 @@ def _get_compute_CE(
                 # probability alone. A target reached with certainty still
                 # carries nodes of probability zero -- a Markov row with a zero
                 # entry beside a state where every action is infeasible -- and
-                # the aggregate cannot tell such a node from a live one.
-                final_weights = target_probability * node_weights
+                # the aggregate cannot tell such a node from a live one. A
+                # weight the dtype could not carry arrives as NaN rather than
+                # zero, so it is refused here rather than read as a null event.
                 lottery_values.append(jnp.where(final_weights == 0, zero, values))
                 lottery_weights.append(final_weights)
 
@@ -1177,8 +1184,10 @@ def _get_joint_weights_function(
 
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:
-        weights = jnp.array(list(kwargs.values()))
-        return jnp.prod(weights)
+        # One factor per stochastic axis. Their product is the node's
+        # probability, and it is refused rather than rounded to impossible
+        # where every factor can occur but the product cannot be represented.
+        return joint_weight_or_nan(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
     return productmap(
@@ -1278,8 +1287,8 @@ def _regime_mass_is_a_distribution(
     - no target carries a negative weight.
 
     Together they give the full range: non-negative weights summing to one each
-    lie in . Unit mass alone does not, since 1.5 and -0.5 sum to one, and
-    a NaN weight fails both tests rather than passing the first by accident.
+    lie in `[0, 1]`. Unit mass alone does not, since 1.5 and -0.5 sum to one,
+    and a NaN weight fails both tests rather than passing the first by accident.
     """
     is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
     return is_unit & (smallest_probability >= 0.0)
