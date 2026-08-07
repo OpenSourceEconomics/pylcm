@@ -20,6 +20,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
@@ -121,3 +122,65 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
         np.asarray([7.75, 15.5, 23.25, 31.0]),
         rtol=1e-6,
     )
+
+
+@categorical(ordered=False)
+class RegimeIdWithInactiveTargets:
+    source: ScalarInt
+    live: ScalarInt
+    gone_a: ScalarInt
+    gone_b: ScalarInt
+
+
+def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> None:
+    """The declared transition is checked as written, not as it survives pruning.
+
+    A target that activity makes unreachable is a legal declaration — it simply
+    needs no handoff — and its cell is dropped before any continuation is
+    built. Nothing downstream can see it, so `+0.5` and `-0.5` on two such
+    targets cancel and leave the live target's `1.0` looking well formed.
+    Validation reads the transition as declared and refuses it.
+    """
+
+    def _all_mass_to_live() -> ScalarFloat:
+        return jnp.float32(1.0)
+
+    def _positive_on_a_dead_target() -> ScalarFloat:
+        return jnp.float32(0.5)
+
+    def _negative_on_a_dead_target() -> ScalarFloat:
+        return jnp.float32(-0.5)
+
+    def _terminal(active) -> Regime:
+        return Regime(
+            transition=None,
+            active=active,
+            states={"wealth": _WEALTH},
+            functions={"utility": _pays_wealth},
+        )
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={
+                    "live": MarkovTransition(_all_mass_to_live),
+                    "gone_a": MarkovTransition(_positive_on_a_dead_target),
+                    "gone_b": MarkovTransition(_negative_on_a_dead_target),
+                },
+                active=lambda age: age < 21,
+                states={"wealth": _WEALTH},
+                state_transitions={"wealth": _keep},
+                functions={"utility": _no_utility},
+            ),
+            "live": _terminal(lambda _age: True),
+            "gone_a": _terminal(lambda age: age < 21),
+            "gone_b": _terminal(lambda age: age < 21),
+        },
+        ages=AgeGrid(start=20, stop=21, step="Y"),
+        regime_id_class=RegimeIdWithInactiveTargets,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+    ):
+        model.solve(params=_PARAMS, log_level="debug")

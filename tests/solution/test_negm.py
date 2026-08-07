@@ -22,7 +22,6 @@ import pytest
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
 from _lcm.solution.negm import (
-    _durable_keeper_transition,
     _with_no_adjustment_outer_function,
 )
 from _lcm.typing import EconFunction, EconFunctionsMapping
@@ -172,31 +171,6 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         negm_model._regimes["alive"].solution.reachability
         is negm_model.reachability.solution
     )
-
-
-def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
-    """A keeper map threads every argument it declares, not only the durable stock.
-
-    A permanent-income deflator `keep(car, growth) = 0.9 * car / growth` reads the
-    durable stock and a growth node; the keeper transition carries both arguments
-    (copying the map's own annotations) and applies the map, so a stored-value
-    normalization can divide the kept stock by the current growth factor.
-    """
-
-    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
-        return car * 0.9 / growth
-
-    transition = _durable_keeper_transition(
-        no_adjustment_func=cast("EconFunction", keep),
-        durable_state="car",
-    )
-
-    assert set(inspect.signature(transition).parameters) == {"car", "growth"}
-    result = transition(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
-    # The composed transition reruns the same arithmetic at the active float
-    # precision, so agreement holds to that dtype's roundoff.
-    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
-    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
 
 
 def test_keeper_outer_function_threads_every_declared_argument() -> None:

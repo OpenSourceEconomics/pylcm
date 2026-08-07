@@ -9,6 +9,8 @@ The loud failure is unaffected. A value outside the support at a node that *can*
 occur is a misspecified model and still shows up as `NaN`.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ import pytest
 from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
 from lcm import (
     AgeGrid,
+    CertaintyEquivalent,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -187,3 +190,40 @@ def test_a_nan_weight_stays_poison() -> None:
     )
 
     assert bool(jnp.isnan(jnp.asarray(got)))
+
+
+class _PlainWeightedMean(CertaintyEquivalent):
+    """The ordinary weighted mean, written the way a user would write it.
+
+    It does nothing about impossible nodes, because nothing in the `aggregate`
+    contract asks it to. The engine is what must guarantee that a node carrying
+    no probability contributes nothing.
+    """
+
+    @property
+    def param_names(self) -> frozenset[str]:
+        return frozenset()
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+
+
+def test_a_user_written_certainty_equivalent_is_handed_no_impossible_nodes() -> None:
+    """An impossible node is neutralized before any `aggregate` implementation.
+
+    The off-support entry makes the middle node's value NaN, and the middle
+    node carries no probability. A user's weighted mean multiplies rather than
+    masks, so `0 * NaN` would take the well-specified nodes down with it unless
+    the engine has already replaced that value.
+    """
+    model = _build((0.5, 0.0, 0.5), certainty_equivalent=_PlainWeightedMean())
+
+    V = model.solve(params=_PARAMS, log_level="off")
+
+    np.testing.assert_allclose(np.asarray(V[0]["source"]), np.asarray(1.5), rtol=1e-6)
