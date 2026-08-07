@@ -128,7 +128,8 @@ def test_params_adapter_keeps_the_floor_and_renames_the_penalty() -> None:
 def test_paper_solver_wiring_matches_the_plan_interface() -> None:
     solver = build_paper_solver()
     assert solver.outer_action == "effort"
-    assert solver.outer_post_decision == "next_lagged_effort"
+    assert solver.outer_state == "lagged_effort"
+    assert solver.outer_post_decision == "new_lagged_effort"
     assert solver.outer_no_adjustment_candidate == "keep_effort"
     aggregator = solver.branch_aggregator
     assert isinstance(aggregator, UniformObservedFixedCost)

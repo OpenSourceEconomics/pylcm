@@ -1310,25 +1310,25 @@ def _outer_transition_offset_and_slope(
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
 ) -> tuple[FloatND, BoolND, Callable[[FloatND], FloatND]] | None:
-    """Per-subject offset of the outer transition, with a unit-slope check.
+    """Per-subject offset of the outer post-decision, with a unit-slope check.
 
-    The winning outer post-decision `s'` is a *transition value*; the
-    recorded action must invert `s' = T(states, a)`. The nested v1 scope
-    supports the affine-unit-slope contract `T(states, a) = offset(states)
-    + a`, verified numerically per subject by probing `T` at `a = 0` and
-    `a = 1`. Returns `None` (whole-regime fallback) when the transition is
-    absent or its arguments cannot be resolved.
+    The winning outer post-decision `s'` is the value of the regime's
+    `outer_post_decision` function; the recorded action must invert
+    `s' = P(states, a)`. The nested v1 scope supports the affine-unit-slope
+    contract `P(states, a) = offset(states) + a`, verified numerically per
+    subject by probing `P` at `a = 0` and `a = 1`. Returns `None`
+    (whole-regime fallback) when it is absent or its arguments cannot be
+    resolved.
+
+    `P` is an ordinary regime FUNCTION of this period's states and actions --
+    the stock chosen NOW -- not a state transition. The durable's law reads it
+    and carries it forward, so the law itself does not mention the outer action
+    and inverting the law could not recover one.
     """
-    # Transitions are keyed by target regime; the outer post-decision must
-    # resolve to one shared callable across every target that declares it.
-    found = [
-        per_target[payload.outer_post_decision_name]
-        for per_target in regime.simulation.transitions.values()
-        if payload.outer_post_decision_name in per_target
-    ]
-    if not found or any(func is not found[0] for func in found[1:]):
+    functions = regime.simulation.functions
+    if payload.outer_post_decision_name not in functions:
         return None
-    transition = found[0]
+    transition = functions[payload.outer_post_decision_name]
 
     def probe(action_value: FloatND) -> FloatND | None:
         kwargs = _resolve_function_kwargs(
