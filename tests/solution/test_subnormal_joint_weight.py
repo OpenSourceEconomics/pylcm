@@ -74,14 +74,17 @@ def test_normal_factors_with_an_unrepresentable_product_stay_nonzero(
     """Factors the dtype holds, with a product it does not, do not become zero.
 
     Zero is reserved for an event that cannot occur. The product leaves as the
-    smallest normal magnitude instead: small enough to contribute nothing to a
-    finite continuation, nonzero so an infinity standing at the node survives.
+    smallest representable magnitude instead — the largest substitute that
+    cannot overstate the node, since every product that underflowed exceeded
+    it — and nonzero, so an infinity standing at the node still survives.
     """
     factor = float(np.finfo(np.float32).tiny ** (1.0 / n_factors) / 2)
     factors = jnp.asarray([factor] * n_factors, dtype=jnp.float32)
     assert bool(jnp.all(factors >= np.finfo(np.float32).tiny))
 
-    assert float(joint_weight(factors)) == float(np.finfo(np.float32).tiny)
+    assert float(joint_weight(factors)) == float(
+        np.finfo(np.float32).smallest_subnormal
+    )
 
 
 def test_a_factor_of_exactly_zero_is_a_null_event() -> None:
@@ -98,19 +101,18 @@ def test_ordinary_factors_multiply_as_they_always_did() -> None:
     np.testing.assert_allclose(float(joint_weight(factors)), 0.0625, rtol=0)
 
 
-def test_a_directly_supplied_subnormal_factor_is_raised_not_dropped() -> None:
-    """A single subnormal probability is unusable, not impossible.
+def test_a_directly_supplied_subnormal_factor_keeps_its_own_magnitude() -> None:
+    """A subnormal that arrives already representable is passed through as it is.
 
-    It compares equal to zero under every arithmetic test on a flushing
-    backend, so nothing short of reading its bits can tell it from a null
-    event.
+    Its own magnitude is more informative than any substitute, and enlarging
+    it would overstate a node the format merely cannot multiply.
     """
     subnormal = float(
         np.nextafter(np.float32(np.finfo(np.float32).tiny), np.float32(0))
     )
     factors = jnp.asarray([subnormal], dtype=jnp.float32)
 
-    assert float(joint_weight(factors)) == float(np.finfo(np.float32).tiny)
+    assert float(joint_weight(factors)) == float(subnormal)
 
 
 def test_a_negative_factor_stays_visible() -> None:
@@ -125,7 +127,9 @@ def test_the_rule_survives_jit() -> None:
     factor = float(np.finfo(np.float32).tiny) ** 0.5 / 2
     factors = jnp.asarray([factor, factor], dtype=jnp.float32)
 
-    assert float(jax.jit(joint_weight)(factors)) == float(np.finfo(np.float32).tiny)
+    assert float(jax.jit(joint_weight)(factors)) == float(
+        np.finfo(np.float32).smallest_subnormal
+    )
 
 
 @pytest.mark.parametrize("n_factors", [2, 3, 4])
@@ -141,7 +145,7 @@ def test_the_rule_holds_at_the_active_precision(n_factors: int) -> None:
     factors = jnp.asarray([factor] * n_factors, dtype=active)
     assert bool(jnp.all(factors >= tiny))
 
-    assert float(joint_weight(factors)) == tiny
+    assert float(joint_weight(factors)) == float(jnp.finfo(active).smallest_subnormal)
 
 
 def test_an_ordinary_lottery_is_untouched_at_the_active_precision() -> None:
