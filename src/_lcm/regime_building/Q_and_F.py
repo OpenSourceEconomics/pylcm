@@ -432,6 +432,11 @@ def _get_compute_CE(
 
         CE = zero
         probability_mass = zero
+        # Unit mass alone does not make a collection of weights a distribution:
+        # 1.5 and -0.5 sum to one. The smallest weight is tracked alongside the
+        # sum so non-negativity is arithmetic too, and the two together give the
+        # whole range — non-negative weights summing to one each lie in [0, 1].
+        smallest_probability = zero + jnp.inf
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
         for target_regime_name in period_targets:
@@ -467,12 +472,17 @@ def _get_compute_CE(
             # lottery route in the certainty equivalent's own `aggregate`.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
+            smallest_probability = jnp.minimum(smallest_probability, target_probability)
             # A target carrying no mass here is never consulted, so whatever its
             # entry law names at this point -- a value off the target's support,
             # or nothing meaningful at all -- must not reach the aggregate.
             # The value is replaced rather than the product masked: `0 * nan` is
             # `nan`, and zeroing the value leaves the derivative finite too.
-            carries_mass = target_probability > 0
+            #
+            # The test is on being exactly zero. A negative probability is not a
+            # target that is never consulted, and dropping it would answer with
+            # the value the remaining targets would have produced on their own.
+            carries_mass = target_probability != 0
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -510,7 +520,7 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
-            CE = CE / _unit_regime_mass_or_nan(probability_mass)
+            CE = CE / _unit_regime_mass_or_nan(probability_mass, smallest_probability)
         elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
@@ -522,7 +532,7 @@ def _get_compute_CE(
             # the initialized `CE`. The mask is `False` there regardless, since
             # a mass of zero is not unit mass.
             CE = jnp.where(
-                _regime_mass_is_unit(probability_mass),
+                _regime_mass_is_a_distribution(probability_mass, smallest_probability),
                 _aggregate_joint_lottery(
                     certainty_equivalent=certainty_equivalent,
                     lottery_values=lottery_values,
@@ -1119,9 +1129,23 @@ def _get_feasibility(
 _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 
 
-def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
-    """Whether the represented regime mass is unit mass, within tolerance."""
-    return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+def _regime_mass_is_a_distribution(
+    probability_mass: FloatND, smallest_probability: FloatND
+) -> BoolND:
+    """Whether the retained targets carry a distribution rather than merely unit mass.
+
+    Two arithmetic conditions, both holding at every log level because they are
+    computed rather than validated:
+
+    - the represented mass is one, within tolerance;
+    - no target carries a negative weight.
+
+    Together they give the full range: non-negative weights summing to one each
+    lie in . Unit mass alone does not, since 1.5 and -0.5 sum to one, and
+    a NaN weight fails both tests rather than passing the first by accident.
+    """
+    is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+    return is_unit & (smallest_probability >= 0.0)
 
 
 def _aggregate_joint_lottery(
@@ -1163,9 +1187,15 @@ def _aggregate_joint_lottery(
     )
 
 
-def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
-    """Return the mass itself, or NaN where it is not unit mass.
+def _unit_regime_mass_or_nan(
+    probability_mass: FloatND, smallest_probability: FloatND
+) -> FloatND:
+    """Return the mass itself, or NaN where the weights are not a distribution.
 
     For the per-target route, which divides by the mass it accumulated.
     """
-    return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)
+    return jnp.where(
+        _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+        probability_mass,
+        jnp.nan,
+    )

@@ -23,7 +23,7 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
-    _regime_mass_is_unit,
+    _regime_mass_is_a_distribution,
     _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
@@ -972,7 +972,8 @@ def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
     Division by exactly one is the identity in IEEE754, so the check cannot
     perturb a well-formed model however the surrounding solve is fused.
     """
-    assert _unit_regime_mass_or_nan(jnp.ones((3,), dtype=dtype)).tolist() == [1.0] * 3
+    mass = jnp.ones((3,), dtype=dtype)
+    assert _unit_regime_mass_or_nan(mass, mass).tolist() == [1.0] * 3
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
@@ -986,4 +987,4 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     ulps of one, three orders of magnitude inside it.
     """
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
-    assert bool(_regime_mass_is_unit(accumulated))
+    assert bool(_regime_mass_is_a_distribution(accumulated, accumulated))
