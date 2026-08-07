@@ -107,9 +107,11 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
 
     Every live weight becomes normal, not merely the smallest: the factor is
     the largest of the per-entry factors, and each entry receives at least the
-    one it needed. The subnormal range spans a factor of `2**23` in single
-    precision and `2**52` in double and a probability is at most one, so
-    lifting a whole lottery by that much cannot overflow.
+    one it needed — up to what the largest weight has room for. A lottery whose
+    weights differ by more binades than the exponent field can express cannot
+    be held on one scale at all, and stopping at the largest weight's headroom
+    leaves the smallest understated rather than replacing the largest with an
+    infinity that would destroy every node beside it.
 
     Zero weights, NaNs and infinities come back untouched — the first is the
     null event and stays exactly null, and the other two are not probabilities
@@ -126,8 +128,17 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
 
     """
     arr = jnp.asarray(weights)
-    shift = jnp.max(_shift_to_normal(arr), axis=axis, keepdims=True)
-    return scaled_by_power_of_two(arr, shift)
+    needed = jnp.max(_shift_to_normal(arr), axis=axis, keepdims=True)
+    room = jnp.min(
+        jnp.where(
+            is_live(arr) & jnp.isfinite(arr),
+            (_exponent_bias(arr) - 1) - _unbiased_exponent(arr),
+            needed,
+        ),
+        axis=axis,
+        keepdims=True,
+    )
+    return scaled_by_power_of_two(arr, jnp.minimum(needed, room))
 
 
 def on_common_scale(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
@@ -256,12 +267,16 @@ def scaled_exact_product(factors: FloatND) -> tuple[FloatND, _BitsND]:
     parts = _product_parts(arr)
     # One shift for the whole array, so every entry keeps its size relative to
     # every other, and large enough that the smallest of them clears the
-    # subnormal range.
-    smallest = jnp.min(
-        jnp.where(parts.ordinary, jnp.zeros_like(parts.exponent), parts.exponent)
-    )
+    # subnormal range — but no larger than the biggest of them has room for.
+    # An entry whose factors include a zero or a non-finite takes the ordinary
+    # product, and every value that can be is scale-invariant, so it neither
+    # needs the shift nor constrains it.
+    bias = _exponent_bias(arr)
+    zero = jnp.zeros_like(parts.exponent)
+    smallest = jnp.min(jnp.where(parts.ordinary, zero, parts.exponent))
+    largest = jnp.max(jnp.where(parts.ordinary, zero + (1 - bias), parts.exponent))
     shift = jnp.maximum(
-        (1 - _exponent_bias(arr)) - smallest, jnp.zeros((), jnp.int32)
+        jnp.minimum((1 - bias) - smallest, bias - largest), jnp.zeros((), jnp.int32)
     ).astype(jnp.int32)
     scaled = _encoded(
         parts.significand, parts.exponent + shift, negative=parts.negative

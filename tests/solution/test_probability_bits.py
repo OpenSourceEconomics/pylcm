@@ -31,6 +31,7 @@ from _lcm.probability import (
     rescaled_weight_group,
     rescaled_weight_pair,
     scaled_by_power_of_two,
+    scaled_exact_product,
 )
 
 
@@ -209,6 +210,25 @@ def test_a_group_of_branches_is_rescaled_by_one_common_factor() -> None:
         np.asarray(scaled[0])
     ) == np.longdouble(_smallest_subnormal())
     assert bool(is_represented_zero(scaled[2]))
+
+
+def test_scaling_a_lottery_never_manufactures_an_infinity() -> None:
+    """A node too small to hold at any shared scale is dropped, not paid for.
+
+    The scale that would lift the smallest joint product into the normal range
+    can be more than the largest product has room for, once the two differ by
+    more binades than the exponent range holds. Lifting anyway would replace a
+    well-specified weight with an infinity and destroy every node beside it,
+    where the node forcing the lift is too small to change their sum at all.
+    """
+    dtype = _dtype()
+    negligible = jnp.asarray(np.finfo(dtype).tiny, dtype=dtype)
+    factors = jnp.stack([jnp.asarray([1.0, negligible], dtype=dtype)] * 3)
+
+    weights, _ = scaled_exact_product(factors)
+
+    assert bool(jnp.isfinite(weights[0]))
+    assert float(weights[0]) > 0.0
 
 
 @pytest.mark.parametrize("shift", [0, 1, 7], ids=["none", "one", "several"])

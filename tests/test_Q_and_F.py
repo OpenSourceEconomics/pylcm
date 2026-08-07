@@ -19,6 +19,7 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
+    _aggregate_joint_lottery,
     _as_lottery,
     _get_feasibility,
     _get_joint_weights_function,
@@ -991,3 +992,75 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
     no_negative = jnp.zeros((), dtype=bool)
     assert bool(_regime_mass_is_a_distribution(accumulated, no_negative))
+
+
+def _dtype() -> np.dtype:
+    """The precision the suite is running at."""
+    return np.dtype(jnp.zeros(()).dtype)
+
+
+def test_joint_weights_of_one_target_come_back_on_a_single_scale() -> None:
+    """Nodes whose products need different scales stay comparable to each other.
+
+    Each node's joint product picks the scale that keeps it a normal number, so
+    read straight off they would be held in different currencies and a node far
+    rarer than its neighbour would price as its equal. The lottery is put on one
+    scale, and every ratio in it is the one the model supplied.
+    """
+    dtype = _dtype()
+    smallest_normal = np.finfo(dtype).tiny
+    factor = dtype.type(2.0**-20)
+    first = jnp.asarray([1.0, smallest_normal], dtype=dtype)
+    second = jnp.asarray([1.0, factor], dtype=dtype)
+
+    weights, _ = _get_joint_weights_function(
+        regime_name="test", variables=("next_a", "next_b")
+    )(weight_test__next_a=first, weight_test__next_b=second)
+
+    rarest = np.longdouble(np.asarray(weights[1, 1]))
+    commonest = np.longdouble(np.asarray(weights[0, 0]))
+    exact = np.longdouble(smallest_normal) * np.longdouble(factor)
+    assert rarest / commonest == exact
+    assert float(rarest) > 0.0
+
+
+def test_a_joint_lottery_brings_its_arms_onto_one_scale() -> None:
+    """Two targets whose weights carry different scales aggregate as one lottery.
+
+    Each arm arrives holding its weights at whatever scale kept them normal, so
+    concatenating them without reconciling would compare a probability in one
+    currency against a probability in another.
+    """
+    dtype = _dtype()
+
+    class _Linear(CertaintyEquivalent):
+        @property
+        def param_names(self) -> tuple[str, ...]:
+            return ()
+
+        def aggregate(
+            self, *, values: FloatND, weights: FloatND, params: Any
+        ) -> FloatND:
+            del params
+            return jnp.sum(weights * values) / jnp.sum(weights)
+
+    # The second arm's weight stands for `1.0 * 2**-40` — the same number the
+    # first arm's second entry carries outright.
+    got = _aggregate_joint_lottery(
+        certainty_equivalent=_Linear(),
+        lottery_values=[
+            jnp.asarray([1.0, 5.0], dtype=dtype),
+            jnp.asarray([5.0], dtype=dtype),
+        ],
+        lottery_weights=[
+            jnp.asarray([1.0, dtype.type(2.0**-40)], dtype=dtype),
+            jnp.asarray([1.0], dtype=dtype),
+        ],
+        lottery_shifts=[jnp.zeros((), jnp.int32), jnp.asarray(40, jnp.int32)],
+        ce_flat_param_names={},
+        states_actions_params={},
+    )
+
+    rare = np.longdouble(2.0**-40)
+    exact = (np.longdouble(1.0) + 5 * rare + 5 * rare) / (np.longdouble(1.0) + 2 * rare)
+    np.testing.assert_allclose(float(np.asarray(got)), float(exact), rtol=1e-6)

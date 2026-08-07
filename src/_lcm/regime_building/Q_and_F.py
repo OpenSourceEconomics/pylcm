@@ -1,5 +1,4 @@
 import dataclasses
-import functools
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
@@ -12,9 +11,6 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     on_common_scale,
-    rescaled_lottery_weights,
-    rescaled_weight_group,
-    scaled_by_power_of_two,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -463,24 +459,6 @@ def _get_compute_CE(
         }
         target_node_weights = {r: target_lotteries[r][0] for r in period_targets}
         target_node_shifts = {r: target_lotteries[r][1] for r in period_targets}
-        # The unscaled probabilities stay in `active_regime_probs` — they are
-        # published, and the mass guard has to see the mass the model actually
-        # specified rather than a rescaled one.
-        weighting_regime_probs = MappingProxyType(
-            dict(
-                zip(
-                    period_targets,
-                    rescaled_weight_group(
-                        [active_regime_probs[r] for r in period_targets],
-                        cofactors=[target_node_weights[r] for r in period_targets],
-                    ),
-                    strict=True,
-                )
-            )
-            if period_targets
-            else {}
-        )
-
         CE = zero
         probability_mass = zero
         # Unit mass alone does not make a collection of weights a distribution:
@@ -494,10 +472,6 @@ def _get_compute_CE(
         # arrives at the test as `-0` and passes it. Each target's sign is read
         # off its own bits, while it still has them.
         has_negative_probability = jnp.zeros(jnp.shape(zero), dtype=bool)
-        # The rescaled counterpart of `probability_mass`: the denominator the
-        # per-target route divides by, carrying the same common factor as the
-        # numerator it accumulates so the ratio is the model's.
-        weighting_mass = zero
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
         lottery_shifts: list[IntND] = []
@@ -536,14 +510,15 @@ def _get_compute_CE(
             # probability too small for the dtype to hold contributes nothing
             # to a total of order one, which is the right answer. Its sign is a
             # different question, and one arithmetic cannot answer at that size,
-            # so it is read from the bits.
+            # so it is read from the bits. The probability enters the weighted
+            # term at its own size — `balanced_product` moves the exponent onto
+            # it from the value it meets — so no rescaling stands between the
+            # model's number and the one that is multiplied.
             target_probability = active_regime_probs[target_regime_name]
-            weighting_probability = weighting_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
             has_negative_probability = has_negative_probability | is_negative(
                 target_probability
             )
-            weighting_mass = weighting_mass + weighting_probability
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -556,7 +531,7 @@ def _get_compute_CE(
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
                 CE = CE + zero_safe_weighted_term(
-                    weighting_probability, next_V_expected_arr
+                    target_probability, next_V_expected_arr
                 )
             else:
                 values, node_weights = _as_lottery(
@@ -578,7 +553,7 @@ def _get_compute_CE(
                 weighted_nodes, product_shift = on_common_scale(
                     *scaled_joint_weight(
                         jnp.stack(
-                            jnp.broadcast_arrays(weighting_probability, node_weights)
+                            jnp.broadcast_arrays(target_probability, node_weights)
                         )
                     )
                 )
@@ -607,17 +582,11 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
-            #
-            # Numerator and denominator carry the same common factor, so it
-            # cancels; where no target needed rescaling the factor is one and
-            # the arithmetic is the same operation on the same bits. Whether
-            # the lottery is a distribution is asked of the mass the model
-            # specified, which is the unscaled one.
             CE = CE / jnp.where(
                 _regime_mass_is_a_distribution(
                     probability_mass, has_negative_probability
                 ),
-                weighting_mass,
+                probability_mass,
                 jnp.nan,
             )
         elif certainty_equivalent is not None:
@@ -1052,11 +1021,10 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
       all; `> 0` is false for both and would launder either into a zero
       contribution, turning a broken transition into a plausible number.
 
-    The target's nodes are rescaled by one common power of two first, which
-    leaves every ratio between them exactly as supplied and keeps a weight
-    below the normal range out of the multiplication that would flush it.
+    The nodes arrive on one common base-two scale, chosen where the joint
+    product was formed, so every weight here is a number the dtype can
+    multiply and every ratio between them is the one the model supplied.
     """
-    weights = rescaled_lottery_weights(weights, axis=None)
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
     weighted = zero_safe_weighted_term(weights, values)
@@ -1313,20 +1281,20 @@ def _aggregate_joint_lottery(
 
     """
     values = jnp.concatenate(list(lottery_values))
-    # The lottery is prepared once, here, where the concatenated weights are
-    # final: rescaling per target would multiply each target's segment by a
-    # different constant and rewrite the regime probabilities. `aggregate` is a
-    # public interface and may multiply by the weights it is handed, so it is
-    # handed weights the dtype can multiply — including a `aggregate` written
-    # by a user, which this file cannot inspect.
-    common = functools.reduce(jnp.maximum, list(lottery_shifts))
-    weights = rescaled_lottery_weights(
-        jnp.concatenate(
-            [
-                scaled_by_power_of_two(w, common - s)
-                for w, s in zip(lottery_weights, lottery_shifts, strict=True)
-            ]
-        )
+    # Each arm carries its own base-two scale, so they are brought onto one
+    # before they are read as a single lottery — rescaling per target instead
+    # would multiply each segment by a different constant and rewrite the
+    # regime probabilities. `aggregate` is a public interface and may multiply
+    # by the weights it is handed, including an `aggregate` written by a user
+    # that this file cannot inspect, so what it receives is normal throughout.
+    per_node_shifts = jnp.concatenate(
+        [
+            jnp.full(jnp.asarray(w).shape, s, dtype=jnp.int32)
+            for w, s in zip(lottery_weights, lottery_shifts, strict=True)
+        ]
+    )
+    weights, _ = on_common_scale(
+        jnp.concatenate(list(lottery_weights)), per_node_shifts
     )
     return certainty_equivalent.aggregate(
         values=_values_without_impossible_nodes(values=values, weights=weights),

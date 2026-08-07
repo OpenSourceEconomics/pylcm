@@ -271,3 +271,40 @@ def test_a_user_written_certainty_equivalent_prices_a_weight_the_dtype_cannot_us
     exact = (np.longdouble(1.0) + rare) / (np.longdouble(1.0) + rare / tiny)
 
     np.testing.assert_allclose(float(value), float(exact), rtol=1e-5, atol=0)
+
+
+def _pays_the_top_of_the_range(shock: ScalarFloat) -> FloatND:
+    """A payoff whose product with a subnormal probability is order one."""
+    dtype = _active_dtype()
+    return (
+        jnp.asarray(dtype.type(1.0) / dtype.type(np.finfo(dtype).tiny), dtype=dtype)
+        + 0.0 * shock
+    )
+
+
+def test_a_linear_expectation_prices_a_weight_the_dtype_cannot_use() -> None:
+    """A rare target's share reaches the expectation whatever the format can hold.
+
+    Under a linear expectation the rare node contributes `p * V`, so a value
+    near the top of the dtype's range makes that order one for a probability
+    below the normal range. The published value is therefore continuous across
+    the boundary between the smallest normal probability and the largest
+    subnormal one, which differ by a single representable step.
+    """
+    subnormal = np.longdouble(
+        np.asarray(
+            _source_value(
+                _model(_largest_subnormal, rare_payoff=_pays_the_top_of_the_range)
+            )
+        )
+    )
+    normal = np.longdouble(
+        np.asarray(
+            _source_value(
+                _model(_smallest_normal, rare_payoff=_pays_the_top_of_the_range)
+            )
+        )
+    )
+
+    assert float(subnormal) > 1.0
+    np.testing.assert_allclose(float(subnormal), float(normal), rtol=1e-5, atol=0)
