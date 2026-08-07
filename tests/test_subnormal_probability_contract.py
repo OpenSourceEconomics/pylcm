@@ -13,12 +13,17 @@ def _largest_subnormal() -> float:
     return float(np.nextafter(np.finfo(dtype).tiny, dtype(0.0), dtype=dtype))
 
 
-def test_a_subnormal_probability_is_seen_despite_the_flush() -> None:
-    """Bit inspection sees a value every arithmetic test reports as zero."""
+def test_a_subnormal_probability_is_seen_on_any_backend() -> None:
+    """Bit inspection sees a subnormal probability whether or not arithmetic can.
+
+    Whether arithmetic can see one is a property of the backend, not of the
+    contract: XLA:CPU flushes a subnormal to zero, so an arithmetic test reports a
+    genuine null event, while CUDA represents it. Reading the bits is what makes
+    the refusal the same on both.
+    """
     dtype = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
     weights = jnp.asarray([_largest_subnormal(), 1.0], dtype=dtype)
 
-    assert bool(jnp.all(weights[0] == 0))
     assert bool(has_nonzero_subnormal(weights))
 
 
