@@ -37,8 +37,6 @@ from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
-    _no_adjustment_outer_transition,
-    _strip_outer_transition,
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
     _without_outer_post_decision,
@@ -252,21 +250,22 @@ class NNBEGM(Solver):
 
         - the *adjuster* strips the outer post-decision transition and admits
           the outer value as a flat param bound per outer-grid node;
-        - the *keeper* injects `next_<durable> = keep(<durable>)` into the
-          transitions and the econ functions, so the durable becomes a genuine
-          passive ride-along state.
+        - the *keeper* injects `s' = keep(<durable>)` into the econ functions,
+          so the durable becomes a genuine passive ride-along state.
         """
         # The adjuster's outer post-decision arrives per outer-grid node as a
-        # bound param, so both the durable's law of motion and the function that
-        # declares the chosen stock leave the inner DAG. Leaving the declaring
-        # function in would let the inner scope check walk through it to the
-        # outer action, which is exactly what binding the node removes.
+        # bound param, so the function declaring the chosen stock leaves the
+        # inner DAG — leaving it in would let the inner scope check walk through
+        # it to the outer action, which is exactly what binding the node
+        # removes.
+        #
+        # The durable's own law of motion stays exactly as the regime declares
+        # it. It reads the post-decision, which is that bound leaf here, so it
+        # is decision-independent without being replaced — and a declared
+        # `next_<durable> = (1 - delta) s'` is therefore the stock the
+        # continuation is read at, not the raw node the outer search picked.
         adjuster_context = replace(
             context,
-            transitions=_strip_outer_transition(
-                transitions=context.transitions,
-                durable_state=self.outer_state,
-            ),
             functions=_without_outer_post_decision(
                 functions=context.functions,
                 outer_post_decision=self.outer_post_decision,
@@ -279,13 +278,11 @@ class NNBEGM(Solver):
             if self.outer_no_adjustment_candidate is not None
             else None
         )
+        # The keeper computes the post-decision from the durable leaf instead of
+        # taking it as a bound param, so the declared law again stands and what
+        # the keeper carries is `next_<durable>(keep(<durable>))`.
         keeper_context = replace(
             context,
-            transitions=_no_adjustment_outer_transition(
-                transitions=context.transitions,
-                durable_state=self.outer_state,
-                no_adjustment_func=no_adjustment_func,
-            ),
             functions=_with_no_adjustment_outer_function(
                 functions=context.functions,
                 durable_state=self.outer_state,
@@ -305,7 +302,6 @@ class NNBEGM(Solver):
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
-                    durable_state=self.outer_state,
                     outer_post_decision=self.outer_post_decision,
                     outer_batch_size=self.outer_batch_size,
                 )
@@ -349,13 +345,6 @@ class _NNBEGMPeriodKernel:
 
     outer_grid_values: FloatND
     """Exogenous grid over the outer post-decision margin `s'`."""
-
-    durable_state: StateName
-    """Name of the durable state the outer margin moves.
-
-    The bound node is the durable's next-period value, so it is published under
-    `next_<durable>` as well for the generic child-carry read.
-    """
 
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
@@ -441,7 +430,6 @@ class _NNBEGMPeriodKernel:
             flat_params=_with_outer_post_decision(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
-                durable_state=self.durable_state,
                 outer_post_decision=self.outer_post_decision,
                 value=self.outer_grid_values[0],
             ),
@@ -492,7 +480,6 @@ class _NNBEGMPeriodKernel:
                     flat_params=_with_outer_post_decision(
                         flat_params=flat_params,
                         regime_name=self.regime_name,
-                        durable_state=self.durable_state,
                         outer_post_decision=self.outer_post_decision,
                         value=node,
                     ),

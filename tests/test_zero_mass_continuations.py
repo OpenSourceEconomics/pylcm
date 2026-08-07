@@ -62,7 +62,7 @@ def _scalar_lottery(
         probability mass the two targets represent.
 
     """
-    _, values, weights, mass = _scalar_target_contribution(
+    _, values, weights, mass, _ = _scalar_target_contribution(
         scalar_targets=("live", "dead"),
         next_regime_to_V_arr={"live": _float(live_V), "dead": _float(dead_V)},
         active_regime_probs={"live": _float(live_prob), "dead": _float(dead_prob)},
