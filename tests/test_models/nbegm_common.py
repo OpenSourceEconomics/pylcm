@@ -200,10 +200,10 @@ def make_alive_dead_model(
     )
     # The default survival law dies deterministically into the final age, so the
     # absorbing regime is needed only there. A caller-supplied law may put mass on
-    # `dead` at any transition, and a target that is inactive when it is reached
-    # has its mass dropped and the survivors renormalized — which would silently
-    # remove the death risk from the solution — so it is active from the first age
-    # it can be entered.
+    # `dead` at any transition, and mass sent to a target that is inactive when it
+    # is reached goes unrepresented, leaving the continuation short of unit mass
+    # and the solved value NaN — so `dead` is active from the first age it can be
+    # entered.
     first_dead_age = 1 if survival_transition is not None else final_age
     dead = Regime(
         transition=None,
