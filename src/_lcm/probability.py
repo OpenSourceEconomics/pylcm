@@ -381,8 +381,23 @@ def balanced_product(weight: FloatND, value: FloatND) -> FloatND:
         Their product.
 
     """
+    return _balanced_with_tangent(jnp.asarray(weight), jnp.asarray(value))
+
+
+def _balanced_bits(weight: FloatND, value: FloatND) -> FloatND:
+    """Multiply with the exponent moved onto the weight, without a derivative.
+
+    The weight travels through the general scaling, because moving it up is
+    exactly the case where it is subnormal. The value only ever moves *down*,
+    by no more binades than it can give away and stay normal, so its exponent
+    field is decremented directly rather than through the general routine — a
+    handful of integer operations instead of the branch structure a subnormal
+    operand would need. This primitive runs at every weighted term, so the
+    difference is visible in compile time rather than only in the graph.
+    """
     weight_arr = jnp.asarray(weight)
     value_arr = jnp.asarray(value)
+    int_dtype = _int_dtype(value_arr)
     give = jnp.maximum(
         _unbiased_exponent(value_arr) - (1 - _exponent_bias(value_arr)),
         jnp.zeros((), jnp.int32),
@@ -390,9 +405,40 @@ def balanced_product(weight: FloatND, value: FloatND) -> FloatND:
     shift = jnp.minimum(_shift_to_normal(weight_arr), give)
     movable = jnp.isfinite(value_arr) & ~is_represented_zero(value_arr)
     shift = jnp.where(movable, shift, jnp.zeros_like(shift))
-    return scaled_by_power_of_two(weight_arr, shift) * scaled_by_power_of_two(
-        value_arr, -shift
+    value_bits = jax.lax.bitcast_convert_type(value_arr, int_dtype)
+    lowered = value_bits - (shift.astype(int_dtype) << _mantissa_bits(value_arr))
+    lowered_value = jax.lax.bitcast_convert_type(
+        jnp.where(movable, lowered, value_bits), value_arr.dtype
     )
+    return _scaled_bits(weight_arr, shift) * lowered_value
+
+
+def _balanced_jvp(
+    primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
+) -> tuple[FloatND, FloatND]:
+    """Differentiate the product against each operand as the other's slope.
+
+    The slopes are the primals, which differentiation treats as constants, so
+    the tangent is an ordinary multiplication — reverse mode has to transpose
+    it, and neither a bitcast nor a `custom_jvp` call has a transpose. The
+    balanced form is therefore the primal's alone. Where the weight is below
+    the normal range the derivative with respect to the value flushes to zero;
+    that derivative is the weight itself, so what is lost is a slope already
+    smaller than the format can hold.
+    """
+    weight, value = primals
+    weight_dot, value_dot = tangents
+    return (
+        _balanced_with_tangent(weight, value),
+        weight_dot * value + value_dot * weight,
+    )
+
+
+# One differentiable boundary for the whole product, rather than one per
+# operand: the bit manipulation inside carries no derivative and does not need
+# to, and a wrapper per operand costs a second trace of the same machinery.
+_balanced_with_tangent = jax.custom_jvp(_balanced_bits)
+_balanced_with_tangent.defjvp(_balanced_jvp)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -518,24 +564,20 @@ def _scaled_bits(values: FloatND, shift: _BitsND) -> FloatND:
     bits = jax.lax.bitcast_convert_type(arr, int_dtype)
     magnitude = _magnitude_bits(arr)
     sign = bits - magnitude
-    own_shift = _shift_to_normal(arr)
 
     shift = shift.astype(int_dtype)
+    own_shift = _shift_to_normal(arr)
+    # A normal number scales by adding to its exponent field. A subnormal scales
+    # by shifting its whole magnitude, which stays correct right up to the normal
+    # range: the significand's leading bit carries into the exponent field and
+    # becomes the implicit bit, which is what the encoding is built to do. Beyond
+    # that point the number is normal and the rest of the shift is an exponent
+    # again.
     normal_bits = magnitude + (shift << mantissa_bits)
-    mantissa_mask = jnp.asarray((1 << mantissa_bits) - 1, dtype=int_dtype)
-    becomes_normal_bits = ((shift - own_shift + 1) << mantissa_bits) | (
-        (magnitude << own_shift) & mantissa_mask
-    )
-    # A shift too small to reach the normal range moves the significand instead,
-    # which is what scaling a subnormal by a power of two does to its bits.
-    stays_subnormal_bits = magnitude << jnp.clip(
-        jnp.minimum(shift, own_shift), 0, mantissa_bits
-    )
-
+    to_normal = jnp.clip(jnp.minimum(shift, own_shift), 0, mantissa_bits + 1)
+    beyond_normal = jnp.maximum(shift - own_shift, jnp.zeros_like(shift))
+    subnormal_bits = (magnitude << to_normal) + (beyond_normal << mantissa_bits)
     is_subnormal = is_below_smallest_normal(arr) & ~is_represented_zero(arr)
-    subnormal_bits = jnp.where(
-        shift >= own_shift, becomes_normal_bits, stays_subnormal_bits
-    )
     scaled = jnp.where(is_subnormal, subnormal_bits, normal_bits)
     keep = is_represented_zero(arr) | ~jnp.isfinite(arr)
     return jax.lax.bitcast_convert_type(jnp.where(keep, bits, sign | scaled), arr.dtype)
