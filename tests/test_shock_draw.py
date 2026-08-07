@@ -1,6 +1,7 @@
 """Tests for draw_shock sampling correctness across all shock grid types."""
 
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import pytest
@@ -19,7 +20,7 @@ from lcm import (
 
 _N_DRAWS = 10_000
 
-_NORMAL_MIXTURE_KWARGS = {
+_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
     "n_std": 3.0,
     "p1": 0.9,
     "mu1": 0.0,
@@ -28,7 +29,7 @@ _NORMAL_MIXTURE_KWARGS = {
     "sigma2": 0.3,
 }
 
-_TAUCHEN_NORMAL_MIXTURE_KWARGS = {
+_TAUCHEN_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
     "rho": 0.8,
     "mu": 1.0,
     "n_std": 3.0,
@@ -54,7 +55,7 @@ def _draw_many(grid, params, key_seed=0, current_value=None):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_uniform(params_at_init):
     """Uniform.draw_shock uses start/stop params."""
-    kwargs = {"start": 2.0, "stop": 4.0}
+    kwargs: dict[str, Any] = {"start": 2.0, "stop": 4.0}
     if params_at_init:
         grid = UniformIIDProcess(n_points=5, batch_size=0, distributed=False, **kwargs)
         params = grid.params
@@ -70,7 +71,7 @@ def test_draw_shock_uniform(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_normal(params_at_init):
     """Normal.draw_shock uses mu/sigma params."""
-    kwargs = {"mu": 5.0, "sigma": 0.1}
+    kwargs: dict[str, Any] = {"mu": 5.0, "sigma": 0.1}
     if params_at_init:
         grid = NormalIIDProcess(
             n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
@@ -89,7 +90,7 @@ def test_draw_shock_normal(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_lognormal(params_at_init):
     """LogNormal.draw_shock produces positive samples with correct log-moments."""
-    kwargs = {"mu": 1.0, "sigma": 0.1}
+    kwargs: dict[str, Any] = {"mu": 1.0, "sigma": 0.1}
     if params_at_init:
         grid = LogNormalIIDProcess(
             n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
@@ -107,7 +108,7 @@ def test_draw_shock_lognormal(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_tauchen(params_at_init):
     """Tauchen.draw_shock uses mu/sigma/rho params."""
-    kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
+    kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
         grid = TauchenAR1Process(
             n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
@@ -124,7 +125,7 @@ def test_draw_shock_tauchen(params_at_init):
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_rouwenhorst(params_at_init):
     """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
-    kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
+    kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
         grid = RouwenhorstAR1Process(
             n_points=5, batch_size=0, distributed=False, **kwargs
@@ -186,7 +187,7 @@ def test_draw_shock_tauchen_normal_mixture(params_at_init):
 def test_ar1_draw_shock_unconditional_moments(grid_cls):
     """Long-run simulated moments match AR(1) unconditional moments."""
     mu, rho, sigma = 0.5, 0.7, 0.3
-    kwargs = {"rho": rho, "sigma": sigma, "mu": mu}
+    kwargs: dict[str, Any] = {"rho": rho, "sigma": sigma, "mu": mu}
     if grid_cls is TauchenAR1Process:
         kwargs["gauss_hermite"] = True
     grid = grid_cls(n_points=11, **kwargs)

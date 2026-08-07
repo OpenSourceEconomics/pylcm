@@ -21,6 +21,7 @@ from typing import cast
 from dags import get_ancestors
 
 from _lcm.grids import Grid
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.phases import (
@@ -292,12 +293,70 @@ def _phase_fixed_point(
                     else active_periods_by_regime.get(regime_name, ())
                 ),
             )
+            needed |= _state_conditioned_names(
+                user_regime=user_regime,
+                reachable_targets=candidates_by_source[regime_name] & all_regime_names,
+                user_regimes=user_regimes,
+                candidates=broadcast_variables[regime_name],
+                grown_here=grown[regime_name],
+            )
             newly_kept = candidates & needed
             if newly_kept:
                 grown[regime_name] = grown[regime_name] | newly_kept
                 changed = True
         if not changed:
             return grown
+
+
+def _state_conditioned_names(
+    *,
+    user_regime: UserRegime,
+    reachable_targets: frozenset[RegimeName],
+    user_regimes: Mapping[RegimeName, UserRegime],
+    candidates: frozenset[StateOrActionName],
+    grown_here: frozenset[StateOrActionName],
+) -> set[str]:
+    """Collect the conditioning states this regime's Q reads through a process.
+
+    A state-conditioned process reads ``state_conditioned.on``: the generated solve
+    weights and simulation draw both take it as an argument. But it is declared as
+    *metadata* on the grid rather than in a user function, so `_needed_names`'s
+    callable-DAG ancestry cannot see it, and a conditioning state declared at model
+    level (a broadcast candidate, reaching nothing else) was pruned here before the
+    feature could ask for it — leaving a misleading "must name a DiscreteGrid state in
+    the same regime" error at build time (code-review round 2, F1).
+
+    Two sources contribute:
+
+    - **local processes** — declared in this regime. Only a *retained* process forces
+      its conditioner (a process that is itself a pruned broadcast candidate reads
+      nothing), so this stays monotone in ``grown_here`` and the caller's fixed point
+      terminates.
+    - **reachable-target processes** — a conditioned process in a regime this one can
+      transition into has its transition weight built into *this* regime's Q, evaluated
+      at *this* regime's ``on`` state. So the conditioner is needed in the source too,
+      not only the process's own regime (round-3 review F1).
+
+    Keeping the state also keeps its law of motion, which the caller filters by the
+    same pruned-set.
+    """
+    names: set[str] = set()
+    for name, grid in user_regime.states.items():
+        if not isinstance(grid, _ContinuousStochasticProcess):
+            continue
+        if grid.state_conditioned is None:
+            continue
+        if name in candidates and name not in grown_here:
+            continue  # the process itself is not (yet) retained
+        names.add(grid.state_conditioned.on)
+    for target in reachable_targets:
+        for grid in user_regimes[target].states.values():
+            if (
+                isinstance(grid, _ContinuousStochasticProcess)
+                and grid.state_conditioned is not None
+            ):
+                names.add(grid.state_conditioned.on)
+    return names
 
 
 def _resolved_at_representative_age(

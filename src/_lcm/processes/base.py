@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
 from typing import ClassVar
@@ -11,6 +12,24 @@ from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+
+
+@dataclass(frozen=True, kw_only=True)
+class StateConditioned:
+    """A process parameter (v1: ``sigma``) conditioned on a discrete regime state.
+
+    ``on`` names a ``DiscreteGrid`` state in the *same* regime (current-regime
+    conditioning only — pro-comp-method audit S4/F4). ``by`` maps each of that state's
+    category names to a concrete parameter value, baked at build time (v1). The scalar
+    ``sigma`` on the process then defines the FIXED common node grid; the per-category
+    values in ``by`` enter only the transition CDF (directly at the from-value).
+
+    Defined here (a leaf module) so the process base class can annotate the field
+    without an import cycle; re-exported from ``_lcm.processes.state_conditioned``.
+    """
+
+    on: str
+    by: Mapping[str, float]
 
 
 def _gauss_hermite_normal(
@@ -44,8 +63,17 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     n_points: int
     """The number of points for the discretization of the process."""
 
+    state_conditioned: StateConditioned | None = None
+    """If set, the process's ``sigma`` is conditioned on a discrete regime state (v1).
+
+    The scalar ``sigma`` field then defines the FIXED common node grid; the per-category
+    innovation stds live in ``state_conditioned.by`` and enter only the transition CDF.
+    The weights builder takes a direct-CDF branch for such processes. Supported for
+    CDF-binned IID normal and Tauchen AR(1) only.
+    """
+
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "batch_size", "distributed"}
+        {"n_points", "batch_size", "distributed", "state_conditioned"}
     )
     """Dataclass field names that are not distribution parameters.
 
