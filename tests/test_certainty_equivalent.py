@@ -1964,3 +1964,34 @@ def test_linear_expectation_subclass_aggregate_is_honoured(x64_enabled: None):
     assert not np.allclose(
         np.asarray(V_plain[0]["working"]), np.asarray(V_halved[0]["working"])
     )
+
+
+def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
+    """A negative probability is malformed, not a node that cannot occur.
+
+    Reading it as dead would drop it and publish the surviving nodes' mean —
+    here `2.0`, a number a well-posed lottery could genuinely produce — for a
+    specification that is not a lottery at all.
+    """
+    got = QuasiArithmeticMean(
+        transform=lambda value: value, inverse=lambda value: value
+    ).aggregate(
+        values=jnp.array([1.0, 2.0]),
+        weights=jnp.array([2.0, -1.0]),
+        params={},
+    )
+
+    assert jnp.isnan(got)
+
+
+def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node():
+    """A weight of exactly zero remains a null event, whatever value stands there."""
+    got = QuasiArithmeticMean(
+        transform=lambda value: value, inverse=lambda value: value
+    ).aggregate(
+        values=jnp.array([1.0, jnp.nan, 2.0]),
+        weights=jnp.array([0.5, 0.0, 0.5]),
+        params={},
+    )
+
+    np.testing.assert_allclose(got, 1.5, rtol=1e-6)

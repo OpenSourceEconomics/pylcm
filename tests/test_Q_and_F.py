@@ -23,7 +23,7 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
-    _regime_mass_is_unit,
+    _regime_mass_is_a_distribution,
     _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
@@ -200,11 +200,11 @@ def test_get_multiply_weights():
         variables=("next_a", "next_b"),
     )
 
-    a = jnp.array([1, 2])
-    b = jnp.array([3, 4])
+    a = jnp.array([1.0, 2.0])
+    b = jnp.array([3.0, 4.0])
 
     got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
-    expected = jnp.array([[3, 4], [6, 8]])
+    expected = jnp.array([[3.0, 4.0], [6.0, 8.0]])
     assert_array_equal(got, expected)
 
 
@@ -214,8 +214,8 @@ def test_joint_weights_axes_follow_the_declared_variable_order():
     The caller productmaps the value surface over the same tuple, so the two
     orderings have to agree; reversing the tuple must transpose the result.
     """
-    a = jnp.array([1, 2])
-    b = jnp.array([3, 4, 5])
+    a = jnp.array([1.0, 2.0])
+    b = jnp.array([3.0, 4.0, 5.0])
 
     forward = _get_joint_weights_function(
         regime_name="test", variables=("next_a", "next_b")
@@ -1034,7 +1034,8 @@ def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
     Division by exactly one is the identity in IEEE754, so the check cannot
     perturb a well-formed model however the surrounding solve is fused.
     """
-    assert _unit_regime_mass_or_nan(jnp.ones((3,), dtype=dtype)).tolist() == [1.0] * 3
+    mass = jnp.ones((3,), dtype=dtype)
+    assert _unit_regime_mass_or_nan(mass, mass).tolist() == [1.0] * 3
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
@@ -1048,4 +1049,4 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     ulps of one, three orders of magnitude inside it.
     """
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
-    assert bool(_regime_mass_is_unit(accumulated))
+    assert bool(_regime_mass_is_a_distribution(accumulated, accumulated))
