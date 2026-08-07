@@ -41,9 +41,17 @@ the disagreement reaches order one. Buying agreement instead would mean
 adopting the flushing backend's answer everywhere — discarding a contribution
 the other hardware computed correctly — so the arithmetic is left to be as
 right as each machine can make it. Tests must therefore assert the invariants
-(nonzero in its bits, never above the true weight, below the normal range)
 rather than any particular value, because which of the two answers appears is a
-property of the executing backend.
+property of the executing backend:
+
+- the weight is nonzero in its bits;
+- it agrees with its node to within the smallest representable magnitude;
+- it stays below the normal range;
+- a published quantity compared against an exactly-computed reference carries
+  one representable step at the active precision. An exact inequality on a
+  reported value asserts the rounding direction, which is not contractual — a
+  backend that prices the node returns the nearest representable value to the
+  exact answer, and that lies above it half the time.
 
 Total-mass conventions are not settled here. They differ by call site — a
 target represented with no mass contributes `0`, while a whole continuation
