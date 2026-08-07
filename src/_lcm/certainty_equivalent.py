@@ -16,6 +16,7 @@ from beartype import beartype
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
 from _lcm.utils.functools import get_union_of_args
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND
 
@@ -113,6 +114,9 @@ class LinearExpectation(CertaintyEquivalent):
 
         Args:
             values: Continuation values of the lottery along the last axis.
+                A node whose weight is exactly zero contributes nothing
+                whatever it carries, `-inf` included; a node with positive
+                weight keeps its value, infinite or not.
             weights: Nonnegative weights over `values`, normalized by their
                 sum; a lottery carrying no mass aggregates to NaN.
             params: Unused — the plain expectation has no parameters.
@@ -121,7 +125,9 @@ class LinearExpectation(CertaintyEquivalent):
             The expectation, reduced over the last axis.
 
         """
-        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+        return jnp.sum(zero_safe_weighted_term(weights, values), axis=-1) / jnp.sum(
+            weights, axis=-1
+        )
 
 
 @beartype(conf=REGIME_CONF)

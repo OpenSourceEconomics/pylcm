@@ -35,6 +35,7 @@ def test_rejects_outer_post_decision_equal_to_inner_post_decision() -> None:
         NNBEGM(
             inner=_nbegm_inner(),
             outer_action="illiquid_investment",
+            outer_state="illiquid",
             outer_post_decision="liquid_savings",
             outer_grid=toy.OUTER_GRID,
         )
@@ -46,7 +47,8 @@ def test_rejects_stochastic_outer_grid() -> None:
         NNBEGM(
             inner=_nbegm_inner(),
             outer_action="illiquid_investment",
-            outer_post_decision="next_illiquid",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
             outer_grid=NormalIIDProcess(
                 n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0
             ),
@@ -59,7 +61,8 @@ def test_rejects_negative_outer_batch_size() -> None:
         NNBEGM(
             inner=_nbegm_inner(),
             outer_action="illiquid_investment",
-            outer_post_decision="next_illiquid",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
             outer_grid=toy.OUTER_GRID,
             outer_batch_size=-1,
         )
@@ -71,7 +74,8 @@ def test_rejects_inner_without_explicit_continuous_state() -> None:
         NNBEGM(
             inner=_nbegm_inner(continuous_state=None),
             outer_action="illiquid_investment",
-            outer_post_decision="next_illiquid",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
             outer_grid=toy.OUTER_GRID,
         )
 

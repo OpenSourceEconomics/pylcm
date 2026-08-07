@@ -2,8 +2,8 @@
 
 A Kaplan-Violante-style two-asset problem: a liquid Euler margin `wealth`, an
 illiquid durable `illiquid` chosen each period (outer grid search over
-`next_illiquid`, paying a one-for-one credited move), a Cobb-Douglas composite
-flow `q = c^phi * next_illiquid^(1-phi)`, stochastic survival (alive→dead with a
+`new_illiquid`, paying a one-for-one credited move), a Cobb-Douglas composite
+flow `q = c^phi * new_illiquid^(1-phi)`, stochastic survival (alive→dead with a
 bequest), and Epstein-Zin recursive preferences (gamma != 1/psi). Conditional on
 the fixed outer durable node the inner consumption-saving problem is a 1-D NB-EGM
 solve whose flow is a single power `A c^phi` — so the inner Euler inversion reads
@@ -59,19 +59,26 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
-    return next_illiquid - illiquid
+def _new_illiquid(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """The durable stock chosen this period, `s' = Z + Iz`."""
+    return illiquid + illiquid_investment
+
+
+def _credited(illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
+    return new_illiquid - illiquid
 
 
 def _resources(
     wealth: ContinuousState,
     illiquid: ContinuousState,
-    next_illiquid: ContinuousState,
+    new_illiquid: ContinuousState,
 ) -> FloatND:
     return (
         wealth
         + _LABOUR_INCOME
-        - _credited(illiquid=illiquid, next_illiquid=next_illiquid)
+        - _credited(illiquid=illiquid, new_illiquid=new_illiquid)
     )
 
 
@@ -83,19 +90,17 @@ def _next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return (1.0 + _LIQUID_RATE) * liquid_savings
 
 
-def _durable_transition(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
-) -> ContinuousState:
-    return illiquid + illiquid_investment
+def _durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
+    return new_illiquid
 
 
 def _keep_illiquid(illiquid: ContinuousState) -> FloatND:
     return illiquid
 
 
-def _utility(consumption: ContinuousAction, next_illiquid: ContinuousState) -> FloatND:
+def _utility(consumption: ContinuousAction, new_illiquid: ContinuousState) -> FloatND:
     """Cobb-Douglas composite of consumption and the chosen durable service."""
-    return consumption**_PHI * next_illiquid ** (1.0 - _PHI)
+    return consumption**_PHI * new_illiquid ** (1.0 - _PHI)
 
 
 def _bequest(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
@@ -111,8 +116,8 @@ def _prob_dead(age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - _SURVIVAL)
 
 
-def _illiquid_feasible(next_illiquid: ContinuousState) -> FloatND:
-    return (next_illiquid >= _OUTER_GRID.start) & (next_illiquid <= _OUTER_GRID.stop)
+def _illiquid_feasible(new_illiquid: ContinuousState) -> FloatND:
+    return (new_illiquid >= _OUTER_GRID.start) & (new_illiquid <= _OUTER_GRID.stop)
 
 
 def _budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -134,7 +139,8 @@ def _build_solver(*, variant: str) -> Solver:
             savings_grid=_SAVINGS_GRID,
         ),
         outer_action="illiquid_investment",
-        outer_post_decision="next_illiquid",
+        outer_state="illiquid",
+        outer_post_decision="new_illiquid",
         outer_grid=_OUTER_GRID,
         outer_no_adjustment_candidate="keep_illiquid",
     )
@@ -167,6 +173,7 @@ def _build_model(*, variant: str) -> Model:
         },
         functions={
             "utility": _utility,
+            "new_illiquid": _new_illiquid,
             "resources": _resources,
             "liquid_savings": _liquid_savings,
             "keep_illiquid": _keep_illiquid,
