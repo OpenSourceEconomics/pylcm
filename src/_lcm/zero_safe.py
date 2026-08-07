@@ -15,9 +15,10 @@ What this module guarantees, and what it deliberately does not:
 - a NaN weight stays poison, because it is not a probability;
 - a negative weight stays visible rather than being absorbed into zero, so an
   invalid specification surfaces instead of being silently rescued;
-- an event that can occur is never priced as one that cannot, even where its
-  probability is too small for the dtype to hold — such a weight is refused
-  rather than rounded down to impossible.
+- an event that can occur is discarded only where discarding it cannot change
+  the answer. A weight too small for the dtype to use is raised to the smallest
+  normal, so its node contributes nothing to a finite continuation and keeps an
+  infinity standing at it.
 
 Total-mass conventions are not settled here. They differ by call site — a
 target represented with no mass contributes `0`, while a whole continuation
@@ -37,64 +38,69 @@ from lcm.typing import BoolND, FloatND
 _FLOAT32_BYTES = 4
 
 
-def probability_or_nan(weights: FloatND) -> FloatND:
-    """Return each weight, or NaN where the dtype cannot carry it as a probability.
+def usable_weight(weights: FloatND) -> FloatND:
+    """Return each weight, with one too small to use raised to the smallest normal.
 
-    A subnormal is representable, but what arithmetic does with it belongs to
-    the backend rather than to the model. XLA:CPU flushes it in both the
-    comparison that decides whether an event can occur and the multiplication
-    that would form its contribution, so a weight of that size reads as exactly
-    zero — the spelling of an event that cannot happen — and whatever value
-    stands at it, including the `-inf` of a state where no action is feasible,
-    never reaches the answer. CUDA represents the same value and carries it
-    through.
+    A subnormal is representable but not usable, and what arithmetic does with
+    it belongs to the backend rather than to the model: XLA:CPU flushes it, so
+    it compares equal to zero and multiplies as zero, while CUDA carries it
+    through. Zero is how this engine spells an event that cannot occur, so on a
+    flushing backend an event of strictly positive probability becomes
+    indistinguishable from an impossible one.
 
-    Neither is a basis for a solved model: the same specification would price a
-    rare target at nothing on one machine and at its true weight on another,
-    silently. Refusing on both is what makes the answer independent of where it
-    was computed.
+    That distinction only changes an answer when the value at the node is
+    infinite. Dropping a node whose value is finite costs at most
+    `tiny * |value|`, which is below every tolerance any model declares. Dropping
+    one that carries `-inf` — the ordinary value of a state at which no action
+    is feasible — replaces the true answer with a finite number, and the error
+    is unbounded.
 
-    Every consumer of a weight passes it through here, so the direct and
-    product routes cannot disagree about which events exist.
+    Raising the weight to the smallest normal settles both cases with one
+    substitution, and does it on an *operand* so the multiplication downstream
+    stays a bare operation that can contract into a fused multiply-add:
 
-    - represented `+0` or `-0` keeps its zero: the genuine null event;
-    - a normal number of either sign is returned unchanged, so a negative
-      weight stays visible to the distribution guard rather than being rescued;
-    - a nonzero subnormal of either sign becomes NaN;
-    - NaN stays NaN.
+    - against a finite value the contribution is `tiny * value`, which differs
+      from dropping the node by less than the dropping error itself;
+    - against `+-inf` the product is that infinity, which is the true answer;
+    - a represented zero is untouched and remains the genuine null event;
+    - the sign is preserved, so a negative weight stays visible to the
+      distribution guard rather than being rescued into a positive one.
 
     Args:
         weights: Probabilities or quadrature weights, of any floating dtype.
 
     Returns:
-        The weights, with every nonzero subnormal replaced by NaN.
+        The weights, with every nonzero subnormal raised to the smallest normal
+        magnitude of its dtype.
 
     """
     arr = jnp.asarray(weights)
-    is_nonzero_subnormal = ~_is_represented_zero(arr) & _is_below_smallest_normal(arr)
-    return jnp.where(is_nonzero_subnormal, jnp.nan, arr)
+    unusable = ~_is_represented_zero(arr) & _is_below_smallest_normal(arr)
+    smallest_normal = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
+    return jnp.where(unusable, jnp.copysign(smallest_normal, arr), arr)
 
 
-def joint_weight_or_nan(factors: FloatND) -> FloatND:
-    """Return the product of a node's probability factors, or NaN if it is lost.
+def joint_weight(factors: FloatND) -> FloatND:
+    """Return the product of a node's probability factors, never rounded to zero.
 
     A joint node carries one factor per stochastic axis, and the product is its
     probability. Each factor can sit inside the dtype's normal range while the
     product falls below it — in float32, `sqrt(tiny)/2` squared is subnormal —
-    at which point the hardware delivers exactly zero. A zero weight is how
-    this engine spells an event that cannot occur, so the node would be dropped
-    although its probability is strictly positive, taking a `-inf` standing
-    there out of the answer with it.
+    at which point the hardware delivers exactly zero. That would make an event
+    which can occur indistinguishable from one which cannot, and downstream
+    nothing could tell them apart, because the two arrive as the same zero.
 
-    No rescaling recovers such a node: normalized against a lottery whose other
-    nodes are ordinary, its weight really is that small. The product is
-    therefore refused rather than rounded to impossible, and the NaN travels to
-    the continuation. Being arithmetic, the refusal holds at every log level.
+    An underflowed product therefore leaves here as the smallest normal
+    magnitude instead, carrying the sign of the product. The magnitude is not
+    the node's probability and is not meant to be: it is small enough that the
+    node contributes nothing to a finite continuation, and nonzero so that an
+    infinity standing at the node still reaches the answer. `usable_weight`
+    states the same rule for a weight that arrives small rather than becoming
+    small here.
 
-    A factor of exactly zero is the genuine null event and keeps its zero, so
-    an impossible node still contributes nothing whatever value stands at it.
-    A negative or NaN factor is untouched: neither is a probability, and both
-    are meant to stay visible.
+    A factor of exactly zero is the genuine null event, so the product keeps its
+    zero and the node contributes nothing whatever value stands at it. A NaN
+    factor stays poison.
 
     Args:
         factors: The factors stacked along the leading axis, one entry per
@@ -103,39 +109,20 @@ def joint_weight_or_nan(factors: FloatND) -> FloatND:
             reduces to one weight per node.
 
     Returns:
-        Their product over the leading axis, or NaN wherever every factor can
-        occur but the product cannot be represented.
+        Their product over the leading axis, raised to the smallest normal
+        magnitude wherever every factor can occur but the product cannot be
+        represented.
 
     """
-    arr = probability_or_nan(jnp.asarray(factors))
+    arr = usable_weight(jnp.asarray(factors))
     product = jnp.prod(arr, axis=0)
     every_factor_can_occur = ~jnp.any(_is_represented_zero(arr), axis=0)
+    smallest_normal = jnp.asarray(jnp.finfo(product.dtype).tiny, dtype=product.dtype)
     return jnp.where(
-        every_factor_can_occur & _is_below_smallest_normal(product), jnp.nan, product
+        every_factor_can_occur & _is_below_smallest_normal(product),
+        jnp.copysign(smallest_normal, product),
+        product,
     )
-
-
-def has_nonzero_subnormal(values: FloatND) -> BoolND:
-    """Return whether any entry is a represented subnormal other than zero.
-
-    Such a value is outside the probability contract this module can honour.
-    A subnormal survives in memory, but XLA:CPU treats it as zero in *both*
-    the comparison that decides nullity and the multiplication that would form
-    its contribution — so a weight of that size is silently dropped rather
-    than either respected or refused. Reading the bits is what makes the
-    verdict the same on a backend that flushes and one that does not: where the
-    value is flushed, every arithmetic test for it is subject to the same
-    flush, so `0 < p < tiny` evaluates as `0 < 0`.
-
-    Args:
-        values: Array to inspect, of any floating dtype.
-
-    Returns:
-        Scalar boolean, true if some entry is subnormal and not zero.
-
-    """
-    arr = jnp.asarray(values)
-    return jnp.any(~_is_represented_zero(arr) & _is_below_smallest_normal(arr))
 
 
 def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
@@ -150,6 +137,11 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
     weighted average by several units in the last place — enough to reverse a
     discrete choice that was not close to tied.
 
+    The weight is raised through `usable_weight` first, for the same reason: a
+    weight too small for the dtype to use is settled on an operand rather than
+    on the product, so a node that can occur keeps an infinity standing at it
+    without any of this costing a rounding step.
+
     Args:
         weight: Probability, quadrature, or interpolation weight.
         value: The value being weighted, possibly `+-inf` at a zero-weight node.
@@ -158,7 +150,7 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
         The elementwise product, broadcast as `weight * value` would be.
 
     """
-    weight_arr = jnp.asarray(weight)
+    weight_arr = usable_weight(jnp.asarray(weight))
     value_arr = jnp.asarray(value)
     safe_value = jnp.where(weight_arr == 0, jnp.zeros((), value_arr.dtype), value_arr)
     return weight_arr * safe_value
