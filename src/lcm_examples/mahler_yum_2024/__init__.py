@@ -6,8 +6,60 @@ Wealth-Health Gaps in Germany" (Mahler & Yum, Econometrica 2024): two regimes
 transitions, an AR(1) productivity shock, and discount-factor heterogeneity.
 
 The full replication — estimation against empirical moments and the paper's
-tables and figures — lives in the separate Replication_MY2024 project, which
-imports this model.
+tables and figures — lives in `lcm-replications`, which imports this model.
+
+## This implements the PAPER, not the authors' Fortran
+
+The two are not the same model. The authors' published Fortran builds its
+continuation array `EV` at the *incoming* effort habit `f_{j-1}` and never
+rebuilds it inside the golden-section search over the effort choice
+(`sub_main.f90:464, 677, 681-686`; `mod_solve.f90:171-186`), so its agent does
+not internalise that today's effort becomes tomorrow's habit — contradicting
+the paper's own eq. (6), which discounts `E V_{j+1}(s_{j+1}, f_j)`. Its
+*simulation* meanwhile does advance the habit (`mod_simul.f90:634`), so its
+solve and simulate are mutually inconsistent.
+
+What their solver omits is an interpolation along the habit axis: with
+`puregrid = 2` the chosen effort lands off the 30-point habit grid (`nf = 30`),
+so evaluating `EV` there needs one, and inside the effort objective they
+interpolate over assets only (`lini(agrid, EV(:,h), ap)`). That is the mechanism;
+the source does not reveal the motive, and it does not support calling the
+omission *forced*. Their own simulator carries `effhabit` as `real(8)`, sets the
+next habit to the continuous golden-section effort (`mod_simul.f90:634`), and
+calls `bilini(agrid, fgrid, ...)` at that continuous habit throughout — the
+two-dimensional interpolation the solver would have needed already existed.
+
+`next_lagged_effort` below implements eq. (6). Consequently this model must NOT
+be expected to reproduce the paper's published model column at the published
+Table-II estimates: those estimates were fit against the other recursion.
+
+Two further defects in the authors' code are likewise not reproduced: its
+simulation reads survival at a stale education index (`mod_simul.f90:609`, `ie`
+last assigned in a loop that has already closed), and it re-encodes the
+permanent-type index with the opposite convention from the one the policy arrays
+were solved under (`mod_simul.f90:365` vs `dimreduce3_new`), swapping beta and
+eta for four of eight types.
+
+Numerical scope: the paper's effort and saving choices are continuous, and the
+Fortran searches both by golden section (`mod_parameters_v12.f90:140` sets
+`puregrid = 2`, selecting the effort search at `sub_main.f90:777-831` around the
+asset search at `mod_solve.f90:101-155`) with an interpolated continuation over
+200 adjustment-cost nodes. pylcm's brute-force solver takes discrete grids
+instead (40 effort levels, 50 saving points, 5 adjustment-cost nodes), so
+quantities that depend on fine optimisation — the wealth moments especially —
+carry a discretisation error that needs convergence evidence, not assumption.
+
+Two consequences worth stating explicitly. (i) The adjust/no-adjust value is
+convex and piecewise linear in the adjustment-cost draw, with one kink, so a
+5-node equal-probability rule integrates it exactly only when a single branch
+dominates over the whole support; the node count needs a refinement check. Note
+that simulated adjustment shares are NOT restricted to multiples of 1/5 —
+simulation draws the cost continuously. (ii) The simulated moments' numerical
+derivative does not converge across finite-difference steps, which is why MSM
+inference is withheld in the replication. The instability is a property of this
+implementation, not of the paper's model — the authors searched continuously and
+estimated successfully — but the measurements do not isolate *which* numerical
+choice produces it; the grid is a consistent explanation, not an identified one.
 """
 
 import dataclasses
@@ -225,6 +277,20 @@ def consumption(
     gross_interest_rate: FloatND,
     min_consumption: FloatND,
 ) -> FloatND:
+    """Consumption, with the government's consumption floor `c_tilde`.
+
+    The floor is a *free top-up*: paired with `savings_constraint` (which only
+    requires `saving <= resources`), an agent may save every euro of ordinary
+    resources and still consume `c_tilde`. There is no asset test.
+
+    This does not follow from the paper's displayed budget: substituting the
+    transfer `T = c_tilde - c` into `c + a' <= resources + T` gives
+    `2c + a' <= resources + c_tilde` on the below-floor branch, not the max
+    rule. The max rule is what the authors' Fortran does (`mod_solve.f90:171`,
+    `mod_simul.f90:579`) and is the standard means-tested-floor formulation in
+    this literature, so it is kept — but it is a modelling choice the paper
+    leaves unstated, not something its equations imply.
+    """
     return jnp.maximum(
         net_income + wealth * gross_interest_rate - saving, min_consumption
     )
@@ -333,17 +399,25 @@ def benefits(
 def pension(
     period: Period,
     education: DiscreteState,
-    productivity: DiscreteState,
     pension_base: FloatND,
     pension_replacement_rate: FloatND,
-    productivity_type_multiplier: FloatND,
     retirement_period: ScalarInt,
 ) -> FloatND:
+    """Pension benefit `P(e)`: education-specific, scaled by `pension_replacement_rate`.
+
+    `pension_base[e]` is what an agent of education `e` would have earned in the
+    last working period, full time, in good health, at the median productivity
+    shock — the paper's construction.
+
+    The paper writes `P(e)`: the benefit depends on education and nothing else.
+    The authors' Fortran additionally scales it by the permanent productivity
+    type (it passes `yt(tr-1,:,:)*theta_val(itheta)` into its pension routine,
+    `sub_main.f90:487`), which the text does not license — "median productivity
+    shock" pins down `z`, not `theta`. Here it is education-only.
+    """
     return jnp.where(
         period >= retirement_period,
-        pension_base[education]
-        * productivity_type_multiplier[productivity]
-        * pension_replacement_rate,
+        pension_base[education] * pension_replacement_rate,
         0,
     )
 
@@ -631,7 +705,12 @@ def _interpolate_knots(
     values = np.asarray(spline(period_range))
     if flat_after is not None:
         values[period_range >= flat_after] = knot_values[-1]
-    return values
+    # A cubic through non-negative knots is not itself non-negative: the feasible
+    # knot vector [0.01, 2, 0.01, 2] dips below -0.3 in the interior. A negative
+    # cost would make work or effort a *good*, so the whole sign of the choice
+    # flips. The estimator bounds the knots, not the interpolated path, so it can
+    # walk into that region; clamping the path is what keeps eqs (12)-(13) costs.
+    return np.maximum(values, 0.0)
 
 
 def create_work_disutility_grid(
@@ -725,11 +804,28 @@ def _build_type_distribution() -> pd.DataFrame:
 
 
 def _compute_income_normalization(*, sigx: float) -> FloatND:
-    """Compute the income normalization denominator from shock variance."""
-    sdztemp = ((sigx**2.0) / (1.0 - shock_persistence**2.0)) ** 0.5
-    return jnp.exp(
-        ((jnp.log(productivity_type_multiplier[1]) ** 2.0) ** 2.0) / 2.0
-    ) * jnp.exp(((sdztemp**2.0) ** 2.0) / 2.0)
+    r"""Mean of the multiplicative wage shock, $E[e^{\theta}] \cdot E[e^{z}]$.
+
+    Dividing the deterministic profile by this makes the shock mean one, so that
+    $\lambda_j(h, e)$ of eq. (18) is the *mean* wage profile rather than the
+    profile of an agent with $\theta = z = 0$.
+
+    $\theta$ is symmetric and equiprobable over $\pm 0.2898$, so
+    $E[e^{\theta}] = \cosh(0.2898)$. `sigx` is the innovation *variance*
+    $\sigma_\upsilon^2$ of the AR(1) (this is what `scaled_productivity_shock`
+    assumes when it scales the unit-innovation chain by `sqrt(sigx)`), so
+    $z$ is stationary normal with variance $\sigma_\upsilon^2 / (1 - \rho^2)$
+    and $E[e^{z}] = \exp(\sigma_\upsilon^2 / (2(1 - \rho^2)))$.
+
+    The authors' Fortran (`sub_main.f90:251-252`) instead reads `sigx` as a
+    standard deviation *and* squares each correction twice, i.e. it uses
+    $\exp(x^4/2)$ where $\exp(x^2/2)$ is meant. That yields 1.0037 instead of
+    1.3966 — the shock mean is left essentially uncorrected. Reproduced here up
+    to pylcm's commit history; corrected as of the paper-faithful pass.
+    """
+    log_theta = jnp.log(productivity_type_multiplier[1])
+    stationary_variance = sigx / (1.0 - shock_persistence**2.0)
+    return jnp.cosh(log_theta) * jnp.exp(stationary_variance / 2.0)
 
 
 def _compute_pension_base(
@@ -849,23 +945,35 @@ def create_inputs(
     }
 
     td = _build_type_distribution()
-    key = jax.random.key(seed)
+    # Split the root key ONCE and consume each child exactly once. Deriving
+    # `type_indices` from `key` and then splitting that same `key` reuses a
+    # consumed key, which JAX's key-reuse checker rejects: the type draw and the
+    # three draws below are then not guaranteed independent. No bias was measured
+    # at this calibration, but the guarantee is what the initial distribution
+    # relies on, so it has to hold by construction rather than by luck.
+    type_key, health_key, adjustment_key, shock_key = jax.random.split(
+        jax.random.key(seed), num=4
+    )
     type_indices = np.asarray(
         jax.random.choice(
-            key,
+            type_key,
             jnp.arange(len(td)),
             (n_simulation_subjects,),
             p=jnp.array(td["probability"].to_numpy()),
         )
     )
 
-    keys = jax.random.split(key=key, num=3)
-    health_draw = jax.random.uniform(keys[0], (n_simulation_subjects,))
+    health_draw = jax.random.uniform(health_key, (n_simulation_subjects,))
     health_thresholds = np.asarray(td["health_threshold"])[type_indices]
 
-    effort_codes = np.searchsorted(
-        np.asarray(effort_grid), np.asarray(td["initial_effort"])[type_indices]
-    )
+    # Round the continuous initial habit to the NEAREST grid point. `searchsorted`
+    # takes the first point at or above the target, biasing every agent's f_{-1}
+    # upward by up to one grid interval (1/39). That bias is not harmless: the
+    # non-adjuster moments key on `f_0 == f_{-1}`, and f_{-1} enters the health
+    # logit with the larger of the two effort coefficients (lambda_2 = 0.734).
+    grid = np.asarray(effort_grid)
+    targets = np.asarray(td["initial_effort"])[type_indices]
+    effort_codes = np.abs(grid[None, :] - targets[:, None]).argmin(axis=1)
 
     shock_gridpoints = prod_shock_grid.get_gridpoints()
     stationary_shock_dist = jax.lax.fori_loop(
@@ -889,7 +997,7 @@ def create_inputs(
             "productivity_shock": np.asarray(
                 shock_gridpoints[
                     jax.random.choice(
-                        keys[2],
+                        shock_key,
                         jnp.arange(5),
                         (n_simulation_subjects,),
                         p=stationary_shock_dist,
@@ -897,7 +1005,7 @@ def create_inputs(
                 ]
             ),
             "adjustment_cost": np.asarray(
-                jax.random.uniform(keys[1], (n_simulation_subjects,))
+                jax.random.uniform(adjustment_key, (n_simulation_subjects,))
             ),
         }
     )

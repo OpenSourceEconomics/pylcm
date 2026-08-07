@@ -4,6 +4,10 @@ Each test pins a moment of the simulated lifecycle (labor-supply distribution,
 wealth profile, health, survival, …) at `seed=32`, `n=10000`, so a change in
 the example's economics is caught as a change in a readable quantity rather
 than an opaque pickle diff.
+
+Re-frozen on an A100 after the four correctness fixes (income normalizer, spline
+clipping, P(e) pension, nearest-habit rounding). Every number here moved; the
+structural invariants at the bottom of the module did not.
 """
 
 import jax
@@ -83,11 +87,11 @@ def simulation_result():
 @pytest.mark.parametrize(
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
-        (0, 193, 6228, 3579),
-        (1, 421, 7184, 2390),
-        (2, 346, 7072, 2564),
-        (3, 261, 6580, 3133),
-        (4, 255, 6308, 3403),
+        (0, 666, 6110, 3224),
+        (1, 619, 7736, 1640),
+        (2, 566, 5769, 3647),
+        (3, 524, 6274, 3175),
+        (4, 475, 5238, 4252),
     ],
 )
 def test_labor_supply_distribution(
@@ -109,12 +113,12 @@ def test_labor_supply_distribution(
     ("period", "expected_mean_wealth"),
     [
         (0, 0.0),
-        (5, 0.3779),
-        (10, 1.2354),
-        (15, 2.5259),
-        (20, 2.9862),
-        (25, 1.9614),
-        (30, 0.9087),
+        (5, 0.2990),
+        (10, 1.0562),
+        (15, 2.2656),
+        (20, 2.7911),
+        (25, 1.8592),
+        (30, 0.8960),
     ],
 )
 def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
@@ -127,9 +131,9 @@ def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
     ("period", "expected_good_frac"),
     [
         (0, 0.9218),
-        (10, 0.9171),
-        (20, 0.8506),
-        (30, 0.7102),
+        (10, 0.9103),
+        (20, 0.8484),
+        (30, 0.7056),
     ],
 )
 def test_health_good_fraction(simulation_result, period, expected_good_frac):
@@ -143,10 +147,10 @@ def test_health_good_fraction(simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9882),
-        (20, 9185),
-        (30, 5104),
-        (37, 536),
+        (10, 9878),
+        (20, 9170),
+        (30, 5081),
+        (37, 525),
     ],
 )
 def test_survival_counts(simulation_result, period, expected_alive):
@@ -158,18 +162,18 @@ def test_survival_counts(simulation_result, period, expected_alive):
 def test_effort_statistics(simulation_result):
     """Mean and std of effort_value across all periods must match reference."""
     np.testing.assert_allclose(
-        simulation_result["effort_value"].mean(), 0.9013, atol=0.005
+        simulation_result["effort_value"].mean(), 0.8752, atol=0.005
     )
     np.testing.assert_allclose(
-        simulation_result["effort_value"].std(), 0.1671, atol=0.005
+        simulation_result["effort_value"].std(), 0.2064, atol=0.005
     )
 
 
 def test_consumption_by_health(simulation_result):
     """Consumption must be higher for good health than bad health."""
     cons = simulation_result.groupby("health")["consumption"].mean()
-    np.testing.assert_allclose(cons.loc["good"], 0.8454, atol=0.005)
-    np.testing.assert_allclose(cons.loc["bad"], 0.7689, atol=0.005)
+    np.testing.assert_allclose(cons.loc["good"], 0.6747, atol=0.005)
+    np.testing.assert_allclose(cons.loc["bad"], 0.5935, atol=0.005)
     assert cons.loc["good"] > cons.loc["bad"]
 
 
@@ -177,8 +181,8 @@ def test_income_by_education(simulation_result):
     """Mean income during working life must be higher for high education."""
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
-    np.testing.assert_allclose(inc.loc["low"], 1.0097, atol=0.01)
-    np.testing.assert_allclose(inc.loc["high"], 1.8929, atol=0.01)
+    np.testing.assert_allclose(inc.loc["low"], 0.7818, atol=0.01)
+    np.testing.assert_allclose(inc.loc["high"], 1.5196, atol=0.01)
     assert inc.loc["high"] > inc.loc["low"]
 
 
@@ -196,7 +200,7 @@ def test_no_income_after_retirement(simulation_result):
 
 def test_total_alive_rows(simulation_result):
     """Total number of alive-regime rows must match reference."""
-    assert abs(len(simulation_result) - 295841) <= 50
+    assert abs(len(simulation_result) - 295381) <= 50
 
 
 def test_wealth_non_negative(simulation_result):
