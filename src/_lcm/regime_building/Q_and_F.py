@@ -487,14 +487,22 @@ def _get_compute_CE(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        CE, lottery_values, lottery_weights, probability_mass = (
-            _scalar_target_contribution(
-                scalar_targets=scalar_targets,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                active_regime_probs=active_regime_probs,
-                as_lottery=not reduces_per_target,
-                zero=zero,
-            )
+        # Unit mass alone does not make a collection of weights a distribution:
+        # 1.5 and -0.5 sum to one. The smallest weight is tracked alongside the
+        # sum so non-negativity is arithmetic too, and the two together give the
+        # whole range — non-negative weights summing to one each lie in [0, 1].
+        (
+            CE,
+            lottery_values,
+            lottery_weights,
+            probability_mass,
+            smallest_probability,
+        ) = _scalar_target_contribution(
+            scalar_targets=scalar_targets,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            active_regime_probs=active_regime_probs,
+            as_lottery=not reduces_per_target,
+            zero=zero,
         )
         for target_regime_name in period_targets:
             continuation = continuations[target_regime_name]
@@ -529,6 +537,12 @@ def _get_compute_CE(
             # lottery route in the certainty equivalent's own `aggregate`.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
+            # Both routes drop a node on being *exactly* zero. A negative
+            # probability is not a target that is never consulted, and dropping
+            # it would answer with the value the remaining targets would have
+            # produced on their own, so it stays in the sum and is caught by the
+            # smallest weight instead.
+            smallest_probability = jnp.minimum(smallest_probability, target_probability)
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -581,7 +595,7 @@ def _get_compute_CE(
             # leaves `CE` at zero when it collects no nodes.
             # A represented mass of zero across targets that do exist is a
             # massless lottery, and NaN there is the same answer both routes give.
-            CE = CE / _unit_regime_mass_or_nan(probability_mass)
+            CE = CE / _unit_regime_mass_or_nan(probability_mass, smallest_probability)
         elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
@@ -593,7 +607,7 @@ def _get_compute_CE(
             # the initialized `CE`. The mask is `False` there regardless, since
             # a mass of zero is not unit mass.
             CE = jnp.where(
-                _regime_mass_is_unit(probability_mass),
+                _regime_mass_is_a_distribution(probability_mass, smallest_probability),
                 _aggregate_joint_lottery(
                     certainty_equivalent=certainty_equivalent,
                     lottery_values=lottery_values,
@@ -994,7 +1008,7 @@ def _scalar_target_contribution(
     active_regime_probs: Mapping[RegimeName, FloatND],
     as_lottery: bool,
     zero: FloatND,
-) -> tuple[FloatND, list[FloatND], list[FloatND], FloatND]:
+) -> tuple[FloatND, list[FloatND], list[FloatND], FloatND, FloatND]:
     """Seed the continuation accumulators with the stateless targets.
 
     A target carrying no state has a rank-zero value function: there is no next
@@ -1017,13 +1031,16 @@ def _scalar_target_contribution(
 
     Returns:
         Tuple of the seeded certainty equivalent, the lottery values, their
-        weights, and the probability mass these targets represent.
+        weights, the probability mass these targets represent, and the smallest
+        weight among them — infinite when there are none, so a later
+        `jnp.minimum` against a stateful target's weight is the identity.
 
     """
     CE = zero
     values: list[FloatND] = []
     weights: list[FloatND] = []
     probability_mass = zero
+    smallest_probability = zero + jnp.inf
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
         prob = active_regime_probs[target_regime_name]
@@ -1031,6 +1048,7 @@ def _scalar_target_contribution(
         # route, so the linear fast path divides by the mass of *every* target
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
+        smallest_probability = jnp.minimum(smallest_probability, prob)
         # Same rule on either route: a target reached with no mass contributes
         # nothing, and its value is neutralized rather than its product masked.
         # `-inf` is the ordinary value of a state where every action is
@@ -1042,7 +1060,7 @@ def _scalar_target_contribution(
             weights.append(prob * jnp.ones_like(node))
         else:
             CE = CE + zero_safe_weighted_term(prob, scalar_V)
-    return CE, values, weights, probability_mass
+    return CE, values, weights, probability_mass, smallest_probability
 
 
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
@@ -1248,9 +1266,23 @@ def _get_feasibility(
 _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 
 
-def _regime_mass_is_unit(probability_mass: FloatND) -> BoolND:
-    """Whether the represented regime mass is unit mass, within tolerance."""
-    return jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+def _regime_mass_is_a_distribution(
+    probability_mass: FloatND, smallest_probability: FloatND
+) -> BoolND:
+    """Whether the retained targets carry a distribution rather than merely unit mass.
+
+    Two arithmetic conditions, both holding at every log level because they are
+    computed rather than validated:
+
+    - the represented mass is one, within tolerance;
+    - no target carries a negative weight.
+
+    Together they give the full range: non-negative weights summing to one each
+    lie in . Unit mass alone does not, since 1.5 and -0.5 sum to one, and
+    a NaN weight fails both tests rather than passing the first by accident.
+    """
+    is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+    return is_unit & (smallest_probability >= 0.0)
 
 
 def _aggregate_joint_lottery(
@@ -1292,9 +1324,15 @@ def _aggregate_joint_lottery(
     )
 
 
-def _unit_regime_mass_or_nan(probability_mass: FloatND) -> FloatND:
-    """Return the mass itself, or NaN where it is not unit mass.
+def _unit_regime_mass_or_nan(
+    probability_mass: FloatND, smallest_probability: FloatND
+) -> FloatND:
+    """Return the mass itself, or NaN where the weights are not a distribution.
 
     For the per-target route, which divides by the mass it accumulated.
     """
-    return jnp.where(_regime_mass_is_unit(probability_mass), probability_mass, jnp.nan)
+    return jnp.where(
+        _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+        probability_mass,
+        jnp.nan,
+    )
