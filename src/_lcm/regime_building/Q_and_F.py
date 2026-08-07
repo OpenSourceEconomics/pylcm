@@ -39,7 +39,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import joint_weight_or_nan, zero_safe_weighted_term
+from _lcm.zero_safe import (
+    joint_weight_or_nan,
+    probability_or_nan,
+    zero_safe_weighted_term,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -535,7 +539,15 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            target_probability = active_regime_probs[target_regime_name]
+            # Refused here, once, so that the mass sum, the range guard, the
+            # liveness test and both continuation routes read the same event
+            # set. A probability the dtype can represent but not carry -- a
+            # subnormal -- would otherwise compare and multiply as zero in
+            # every one of them, and a target of strictly positive probability
+            # would be priced as unreachable.
+            target_probability = probability_or_nan(
+                active_regime_probs[target_regime_name]
+            )
             probability_mass = probability_mass + target_probability
             # Both routes drop a node on being *exactly* zero. A negative
             # probability is not a target that is never consulted, and dropping
@@ -567,25 +579,28 @@ def _get_compute_CE(
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
+                # An impossible node is neutralized once, downstream in
+                # `_aggregate_joint_lottery`, where the concatenated weights are
+                # final and the stand-in can be copied from a node that carries
+                # mass. Masking here would state the same rule a second time,
+                # with the constant this route rejects.
+                lottery_values.append(values)
                 # The regime probability and the node weight are two more
                 # factors of the same joint event, so their product carries the
-                # same refusal as the product across the stochastic axes.
-                final_weights = joint_weight_or_nan(
-                    jnp.stack(jnp.broadcast_arrays(target_probability, node_weights))
+                # same refusal as the product across the stochastic axes. The
+                # weight collected here is therefore each node's *final* weight,
+                # which is what the downstream neutralization tests: a target
+                # reached with certainty still carries nodes of probability zero
+                # -- a Markov row with a zero entry beside a state where every
+                # action is infeasible -- and one the dtype could not carry
+                # arrives as NaN rather than as a null event.
+                lottery_weights.append(
+                    joint_weight_or_nan(
+                        jnp.stack(
+                            jnp.broadcast_arrays(target_probability, node_weights)
+                        )
+                    )
                 )
-                # Same rule, applied to the value rather than to a product: the
-                # aggregate reduces values and weights together, so a node that
-                # cannot occur has to be neutral before it is collected.
-                #
-                # The test is each node's *final* weight, not the target
-                # probability alone. A target reached with certainty still
-                # carries nodes of probability zero -- a Markov row with a zero
-                # entry beside a state where every action is infeasible -- and
-                # the aggregate cannot tell such a node from a live one. A
-                # weight the dtype could not carry arrives as NaN rather than
-                # zero, so it is refused here rather than read as a null event.
-                lottery_values.append(jnp.where(final_weights == 0, zero, values))
-                lottery_weights.append(final_weights)
 
         if reduces_per_target and (period_targets or scalar_targets):
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
@@ -1050,7 +1065,12 @@ def _scalar_target_contribution(
     smallest_probability = zero + jnp.inf
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
-        prob = active_regime_probs[target_regime_name]
+        # Read through the same refusal as the stateful route: a stateless
+        # target has no stochastic node to multiply against, so its regime
+        # probability is the whole weight, and a value the dtype cannot carry
+        # as a probability would otherwise be priced as an impossible target
+        # here while the same value is refused one branch over.
+        prob = probability_or_nan(active_regime_probs[target_regime_name])
         # A stateless target contributes to the represented mass on either
         # route, so the linear fast path divides by the mass of *every* target
         # it summed, not just the ones carrying state.
