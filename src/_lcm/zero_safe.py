@@ -15,9 +15,10 @@ What this module guarantees, and what it deliberately does not:
 - a NaN weight stays poison, because it is not a probability;
 - a negative weight stays visible rather than being absorbed into zero, so an
   invalid specification surfaces instead of being silently rescued;
-- an event that can occur is never priced as one that cannot, even where its
-  probability is too small for the dtype to hold — such a weight is refused
-  rather than rounded down to impossible.
+- an event that can occur is discarded only where discarding it cannot change
+  the answer. A weight too small for the dtype to use is raised to the smallest
+  normal, so its node contributes nothing to a finite continuation and keeps an
+  infinity standing at it.
 
 Total-mass conventions are not settled here. They differ by call site — a
 target represented with no mass contributes `0`, while a whole continuation
@@ -122,29 +123,6 @@ def joint_weight(factors: FloatND) -> FloatND:
         jnp.copysign(smallest_normal, product),
         product,
     )
-
-
-def has_nonzero_subnormal(values: FloatND) -> BoolND:
-    """Return whether any entry is a represented subnormal other than zero.
-
-    Such a value is outside the probability contract this module can honour.
-    A subnormal survives in memory, but XLA:CPU treats it as zero in *both*
-    the comparison that decides nullity and the multiplication that would form
-    its contribution — so a weight of that size is silently dropped rather
-    than either respected or refused. Reading the bits is what makes the
-    verdict the same on a backend that flushes and one that does not: where the
-    value is flushed, every arithmetic test for it is subject to the same
-    flush, so `0 < p < tiny` evaluates as `0 < 0`.
-
-    Args:
-        values: Array to inspect, of any floating dtype.
-
-    Returns:
-        Scalar boolean, true if some entry is subnormal and not zero.
-
-    """
-    arr = jnp.asarray(values)
-    return jnp.any(~_is_represented_zero(arr) & _is_below_smallest_normal(arr))
 
 
 def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
