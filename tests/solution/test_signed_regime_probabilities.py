@@ -132,30 +132,29 @@ class RegimeIdWithInactiveTargets:
     gone_b: ScalarInt
 
 
-def test_a_signed_cell_on_a_target_that_drops_out_is_refused() -> None:
-    """A declared cell is checked even where its target never carries mass.
+def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> None:
+    """The declared transition is checked as written, not as it survives pruning.
 
-    Targets inactive next period are pruned before the continuation is built,
-    so the arithmetic backstop never sees their cells: `+0.5` and `-0.5` on two
-    of them cancel, and the live target's `1.0` is left looking like a
-    well-formed lottery. Validation reads the transition as declared and
-    refuses it, which is why a model has to be run with validation on.
+    A target that activity makes unreachable is a legal declaration — it simply
+    needs no handoff — and its cell is dropped before any continuation is
+    built. Nothing downstream can see it, so `+0.5` and `-0.5` on two such
+    targets cancel and leave the live target's `1.0` looking well formed.
+    Validation reads the transition as declared and refuses it.
     """
 
     def _all_mass_to_live() -> ScalarFloat:
         return jnp.float32(1.0)
 
-    def _positive_on_a_dropped_target() -> ScalarFloat:
+    def _positive_on_a_dead_target() -> ScalarFloat:
         return jnp.float32(0.5)
 
-    def _negative_on_a_dropped_target() -> ScalarFloat:
+    def _negative_on_a_dead_target() -> ScalarFloat:
         return jnp.float32(-0.5)
 
-    def _terminal(name: str) -> Regime:
-        active = None if name == "live" else (lambda age: age < 21)
+    def _terminal(active) -> Regime:
         return Regime(
             transition=None,
-            active=active if active is not None else (lambda _age: True),
+            active=active,
             states={"wealth": _WEALTH},
             functions={"utility": _pays_wealth},
         )
@@ -165,17 +164,17 @@ def test_a_signed_cell_on_a_target_that_drops_out_is_refused() -> None:
             "source": Regime(
                 transition={
                     "live": MarkovTransition(_all_mass_to_live),
-                    "gone_a": MarkovTransition(_positive_on_a_dropped_target),
-                    "gone_b": MarkovTransition(_negative_on_a_dropped_target),
+                    "gone_a": MarkovTransition(_positive_on_a_dead_target),
+                    "gone_b": MarkovTransition(_negative_on_a_dead_target),
                 },
                 active=lambda age: age < 21,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},
             ),
-            "live": _terminal("live"),
-            "gone_a": _terminal("gone_a"),
-            "gone_b": _terminal("gone_b"),
+            "live": _terminal(lambda _age: True),
+            "gone_a": _terminal(lambda age: age < 21),
+            "gone_b": _terminal(lambda age: age < 21),
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeIdWithInactiveTargets,
