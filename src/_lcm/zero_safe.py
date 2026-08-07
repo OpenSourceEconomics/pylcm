@@ -40,13 +40,19 @@ _FLOAT32_BYTES = 4
 def probability_or_nan(weights: FloatND) -> FloatND:
     """Return each weight, or NaN where the dtype cannot carry it as a probability.
 
-    A subnormal is representable but not usable: XLA flushes it in both the
+    A subnormal is representable, but what arithmetic does with it belongs to
+    the backend rather than to the model. XLA:CPU flushes it in both the
     comparison that decides whether an event can occur and the multiplication
-    that would form its contribution, so a weight of that size is read as
-    exactly zero — the spelling of an event that cannot happen. An event of
-    strictly positive probability is then dropped, and whatever value stands at
-    it, including the `-inf` of a state where no action is feasible, never
-    reaches the answer.
+    that would form its contribution, so a weight of that size reads as exactly
+    zero — the spelling of an event that cannot happen — and whatever value
+    stands at it, including the `-inf` of a state where no action is feasible,
+    never reaches the answer. CUDA represents the same value and carries it
+    through.
+
+    Neither is a basis for a solved model: the same specification would price a
+    rare target at nothing on one machine and at its true weight on another,
+    silently. Refusing on both is what makes the answer independent of where it
+    was computed.
 
     Every consumer of a weight passes it through here, so the direct and
     product routes cannot disagree about which events exist.
@@ -116,9 +122,10 @@ def has_nonzero_subnormal(values: FloatND) -> BoolND:
     A subnormal survives in memory, but XLA:CPU treats it as zero in *both*
     the comparison that decides nullity and the multiplication that would form
     its contribution — so a weight of that size is silently dropped rather
-    than either respected or refused. Reading the bits is the only way to see
-    it: every arithmetic test is subject to the same flush, so `0 < p < tiny`
-    evaluates as `0 < 0`.
+    than either respected or refused. Reading the bits is what makes the
+    verdict the same on a backend that flushes and one that does not: where the
+    value is flushed, every arithmetic test for it is subject to the same
+    flush, so `0 < p < tiny` evaluates as `0 < 0`.
 
     Args:
         values: Array to inspect, of any floating dtype.

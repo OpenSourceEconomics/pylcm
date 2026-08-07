@@ -346,9 +346,9 @@ def _validate_regime_transition_probs(
 
     # A subnormal passes every test above and below -- it is in range, and the
     # mass it removes is far under the unit-sum tolerance -- while the engine
-    # cannot carry it: the same flush that drops it makes it compare equal to
-    # zero, so the target reads as unreachable. The arithmetic refuses such a
-    # weight on its own; this says which regime is responsible.
+    # refuses to carry it, because what the arithmetic does with it depends on
+    # the backend and a solved value may not. The refusal is arithmetic and
+    # holds without this check; this says which regime is responsible.
     if has_nonzero_subnormal(all_probs):
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime transition probabilities from '{regime_name}' between ages "

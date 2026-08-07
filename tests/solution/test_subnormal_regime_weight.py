@@ -1,11 +1,13 @@
 """A target reachable with a representable probability may not be priced as impossible.
 
 A regime transition can place a strictly positive probability on a target that
-is too small for the dtype to hold as a normal number. The value survives in
-memory, but XLA flushes it in both the comparison that decides whether the
-target carries mass and the multiplication that would form its contribution —
-so a target worth almost four units of a five-unit continuation is silently
-priced at zero, and the remaining targets answer alone.
+is too small for the dtype to hold as a normal number. On XLA:CPU that value is
+flushed in both the comparison that decides whether the target carries mass and
+the multiplication that would form its contribution, so a target worth almost
+four units of a five-unit continuation is silently priced at zero and the
+remaining targets answer alone. CUDA represents the same value instead, so the
+arithmetic there differs — which is the reason to refuse rather than to rely on
+what a backend happens to do with it.
 
 Refusing the probability is the only honest option: normalized against a
 sibling of ordinary size, the weight really is that small, so no rescaling
@@ -206,11 +208,15 @@ def test_probability_or_nan_refuses_a_subnormal_and_keeps_everything_else() -> N
 
 
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
-def test_probability_or_nan_reads_bits_rather_than_arithmetic(
+def test_probability_or_nan_refuses_a_subnormal_on_any_backend(
     *, compile_it: bool
 ) -> None:
-    """A subnormal is invisible to comparison, so the refusal survives compilation."""
-    subnormal = _largest_subnormal()
-    assert bool(subnormal == 0.0), "the flush this test exists for is not happening"
+    """The refusal survives compilation, and does not depend on the backend.
+
+    What a subnormal does to arithmetic differs by backend: XLA:CPU flushes it,
+    so it compares equal to zero and reads as an event that cannot occur, while
+    CUDA represents it and the comparison is false. The refusal is the same on
+    both, which is what makes a model's answer independent of where it runs.
+    """
     func = jax.jit(probability_or_nan) if compile_it else probability_or_nan
-    assert bool(jnp.isnan(func(subnormal)))
+    assert bool(jnp.isnan(func(_largest_subnormal())))
