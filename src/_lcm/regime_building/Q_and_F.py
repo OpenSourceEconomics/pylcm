@@ -34,7 +34,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import joint_weight_or_nan, zero_safe_weighted_term
+from _lcm.zero_safe import (
+    joint_weight_or_nan,
+    probability_or_nan,
+    zero_safe_weighted_term,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -471,13 +475,21 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            target_probability = active_regime_probs[target_regime_name]
+            # Refused here, once, so that the mass sum, the range guard, the
+            # liveness test and both continuation routes read the same event
+            # set. A probability the dtype can represent but not carry -- a
+            # subnormal -- would otherwise compare and multiply as zero in
+            # every one of them, and a target of strictly positive probability
+            # would be priced as unreachable.
+            target_probability = probability_or_nan(
+                active_regime_probs[target_regime_name]
+            )
             probability_mass = probability_mass + target_probability
             smallest_probability = jnp.minimum(smallest_probability, target_probability)
             # A target carrying no mass here is never consulted, so whatever its
             # entry law names at this point -- a value off the target's support,
-            # or nothing meaningful at all -- must not reach the aggregate.
-            # The value is replaced rather than the product masked: `0 * nan` is
+            # or nothing meaningful at all -- must not reach the aggregate. The
+            # value is replaced rather than the product masked: `0 * nan` is
             # `nan`, and zeroing the value leaves the derivative finite too.
             #
             # The test is on being exactly zero. A negative probability is not a
@@ -504,7 +516,12 @@ def _get_compute_CE(
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
-                lottery_values.append(jnp.where(carries_mass, values, zero))
+                # An impossible node is neutralized once, downstream in
+                # `_aggregate_joint_lottery`, where the concatenated weights are
+                # final and the stand-in can be copied from a node that carries
+                # mass. Masking here would state the same rule a second time,
+                # with the constant this route rejects.
+                lottery_values.append(values)
                 # The regime probability and the node weight are two more
                 # factors of the same joint event, so their product carries the
                 # same refusal as the product across the stochastic axes.

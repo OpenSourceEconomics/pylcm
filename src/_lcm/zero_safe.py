@@ -37,6 +37,38 @@ from lcm.typing import BoolND, FloatND
 _FLOAT32_BYTES = 4
 
 
+def probability_or_nan(weights: FloatND) -> FloatND:
+    """Return each weight, or NaN where the dtype cannot carry it as a probability.
+
+    A subnormal is representable but not usable: XLA flushes it in both the
+    comparison that decides whether an event can occur and the multiplication
+    that would form its contribution, so a weight of that size is read as
+    exactly zero — the spelling of an event that cannot happen. An event of
+    strictly positive probability is then dropped, and whatever value stands at
+    it, including the `-inf` of a state where no action is feasible, never
+    reaches the answer.
+
+    Every consumer of a weight passes it through here, so the direct and
+    product routes cannot disagree about which events exist.
+
+    - represented `+0` or `-0` keeps its zero: the genuine null event;
+    - a normal number of either sign is returned unchanged, so a negative
+      weight stays visible to the distribution guard rather than being rescued;
+    - a nonzero subnormal of either sign becomes NaN;
+    - NaN stays NaN.
+
+    Args:
+        weights: Probabilities or quadrature weights, of any floating dtype.
+
+    Returns:
+        The weights, with every nonzero subnormal replaced by NaN.
+
+    """
+    arr = jnp.asarray(weights)
+    is_nonzero_subnormal = ~_is_represented_zero(arr) & _is_below_smallest_normal(arr)
+    return jnp.where(is_nonzero_subnormal, jnp.nan, arr)
+
+
 def joint_weight_or_nan(factors: FloatND) -> FloatND:
     """Return the product of a node's probability factors, or NaN if it is lost.
 
@@ -69,7 +101,7 @@ def joint_weight_or_nan(factors: FloatND) -> FloatND:
         occur but the product cannot be represented.
 
     """
-    arr = jnp.asarray(factors)
+    arr = probability_or_nan(jnp.asarray(factors))
     product = jnp.prod(arr, axis=0)
     every_factor_can_occur = ~jnp.any(_is_represented_zero(arr), axis=0)
     return jnp.where(
@@ -96,14 +128,7 @@ def has_nonzero_subnormal(values: FloatND) -> BoolND:
 
     """
     arr = jnp.asarray(values)
-    int_dtype = jnp.int32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.int64
-    magnitude = jax.lax.bitcast_convert_type(arr, int_dtype) & jnp.asarray(
-        (1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype
-    )
-    smallest_normal = jax.lax.bitcast_convert_type(
-        jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), int_dtype
-    )
-    return jnp.any((magnitude > 0) & (magnitude < smallest_normal))
+    return jnp.any(~_is_represented_zero(arr) & _is_below_smallest_normal(arr))
 
 
 def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:

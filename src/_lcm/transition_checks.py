@@ -344,6 +344,22 @@ def _validate_regime_transition_probs(
             f"function of the '{regime_name}' regime."
         )
 
+    # A subnormal passes every test above and below -- it is in range, and the
+    # mass it removes is far under the unit-sum tolerance -- while the engine
+    # cannot carry it: the same flush that drops it makes it compare equal to
+    # zero, so the target reads as unreachable. The arithmetic refuses such a
+    # weight on its own; this says which regime is responsible.
+    if has_nonzero_subnormal(all_probs):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime transition probabilities from '{regime_name}' between ages "
+            f"{age} and {next_age} contain a subnormal probability. A value "
+            f"below {jnp.finfo(all_probs.dtype).tiny} is representable but not "
+            f"usable at this precision: the target it names would be priced as "
+            f"unreachable, so the continuation is refused instead. Either give "
+            f"the target a probability of at least that size or exactly 0. "
+            f"Check the 'next_regime' function of the '{regime_name}' regime."
+        )
+
     sum_all = jnp.sum(all_probs, axis=0)
     if jnp.any(_unit_mass_violations(sum_all)):
         detail = _format_sum_violation(
