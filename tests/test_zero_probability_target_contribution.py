@@ -31,7 +31,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
     unreachable_value,
 ):
     """A zero-probability target adds zero, not NaN, beside a reachable one."""
-    mixture_terms, _, _, mass = _scalar_target_contribution(
+    mixture_terms, _, _, mass, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "unreachable"),
         next_regime_to_V_arr={
             "reachable": jnp.asarray(2.0),
@@ -52,7 +52,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
 
 def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
     """A target that is genuinely reached at `-inf` keeps making the value `-inf`."""
-    mixture_terms, _, _, _ = _scalar_target_contribution(
+    mixture_terms, _, _, _, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "infeasible"),
         next_regime_to_V_arr={
             "reachable": jnp.asarray(2.0),
