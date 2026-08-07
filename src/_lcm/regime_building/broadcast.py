@@ -412,6 +412,10 @@ def _needed_names(
     the DAG walk, so `get_ancestors` sees a marked node's real argument names
     instead of `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
     """
+    # BOTH sides are load-bearing. Upstream added the representative-age resolution
+    # (the docstring's last paragraph describes it, and `constraints` below is only
+    # defined by it -- taking HEAD wholesale leaves that name undefined). The
+    # collective branch added the per-stakeholder utility targets.
     functions = _resolved_at_representative_age(
         phase_slice.functions, ages=ages, active_periods=active_periods
     )
@@ -420,7 +424,14 @@ def _needed_names(
     )
 
     pool: dict[str, UserFunction] = dict(functions)
-    targets = ["utility"] if "utility" in pool else []
+    # A collective regime carries a per-stakeholder `utility_<s>` in place of a
+    # single `utility`; a broadcast variable read only by those must survive.
+    utility_names: tuple[str, ...] = (
+        tuple(f"utility_{s}" for s in user_regime.stakeholders)
+        if user_regime.stakeholders is not None
+        else ("utility",)
+    )
+    targets = [name for name in utility_names if name in pool]
     targets += [name for name in user_regime.derived_categoricals if name in pool]
 
     roots = {f"__constraint_{name}": func for name, func in constraints.items()}

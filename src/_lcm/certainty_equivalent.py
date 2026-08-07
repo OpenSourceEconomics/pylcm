@@ -356,3 +356,18 @@ def _args_for(
 ) -> dict[str, FloatND]:
     """Pick the entries of `params` that `func`'s signature declares."""
     return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}
+
+
+def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> bool:
+    """Whether this certainty equivalent is anything other than the linear one.
+
+    Every non-terminal regime now carries a certainty equivalent, so PRESENCE
+    no longer distinguishes a nonlinear aggregation from the expected-utility
+    default: `LinearExpectation` is a real class with a real `aggregate`, and it
+    is what a regime that declared nothing receives. A guard that means "this
+    path does not implement a nonlinear CE" must therefore ask for the property,
+    not for presence.
+    """
+    return certainty_equivalent is not None and not isinstance(
+        certainty_equivalent, LinearExpectation
+    )
