@@ -40,6 +40,7 @@ from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
+from _lcm.zero_safe import has_nonzero_subnormal
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -614,6 +615,20 @@ def _check_state_probs(
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned values outside [0, 1]."
+        )
+
+    # A subnormal passes every test above -- it is in range, and the row still
+    # sums to one -- but the arithmetic downstream cannot carry it: it compares
+    # equal to zero and multiplies to zero, so its node would be priced as one
+    # that cannot occur. The solve refuses it either way; naming the state and
+    # the age here is what a NaN cannot do.
+    if has_nonzero_subnormal(probs):
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned a subnormal probability. A value below "
+            f"{float(jnp.finfo(probs.dtype).tiny):.3e} cannot be weighted at "
+            f"this precision, so the outcome would be dropped as impossible "
+            f"rather than counted. Use exactly 0 if the outcome cannot occur."
         )
 
     row_sums = jnp.sum(probs, axis=-1)

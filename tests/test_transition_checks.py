@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.utils.logging import LogLevel
@@ -643,4 +644,24 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def test_runtime_check_raises_on_a_subnormal_probability() -> None:
+    """A probability too small for the dtype to carry surfaces at solve.
+
+    Such a row sums to one and lies in `[0, 1]`, so every other check passes it.
+    It cannot be weighted, though: the hardware treats it as zero in both the
+    comparison that decides whether the node occurs and the multiplication that
+    would form its contribution, so the node would be dropped as impossible.
+    """
+    active = jnp.zeros(()).dtype
+    tiny = jnp.finfo(active).tiny
+    subnormal = np.nextafter(np.asarray(tiny), np.asarray(0.0, dtype=active))
+
+    def subnormal_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.asarray([subnormal, 1.0 - subnormal], dtype=active)
+
+    model = _model_with_state_probs(subnormal_probs)
+    with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subnormal"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})

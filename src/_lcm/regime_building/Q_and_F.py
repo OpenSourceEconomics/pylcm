@@ -34,6 +34,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
+from _lcm.zero_safe import joint_weight_or_nan, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -504,7 +505,16 @@ def _get_compute_CE(
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
                 lottery_values.append(jnp.where(carries_mass, values, zero))
-                lottery_weights.append(target_probability * node_weights)
+                # The regime probability and the node weight are two more
+                # factors of the same joint event, so their product carries the
+                # same refusal as the product across the stochastic axes.
+                lottery_weights.append(
+                    joint_weight_or_nan(
+                        jnp.stack(
+                            jnp.broadcast_arrays(target_probability, node_weights)
+                        )
+                    )
+                )
 
         # An empty retained target set is not "no continuation to aggregate": a
         # non-terminal regime always emits unit mass, so retaining nothing means
@@ -952,7 +962,7 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     """
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    weighted = weights * jnp.where(weights == 0.0, 0.0, values)
+    weighted = zero_safe_weighted_term(weights, values)
     return jnp.sum(weighted) / safe_weight_sum
 
 
@@ -1041,8 +1051,10 @@ def _get_joint_weights_function(
 
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:
-        weights = jnp.array(list(kwargs.values()))
-        return jnp.prod(weights)
+        # One factor per stochastic axis. Their product is the node's
+        # probability, and it is refused rather than rounded to impossible
+        # where every factor can occur but the product cannot be represented.
+        return joint_weight_or_nan(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
     return productmap(
