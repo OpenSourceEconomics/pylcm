@@ -19,7 +19,15 @@ from _lcm.regime_building.next_state import (
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
-from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
+
+# `zero_safe_average` only. Its sibling `zero_safe_weighted_term` in that module
+# and the one in `_lcm.zero_safe` used to differ on the mask predicate, and this
+# file deliberately took the local one; upstream has since adopted the same
+# gradient-preserving mask AND added subnormal-weight handling on top, which the
+# comments at the call sites below now rely on. So the term comes from
+# `_lcm.zero_safe` and the local copy is left to `zero_safe_average` and
+# `collective.py` until those are moved over too.
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.transition_laws import (
     TransitionLaws,
     is_interpolation_basis,
@@ -42,14 +50,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-
-# NOT `zero_safe_weighted_term`: that one is imported above from
-# `_lcm.regime_building.zero_safe`, whose form masks the value only where it is
-# NON-FINITE. Upstream's masks on `weight == 0` outright, which is a hard select
-# and therefore kills `d/dw` at every exactly-zero-weight node — invisible for a
-# probability or quadrature weight, wrong for an interpolation corner weight that
-# is itself a function of the coordinate being differentiated.
-from _lcm.zero_safe import joint_weight, usable_weight
+from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -1589,8 +1590,8 @@ def _get_compute_CE(
                 # target reached with certainty still carries nodes of
                 # probability zero -- a Markov row with a zero entry beside a
                 # state where every action is infeasible -- and one that merely
-                # underflowed arrives at the smallest normal instead, so it is
-                # not mistaken for that null event.
+                # underflowed arrives as the smallest representable magnitude
+                # instead, so it is not mistaken for that null event.
                 lottery_weights.append(
                     joint_weight(
                         jnp.stack(
@@ -2085,21 +2086,24 @@ def _scalar_target_contribution(
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
         smallest_probability = jnp.minimum(smallest_probability, prob)
-        # Whether such a target contributes nothing to the *continuation*
-        # depends on the value standing at it, so it is settled per term. A
-        # stateless target has no stochastic node to multiply against, so its
-        # regime probability is the whole weight: what `joint_weight` does for a
-        # node of the stateful route, `usable_weight` does here.
+        # A stateless target has no stochastic node to multiply against, so its
+        # regime probability is already the whole weight. There is no product to
+        # underflow, which is what `joint_weight` guards on the stateful route,
+        # so the probability is collected as it stands.
         #
-        # The value is handed over as it stands. A node that cannot occur is
-        # neutralized once, downstream in `_aggregate_joint_lottery`, against
-        # the same final weights -- and a weight raised to the smallest normal
-        # is not zero there, so `-inf`, the ordinary value of a state where
-        # every action is infeasible, still reaches the answer.
+        # Both the weight and the value are handed over unmodified, because
+        # whether a weight too small for the dtype matters is decided by the
+        # value it meets. That decision belongs to `zero_safe_weighted_term`,
+        # downstream in `_aggregate_joint_lottery`, where the concatenated
+        # weights are final: against a finite value the weight stands and the
+        # node may drop, while against `-inf` -- the ordinary value of a state
+        # where every action is infeasible -- it is raised so the infinity
+        # reaches the answer. Pre-adjusting the weight here would take that
+        # decision away before the value is known.
         if as_lottery:
             node = jnp.ravel(scalar_V)
             values.append(node)
-            weights.append(usable_weight(prob) * jnp.ones_like(node))
+            weights.append(prob * jnp.ones_like(node))
         else:
             # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
             # `p_r * V_r` once inside a single zero-safe contraction, masking the
