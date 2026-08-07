@@ -70,6 +70,7 @@ def get_V_interpolator(
     V_arr_name: str,
     co_map_state_names: tuple[StateName, ...] = (),
     interpolate_process_axes: bool = False,
+    entered_process_names: tuple[StateName, ...] = (),
 ) -> Callable[..., FloatND]:
     """Create a function representation of a value function array.
 
@@ -127,7 +128,14 @@ def get_V_interpolator(
             continuation-value path always feeds a process axis its exact
             on-grid Markov-chain index and must keep using the fast integer
             lookup, so leave this `False` there. `False` (the default) is
-            byte-identical to before this parameter existed.
+            byte-identical to before this parameter existed. It takes precedence
+            over `entered_process_names`: the process-aware reader already reads
+            every process axis by value, so naming a subset adds nothing.
+        entered_process_names: Tuple of stochastic-process state names the caller
+            enters at one declared physical value rather than drawing. Their axes
+            are interpolated at that value instead of indexed, so the caller passes
+            the value itself and the cost is one interpolation rather than the
+            process's whole node axis. Ignored when `interpolate_process_axes`.
 
     Returns:
         A callable that lets you treat the result of pre-calculating a function on the
@@ -143,7 +151,9 @@ def get_V_interpolator(
         )
 
     _fail_if_interpolation_axes_are_not_last(v_interpolation_info)
-    _need_interpolation = bool(v_interpolation_info.continuous_states)
+    _need_interpolation = bool(v_interpolation_info.continuous_states) or bool(
+        entered_process_names
+    )
 
     funcs: dict[
         str,
@@ -160,19 +170,31 @@ def get_V_interpolator(
     funcs[_out_name] = _get_lookup_function(
         array_name=V_arr_name,
         axis_names=_discrete_axes,
+        retained_axis_names=frozenset(
+            state_prefix + var for var in entered_process_names
+        ),
     )
 
     if _need_interpolation:
+        for var in entered_process_names:
+            funcs[f"__{var}_coord__"] = _get_entered_process_coordinate_finder(
+                in_name=state_prefix + var,
+                process=v_interpolation_info.discrete_states[var],
+            )
         for var, grid_spec in v_interpolation_info.continuous_states.items():
             funcs[f"__{var}_coord__"] = _get_coordinate_finder(
                 in_name=state_prefix + var,
                 grid=grid_spec,
             )
 
+        # An entered process keeps its axis in the array, and the lookup removes
+        # every indexed axis ahead of it, so the axes left to interpolate are the
+        # entered processes in state order followed by the continuous states.
         _continuous_axes = [
             f"__{var}_coord__"
             for var in v_interpolation_info.state_names
-            if var in v_interpolation_info.continuous_states
+            if var in entered_process_names
+            or var in v_interpolation_info.continuous_states
         ]
         funcs["__fval__"] = _get_interpolator(
             name_of_values_on_grid="__interpolation_data__",
@@ -344,19 +366,25 @@ def _get_lookup_function(
     *,
     array_name: str,
     axis_names: list[str],
+    retained_axis_names: frozenset[str] = frozenset(),
 ) -> Callable[..., FloatND]:
     """Create a function that emulates indexing into an array via named axes.
 
     Args:
         array_name: The name of the array into which the function indexes.
         axis_names: List of strings with names for each axis in the array.
+        retained_axis_names: Names among `axis_names` to keep rather than index —
+            an axis to be interpolated afterwards. It takes a full slice, so the
+            axes left over are the retained ones in their own order followed by
+            whatever trailed them.
 
     Returns:
-        A callable with the keyword-only arguments `[*axis_names]` that looks up values
-        from an array called `array_name`.
+        A callable with the keyword-only arguments `[*axis_names]` minus the
+        retained ones, that looks up values from an array called `array_name`.
 
     """
-    arg_names = [*axis_names, array_name]
+    indexed_axis_names = [var for var in axis_names if var not in retained_axis_names]
+    arg_names = [*indexed_axis_names, array_name]
 
     @with_signature(
         args=dict.fromkeys(arg_names, "FloatND | IntND"),
@@ -364,10 +392,60 @@ def _get_lookup_function(
     )
     def lookup_wrapper(*args: FloatND | IntND, **kwargs: FloatND | IntND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
-        positions = tuple(kwargs[var] for var in axis_names)
+        positions = tuple(
+            slice(None) if var in retained_axis_names else kwargs[var]
+            for var in axis_names
+        )
         return kwargs[array_name][positions]
 
     return lookup_wrapper
+
+
+def _get_entered_process_coordinate_finder(
+    *,
+    in_name: str,
+    process: DiscreteGrid | _ContinuousStochasticProcess,
+) -> Callable[..., FloatND]:
+    """Create a function placing a declared entry value on a process's node axis.
+
+    A declared entry names one physical value, and the target holds its value
+    function on the process's nodes. The coordinate of that value on those nodes
+    is what the interpolation needs, and interpolating there is the same number
+    the node basis expresses — at the cost of one interpolation rather than the
+    whole node axis.
+
+    Args:
+        in_name: Name via which the declared physical value arrives.
+        process: The target's stochastic process, whose nodes the value is placed
+            on.
+
+    Returns:
+        A callable with the keyword-only argument `[in_name]` returning the
+        coordinate, or NaN for a value the process cannot represent.
+
+    """
+    gridpoints = process.to_jax()
+    lower = gridpoints[0]
+    upper = gridpoints[-1]
+
+    @with_signature(args={in_name: "FloatND"}, return_annotation="FloatND")
+    def find_entered_process_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
+        value = kwargs[in_name]
+        coordinate = get_irreg_coordinate(value=value, points=gridpoints)
+        # The interpolation extrapolates outside the node range rather than
+        # refusing, and the target has no representation out there, so an entry
+        # naming such a value is poisoned here and the solve-time check names the
+        # regime and period.
+        #
+        # The test is on the physical value, not its coordinate. A coordinate only
+        # stands in for the value where the map is invertible, which it is not on
+        # a support of one node: there every value shares the sole index, so a
+        # coordinate test would accept the whole real line.
+        on_support = (value >= lower) & (value <= upper)
+        return jnp.where(on_support, coordinate, jnp.nan)
+
+    return find_entered_process_coordinate
 
 
 def _get_coordinate_finder(

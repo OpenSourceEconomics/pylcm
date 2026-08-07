@@ -220,19 +220,23 @@ def test_per_target_phased_next_state_is_rejected():
         )
 
 
-def test_constraint_reading_a_fixed_next_state_still_builds():
+def test_constraint_reading_a_fixed_current_state_still_builds():
     """F4: `fixed_transition` rebuilds a fresh `_IdentityTransition` per collection,
     so the solve and simulate resolutions are distinct objects -- but they are the
-    same phase-invariant identity law. A constraint reading that fixed `next_stock`
-    has an identical feasible set in both phases and must build, not be falsely
-    rejected as phase-varying.
+    same phase-invariant identity law, and a constraint reading the state it fixes
+    must build rather than be falsely rejected as phase-varying.
+
+    The constraint reads the CURRENT `stock`, not `next_stock`: a `next_` name is
+    reserved for a transition's output and rejected outside one (see
+    `test_next_prefix_is_reserved.py`). For a fixed state the two values are equal
+    anyway, so the phase-invariance question this pins is unchanged.
     """
 
     def utility(stock: DiscreteState, move: DiscreteAction) -> FloatND:
         return 0.0 * stock + 0.0 * move
 
-    def capacity(next_stock: DiscreteState) -> FloatND:
-        return next_stock == Stock.good
+    def capacity(stock: DiscreteState) -> FloatND:
+        return stock == Stock.good
 
     model = _model(
         live_functions={"utility": utility},

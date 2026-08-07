@@ -18,7 +18,6 @@ from dags import get_annotations
 from dags.tree.tree_utils import QNAME_DELIMITER
 
 from _lcm.grids import Grid
-from _lcm.reachability import PhaseName
 from _lcm.transition_laws import TransitionLawInfo, TransitionLaws
 from _lcm.typing import (
     RegimeName,
@@ -37,7 +36,6 @@ def fail_if_transition_namespaces_are_mixed(
     transition_laws: TransitionLaws,
     processed_functions: MappingProxyType[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    phase_name: PhaseName,
 ) -> None:
     """Check one phase's transition laws against the two-namespace contract.
 
@@ -48,9 +46,6 @@ def fail_if_transition_namespaces_are_mixed(
       weight function — and does not also claim to emit node indices.
     - Every `next_<state>` a transition or weight law reads has a producer in the
       same target's bundle.
-    - No such read lands on a genuinely stochastic law. A realized draw has no
-      value while the expectation over it is still being built, so the
-      composition is rejected here rather than resolved into something else.
 
     Args:
         source_regime_name: Regime whose laws are being checked, named in
@@ -62,10 +57,6 @@ def fail_if_transition_namespaces_are_mixed(
         processed_functions: Immutable mapping of qualified function names to
             functions, carrying the synthesized weight laws.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        phase_name: Phase whose laws are being checked. A draw is realized in
-            simulation, where the realization is published under its
-            `next_<state>` name and may be read like any other producer; during
-            backward induction it has no value, so the read is rejected.
 
     Raises:
         ModelInitializationError: If any of the three conditions fails.
@@ -73,6 +64,9 @@ def fail_if_transition_namespaces_are_mixed(
     """
     for target, bundle in transitions.items():
         laws = transition_laws.get(target, MappingProxyType({}))
+        _fail_if_a_stochastic_law_carries_a_basis(
+            source_regime_name=source_regime_name, target=target, laws=laws
+        )
         _fail_if_a_basis_law_is_incomplete(
             source_regime_name=source_regime_name,
             target=target,
@@ -86,7 +80,6 @@ def fail_if_transition_namespaces_are_mixed(
             laws=laws,
             processed_functions=processed_functions,
             target_state_names=set(all_grids.get(target, MappingProxyType({}))),
-            draws_are_realized=phase_name == "simulation",
         )
 
 
@@ -119,6 +112,37 @@ def _functions_feeding(
             found[arg] = candidates[arg]
             frontier.append(candidates[arg])
     return found
+
+
+def _fail_if_a_stochastic_law_carries_a_basis(
+    *,
+    source_regime_name: RegimeName,
+    target: RegimeName,
+    laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
+) -> None:
+    """Check that no law is both a draw and a declared entry.
+
+    The two place a value on the target's nodes for opposite reasons. A declared
+    entry names one value, and its coefficients express that value in the node
+    basis; they sum to one but are not probabilities. A draw names a distribution,
+    and its weights are probabilities. Reading one as the other prices a different
+    object and would otherwise do so silently — the coefficients of an entry, run
+    through a certainty equivalent, give a mean over nodes the entry never took.
+    """
+    for next_state_name, law in laws.items():
+        if not law.stochastic:
+            continue
+        if law.support_axis_name is None and not law.interpolation_basis:
+            continue
+        msg = (
+            f"The law '{next_state_name}' of regime '{source_regime_name}' into "
+            f"regime '{target}' is marked as realizing a draw, but it also "
+            f"carries the node basis of a declared entry. A draw's weights are "
+            f"probabilities over the target's nodes; an entry's are the "
+            f"coefficients expressing one value in them. Nothing is both, and "
+            f"reading either as the other prices a different object."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_a_basis_law_is_incomplete(
@@ -167,7 +191,6 @@ def _fail_if_a_read_next_state_has_no_value(
     laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
     processed_functions: MappingProxyType[str, UserFunction],
     target_state_names: set[StateOrActionName],
-    draws_are_realized: bool,
 ) -> None:
     """Check that every `next_<state>` a law reads is produced and not a draw."""
     consumers: dict[str, UserFunction] = dict(bundle)
@@ -197,17 +220,5 @@ def _fail_if_a_read_next_state_has_no_value(
                     f"transition produces it. Declare a state transition for "
                     f"'{state_name}' toward '{target}', or read a value the "
                     f"transition does produce."
-                )
-                raise ModelInitializationError(msg)
-            if laws[arg].stochastic and not draws_are_realized:
-                msg = (
-                    f"'{consumer_name}' of regime '{source_regime_name}' reads "
-                    f"'{arg}' on the way into regime '{target}', but that law "
-                    f"realizes a draw. A draw has no value while the expectation "
-                    f"over it is being built, so it cannot feed another law; "
-                    f"representing the dependence needs a joint kernel over both "
-                    f"states rather than one marginal each. Declare '{state_name}' "
-                    f"as a deterministic transition, or move the dependence into "
-                    f"the law of '{arg}' itself."
                 )
                 raise ModelInitializationError(msg)

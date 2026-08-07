@@ -19,13 +19,10 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
-    LAW_SOURCE_ATTR,
     _as_lottery,
-    _get_deterministic_transitions,
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
-    _law_sources_differ,
     _regime_mass_is_unit,
     _unit_regime_mass_or_nan,
     get_compute_intermediates,
@@ -303,160 +300,6 @@ def test_get_U_and_F_with_annotated_constraints():
     assert F.item() is False
 
 
-def test_identical_target_specific_deterministic_laws_are_accepted():
-    """Identical `next_<state>` laws across targets bind into the decision DAG.
-
-    When every target bundle carries the same `next_durable` function object and
-    `utility` reads it, the within-period law is unambiguous, so the merged
-    decision DAG builds without error.
-    """
-
-    def next_durable(durable: float) -> float:
-        return durable
-
-    def utility(consumption: float, next_durable: float) -> FloatND:
-        return jnp.log(consumption) + next_durable
-
-    transitions = MappingProxyType(
-        {
-            "stay": MappingProxyType({"next_durable": next_durable}),
-            "leave": MappingProxyType({"next_durable": next_durable}),
-        }
-    )
-    deterministic_transitions, conflicting = _get_deterministic_transitions(
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        transition_laws=MappingProxyType({}),
-    )
-    assert conflicting == frozenset()
-    U_and_F = _get_U_and_F(
-        functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
-        constraints=MappingProxyType({}),
-        deterministic_transitions=deterministic_transitions,
-        conflicting_deterministic_transition_names=conflicting,
-    )
-    U, _F = U_and_F(consumption=jnp.asarray(2.0), durable=jnp.asarray(3.0))
-    assert jnp.isclose(U, jnp.log(2.0) + 3.0)
-
-
-def test_conflicting_target_specific_deterministic_law_read_by_utility_is_rejected():
-    """A `next_<state>` read by `utility` must agree across all targets.
-
-    When two target bundles supply *different* implementations of the same
-    `next_durable` law and `utility` reads it, the merged decision DAG would bind
-    one target's law while the simulate state-update uses the right one — a silent
-    disagreement. The build rejects this, naming the conflicting state.
-    """
-
-    def next_durable_stay(durable: float) -> float:
-        return durable
-
-    def next_durable_leave(durable: float) -> float:
-        return 0.0 * durable
-
-    def utility(consumption: float, next_durable: float) -> FloatND:
-        return jnp.log(consumption) + next_durable
-
-    transitions = MappingProxyType(
-        {
-            "stay": MappingProxyType({"next_durable": next_durable_stay}),
-            "leave": MappingProxyType({"next_durable": next_durable_leave}),
-        }
-    )
-    deterministic_transitions, conflicting = _get_deterministic_transitions(
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        transition_laws=MappingProxyType({}),
-    )
-    assert conflicting == frozenset({"next_durable"})
-    with pytest.raises(ValueError, match="next_durable"):
-        _get_U_and_F(
-            functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
-            constraints=MappingProxyType({}),
-            deterministic_transitions=deterministic_transitions,
-            conflicting_deterministic_transition_names=conflicting,
-        )
-
-
-def test_conflicting_deterministic_law_not_read_by_decision_is_accepted():
-    """An unread conflicting `next_<state>` law does not block the build.
-
-    When the conflicting `next_durable` is pruned away because neither `utility`
-    nor any constraint reads it, the decision DAG never binds it, so the
-    disagreement is harmless and the build succeeds.
-    """
-
-    def next_durable_stay(durable: float) -> float:
-        return durable
-
-    def next_durable_leave(durable: float) -> float:
-        return 0.0 * durable
-
-    def utility(consumption: float) -> FloatND:
-        return jnp.log(consumption)
-
-    transitions = MappingProxyType(
-        {
-            "stay": MappingProxyType({"next_durable": next_durable_stay}),
-            "leave": MappingProxyType({"next_durable": next_durable_leave}),
-        }
-    )
-    deterministic_transitions, conflicting = _get_deterministic_transitions(
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        transition_laws=MappingProxyType({}),
-    )
-    assert conflicting == frozenset({"next_durable"})
-    U_and_F = _get_U_and_F(
-        functions=MappingProxyType({"utility": utility}),  # ty: ignore[invalid-argument-type]
-        constraints=MappingProxyType({}),
-        deterministic_transitions=deterministic_transitions,
-        conflicting_deterministic_transition_names=conflicting,
-    )
-    U, _F = U_and_F(consumption=jnp.asarray(2.0))
-    assert jnp.isclose(U, jnp.log(2.0))
-
-
-class _RaisingEq:
-    """A stand-in for an array-backed callable law whose `==`/`!=` is not a plain bool.
-
-    A real array-backed callable object (e.g. one wrapping a jax array) compares by
-    value, so `a != b` builds an array and `bool(...)` on it raises. Here `__eq__`
-    raises outright, which any value comparison of the provenance token would trigger.
-    """
-
-    def __eq__(self, other: object) -> bool:
-        raise AssertionError("law base must never be compared by value")
-
-    __hash__ = object.__hash__
-
-
-def test_law_sources_differ_uses_identity_not_value_equality():
-    """The conflict comparison must not invoke a user law's `__eq__` (round-7 F3).
-
-    The base user law is compared by object identity and the parameter location by
-    string equality, so an array-backed callable law whose `==` returns a non-bool
-    (or raises) never blocks or corrupts the merge.
-    """
-    base1, base2 = _RaisingEq(), _RaisingEq()
-
-    def a() -> float:
-        return 0.0
-
-    def b() -> float:
-        return 0.0
-
-    # Distinct base objects, same location -> differ, WITHOUT calling `base.__eq__`.
-    setattr(a, LAW_SOURCE_ATTR, (base1, "next_x"))
-    setattr(b, LAW_SOURCE_ATTR, (base2, "next_x"))
-    assert _law_sources_differ(a, b) is True  # ty: ignore[invalid-argument-type]
-
-    # Same base object, same location -> not differ (identity short-circuit).
-    setattr(b, LAW_SOURCE_ATTR, (base1, "next_x"))
-    assert _law_sources_differ(a, b) is False  # ty: ignore[invalid-argument-type]
-
-    # Same base object, different (target-qualified) location -> differ, by string.
-    setattr(b, LAW_SOURCE_ATTR, (base1, "next_x__retire"))
-    assert _law_sources_differ(a, b) is True  # ty: ignore[invalid-argument-type]
-
-
 def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
@@ -642,7 +485,6 @@ def _build_two_target_closure(
         scalar_targets=scalar_targets,
         transitions=MappingProxyType({}),
         transition_laws=MappingProxyType({}),
-        support_axes=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
             functions={"regime_transition_probs": probs_function},
             targets="regime_transition_probs",

@@ -1,11 +1,11 @@
 """Static class invariant: a collective builder may not drop a phase role.
 
 Round 2 found `_build_Q_and_F_per_period`'s collective branch calling
-`get_Q_and_F_collective` with only `(transitions, functions)`, dropping the four
-arguments that carry the solve/simulate phase split. That witness was repaired -- and
-then the SAME class turned up one function away, in `get_Q_and_F_terminal_collective`.
-A signature that DEFAULTS a phase argument makes its omission silent by construction,
-so per-site repair keeps losing to the next collective twin.
+`get_Q_and_F_collective` with only `(transitions, functions)`, dropping the arguments
+that carry the solve/simulate phase split. That witness was repaired -- and then the
+SAME class turned up one function away, in `get_Q_and_F_terminal_collective`. A
+signature that DEFAULTS a phase argument makes its omission silent by construction, so
+per-site repair keeps losing to the next collective twin.
 
 This is the fail-closed replacement, at the level the class actually lives: the
 source is parsed and every collective twin is required to expose -- and correctly
@@ -13,19 +13,27 @@ route -- every phase-role argument its singleton twin exposes. Adding a new
 `get_X_collective` next to a `get_X` that takes phase arguments FAILS THIS TEST until
 the twin threads them too.
 
+Three of the four roles this module originally tracked (`flow_transitions`,
+`flow_stochastic_transition_names`, `next_state_names`) no longer exist upstream:
+`next_<state>` is now reserved for a transition's OUTPUT, so no utility, feasibility or
+value constraint may read one, and the flow therefore holds no transition node to
+resolve and needs no pool of its own. What remains is the role that still splits the
+two phases -- `continuation_functions` -- plus the complementary requirement that the
+flow be built from `functions` and NOT from the continuation pool. The invariant is
+generic over `PHASE_ARGS`, so it re-arms automatically if a future role is added.
+
 The mutation catalogue below is the evidence that the checker has teeth: each
 mutation is one member of the counterexample class (drop the argument from the
-signature, drop it at the dispatch, pair a role with the wrong pool, drop the
-diagnostic vocabulary, skip age specialization, hide a builder in a stakeholder-only
-branch), and every one must be rejected. Two reproduce the defects actually found.
+signature, drop it at the dispatch, pair a role with the wrong pool, skip age
+specialization, hide a builder in a stakeholder-only branch), and every one must be
+rejected. One reproduces the defect actually found.
 
 Checked against the REAL history, not only against synthetic mutations: at `f0f7173`
-(the round-2 baseline) `get_Q_and_F_collective` exposed NONE of the four phase arguments
-and the dispatch passed none; at `27bc15f` the terminal twin still lacked
-`next_state_names`. The twin-pair rule rejects both trees, and accepts the head.
+(the round-2 baseline) `get_Q_and_F_collective` exposed NO phase argument and the
+dispatch passed none. The twin-pair rule rejects that tree, and accepts the head.
 
-Adopted from the round-3 external audit's MT1 mutation suite (hardening note H1), which
-returned 22/22 rejected against this tree; kept in the suite so it stays enforced.
+Adopted from the round-3 external audit's MT1 mutation suite (hardening note H1); kept
+in the suite so it stays enforced, and pruned in step with the roles it tracks.
 """
 
 import ast
@@ -39,14 +47,7 @@ import pytest
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 
-PHASE_ARGS = frozenset(
-    {
-        "continuation_functions",
-        "flow_transitions",
-        "flow_stochastic_transition_names",
-        "next_state_names",
-    }
-)
+PHASE_ARGS = frozenset({"continuation_functions"})
 
 # Files with a `stakeholders is not None` branch that is meant to be value/shape
 # selection, NOT builder dispatch. The invariant pins that classification.
@@ -166,9 +167,9 @@ def assert_every_twin_exposes_its_singleton_s_phase_roles(
 ) -> None:
     """Generic pair discovery -- this is the fail-closed part of the invariant.
 
-    Every `get_*_collective` twin must expose every semantic phase-role / guard
-    argument its singleton twin exposes. A NEW twin is caught here, without anyone
-    having to remember the rule.
+    Every `get_*_collective` twin must expose every semantic phase-role argument its
+    singleton twin exposes. A NEW twin is caught here, without anyone having to
+    remember the rule; so is a role added to a singleton and forgotten on its twin.
     """
     pairs: list[tuple[ast.FunctionDef, ast.FunctionDef]] = []
     for name, collective_def in qdefs.items():
@@ -200,51 +201,26 @@ def assert_the_collective_builders_route_each_role(
         default="functions",
         override="continuation_functions",
     )
-    assert_role_default(
-        assignment_value(collective, "flow_pool"),
-        default="transitions",
-        override="flow_transitions",
-    )
-    # The default is now READ OFF the per-target `transition_laws` rather than
-    # taken from a model-wide frozenset parameter, so the name it is bound to
-    # changed. The role, and the routing form this pins, did not.
-    assert_role_default(
-        assignment_value(collective, "flow_stochastic_names"),
-        default="solve_stochastic_names",
-        override="flow_stochastic_transition_names",
-    )
 
-    det = call_named(collective, "_get_deterministic_transitions")
-    assert len(det) == 1
-    det_kw = keyword_map(det[0])
-    assert_name(det_kw["transitions"], "flow_pool")
-    # The merge asks the per-target laws, and is handed the RAW override so that
-    # `None` keeps the per-target reading: the resolved name-level set is the
-    # conservative flow answer and would change what the SOLVE phase merges.
-    assert_name(det_kw["transition_laws"], "transition_laws")
-    assert_name(det_kw["stochastic_names"], "flow_stochastic_transition_names")
-
+    # The FLOW is the other half of the split: each stakeholder's within-period
+    # utility and the shared feasibility must be built from `functions` -- the pool
+    # of the phase being built -- never from the perceived continuation pool.
     u_calls = call_named(collective, "_get_U_and_F")
     assert len(u_calls) == 1  # one comprehension call, executed once per stakeholder
     u_kw = keyword_map(u_calls[0])
     assert_name(u_kw["functions"], "functions")
-    assert_name(u_kw["stochastic_transition_names"], "flow_stochastic_names")
-    assert_name(u_kw["next_state_names"], "next_state_names")
+    assert_name(u_kw["constraints"], "constraints")
 
+    # The CONTINUATION -- the per-target state laws and stochastic weights -- prices
+    # the target's V under the perceived law, so both read `continuation_pool`.
     next_calls = call_named(collective, "get_next_state_function_for_solution")
     weight_calls = call_named(collective, "get_next_stochastic_weights_function")
     assert len(next_calls) == len(weight_calls) == 1
     assert_name(keyword_map(next_calls[0])["functions"], "continuation_pool")
     assert_name(keyword_map(weight_calls[0])["functions"], "continuation_pool")
 
-    terminal_collective = qdefs["get_Q_and_F_terminal_collective"]
-    terminal_u = call_named(terminal_collective, "_get_U_and_F")
-    assert len(terminal_u) == 1
-    assert_name(keyword_map(terminal_u[0])["next_state_names"], "next_state_names")
-
 
 def assert_every_dispatch_threads_every_role(
-    processing_tree: ast.Module,
     pdefs: dict[str, ast.FunctionDef],
 ) -> None:
     """The call sites must pass what the signatures now expose."""
@@ -279,13 +255,6 @@ def assert_every_dispatch_threads_every_role(
             f"`{resolver}` — the continuation sub-DAG would see an unresolved marker: "
             f"{rendered}"
         )
-
-    # Both the solution and the simulation terminal path thread the guard vocabulary.
-    tcalls = call_named(processing_tree, "get_Q_and_F_terminal_collective")
-    scalls = call_named(processing_tree, "get_Q_and_F_terminal")
-    assert len(tcalls) == len(scalls) == 2
-    assert all("next_state_names" in keyword_map(call) for call in tcalls)
-    assert all("next_state_names" in keyword_map(call) for call in scalls)
 
 
 def assert_no_hidden_builder_in_a_stakeholder_branch(
@@ -331,7 +300,7 @@ def check_class_invariant(
 
     assert_every_twin_exposes_its_singleton_s_phase_roles(qdefs)
     assert_the_collective_builders_route_each_role(qdefs)
-    assert_every_dispatch_threads_every_role(processing_tree, pdefs)
+    assert_every_dispatch_threads_every_role(pdefs)
     assert_no_hidden_builder_in_a_stakeholder_branch(other_trees)
 
 
@@ -390,12 +359,6 @@ def replace_call_keyword_in_collective(
     return mutate
 
 
-def remove_terminal_forwarding(q_tree, _p_tree, _others):
-    func = functions(q_tree)["get_Q_and_F_terminal_collective"]
-    call = call_named(func, "_get_U_and_F")[0]
-    call.keywords = [kw for kw in call.keywords if kw.arg != "next_state_names"]
-
-
 def drop_age_specialization(_q_tree, p_tree, _others):
     func = functions(p_tree)["_build_Q_and_F_per_period"]
     call = call_named(func, "get_Q_and_F_collective")[0]
@@ -445,19 +408,15 @@ def mutation_catalog() -> list[Mutation]:
                 replace_assignment("continuation_pool", "functions"),
             ),
             Mutation(
-                "force_flow_to_solve_transitions",
-                replace_assignment("flow_pool", "transitions"),
-            ),
-            Mutation(
-                "force_flow_stochastic_names_to_solve",
-                replace_assignment(
-                    "flow_stochastic_names", "stochastic_transition_names"
+                "price_the_flow_under_the_continuation_pool",
+                replace_call_keyword_in_collective(
+                    "_get_U_and_F", "functions", "continuation_pool"
                 ),
             ),
             Mutation(
-                "bypass_flow_pool_at_deterministic_merge",
+                "price_feasibility_under_the_continuation_pool",
                 replace_call_keyword_in_collective(
-                    "_get_deterministic_transitions", "transitions", "transitions"
+                    "_get_U_and_F", "constraints", "continuation_pool"
                 ),
             ),
             Mutation(
@@ -470,42 +429,6 @@ def mutation_catalog() -> list[Mutation]:
                 "bypass_continuation_pool_at_weights",
                 replace_call_keyword_in_collective(
                     "get_next_stochastic_weights_function", "functions", "functions"
-                ),
-            ),
-            Mutation(
-                "drop_flow_stochastic_names_from_utility",
-                replace_call_keyword_in_collective(
-                    "_get_U_and_F",
-                    "stochastic_transition_names",
-                    "stochastic_transition_names",
-                ),
-            ),
-            Mutation(
-                "drop_next_state_guard_from_collective_utility",
-                replace_call_keyword_in_collective(
-                    "_get_U_and_F", "next_state_names", "frozenset()"
-                ),
-            ),
-            Mutation(
-                "drop_terminal_collective_signature_next_state_names",
-                remove_kwonly_arg(
-                    "get_Q_and_F_terminal_collective", "next_state_names"
-                ),
-            ),
-            Mutation(
-                "drop_terminal_collective_guard_forwarding",
-                remove_terminal_forwarding,
-            ),
-            Mutation(
-                "drop_solution_terminal_collective_call_keyword",
-                remove_call_keyword(
-                    "get_Q_and_F_terminal_collective", "next_state_names", occurrence=0
-                ),
-            ),
-            Mutation(
-                "drop_simulation_terminal_collective_call_keyword",
-                remove_call_keyword(
-                    "get_Q_and_F_terminal_collective", "next_state_names", occurrence=1
                 ),
             ),
             Mutation("drop_collective_age_specialization", drop_age_specialization),

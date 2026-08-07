@@ -33,7 +33,7 @@ from _lcm.regime_building.Q_and_F import (
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import SupportAxes, TransitionLaws
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -43,7 +43,6 @@ from _lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
@@ -60,7 +59,6 @@ def _build_compute_intermediates_per_period(
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -68,7 +66,6 @@ def _build_compute_intermediates_per_period(
     enable_jit: bool,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
-    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -92,8 +89,6 @@ def _build_compute_intermediates_per_period(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability
             function for the current regime.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -106,8 +101,6 @@ def _build_compute_intermediates_per_period(
             renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
-        next_state_names: Declared `next_<state>` node names for this regime,
-            forwarded to the no-producer guard.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -166,12 +159,10 @@ def _build_compute_intermediates_per_period(
             scalar_targets=scalar_targets,
             transitions=transitions,
             transition_laws=transition_laws,
-            support_axes=support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
-            next_state_names=next_state_names,
             # The diagnostics are handed the full value arrays and map over
             # every state, so none of the solve kernel's co-mapped axes have
             # been sliced off here.

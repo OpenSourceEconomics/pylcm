@@ -6,9 +6,9 @@ discretizations of the brute-force example with their exact counterparts:
 - **Continuous effort.** The 40-class effort action becomes the continuous
   outer action of an `NNBEGM` solve: the habit (`lagged_effort`) is a
   continuous state on `[0, 1]`, the outer post-decision is
-  `next_lagged_effort = effort`, and the keeper holds the habit through
+  `new_lagged_effort = effort`, and the keeper holds the habit through
   `keep_effort`. Functions that used the effort *class* read the bound
-  post-decision instead (`effort_value = next_lagged_effort`), so both the
+  post-decision instead (`effort_value = new_lagged_effort`), so both the
   keeper and every adjuster candidate evaluate the same DAG.
 - **Analytic adjustment cost.** The five-node `adjustment_cost` solve state
   disappears; the uniform observed fixed cost is integrated in closed form
@@ -148,14 +148,19 @@ N_EFFORT_GRID = 17
 N_CONSUMPTION_GRID = 50
 
 
-def effort_value(next_lagged_effort: ContinuousState) -> FloatND:
+def effort_value(new_lagged_effort: ContinuousState) -> FloatND:
     """The continuous effort choice, read through the bound outer node.
 
     Inside the nested solve the outer action itself is not visible to the
-    inner problems; the outer post-decision (`next_lagged_effort = effort`)
+    inner problems; the outer post-decision (`new_lagged_effort = effort`)
     is — bound per adjuster candidate, and to `keep_effort` for the keeper.
+
+    `new_lagged_effort` is the habit chosen THIS period: an ordinary function
+    of this period's action, which the habit law then carries forward. It is
+    not a `next_<state>` — that name is reserved for a transition's output and
+    may not be read within the period.
     """
-    return next_lagged_effort
+    return new_lagged_effort
 
 
 def lagged_effort_value(lagged_effort: ContinuousState) -> FloatND:
@@ -168,9 +173,14 @@ def keep_effort(lagged_effort: ContinuousState) -> FloatND:
     return lagged_effort
 
 
-def next_lagged_effort(effort: ContinuousAction) -> ContinuousState:
-    """The habit law of motion — the outer post-decision (unit slope)."""
+def new_lagged_effort(effort: ContinuousAction) -> ContinuousState:
+    """The habit chosen this period — the outer post-decision (unit slope)."""
     return effort
+
+
+def next_lagged_effort(new_lagged_effort: ContinuousState) -> ContinuousState:
+    """The habit law of motion: carry this period's chosen habit forward."""
+    return new_lagged_effort
 
 
 def utility(
@@ -277,7 +287,8 @@ def build_paper_solver(
             interval_batch_size=interval_batch_size,
         ),
         outer_action="effort",
-        outer_post_decision="next_lagged_effort",
+        outer_state="lagged_effort",
+        outer_post_decision="new_lagged_effort",
         outer_no_adjustment_candidate="keep_effort",
         outer_search=outer_search
         if outer_search is not None
@@ -328,6 +339,7 @@ def build_alive_regime(*, outer_search: AdaptiveOuterMesh | None = None) -> Regi
         },
         functions={
             "utility": utility,
+            "new_lagged_effort": new_lagged_effort,
             "effort_value": effort_value,
             "lagged_effort_value": lagged_effort_value,
             "keep_effort": keep_effort,

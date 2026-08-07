@@ -10,6 +10,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    LinSpacedGrid,
     MarkovTransition,
     Model,
     Regime,
@@ -41,6 +42,22 @@ def _no_utility() -> ScalarFloat:
 
 def _shock_plus_ten(shock: ScalarFloat) -> ScalarFloat:
     return shock + 10.0
+
+
+_WEALTH = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
+
+
+def _keep_wealth(wealth: ScalarFloat) -> ScalarFloat:
+    return wealth
+
+
+def _enter_at_the_node_from_wealth(wealth: ScalarFloat) -> ScalarFloat:
+    del wealth
+    return jnp.float32(0)
+
+
+def _shock_and_wealth(shock: ScalarFloat, wealth: ScalarFloat) -> ScalarFloat:
+    return shock + wealth
 
 
 @pytest.mark.parametrize("value", [-1.0, 0.0, 1.0, 5.0])
@@ -83,3 +100,54 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([10.0]), atol=1e-5
     )
+
+
+def _model_entering_at(enter_law) -> Model:
+    """Source entering the one-node target through a state-dependent law."""
+    return Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_to_target)},
+                active=lambda age: age < 22,
+                states={"wealth": _WEALTH},
+                state_transitions={
+                    "shock": {"target": enter_law},
+                    "wealth": {"target": _keep_wealth},
+                },
+                functions={"utility": _no_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": _ONE_NODE, "wealth": _WEALTH},
+                functions={"utility": _shock_and_wealth},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_a_state_dependent_entry_off_the_sole_node_is_not_silently_accepted() -> None:
+    """Only the wealth point equal to the sole node yields a usable continuation.
+
+    The support holds one value, zero. A law entering at the source's wealth is on
+    support at wealth zero and off it at one and two, where no representation exists
+    — so those points must not come back as ordinary numbers.
+    """
+    V = _model_entering_at(_keep_wealth).solve(
+        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+        log_level="off",
+    )
+
+    off_support = np.asarray(V[0]["source"]).ravel()[1:]
+    assert np.isnan(off_support).all()
+
+
+def test_an_entry_exactly_on_the_sole_node_stays_usable() -> None:
+    """A law naming the sole node itself is on support everywhere."""
+    V = _model_entering_at(_enter_at_the_node_from_wealth).solve(
+        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+        log_level="off",
+    )
+
+    assert not np.isnan(np.asarray(V[0]["source"])).any()
