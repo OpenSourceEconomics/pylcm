@@ -647,13 +647,13 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
-def test_runtime_check_raises_on_a_subnormal_probability() -> None:
-    """A probability too small for the dtype to carry surfaces at solve.
+def test_a_subnormal_probability_is_a_valid_row() -> None:
+    """A probability too small for the dtype to carry is not a misspecification.
 
-    Such a row sums to one and lies in `[0, 1]`, so every other check passes it.
-    It cannot be weighted, though: the hardware treats it as zero in both the
-    comparison that decides whether the node occurs and the multiplication that
-    would form its contribution, so the node would be dropped as impossible.
+    Such a row sums to one and lies in `[0, 1]`, and the outcome it names is
+    simply very unlikely. Its contribution to a finite continuation is below the
+    last bit, so the solve prices the row as though the outcome were absent
+    rather than rejecting a model whose answer is correct.
     """
     active = jnp.zeros(()).dtype
     tiny = jnp.finfo(active).tiny
@@ -663,5 +663,6 @@ def test_runtime_check_raises_on_a_subnormal_probability() -> None:
         return jnp.asarray([subnormal, 1.0 - subnormal], dtype=active)
 
     model = _model_with_state_probs(subnormal_probs)
-    with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subnormal"):
-        model.solve(log_level="debug", params={"discount_factor": 0.95})
+    V = model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+    assert not bool(jnp.any(jnp.isnan(jnp.asarray(V[0]["alive"]))))

@@ -34,11 +34,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import (
-    joint_weight_or_nan,
-    probability_or_nan,
-    zero_safe_weighted_term,
-)
+from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -475,27 +471,15 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            # Refused here, once, so that the mass sum, the range guard, the
-            # liveness test and both continuation routes read the same event
-            # set. A probability the dtype can represent but not carry -- a
-            # subnormal -- would otherwise compare and multiply as zero in
-            # every one of them, and a target of strictly positive probability
-            # would be priced as unreachable.
-            target_probability = probability_or_nan(
-                active_regime_probs[target_regime_name]
-            )
+            # The mass sum, the range guard and the liveness test read the
+            # weight as the arithmetic sees it: a probability too small for the
+            # dtype to use contributes nothing to any of them, which is the
+            # right answer for all three. Whether it contributes nothing to the
+            # *continuation* depends on the value standing at it, so that is
+            # settled per term rather than here.
+            target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
             smallest_probability = jnp.minimum(smallest_probability, target_probability)
-            # A target carrying no mass here is never consulted, so whatever its
-            # entry law names at this point -- a value off the target's support,
-            # or nothing meaningful at all -- must not reach the aggregate. The
-            # value is replaced rather than the product masked: `0 * nan` is
-            # `nan`, and zeroing the value leaves the derivative finite too.
-            #
-            # The test is on being exactly zero. A negative probability is not a
-            # target that is never consulted, and dropping it would answer with
-            # the value the remaining targets would have produced on their own.
-            carries_mass = target_probability != 0
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -507,8 +491,8 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                CE = CE + target_probability * jnp.where(
-                    carries_mass, next_V_expected_arr, zero
+                CE = CE + zero_safe_weighted_term(
+                    target_probability, next_V_expected_arr
                 )
             else:
                 values, node_weights = _as_lottery(
@@ -526,7 +510,7 @@ def _get_compute_CE(
                 # factors of the same joint event, so their product carries the
                 # same refusal as the product across the stochastic axes.
                 lottery_weights.append(
-                    joint_weight_or_nan(
+                    joint_weight(
                         jnp.stack(
                             jnp.broadcast_arrays(target_probability, node_weights)
                         )
@@ -1071,7 +1055,7 @@ def _get_joint_weights_function(
         # One factor per stochastic axis. Their product is the node's
         # probability, and it is refused rather than rounded to impossible
         # where every factor can occur but the product cannot be represented.
-        return joint_weight_or_nan(jnp.array(list(kwargs.values())))
+        return joint_weight(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
     return productmap(

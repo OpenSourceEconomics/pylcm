@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.zero_safe import joint_weight_or_nan
+from _lcm.zero_safe import joint_weight
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -34,6 +34,7 @@ from lcm import (
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
+_WEALTH_VALUES = np.array([1.0, 2.0, 3.0, 4.0])
 
 
 @categorical(ordered=False)
@@ -67,63 +68,69 @@ def _keep_wealth(wealth: ScalarFloat) -> ScalarFloat:
 
 
 @pytest.mark.parametrize("n_factors", [2, 3, 4])
-def test_normal_factors_with_an_unrepresentable_product_give_nan(
+def test_normal_factors_with_an_unrepresentable_product_stay_nonzero(
     n_factors: int,
 ) -> None:
-    """Factors the dtype holds, with a product it does not, refuse to be zero."""
+    """Factors the dtype holds, with a product it does not, do not become zero.
+
+    Zero is reserved for an event that cannot occur. The product leaves as the
+    smallest normal magnitude instead: small enough to contribute nothing to a
+    finite continuation, nonzero so an infinity standing at the node survives.
+    """
     factor = float(np.finfo(np.float32).tiny ** (1.0 / n_factors) / 2)
     factors = jnp.asarray([factor] * n_factors, dtype=jnp.float32)
     assert bool(jnp.all(factors >= np.finfo(np.float32).tiny))
 
-    assert bool(jnp.isnan(joint_weight_or_nan(factors)))
+    assert float(joint_weight(factors)) == float(np.finfo(np.float32).tiny)
 
 
-def test_a_factor_of_exactly_zero_is_a_null_event_not_a_refusal() -> None:
-    """An impossible event keeps its zero weight rather than becoming `NaN`."""
+def test_a_factor_of_exactly_zero_is_a_null_event() -> None:
+    """An impossible event keeps its zero weight rather than being raised."""
     factors = jnp.asarray([0.0, 0.5], dtype=jnp.float32)
 
-    assert float(joint_weight_or_nan(factors)) == 0.0
+    assert float(joint_weight(factors)) == 0.0
 
 
 def test_ordinary_factors_multiply_as_they_always_did() -> None:
     """A representable product is returned unchanged."""
     factors = jnp.asarray([0.25, 0.5, 0.5], dtype=jnp.float32)
 
-    np.testing.assert_allclose(float(joint_weight_or_nan(factors)), 0.0625, rtol=0)
+    np.testing.assert_allclose(float(joint_weight(factors)), 0.0625, rtol=0)
 
 
-def test_a_directly_supplied_subnormal_factor_is_refused() -> None:
-    """A single subnormal probability is unrepresentable, not impossible.
+def test_a_directly_supplied_subnormal_factor_is_raised_not_dropped() -> None:
+    """A single subnormal probability is unusable, not impossible.
 
-    It compares equal to zero under every arithmetic test, so nothing short of
-    reading its bits can tell it from a null event.
+    It compares equal to zero under every arithmetic test on a flushing
+    backend, so nothing short of reading its bits can tell it from a null
+    event.
     """
     subnormal = float(
         np.nextafter(np.float32(np.finfo(np.float32).tiny), np.float32(0))
     )
     factors = jnp.asarray([subnormal], dtype=jnp.float32)
 
-    assert bool(jnp.isnan(joint_weight_or_nan(factors)))
+    assert float(joint_weight(factors)) == float(np.finfo(np.float32).tiny)
 
 
 def test_a_negative_factor_stays_visible() -> None:
     """A negative probability is malformed, and is not rescued into a refusal."""
     factors = jnp.asarray([-0.5, 0.5], dtype=jnp.float32)
 
-    assert float(joint_weight_or_nan(factors)) == -0.25
+    assert float(joint_weight(factors)) == -0.25
 
 
-def test_the_refusal_survives_jit() -> None:
-    """The check is arithmetic, so it holds inside a compiled program."""
+def test_the_rule_survives_jit() -> None:
+    """The rule is arithmetic, so it holds inside a compiled program."""
     factor = float(np.finfo(np.float32).tiny) ** 0.5 / 2
     factors = jnp.asarray([factor, factor], dtype=jnp.float32)
 
-    assert bool(jnp.isnan(jax.jit(joint_weight_or_nan)(factors)))
+    assert float(jax.jit(joint_weight)(factors)) == float(np.finfo(np.float32).tiny)
 
 
 @pytest.mark.parametrize("n_factors", [2, 3, 4])
-def test_the_refusal_holds_at_the_active_precision(n_factors: int) -> None:
-    """Whatever precision the suite runs at, an unrepresentable product refuses.
+def test_the_rule_holds_at_the_active_precision(n_factors: int) -> None:
+    """Whatever precision the suite runs at, an unrepresentable product stays nonzero.
 
     float64 needs far smaller factors than float32 before a product underflows,
     so the witness is derived from the active dtype rather than fixed.
@@ -134,7 +141,7 @@ def test_the_refusal_holds_at_the_active_precision(n_factors: int) -> None:
     factors = jnp.asarray([factor] * n_factors, dtype=active)
     assert bool(jnp.all(factors >= tiny))
 
-    assert bool(jnp.isnan(joint_weight_or_nan(factors)))
+    assert float(joint_weight(factors)) == tiny
 
 
 def test_an_ordinary_lottery_is_untouched_at_the_active_precision() -> None:
@@ -142,15 +149,17 @@ def test_an_ordinary_lottery_is_untouched_at_the_active_precision() -> None:
     active = jnp.zeros(()).dtype
     factors = jnp.asarray([0.5, 0.25], dtype=active)
 
-    np.testing.assert_allclose(float(joint_weight_or_nan(factors)), 0.125, rtol=0)
+    np.testing.assert_allclose(float(joint_weight(factors)), 0.125, rtol=0)
 
 
-def test_a_model_whose_joint_node_underflows_solves_to_nan() -> None:
+def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     """Two ordinary Markov rows can still make a joint node the dtype cannot hold.
 
     Each row is a valid distribution of normal probabilities, so every
     input-level check passes. Their joint node is the product of the two small
-    entries, which underflows. The solve refuses rather than dropping the node.
+    entries, which underflows. Its value is finite, so its contribution is below
+    the last bit of the continuation and the solve answers as though the node
+    were absent — which it is, to every tolerance the model declares.
     """
     active = jnp.zeros(()).dtype
     small = float(jnp.finfo(active).tiny) ** 0.5 / 2
@@ -197,4 +206,6 @@ def test_a_model_whose_joint_node_underflows_solves_to_nan() -> None:
         log_level="off",
     )
 
-    assert bool(jnp.all(jnp.isnan(jnp.asarray(V[0]["alive"]))))
+    np.testing.assert_allclose(
+        np.asarray(V[0]["alive"]), np.broadcast_to(_WEALTH_VALUES, (2, 2, 4))
+    )
