@@ -4,18 +4,20 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, get_ancestors, with_signature
+from dags import (
+    concatenate_functions,
+    get_annotations,
+    with_signature,
+)
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.regime_building.next_state import (
-    get_next_interpolation_basis_weights_function,
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.transition_laws import (
-    SupportAxes,
     TransitionLaws,
     is_interpolation_basis,
     is_stochastic,
@@ -25,7 +27,6 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
-    FunctionName,
     NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
@@ -38,7 +39,14 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND
+from _lcm.zero_safe import zero_safe_weighted_term
+from lcm.exceptions import ModelInitializationError
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    IntND,
+)
 
 
 def get_Q_and_F(
@@ -50,7 +58,6 @@ def get_Q_and_F(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -77,8 +84,6 @@ def get_Q_and_F(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -97,27 +102,13 @@ def get_Q_and_F(
         for a non-terminal period.
 
     """
-    deterministic_transitions, conflicting_deterministic_transition_names = (
-        _get_deterministic_transitions(
-            transitions=transitions,
-            transition_laws=transition_laws,
-        )
-    )
-    U_and_F = _get_U_and_F(
-        functions=functions,
-        constraints=constraints,
-        deterministic_transitions=deterministic_transitions,
-        conflicting_deterministic_transition_names=(
-            conflicting_deterministic_transition_names
-        ),
-    )
-    compute_CE, continuation_deps = _get_compute_CE(
+    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -127,7 +118,11 @@ def get_Q_and_F(
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        include=frozenset(
+            {"next_regime_to_V_arr", "period", "age"}
+            | flat_param_names
+            | continuation_arg_names
+        ),
         exclude=frozenset(),
     )
 
@@ -178,7 +173,6 @@ def get_compute_intermediates(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -208,8 +202,6 @@ def get_compute_intermediates(
             functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -227,27 +219,13 @@ def get_compute_intermediates(
         Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
 
     """
-    deterministic_transitions, conflicting_deterministic_transition_names = (
-        _get_deterministic_transitions(
-            transitions=transitions,
-            transition_laws=transition_laws,
-        )
-    )
-    U_and_F = _get_U_and_F(
-        functions=functions,
-        constraints=constraints,
-        deterministic_transitions=deterministic_transitions,
-        conflicting_deterministic_transition_names=(
-            conflicting_deterministic_transition_names
-        ),
-    )
-    compute_CE, continuation_deps = _get_compute_CE(
+    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
+    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -257,7 +235,11 @@ def get_compute_intermediates(
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        include=frozenset(
+            {"next_regime_to_V_arr", "period", "age"}
+            | flat_param_names
+            | continuation_arg_names
+        ),
         exclude=frozenset(),
     )
 
@@ -389,7 +371,6 @@ def _get_compute_CE(
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -397,6 +378,7 @@ def _get_compute_CE(
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
+    frozenset[str],
 ]:
     """Build the closure that aggregates next period's value into `CE`.
 
@@ -426,8 +408,6 @@ def _get_compute_CE(
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
@@ -437,8 +417,10 @@ def _get_compute_CE(
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
     Returns:
-        Tuple of the closure returning `(CE, active_regime_probs)` and the
-        dependencies whose arguments must enter the calling closure's signature.
+        Tuple of the closure returning `(CE, active_regime_probs)`, the
+        dependencies whose arguments must enter the calling closure's signature,
+        and the further argument names that signature must carry for weights
+        formed inside the node axes.
 
     """
     continuations = {
@@ -447,7 +429,6 @@ def _get_compute_CE(
             functions=functions,
             bundle=transitions.get(target_regime_name, MappingProxyType({})),
             transition_laws=transition_laws,
-            support_axes=support_axes,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
         )
@@ -528,47 +509,26 @@ def _get_compute_CE(
             extra_kw = {
                 k: states_actions_params[k] for k in continuation.extra_param_names
             }
-            # The interpolator is indexed, not evaluated, along a node axis. A
-            # declared entry publishes its physical value under the public name
-            # every other law reads; what the target's value function is indexed
-            # by is the private axis, substituted here and nowhere else — so the
-            # physical value stays intact in `next_states` for the dependent
-            # laws, diagnostics, and simulation.
             interpolator_coordinates = {
                 name: val
                 for name, val in next_states.items()
                 if name not in co_map_next_names
-            } | dict(continuation.support_axes)
+            }
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
 
-            if continuation.n_basis_axes:
-                # A declared entry names one value; the basis axes are only how
-                # the target's nodes can express it. Contracting them here states
-                # that value as the single number `Σ_j w_j · V(node_j)` -- the
-                # linear interpolation of the target's value function -- before
-                # any lottery is formed. The coefficients sum to one by
-                # construction, so normalizing here would mask a malformed basis
-                # rather than protect against one.
-                next_V_at_stochastic_states_arr = jnp.tensordot(
-                    next_V_at_stochastic_states_arr,
-                    continuation.joint_basis_weights(
-                        **continuation.basis_weights(**states_actions_params)
-                    ),
-                    axes=continuation.n_basis_axes,
-                )
-
+            # A node the target's own lottery gives zero probability is never
+            # realized, so whatever a law names there -- a value off the target's
+            # support, and so a NaN out of the interpolator -- is not part of the
+            # model. Both aggregation routes drop such a node rather than
+            # multiplying it by its zero weight, since `0 * nan` is `nan`: the
+            # per-target route in `_expectation_over_stochastic_nodes`, the
+            # lottery route in the certainty equivalent's own `aggregate`.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
-            # A target carrying no mass here is never consulted, so whatever its
-            # entry law names at this point -- a value off the target's support,
-            # or nothing meaningful at all -- must not reach the aggregate.
-            # The value is replaced rather than the product masked: `0 * nan` is
-            # `nan`, and zeroing the value leaves the derivative finite too.
-            carries_mass = target_probability > 0
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -580,8 +540,12 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
-                CE = CE + target_probability * jnp.where(
-                    carries_mass, next_V_expected_arr, zero
+                # A target carrying no mass here is never consulted, so whatever
+                # its entry law names at this point -- a value off the target's
+                # support, or nothing meaningful at all -- must not reach the
+                # aggregate.
+                CE = CE + zero_safe_weighted_term(
+                    target_probability, next_V_expected_arr
                 )
             else:
                 values, node_weights = _as_lottery(
@@ -589,8 +553,18 @@ def _get_compute_CE(
                     weights=joint_next_stochastic_states_weights,
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
-                lottery_values.append(jnp.where(carries_mass, values, zero))
-                lottery_weights.append(target_probability * node_weights)
+                # Same rule, applied to the value rather than to a product: the
+                # aggregate reduces values and weights together, so a node that
+                # cannot occur has to be neutral before it is collected.
+                #
+                # The test is each node's *final* weight, not the target
+                # probability alone. A target reached with certainty still
+                # carries nodes of probability zero -- a Markov row with a zero
+                # entry beside a state where every action is infeasible -- and
+                # the aggregate cannot tell such a node from a live one.
+                final_weights = target_probability * node_weights
+                lottery_values.append(jnp.where(final_weights == 0, zero, values))
+                lottery_weights.append(final_weights)
 
         if reduces_per_target and (period_targets or scalar_targets):
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
@@ -638,9 +612,8 @@ def _get_compute_CE(
         compute_regime_transition_probs,
         *(c.next_states for c in continuations.values()),
         *(c.lottery_weights for c in continuations.values()),
-        *(c.basis_weights for c in continuations.values()),
     )
-    return compute_CE, deps
+    return compute_CE, deps, frozenset()
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -653,27 +626,14 @@ class _TargetContinuation:
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
     """Marginal probabilities of the target's stochastic laws."""
 
-    basis_weights: Callable[..., dict[str, FloatND | IntND]]
-    """Marginal node-basis coefficients of the target's declared entry laws."""
-
     joint_lottery_weights: Callable[..., FloatND]
-    """Outer product of the lottery marginals, over the leading node axes."""
-
-    joint_basis_weights: Callable[..., FloatND]
-    """Outer product of the basis marginals, over the trailing node axes."""
+    """Outer product of the lottery marginals, over the node axes."""
 
     next_V: Callable[..., FloatND]
-    """Target's value function, product-mapped over its node axes.
+    """Target's value function, product-mapped over its lottery axes.
 
-    The axes come in the order `(lottery..., basis...)`, so the basis block is
-    the tail and contracts away in one `tensordot`.
-    """
-
-    support_axes: MappingProxyType[TransitionFunctionName, Int1D]
-    """Private node axes to index `next_V` along, keyed by public next-state name.
-
-    One entry per declared entry law. The public name produces that law's
-    physical value everywhere else; only the interpolator sees this axis.
+    A declared entry gets no axis: its one value is interpolated on the target's
+    nodes inside the interpolator, so the surface carries genuine draws only.
     """
 
     extra_param_names: frozenset[str]
@@ -686,8 +646,218 @@ class _TargetContinuation:
     has_lottery_axes: bool
     """Whether the target draws anything, i.e. whether `next_V` has lottery axes."""
 
-    n_basis_axes: int
-    """Number of trailing axes to contract against the basis weights."""
+    lottery_axis_names: tuple[TransitionFunctionName, ...] = ()
+    """Stochastic `next_<state>` names, in the order their axes appear."""
+
+    draw_dependent_names: frozenset[TransitionFunctionName] = frozenset()
+    """Laws resolved on a node axis, one value per node of a sibling draw."""
+
+
+def _draw_dependencies_by_law(
+    *,
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    stochastic_names: tuple[TransitionFunctionName, ...],
+) -> MappingProxyType[TransitionFunctionName, frozenset[TransitionFunctionName]]:
+    """Return, per deterministic law, which of the target's own draws it reads.
+
+    A law reading `next_<state>` of a stochastic sibling depends on which node the
+    draw lands on, so its value is one number per node rather than one number. The
+    dependence travels through helpers, so the walk is transitive.
+
+    Which draws a law reads — not merely whether it reads any — is what the
+    consumers need: the interpolator substitutes exactly those, and the
+    construction-time support requirement falls on exactly those and no other
+    stochastic sibling.
+
+    Args:
+        bundle: This target's unqualified `next_<state>` transition functions.
+        functions: Immutable mapping of function names to internal user functions.
+        stochastic_names: This target's stochastic `next_<state>` names.
+
+    Returns:
+        Immutable mapping of each draw-dependent law in `bundle` order to the
+        draws it reads. Laws reading none are absent.
+
+    """
+    draws = set(stochastic_names)
+    candidates = {
+        name: func
+        for name, func in (dict(functions) | dict(bundle)).items()
+        if name not in draws
+    }
+    reads: dict[TransitionFunctionName, frozenset[TransitionFunctionName]] = {
+        name: frozenset() for name in candidates
+    }
+    growing = True
+    while growing:
+        growing = False
+        for name, func in candidates.items():
+            args = [arg for arg in get_annotations(func) if arg != "return"]
+            found = {arg for arg in args if arg in draws}
+            found |= {draw for arg in args if arg in reads for draw in reads[arg]}
+            merged = reads[name] | found
+            if merged != reads[name]:
+                reads[name] = merged
+                growing = True
+    return MappingProxyType({name: reads[name] for name in bundle if reads.get(name)})
+
+
+def _fail_if_a_draw_reads_a_sibling_draw(
+    *,
+    target_regime_name: RegimeName,
+    lottery_weights: Callable[..., dict[str, FloatND | IntND]],
+    stochastic_names: tuple[TransitionFunctionName, ...],
+) -> None:
+    """Check that no draw's own distribution is conditioned on another draw.
+
+    Each draw contributes its own node axis and its own weight vector, and the
+    joint distribution over those axes is formed as the product of the marginals.
+    A draw whose probabilities depend on where a sibling landed is not that
+    product — it is a genuine joint kernel, and no product of marginals expresses
+    the correlation it describes.
+
+    The dependence is read off the weight DAG's own arguments, which is where it
+    surfaces: a draw has no realized value while the expectation over it is being
+    built, so a sibling's weights asking for one leaves it unbound.
+
+    Args:
+        target_regime_name: Regime whose laws are being built, named in the message.
+        lottery_weights: DAG producing this target's probability weight vectors.
+        stochastic_names: This target's stochastic `next_<state>` names.
+
+    Raises:
+        ModelInitializationError: If a draw's weights read a sibling draw.
+
+    """
+    read_draws = sorted(get_union_of_args([lottery_weights]) & set(stochastic_names))
+    if not read_draws:
+        return
+    named = ", ".join(f"'{name}'" for name in read_draws)
+    msg = (
+        f"A draw of regime '{target_regime_name}' has probabilities that read "
+        f"{named}, which are draws of the same regime. Each draw carries its own "
+        f"nodes and its own probabilities, and their joint distribution is formed "
+        f"as the product of those marginals — a distribution conditioned on where "
+        f"a sibling landed is a joint kernel that product cannot express. Declare "
+        f"the two as one state with a joint law, or condition a deterministic law "
+        f"on the draw instead of the draw's own distribution."
+    )
+    raise ModelInitializationError(msg)
+
+
+def _fail_if_a_read_draw_has_no_nodes_yet(
+    *,
+    target_regime_name: RegimeName,
+    dependencies_by_law: MappingProxyType[
+        TransitionFunctionName, frozenset[TransitionFunctionName]
+    ],
+    v_interpolation_info: VInterpolationInfo,
+) -> None:
+    """Check that every draw a law reads has a support while the model builds.
+
+    Resolving a dependent law on the node axis reads the nodes themselves, so a
+    process whose law arrives at runtime has nothing to resolve against — its
+    nodes are not numbers yet. The requirement falls on the draws that are read
+    and on no other stochastic sibling: a process nothing resolves against is
+    free to receive its law at solve time, as any carried process is.
+
+    Args:
+        target_regime_name: Regime whose laws are being built, named in the message.
+        dependencies_by_law: Immutable mapping of each draw-dependent law to the
+            draws it reads.
+        v_interpolation_info: The target's V-interpolation info, holding the grids.
+
+    Raises:
+        ModelInitializationError: If a read draw's process is not fully specified.
+
+    """
+    readers_by_draw: dict[TransitionFunctionName, list[TransitionFunctionName]] = {}
+    for law_name, draws in dependencies_by_law.items():
+        for draw in draws:
+            readers_by_draw.setdefault(draw, []).append(law_name)
+
+    for next_state_name in sorted(readers_by_draw):
+        state_name = next_state_name.removeprefix("next_")
+        grid = v_interpolation_info.discrete_states[state_name]
+        if getattr(grid, "is_fully_specified", True):
+            continue
+        msg = (
+            f"{', '.join(sorted(readers_by_draw[next_state_name]))} of regime "
+            f"'{target_regime_name}' reads the draw '{next_state_name}', but that "
+            f"process is parameterized at runtime, so its nodes are not known "
+            f"while the model builds. A law reading a draw is resolved on that "
+            f"draw's own nodes, which requires them to be fixed at construction — "
+            f"through the process constructor or `fixed_params`."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _get_interpolator_resolving_draws(
+    *,
+    next_V_interpolator: Callable[..., FloatND],
+    bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    functions: EconFunctionsMapping,
+    stochastic_names: tuple[TransitionFunctionName, ...],
+    draw_dependent_names: tuple[TransitionFunctionName, ...],
+    node_values: MappingProxyType[TransitionFunctionName, FloatND],
+) -> Callable[..., FloatND]:
+    """Wrap the interpolator so draw-dependent laws resolve on the node axis.
+
+    The caller product-maps the result over the target's node axes, so one call
+    sees one node per stochastic law. The draw's *index* is what indexes the value
+    function; the draw's *value* is what a dependent law reads. Both come from the
+    same node, which is why resolving them here — inside the axis the process
+    already contributes — needs no second axis and no parameter for the draw.
+
+    Args:
+        next_V_interpolator: The target's value-function interpolator.
+        bundle: This target's unqualified `next_<state>` transition functions.
+        functions: Immutable mapping of function names to internal user functions.
+        stochastic_names: This target's stochastic `next_<state>` names.
+        draw_dependent_names: Laws to resolve here rather than ahead of the axes.
+        node_values: Immutable mapping of each stochastic law to its nodes, indexed
+            by the value its next-state function yields.
+
+    Returns:
+        A callable with the interpolator's signature, minus the laws it now
+        resolves itself, plus whatever resolving them reads.
+
+    """
+    resolve = concatenate_functions(
+        functions={
+            name: func
+            for name, func in (dict(bundle) | dict(functions)).items()
+            if name not in stochastic_names
+        },
+        targets=list(draw_dependent_names),
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    resolver_args = get_union_of_args([resolve])
+    interpolator_args = get_union_of_args([next_V_interpolator])
+    read_as_a_draw = tuple(name for name in stochastic_names if name in resolver_args)
+    arg_names = sorted((interpolator_args - set(draw_dependent_names)) | resolver_args)
+
+    @with_signature(args=arg_names)
+    def interpolate_at_this_node(**kwargs: FloatND) -> FloatND:
+        drawn = {
+            name: node_values[name][kwargs[name].astype(jnp.int32)]
+            for name in read_as_a_draw
+        }
+        resolved = resolve(
+            **{
+                k: v for k, v in kwargs.items() if k in resolver_args and k not in drawn
+            },
+            **drawn,
+        )
+        return next_V_interpolator(
+            **{k: v for k, v in kwargs.items() if k in interpolator_args},
+            **resolved,
+        )
+
+    return interpolate_at_this_node
 
 
 def _build_target_continuation(
@@ -696,17 +866,17 @@ def _build_target_continuation(
     functions: EconFunctionsMapping,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
-    A law that carries weights contributes a node axis to the interpolated value
-    function either way, but only a lottery's weights are probabilities. The two
-    groups are kept apart here, with the lottery axes product-mapped first, so
-    the basis axes sit at the tail and can be contracted before the certainty
-    equivalent ever sees the surface.
+    A law that carries weights is either a lottery or a declared entry, and only
+    a lottery's weights are probabilities. The distinction decides what the value
+    function is mapped over: a lottery gets a node axis, because its outcome is
+    genuinely uncertain and every node can occur; a declared entry names one
+    value, which the interpolator places on the target's nodes without the axis
+    ever being formed.
 
     Args:
         target_regime_name: Regime the continuation leads into.
@@ -714,8 +884,6 @@ def _build_target_continuation(
         bundle: This target's unqualified `next_<state>` transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
 
@@ -731,7 +899,12 @@ def _build_target_continuation(
         for key in bundle
         if is_interpolation_basis(transition_laws, target_regime_name, key)
     )
-    node_variables = (*lottery_variables, *basis_variables)
+    # A declared entry names one value on the target's node axis, so it is
+    # interpolated there rather than enumerated: only a genuine draw gets an axis
+    # of its own on the continuation surface. Enumerating a declared entry instead
+    # would make the surface Cartesian in the entered dimensions -- the product of
+    # their node counts at every state-action point -- to state a single number.
+    node_variables = lottery_variables
 
     V_arr_name = "next_V_arr"
     next_V_interpolator = get_V_interpolator(
@@ -739,40 +912,78 @@ def _build_target_continuation(
         state_prefix="next_",
         V_arr_name=V_arr_name,
         co_map_state_names=co_map_state_names,
+        entered_process_names=tuple(
+            name.removeprefix("next_") for name in basis_variables
+        ),
     )
+
+    # A law reading one of this target's own draws has one value per node, so it
+    # is resolved inside the node axes rather than once ahead of them. Which
+    # consumer resolves it depends on what the law is: a law feeding a coordinate
+    # is resolved by the interpolator, a declared entry by its basis weights.
+    lottery_weights = get_next_stochastic_weights_function(
+        functions=functions,
+        transitions=bundle,
+        transition_laws=transition_laws,
+        regime_name=target_regime_name,
+    )
+    _fail_if_a_draw_reads_a_sibling_draw(
+        target_regime_name=target_regime_name,
+        lottery_weights=lottery_weights,
+        stochastic_names=lottery_variables,
+    )
+    dependencies_by_law = _draw_dependencies_by_law(
+        bundle=bundle, functions=functions, stochastic_names=lottery_variables
+    )
+    # A declared entry is a coordinate like any other now, so a law reading a
+    # sibling draw is resolved inside that draw's axes whether it feeds a
+    # coordinate or an entry.
+    dependent_coordinate_names = tuple(dependencies_by_law)
+    node_values = MappingProxyType(
+        {
+            name: v_interpolation_info.discrete_states[
+                name.removeprefix("next_")
+            ].to_jax()
+            for name in lottery_variables
+        }
+    )
+    if dependencies_by_law:
+        _fail_if_a_read_draw_has_no_nodes_yet(
+            target_regime_name=target_regime_name,
+            dependencies_by_law=dependencies_by_law,
+            v_interpolation_info=v_interpolation_info,
+        )
+    if dependent_coordinate_names:
+        next_V_interpolator = _get_interpolator_resolving_draws(
+            next_V_interpolator=next_V_interpolator,
+            bundle=bundle,
+            functions=functions,
+            stochastic_names=lottery_variables,
+            draw_dependent_names=dependent_coordinate_names,
+            node_values=node_values,
+        )
+
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
-            functions=functions, transitions=bundle
-        ),
-        lottery_weights=get_next_stochastic_weights_function(
             functions=functions,
             transitions=bundle,
-            transition_laws=transition_laws,
-            regime_name=target_regime_name,
+            targets=[key for key in bundle if key not in dependencies_by_law],
         ),
-        basis_weights=get_next_interpolation_basis_weights_function(
-            functions=functions,
-            transitions=bundle,
-            transition_laws=transition_laws,
-            regime_name=target_regime_name,
-        ),
+        lottery_weights=lottery_weights,
         joint_lottery_weights=_get_joint_weights_function(
             regime_name=target_regime_name, variables=lottery_variables
         ),
-        joint_basis_weights=_get_joint_weights_function(
-            regime_name=target_regime_name, variables=basis_variables
-        ),
+        lottery_axis_names=lottery_variables,
         next_V=productmap(
             func=next_V_interpolator,
             variables=node_variables,
             batch_sizes=dict.fromkeys(node_variables, 0),
         ),
-        support_axes=support_axes.get(target_regime_name, MappingProxyType({})),
         extra_param_names=frozenset(
             get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
         ),
         has_lottery_axes=bool(lottery_variables),
-        n_basis_axes=len(basis_variables),
+        draw_dependent_names=frozenset(dependencies_by_law),
     )
 
 
@@ -820,17 +1031,17 @@ def _scalar_target_contribution(
         # route, so the linear fast path divides by the mass of *every* target
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
+        # Same rule on either route: a target reached with no mass contributes
+        # nothing, and its value is neutralized rather than its product masked.
+        # `-inf` is the ordinary value of a state where every action is
+        # infeasible, so `0 * -inf` is otherwise how a single unreachable target
+        # takes the reachable ones down with it.
         if as_lottery:
             node = jnp.ravel(scalar_V)
-            values.append(node)
+            values.append(jnp.where(prob == 0, jnp.zeros_like(node), node))
             weights.append(prob * jnp.ones_like(node))
         else:
-            # Same rule as for the targets that carry state: a target reached
-            # with no mass contributes nothing, and its value is replaced rather
-            # than its product masked. `-inf` is the ordinary value of a state
-            # where every action is infeasible, so `0 * -inf` is otherwise how a
-            # single unreachable target takes the reachable ones down with it.
-            CE = CE + prob * jnp.where(prob > 0, scalar_V, zero)
+            CE = CE + zero_safe_weighted_term(prob, scalar_V)
     return CE, values, weights, probability_mass
 
 
@@ -842,37 +1053,25 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     contributes no branch, and must not contribute NaN either — every target
     enters the same continuation, so a NaN here would destroy the
     well-specified targets beside it.
+
+    The same holds one level down, at a single node of a target that does carry
+    mass: a node of probability zero contributes nothing whatever value stands
+    there, so it is dropped rather than multiplied by its zero weight.
+
+    Two details of how that node is dropped:
+
+    - the mask sits on the **value**, so the multiplication stays a bare
+      operation feeding the sum and can be contracted into a fused
+      multiply-add. Selecting on the product instead forces it to round before
+      the sum rounds again, which every well-specified node pays for;
+    - the test is `== 0`, not `> 0`. A negative weight is a malformed
+      specification and a `NaN` weight is not a probability at all; `> 0` is
+      false for both and would launder either into a zero contribution, turning
+      a broken transition into a plausible number.
     """
-    # @pro: The paragraph above states a property this body does not deliver,
-    # and the gap is reachable here rather than hypothetical. The guard covers
-    # a target whose weights sum to zero. It does not cover a *single* node
-    # carrying zero probability beside admissible ones, because the product is
-    # formed before any masking: `0.0 * -inf` is NaN, and the sum then carries
-    # it. Measured against this function:
-    #
-    #     values  = [-inf, 1.0, 2.0]      weights = [0.0, 0.5, 0.5]
-    #     weight sum 1.0 (a well-formed lottery, so the guard never fires)
-    #     correct 1.5, returned nan
-    #
-    # `-inf` is the ordinary value of a state at which every action is
-    # infeasible -- `max_Q_over_a` masks with `-jnp.inf` -- so this needs only a
-    # zero-probability node beside such a state, which a Markov row with a zero
-    # entry or a binned process with an empty tail bin supplies.
-    #
-    # Please rule on all three.
-    # (1) Is dropping a zero-probability node the correct reading -- a null set
-    #     contributes nothing to an expectation, so the -inf is irrelevant -- or
-    #     does an admissible -inf beside it mean something the average must keep?
-    # (2) If dropping is correct, must the value be neutralized as well as the
-    #     weight? Masking only the product still evaluates `-inf * 0` in the
-    #     untaken `jnp.where` branch, which is primal-safe but poisons the
-    #     gradient; this project's JAX rules call that out specifically.
-    # (3) A sibling branch resolved the same question by keeping an older
-    #     `zero_safe_average` rather than adopting this function. If one of the
-    #     two is right, say which, so the two do not keep diverging.
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    return jnp.sum(values * weights) / safe_weight_sum
+    return jnp.sum(zero_safe_weighted_term(weights, values)) / safe_weight_sum
 
 
 def _as_lottery(
@@ -969,65 +1168,10 @@ def _get_joint_weights_function(
     )
 
 
-def _get_deterministic_transitions(
-    *,
-    transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
-) -> tuple[
-    Mapping[TransitionFunctionName, TransitionFunction],
-    frozenset[TransitionFunctionName],
-]:
-    """Merge the deterministic `next_<state>` transitions across all targets.
-
-    Iterates every target bundle, not just this period's targets: the within-
-    period durable law (`next_<durable>`) lives in the source regime's own
-    self-transition bundle and is needed even in periods bound for a terminal
-    target that does not carry it. Own-regime within-period laws are
-    target-independent, so the first occurrence of each `next_<state>` name is
-    kept. Stochastic transitions are excluded — a within-period utility or
-    constraint cannot read an unrealised stochastic next state.
-
-    Returns the merged mapping and the set of `next_<state>` names that appear in
-    more than one target bundle with non-identical implementations. The merge
-    keeps one of them, so a within-period utility or constraint reading such a
-    name would silently bind one target's law; the caller rejects the model if a
-    conflicting name is actually read by the decision evaluation.
-
-    Non-identity is tested by object identity (`is not`), not structural
-    equality. This is a conservative proxy that relies on the canonicalization
-    pipeline installing the *same* function object for a target-independent
-    own-regime within-period law across every bundle: a shared reference is
-    correctly seen as non-conflicting, and a distinct object genuinely signals a
-    different target's law. Two behaviourally-equal but distinct objects would be
-    over-reported as conflicting — harmless, since the conflict set only matters
-    for names the decision evaluation actually reads.
-
-    Returns:
-        Tuple of the immutable merged `next_<state>` mapping and the frozenset of
-        conflicting `next_<state>` names.
-    """
-    merged: dict[TransitionFunctionName, TransitionFunction] = {}
-    conflicting: set[TransitionFunctionName] = set()
-    for target_regime_name, bundle in transitions.items():
-        for name, func in bundle.items():
-            if is_stochastic(transition_laws, target_regime_name, name):
-                continue
-            if name in merged and merged[name] is not func:
-                conflicting.add(name)
-            merged.setdefault(name, func)
-    return MappingProxyType(merged), frozenset(conflicting)
-
-
 def _get_U_and_F(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
-        MappingProxyType({})
-    ),
-    conflicting_deterministic_transition_names: frozenset[
-        TransitionFunctionName
-    ] = frozenset(),
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -1039,101 +1183,34 @@ def _get_U_and_F(
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        deterministic_transitions: Mapping of `next_<state>` names to deterministic
-            own-regime transition functions, made available so within-period utility
-            or feasibility that reads a chosen next state (the NEGM service-flow
-            `next_<durable>`, or a budget constraint reading it) resolves it from the
-            current states and actions. Pruned away when unread, so the grid-search
-            path is unchanged.
-        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
-            names whose deterministic law differs across target bundles. A model is
-            rejected if any of them is read by the within-period decision (utility
-            or feasibility), because the merged law would disagree with the
-            simulate state-update.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
-    combined = {
-        "feasibility": _get_feasibility(
-            functions=functions,
-            constraints=constraints,
-            deterministic_transitions=deterministic_transitions,
-        ),
-        **dict(deterministic_transitions),
-        **dict(functions),
-    }
-    _fail_if_conflicting_transition_is_read(
-        combined=combined,
-        targets=["utility", "feasibility"],
-        conflicting_deterministic_transition_names=(
-            conflicting_deterministic_transition_names
-        ),
-    )
     return concatenate_functions(
-        functions=combined,
+        functions={
+            "feasibility": _get_feasibility(
+                functions=functions, constraints=constraints
+            ),
+            **dict(functions),
+        },
         targets=["utility", "feasibility"],
         enforce_signature=False,
         set_annotations=True,
     )
 
 
-def _fail_if_conflicting_transition_is_read(
-    *,
-    combined: Mapping[FunctionName, Callable[..., Any]],
-    targets: list[FunctionName],
-    conflicting_deterministic_transition_names: frozenset[TransitionFunctionName],
-) -> None:
-    """Reject a model whose decision reads a target-dependent `next_<state>` law.
-
-    A `next_<state>` whose deterministic law differs across target bundles is
-    merged down to one implementation; binding it into the decision DAG while the
-    simulate state-update uses the per-target law produces a silent disagreement.
-    Raise naming each such state actually read by `targets`.
-
-    Args:
-        combined: Mapping of function names to the functions assembled for the
-            decision DAG.
-        targets: List of target function names the decision evaluates.
-        conflicting_deterministic_transition_names: Frozenset of `next_<state>`
-            names with non-identical implementations across target bundles.
-    """
-    if not conflicting_deterministic_transition_names:
-        return
-    read_names = get_ancestors(combined, targets, include_targets=True)
-    offending = sorted(conflicting_deterministic_transition_names & read_names)
-    if offending:
-        names = ", ".join(offending)
-        msg = (
-            "Within-period utility or feasibility reads a target-dependent "
-            f"deterministic state law ({names}), but its implementation differs "
-            "across target regimes. The decision DAG would bind one target's law "
-            "while the simulate state-update uses the right one, so they would "
-            "disagree silently. Make the law identical across all targets that "
-            "carry the state, or stop reading the chosen next state in the "
-            "within-period utility/feasibility."
-        )
-        raise ValueError(msg)
-
-
 def _get_feasibility(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
-        MappingProxyType({})
-    ),
 ) -> ConstraintFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        deterministic_transitions: Mapping of `next_<state>` names to deterministic
-            transition functions, so a constraint reading a chosen next state (the
-            NEGM budget constraint reading `next_<durable>`) resolves it. Pruned when
-            unread.
 
     Returns:
         The combined constraint function (feasibility).
@@ -1141,9 +1218,7 @@ def _get_feasibility(
     """
     if constraints:
         combined_constraint = concatenate_functions(
-            functions=dict(deterministic_transitions)
-            | dict(constraints)
-            | dict(functions),
+            functions=dict(constraints) | dict(functions),
             targets=list(constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",

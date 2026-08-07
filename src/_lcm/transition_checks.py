@@ -40,6 +40,7 @@ from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
+from _lcm.zero_safe import has_nonzero_subnormal
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -334,6 +335,19 @@ def _validate_regime_transition_probs(
             f"Non-finite values in regime transition probabilities from "
             f"'{regime_name}' between ages {age} and {next_age}. Check the "
             f"'next_regime' function of the '{regime_name}' regime."
+        )
+
+    if has_nonzero_subnormal(all_probs):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime transition probabilities from '{regime_name}' between ages {age} "
+            f"and {next_age} contain a subnormal value. A probability must be either "
+            f"exactly zero or at least the smallest normal number of the working "
+            f"precision ({float(jnp.finfo(all_probs.dtype).tiny):.3g} at "
+            f"{all_probs.dtype}); in between, the backend treats it as zero when "
+            f"deciding whether the branch occurs and again when forming its "
+            f"contribution, so the target would be dropped rather than weighted. "
+            f"Round such a probability to zero deliberately, or raise it above that "
+            f"floor. Check the 'next_regime' function of the '{regime_name}' regime."
         )
 
     if jnp.any(all_probs < 0) or jnp.any(all_probs > 1):

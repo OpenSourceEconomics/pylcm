@@ -2,7 +2,7 @@
 
 A variant of the kinked two-asset toy (`negm_kinked_toy.py`) in which the
 durable yields its service flow from the **newly chosen** stock `s'`
-(`next_illiquid`) rather than the held stock `Z` (`illiquid`):
+(`new_durable`) rather than the held stock `Z` (`illiquid`):
 
 ```{math}
 u(c, s') = \\frac{c^{1-\\gamma}}{1-\\gamma} + \\iota\\, s'
@@ -10,11 +10,11 @@ u(c, s') = \\frac{c^{1-\\gamma}}{1-\\gamma} + \\iota\\, s'
 
 The service term is additively separable from consumption, so the inner
 consumption Euler equation is the plain CRRA inversion (no offset). The novelty
-is that `utility` reads `next_illiquid`, the auto-named output of the `illiquid`
-state transition and the NEGM `outer_post_decision`. The NEGM solver binds that
-value per outer-grid node (the adjuster) or holds it at the durable stock (the
-keeper), so the inner kernel evaluates the service flow from the chosen house —
-the Dobrescu-Shanker housing pattern (`utility` reads `next_housing`).
+is that `utility` reads `new_durable`, the chosen stock, which is also the NEGM
+`outer_post_decision` and what the `illiquid` law of motion carries forward. The
+NEGM solver binds that value per outer-grid node (the adjuster) or holds it at
+the durable stock (the keeper), so the inner kernel evaluates the service flow
+from the chosen house — the Dobrescu-Shanker housing pattern.
 
 `build_negm_model` solves it by the nested EGM; `build_brute_model` is the
 economically identical grid-search twin used as the parity oracle. Brute
@@ -48,7 +48,7 @@ N_AZ = 12
 N_PERIODS = 3
 
 ILLIQUID_FLOW = 0.05  # iota: service flow per unit of the new durable stock s'
-WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (next_illiquid < illiquid)
+WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (new_durable < illiquid)
 BORROW_RATE = 0.12  # credit-card rate on liquid_savings < 0
 SAVE_RATE = 0.03  # rate on liquid_savings >= 0
 RISK_AVERSION = 2.0
@@ -62,13 +62,25 @@ class RegimeId:
     dead: ScalarInt
 
 
-def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
-    """Net liquid cost of moving the durable to `next_illiquid` (`s'`).
+def new_durable(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """The durable stock chosen this period, `s' = Z + Iz`.
+
+    The outer post-decision margin: an ordinary function of this period's state
+    and action, so utility, the credited cost, and the `illiquid` law of motion
+    all read one value.
+    """
+    return illiquid + illiquid_investment
+
+
+def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
+    """Net liquid cost of moving the durable to `new_durable` (`s'`).
 
     A deposit (`s' > Z`) costs its face value; a withdrawal (`s' < Z`) returns
     only `(1 - kappa)` of the amount pulled out — the penalty kink at `s' = Z`.
     """
-    investment = next_illiquid - illiquid
+    investment = new_durable - illiquid
     return jnp.where(
         investment < 0.0,
         (1.0 - WITHDRAWAL_PENALTY) * investment,
@@ -97,16 +109,14 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return (1.0 + rate) * liquid_savings
 
 
-def durable_transition(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
-) -> ContinuousState:
-    """Durable law of motion `s' = Z + Iz`, the `illiquid` state transition.
+def durable_transition(new_durable: ContinuousState) -> ContinuousState:
+    """Durable law of motion: the stock chosen this period is next period's.
 
-    pylcm names its output `next_illiquid`; the NEGM solver names that value as
-    its `outer_post_decision`, read by the inner `resources` and `utility` as a
-    kernel-bound constant per outer-grid node.
+    The chosen level is `new_durable`, which the NEGM solver names as its
+    `outer_post_decision` and binds per outer-grid node; this law carries it
+    into the next period.
     """
-    return illiquid + illiquid_investment
+    return new_durable
 
 
 def keep_illiquid(illiquid: ContinuousState) -> FloatND:
@@ -114,15 +124,15 @@ def keep_illiquid(illiquid: ContinuousState) -> FloatND:
     return illiquid
 
 
-def serviced_durable(next_illiquid: ContinuousState) -> FloatND:
+def serviced_durable(new_durable: ContinuousState) -> FloatND:
     """Service flow from the newly chosen durable stock `s'`.
 
     Routing the outer post-decision through its own function (rather than into
     `utility`'s signature directly) keeps `utility` additively separable in the
     inner and outer margins — the Dobrescu-Shanker housing structure, where
-    `utility` reads a `serviced_housing(next_housing)` flow.
+    `utility` reads a `serviced_housing(new_housing)` flow.
     """
-    return ILLIQUID_FLOW * next_illiquid
+    return ILLIQUID_FLOW * new_durable
 
 
 def utility(consumption: ContinuousAction, serviced_durable: FloatND) -> FloatND:
@@ -222,7 +232,8 @@ NEGM_SOLVER = NEGM(
         savings_grid=SAVINGS_GRID,
     ),
     outer_action="illiquid_investment",
-    outer_post_decision="next_illiquid",
+    outer_state="illiquid",
+    outer_post_decision="new_durable",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
     outer_cost="credited",
@@ -254,6 +265,7 @@ def build_negm_model() -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
+            "new_durable": new_durable,
             "serviced_durable": serviced_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,

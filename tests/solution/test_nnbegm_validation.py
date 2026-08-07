@@ -10,7 +10,7 @@ kernels or solving.
 The cases mutate the valid smooth two-asset toy one rule at a time:
 
 1. no outer margin (outer action absent) → use `NBEGM`,
-2. outer post-decision neither a declared function nor a state transition,
+2. outer post-decision naming no declared function of the regime,
 3. outer action equals the inner consumption action → reject (distinct
    margins).
 
@@ -52,6 +52,7 @@ _VALID = UserRegime(
     transition=n_nbegm_toy.next_regime,
     functions={
         "utility": n_nbegm_toy.utility,
+        "new_illiquid": n_nbegm_toy.new_illiquid,
         "resources": n_nbegm_toy.resources,
         "liquid_savings": n_nbegm_toy.liquid_savings,
         "keep_illiquid": n_nbegm_toy.keep_illiquid,
@@ -83,11 +84,11 @@ def test_outer_action_absent_is_rejected_with_nbegm_pointer():
 
 
 def test_outer_post_decision_not_declared_is_rejected():
-    """An outer post-decision that is neither a function nor a transition fails."""
+    """An outer post-decision naming no function of the regime fails."""
     regime = _VALID.replace(
         solver=dataclasses.replace(_SOLVER, outer_post_decision="not_a_function")
     )
-    with pytest.raises(ModelInitializationError, match="neither a declared function"):
+    with pytest.raises(ModelInitializationError, match="not a declared function"):
         _validate(regime)
 
 
@@ -106,10 +107,10 @@ def test_outer_action_equal_to_the_inner_consumption_action_is_rejected():
 
 
 def _euler_law_reading_outer_margin(
-    liquid_savings: FloatND, next_illiquid: ContinuousState
+    liquid_savings: FloatND, new_illiquid: ContinuousState
 ) -> ContinuousState:
     """A liquid Euler law whose return depends on the chosen durable stock."""
-    return (1.0 + n_nbegm_toy.LIQUID_RATE) * liquid_savings + 0.01 * next_illiquid
+    return (1.0 + n_nbegm_toy.LIQUID_RATE) * liquid_savings + 0.01 * new_illiquid
 
 
 def test_an_euler_law_reading_the_outer_margin_is_accepted():
@@ -129,10 +130,10 @@ def test_an_euler_law_reading_the_outer_margin_is_accepted():
 
 
 def _utility_coupling_consumption_and_durable_move(
-    consumption: ContinuousAction, next_illiquid: ContinuousState
+    consumption: ContinuousAction, new_illiquid: ContinuousState
 ) -> FloatND:
     """A Cobb-Douglas composite of consumption and the chosen durable service."""
-    composite = consumption**0.8 * next_illiquid**0.2
+    composite = consumption**0.8 * new_illiquid**0.2
     return composite ** (1.0 - n_nbegm_toy.RISK_AVERSION) / (
         1.0 - n_nbegm_toy.RISK_AVERSION
     )
