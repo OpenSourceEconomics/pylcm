@@ -1141,8 +1141,8 @@ def _regime_mass_is_a_distribution(
     - no target carries a negative weight.
 
     Together they give the full range: non-negative weights summing to one each
-    lie in . Unit mass alone does not, since 1.5 and -0.5 sum to one, and
-    a NaN weight fails both tests rather than passing the first by accident.
+    lie in `[0, 1]`. Unit mass alone does not, since 1.5 and -0.5 sum to one,
+    and a NaN weight fails both tests rather than passing the first by accident.
     """
     is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
     return is_unit & (smallest_probability >= 0.0)
