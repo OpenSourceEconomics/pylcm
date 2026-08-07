@@ -49,7 +49,7 @@ from _lcm.utils.functools import get_union_of_args
 # and therefore kills `d/dw` at every exactly-zero-weight node — invisible for a
 # probability or quadrature weight, wrong for an interpolation corner weight that
 # is itself a function of the coordinate being differentiated.
-from _lcm.zero_safe import joint_weight_or_nan, probability_or_nan
+from _lcm.zero_safe import joint_weight, usable_weight
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -1517,15 +1517,13 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            # Refused here, once, so that the mass sum, the range guard, the
-            # liveness test and both continuation routes read the same event
-            # set. A probability the dtype can represent but not carry -- a
-            # subnormal -- would otherwise compare and multiply as zero in
-            # every one of them, and a target of strictly positive probability
-            # would be priced as unreachable.
-            target_probability = probability_or_nan(
-                active_regime_probs[target_regime_name]
-            )
+            # The mass sum, the range guard and the liveness test read the
+            # weight as the arithmetic sees it: a probability too small for the
+            # dtype to use contributes nothing to any of them, which is the
+            # right answer for all three. Whether it contributes nothing to the
+            # *continuation* depends on the value standing at it, so that is
+            # settled per term rather than here.
+            target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
             # Both routes drop a node on being *exactly* zero. A negative
             # probability is not a target that is never consulted, and dropping
@@ -1558,20 +1556,16 @@ def _get_compute_CE(
                 # this beats a sequential left-fold on accuracy (round-8) and why the
                 # order must not depend on regime LABELS (round-10 F1).
                 #
-                # Upstream's `_neutralize_where_unreachable` is deliberately NOT
-                # applied here, and not because the hazard is absent: it is the same
-                # `0 * -inf` from a zero-probability target carrying an admissible
-                # `-inf`. It is already handled one level in, by
-                # `zero_safe_weighted_term` inside `_sum_regime_mixture`, which masks
-                # the VALUE before the multiply on the same `weight == 0` predicate
-                # and for the reason upstream itself gives -- masking the product
-                # instead poisons the gradient. Neutralizing here too would multiply
-                # at the call site and put this term back outside the single
-                # value-ordered reduction, which is the point of the unmultiplied form.
+                # Multiplying here, as the upstream accumulator does, would put this
+                # term outside that single value-ordered reduction -- which is the
+                # point of the unmultiplied form. The `0 * -inf` hazard it would
+                # otherwise raise (a zero-probability target carrying an admissible
+                # `-inf`) is handled one level in, by `zero_safe_weighted_term` inside
+                # `_sum_regime_mixture`.
                 mixture_terms.append(
                     (
                         target_regime_name,
-                        active_regime_probs[target_regime_name],
+                        target_probability,
                         next_V_expected_arr,
                     )
                 )
@@ -1588,16 +1582,17 @@ def _get_compute_CE(
                 # with the constant this route rejects.
                 lottery_values.append(values)
                 # The regime probability and the node weight are two more
-                # factors of the same joint event, so their product carries the
-                # same refusal as the product across the stochastic axes. The
-                # weight collected here is therefore each node's *final* weight,
-                # which is what the downstream neutralization tests: a target
-                # reached with certainty still carries nodes of probability zero
-                # -- a Markov row with a zero entry beside a state where every
-                # action is infeasible -- and one the dtype could not carry
-                # arrives as NaN rather than as a null event.
+                # factors of the same joint event, so their product goes through
+                # the same treatment as the product across the stochastic axes.
+                # The weight collected here is therefore each node's *final*
+                # weight, which is what the downstream neutralization tests: a
+                # target reached with certainty still carries nodes of
+                # probability zero -- a Markov row with a zero entry beside a
+                # state where every action is infeasible -- and one that merely
+                # underflowed arrives at the smallest normal instead, so it is
+                # not mistaken for that null event.
                 lottery_weights.append(
-                    joint_weight_or_nan(
+                    joint_weight(
                         jnp.stack(
                             jnp.broadcast_arrays(target_probability, node_weights)
                         )
@@ -2080,26 +2075,31 @@ def _scalar_target_contribution(
     smallest_probability = zero + jnp.inf
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
-        # Read through the same refusal as the stateful route: a stateless
-        # target has no stochastic node to multiply against, so its regime
-        # probability is the whole weight, and a value the dtype cannot carry
-        # as a probability would otherwise be priced as an impossible target
-        # here while the same value is refused one branch over.
-        prob = probability_or_nan(active_regime_probs[target_regime_name])
+        # The mass sum and the liveness test read the weight as the arithmetic
+        # sees it, exactly as the stateful route does: a probability too small
+        # for the dtype to use contributes nothing to either, which is the right
+        # answer for both.
+        prob = active_regime_probs[target_regime_name]
         # A stateless target contributes to the represented mass on either
         # route, so the linear fast path divides by the mass of *every* target
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
         smallest_probability = jnp.minimum(smallest_probability, prob)
-        # Same rule on either route: a target reached with no mass contributes
-        # nothing, and its value is neutralized rather than its product masked.
-        # `-inf` is the ordinary value of a state where every action is
-        # infeasible, so `0 * -inf` is otherwise how a single unreachable target
-        # takes the reachable ones down with it.
+        # Whether such a target contributes nothing to the *continuation*
+        # depends on the value standing at it, so it is settled per term. A
+        # stateless target has no stochastic node to multiply against, so its
+        # regime probability is the whole weight: what `joint_weight` does for a
+        # node of the stateful route, `usable_weight` does here.
+        #
+        # The value is handed over as it stands. A node that cannot occur is
+        # neutralized once, downstream in `_aggregate_joint_lottery`, against
+        # the same final weights -- and a weight raised to the smallest normal
+        # is not zero there, so `-inf`, the ordinary value of a state where
+        # every action is infeasible, still reaches the answer.
         if as_lottery:
             node = jnp.ravel(scalar_V)
-            values.append(jnp.where(prob == 0, jnp.zeros_like(node), node))
-            weights.append(prob * jnp.ones_like(node))
+            values.append(node)
+            weights.append(usable_weight(prob) * jnp.ones_like(node))
         else:
             # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
             # `p_r * V_r` once inside a single zero-safe contraction, masking the
@@ -2229,7 +2229,7 @@ def _get_joint_weights_function(
         # One factor per stochastic axis. Their product is the node's
         # probability, and it is refused rather than rounded to impossible
         # where every factor can occur but the product cannot be represented.
-        return joint_weight_or_nan(jnp.array(list(kwargs.values())))
+        return joint_weight(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
     return productmap(

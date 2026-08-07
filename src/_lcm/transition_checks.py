@@ -40,7 +40,6 @@ from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
-from _lcm.zero_safe import has_nonzero_subnormal
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -337,40 +336,11 @@ def _validate_regime_transition_probs(
             f"'next_regime' function of the '{regime_name}' regime."
         )
 
-    if has_nonzero_subnormal(all_probs):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' between ages {age} "
-            f"and {next_age} contain a subnormal value. A probability must be either "
-            f"exactly zero or at least the smallest normal number of the working "
-            f"precision ({float(jnp.finfo(all_probs.dtype).tiny):.3g} at "
-            f"{all_probs.dtype}); in between, the backend treats it as zero when "
-            f"deciding whether the branch occurs and again when forming its "
-            f"contribution, so the target would be dropped rather than weighted. "
-            f"Round such a probability to zero deliberately, or raise it above that "
-            f"floor. Check the 'next_regime' function of the '{regime_name}' regime."
-        )
-
     if jnp.any(all_probs < 0) or jnp.any(all_probs > 1):
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime transition probabilities from '{regime_name}' between ages {age} "
             f"and {next_age} contain values outside [0, 1]. Check the 'next_regime' "
             f"function of the '{regime_name}' regime."
-        )
-
-    # A subnormal passes every test above and below -- it is in range, and the
-    # mass it removes is far under the unit-sum tolerance -- while the engine
-    # refuses to carry it, because what the arithmetic does with it depends on
-    # the backend and a solved value may not. The refusal is arithmetic and
-    # holds without this check; this says which regime is responsible.
-    if has_nonzero_subnormal(all_probs):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' between ages "
-            f"{age} and {next_age} contain a subnormal probability. A value "
-            f"below {jnp.finfo(all_probs.dtype).tiny} is representable but not "
-            f"usable at this precision: the target it names would be priced as "
-            f"unreachable, so the continuation is refused instead. Either give "
-            f"the target a probability of at least that size or exactly 0. "
-            f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
 
     sum_all = jnp.sum(all_probs, axis=0)
@@ -651,20 +621,6 @@ def _check_state_probs(
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned values outside [0, 1]."
-        )
-
-    # A subnormal passes every test above -- it is in range, and the row still
-    # sums to one -- but the arithmetic downstream cannot carry it: it compares
-    # equal to zero and multiplies to zero, so its node would be priced as one
-    # that cannot occur. The solve refuses it either way; naming the state and
-    # the age here is what a NaN cannot do.
-    if has_nonzero_subnormal(probs):
-        raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} returned a subnormal probability. A value below "
-            f"{float(jnp.finfo(probs.dtype).tiny):.3e} cannot be weighted at "
-            f"this precision, so the outcome would be dropped as impossible "
-            f"rather than counted. Use exactly 0 if the outcome cannot occur."
         )
 
     row_sums = jnp.sum(probs, axis=-1)
