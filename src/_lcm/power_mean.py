@@ -19,6 +19,7 @@ which `test_CESAggregator_equals_the_general_power_mean` pins.
 
 import jax.numpy as jnp
 
+from _lcm.zero_safe import is_below_smallest_normal
 from lcm.typing import FloatND
 
 # Deviation ratio at which `weighted_power_mean` switches from the `log1p`
@@ -115,7 +116,19 @@ def weighted_power_mean(
     # node instead, that value's scaled exponent is `+inf` at a negative
     # exponent, the moment diverges, and the mean goes to zero — which is
     # what `v^p -> inf` gives.
-    anchorable = live & jnp.isfinite(log_v)
+    #
+    # Only a node whose weight the format can *use* may anchor. The claim above
+    # — that the anchor's own term sits at exactly its weight, so the moment
+    # cannot underflow — holds only if that weight is a normal number. Anchored
+    # on a node carrying a subnormal weight, every term of the moment is below
+    # the smallest normal, the sum flushes to exactly zero, `log M` is `-inf`,
+    # and the mean comes back as an infinity for a lottery whose answer is
+    # ordinary. Such a node still contributes; it just may not set the scale.
+    anchorable = live & jnp.isfinite(log_v) & ~is_below_smallest_normal(weights)
+    # A lottery whose every live weight is subnormal has no usable scale to
+    # anchor on, and there the original rule is still the best available.
+    has_usable_anchor = jnp.any(anchorable, axis=-1, keepdims=True)
+    anchorable = jnp.where(has_usable_anchor, anchorable, live & jnp.isfinite(log_v))
     anchor_high = jnp.max(jnp.where(anchorable, log_v, -jnp.inf), axis=-1)
     anchor_low = jnp.min(jnp.where(anchorable, log_v, jnp.inf), axis=-1)
     anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
