@@ -16,9 +16,18 @@ What this module guarantees, and what it deliberately does not:
 - a negative weight stays visible rather than being absorbed into zero, so an
   invalid specification surfaces instead of being silently rescued;
 - an event that can occur is discarded only where discarding it cannot change
-  the answer. A weight too small for the dtype to use is raised to the smallest
-  normal, so its node contributes nothing to a finite continuation and keeps an
-  infinity standing at it.
+  the answer, and is never enlarged. A weight too small for the dtype to use
+  keeps its own magnitude against a finite value, where a backend that flushes
+  it drops the node and the omission is the smallest available; it is raised to
+  the smallest normal only against `+-inf`, where every strictly positive weight
+  gives the same answer and dropping would not.
+
+The residual is an approximation, declared rather than hidden: a node whose
+probability the format cannot hold may contribute less than its true share, by
+at most `tiny * |value|`. That is below every declared tolerance for any value
+function a model can also add utility to, and it is the floor for arithmetic
+that cannot multiply subnormals. What the module does guarantee is the
+direction — such a node never contributes *more* than its true share.
 
 Total-mass conventions are not settled here. They differ by call site — a
 target represented with no mass contributes `0`, while a whole continuation
@@ -38,48 +47,6 @@ from lcm.typing import BoolND, FloatND
 _FLOAT32_BYTES = 4
 
 
-def usable_weight(weights: FloatND) -> FloatND:
-    """Return each weight, with one too small to use raised to the smallest normal.
-
-    A subnormal is representable but not usable, and what arithmetic does with
-    it belongs to the backend rather than to the model: XLA:CPU flushes it, so
-    it compares equal to zero and multiplies as zero, while CUDA carries it
-    through. Zero is how this engine spells an event that cannot occur, so on a
-    flushing backend an event of strictly positive probability becomes
-    indistinguishable from an impossible one.
-
-    That distinction only changes an answer when the value at the node is
-    infinite. Dropping a node whose value is finite costs at most
-    `tiny * |value|`, which is below every tolerance any model declares. Dropping
-    one that carries `-inf` — the ordinary value of a state at which no action
-    is feasible — replaces the true answer with a finite number, and the error
-    is unbounded.
-
-    Raising the weight to the smallest normal settles both cases with one
-    substitution, and does it on an *operand* so the multiplication downstream
-    stays a bare operation that can contract into a fused multiply-add:
-
-    - against a finite value the contribution is `tiny * value`, which differs
-      from dropping the node by less than the dropping error itself;
-    - against `+-inf` the product is that infinity, which is the true answer;
-    - a represented zero is untouched and remains the genuine null event;
-    - the sign is preserved, so a negative weight stays visible to the
-      distribution guard rather than being rescued into a positive one.
-
-    Args:
-        weights: Probabilities or quadrature weights, of any floating dtype.
-
-    Returns:
-        The weights, with every nonzero subnormal raised to the smallest normal
-        magnitude of its dtype.
-
-    """
-    arr = jnp.asarray(weights)
-    unusable = ~_is_represented_zero(arr) & _is_below_smallest_normal(arr)
-    smallest_normal = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
-    return jnp.where(unusable, jnp.copysign(smallest_normal, arr), arr)
-
-
 def joint_weight(factors: FloatND) -> FloatND:
     """Return the product of a node's probability factors, never rounded to zero.
 
@@ -90,13 +57,18 @@ def joint_weight(factors: FloatND) -> FloatND:
     which can occur indistinguishable from one which cannot, and downstream
     nothing could tell them apart, because the two arrive as the same zero.
 
-    An underflowed product therefore leaves here as the smallest normal
-    magnitude instead, carrying the sign of the product. The magnitude is not
-    the node's probability and is not meant to be: it is small enough that the
-    node contributes nothing to a finite continuation, and nonzero so that an
-    infinity standing at the node still reaches the answer. `usable_weight`
-    states the same rule for a weight that arrives small rather than becoming
-    small here.
+    A product that vanishes this way leaves here as the **smallest representable
+    magnitude** instead, carrying the sign of the product. That value is chosen
+    because it is the largest one that cannot overstate the node: every product
+    which underflowed was larger than it, so the substitution errs downward, in
+    the only direction a weight the format cannot hold is allowed to err. It is
+    also nonzero, so a node that can occur still carries an infinity standing at
+    it to the answer. `zero_safe_weighted_term` decides which of those two
+    properties is the operative one, because that depends on the value.
+
+    A product which is merely subnormal — the backend represented it rather than
+    flushing it — keeps its own magnitude, which is more informative than the
+    substitute.
 
     A factor of exactly zero is the genuine null event, so the product keeps its
     zero and the node contributes nothing whatever value stands at it. A NaN
@@ -109,18 +81,20 @@ def joint_weight(factors: FloatND) -> FloatND:
             reduces to one weight per node.
 
     Returns:
-        Their product over the leading axis, raised to the smallest normal
-        magnitude wherever every factor can occur but the product cannot be
-        represented.
+        Their product over the leading axis, with a product that vanished
+        despite every factor being able to occur replaced by the smallest
+        representable magnitude of the same sign.
 
     """
-    arr = usable_weight(jnp.asarray(factors))
+    arr = jnp.asarray(factors)
     product = jnp.prod(arr, axis=0)
     every_factor_can_occur = ~jnp.any(_is_represented_zero(arr), axis=0)
-    smallest_normal = jnp.asarray(jnp.finfo(product.dtype).tiny, dtype=product.dtype)
+    smallest_magnitude = jnp.asarray(
+        jnp.finfo(product.dtype).smallest_subnormal, dtype=product.dtype
+    )
     return jnp.where(
-        every_factor_can_occur & _is_below_smallest_normal(product),
-        jnp.copysign(smallest_normal, product),
+        every_factor_can_occur & _is_represented_zero(product),
+        jnp.copysign(smallest_magnitude, product),
         product,
     )
 
@@ -137,10 +111,31 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
     weighted average by several units in the last place — enough to reverse a
     discrete choice that was not close to tied.
 
-    The weight is raised through `usable_weight` first, for the same reason: a
-    weight too small for the dtype to use is settled on an operand rather than
-    on the product, so a node that can occur keeps an infinity standing at it
-    without any of this costing a rounding step.
+    A weight the format cannot use — a nonzero subnormal — is treated according
+    to the value it meets, because that is what decides whether its magnitude
+    matters:
+
+    - against a **finite** value the weight is left exactly as it is. A backend
+      that flushes it then drops the node, and the omission is `p * |value|`,
+      the smallest error available to anything that cannot do subnormal
+      arithmetic. Enlarging the weight here would be strictly worse: the
+      subnormal range spans a factor of `2**23` in single precision and `2**52`
+      in double, so promoting the smallest of them to `tiny` would hand a
+      negligible event the mass of the largest one and invent a contribution;
+    - against `+-inf` it is raised to the smallest normal magnitude, keeping its
+      sign. Every strictly positive weight yields the same infinity there, so no
+      magnitude is lost by the substitution, while dropping the node would
+      replace an infinite answer with a finite one.
+
+    A represented zero is the genuine null event and annihilates any value,
+    finite or not. A NaN weight stays poison.
+
+    The value is replaced only where a zero weight meets a value that is not
+    finite, which is the only case the multiplication itself gets wrong. Against
+    a finite value `0 * value` is already `0`, and leaving the operand in place
+    keeps the derivative with respect to the weight — `d(w * v)/dw = v` — which
+    masking unconditionally would flatten to zero at exactly the coordinates
+    where a weight vanishes.
 
     Args:
         weight: Probability, quadrature, or interpolation weight.
@@ -150,10 +145,25 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
         The elementwise product, broadcast as `weight * value` would be.
 
     """
-    weight_arr = usable_weight(jnp.asarray(weight))
+    weight_arr = jnp.asarray(weight)
     value_arr = jnp.asarray(value)
-    safe_value = jnp.where(weight_arr == 0, jnp.zeros((), value_arr.dtype), value_arr)
-    return weight_arr * safe_value
+
+    weight_is_null = _is_represented_zero(weight_arr)
+    weight_is_unusable = ~weight_is_null & _is_below_smallest_normal(weight_arr)
+    smallest_normal = jnp.asarray(
+        jnp.finfo(weight_arr.dtype).tiny, dtype=weight_arr.dtype
+    )
+    effective_weight = jnp.where(
+        weight_is_unusable & jnp.isinf(value_arr),
+        jnp.copysign(smallest_normal, weight_arr),
+        weight_arr,
+    )
+    safe_value = jnp.where(
+        weight_is_null & ~jnp.isfinite(value_arr),
+        jnp.zeros((), value_arr.dtype),
+        value_arr,
+    )
+    return effective_weight * safe_value
 
 
 def _is_represented_zero(values: FloatND) -> BoolND:
