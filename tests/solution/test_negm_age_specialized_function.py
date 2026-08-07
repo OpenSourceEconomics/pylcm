@@ -33,6 +33,7 @@ from tests.test_models.negm_kinked_toy import (
     inverse_marginal_utility,
     keep_illiquid,
     liquid_savings,
+    new_durable,
     next_regime,
     next_wealth,
     resources_before_outer_cost,
@@ -60,9 +61,9 @@ def _make_penalised_credited(age: float):
     penalty = 0.10 + 0.02 * (age - _MIN_AGE)
 
     def credited_at_age(
-        illiquid: ContinuousState, next_illiquid: ContinuousState
+        illiquid: ContinuousState, new_durable: ContinuousState
     ) -> FloatND:
-        investment = next_illiquid - illiquid
+        investment = new_durable - illiquid
         return jnp.where(investment < 0.0, (1.0 - penalty) * investment, investment)
 
     return credited_at_age
@@ -83,6 +84,7 @@ def _build_model(*, helper_name: str, override) -> Model:
     """
     functions = {
         "utility": utility,
+        "new_durable": new_durable,
         "resources_before_outer_cost": resources_before_outer_cost,
         "liquid_savings": liquid_savings,
         "keep_illiquid": keep_illiquid,

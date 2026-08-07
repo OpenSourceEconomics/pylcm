@@ -10,7 +10,7 @@ keeper/adjuster wrapper from the inner solver's kink machinery:
 - `"negm"` — `NEGM(inner=DCEGM(...))`, the smooth nested baseline;
 - `"n_nbegm"` — `NNBEGM(inner=NBEGM(...))`, the target method.
 
-The nested solvers fix the outer post-decision `next_illiquid` per outer-grid
+The nested solvers fix the outer post-decision `new_illiquid` per outer-grid
 node; the inner consumption-saving problem is then a 1-D solve on `wealth` with
 the credited durable move entering `resources` as a constant. The budget
 declares no breakpoints, so the inner NB-EGM partition is a single interval —
@@ -59,21 +59,31 @@ class RegimeId:
     dead: ScalarInt
 
 
-def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
-    """Net liquid cost of moving the durable to `next_illiquid` — one-for-one."""
-    return next_illiquid - illiquid
+def new_illiquid(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """The durable stock chosen this period, `s' = Z + Iz`.
+
+    The outer post-decision margin: an ordinary function of this period's state
+    and action, so the credited cost, the liquid budget, and the `illiquid` law
+    of motion all read one value.
+    """
+    return illiquid + illiquid_investment
+
+
+def credited(illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
+    """Net liquid cost of moving the durable to `new_illiquid` — one-for-one."""
+    return new_illiquid - illiquid
 
 
 def resources(
     wealth: ContinuousState,
     illiquid: ContinuousState,
-    next_illiquid: ContinuousState,
+    new_illiquid: ContinuousState,
 ) -> FloatND:
     """Liquid resources consumption is paid out of, given the fixed outer node."""
     return (
-        wealth
-        + LABOUR_INCOME
-        - credited(illiquid=illiquid, next_illiquid=next_illiquid)
+        wealth + LABOUR_INCOME - credited(illiquid=illiquid, new_illiquid=new_illiquid)
     )
 
 
@@ -98,11 +108,9 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return (1.0 + LIQUID_RATE) * liquid_savings
 
 
-def durable_transition(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
-) -> ContinuousState:
-    """Durable law of motion `s' = Z + Iz` (the `illiquid` state transition)."""
-    return illiquid + illiquid_investment
+def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
+    """Durable law of motion: the stock chosen this period is next period's."""
+    return new_illiquid
 
 
 def keep_illiquid(illiquid: ContinuousState) -> FloatND:
@@ -146,9 +154,9 @@ OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=35.0, n_points=60)
 
 
-def illiquid_feasible(next_illiquid: ContinuousState) -> FloatND:
+def illiquid_feasible(new_illiquid: ContinuousState) -> FloatND:
     """Brute-only constraint pinning `s'` to the N-NB-EGM outer range."""
-    return (next_illiquid >= OUTER_GRID.start) & (next_illiquid <= OUTER_GRID.stop)
+    return (new_illiquid >= OUTER_GRID.start) & (new_illiquid <= OUTER_GRID.stop)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -186,7 +194,8 @@ def build_solver(
                 savings_grid=SAVINGS_GRID,
             ),
             outer_action="illiquid_investment",
-            outer_post_decision="next_illiquid",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
             outer_grid=OUTER_GRID,
             outer_no_adjustment_candidate="keep_illiquid",
             outer_cost="credited",
@@ -206,7 +215,8 @@ def build_solver(
                 savings_grid=SAVINGS_GRID,
             ),
             outer_action="illiquid_investment",
-            outer_post_decision="next_illiquid",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
             outer_search=outer_search,
             outer_grid=None if outer_search is not None else OUTER_GRID,
             outer_no_adjustment_candidate="keep_illiquid",
@@ -237,6 +247,7 @@ def build_model(
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
         "utility": utility,
+        "new_illiquid": new_illiquid,
         "resources": resources,
         "liquid_savings": liquid_savings,
         "keep_illiquid": keep_illiquid,

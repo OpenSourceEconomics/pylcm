@@ -107,7 +107,7 @@ def test_margin_distinctness_recheck_rejects_outer_equal_to_inner_post_decision(
     """The model-build re-check rejects a coincident post-decision function."""
     solver = negm_kinked_toy.NEGM_SOLVER
     inner_post_clashes = dataclasses.replace(
-        solver.inner, post_decision_function="next_illiquid"
+        solver.inner, post_decision_function="new_durable"
     )
     with pytest.raises(ModelInitializationError, match="coincides with"):
         _fail_if_margins_not_distinct(
@@ -145,14 +145,14 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
 
 
 def _utility_coupling_consumption_and_durable_move(
-    consumption: ContinuousAction, next_illiquid: ContinuousState
+    consumption: ContinuousAction, new_durable: ContinuousState
 ) -> FloatND:
     """A utility that multiplies consumption by the outer post-decision.
 
     The cross-term makes the inner marginal utility depend on the outer choice,
     so the durable margin is not additively separable from consumption.
     """
-    flow = consumption * (1.0 + 0.01 * next_illiquid)
+    flow = consumption * (1.0 + 0.01 * new_durable)
     return flow ** (1.0 - 2.0) / (1.0 - 2.0)
 
 
@@ -160,7 +160,7 @@ def test_utility_coupling_the_two_margins_is_rejected_with_2d_pointer():
     """A non-additively-separable utility cross-term fails fast.
 
     NEGM treats the outer margin's utility term as a constant in the inner Euler
-    inversion; a cross-term in `(consumption, next_illiquid)` breaks that.
+    inversion; a cross-term in `(consumption, new_durable)` breaks that.
     """
     regime = _VALID.replace(
         functions={
@@ -271,10 +271,10 @@ def test_outer_cost_reading_the_euler_state_is_rejected():
 
 
 def _base_reading_the_outer_margin(
-    wealth: ContinuousState, next_illiquid: ContinuousState
+    wealth: ContinuousState, new_durable: ContinuousState
 ) -> FloatND:
     """A cost-free resources base that reads the outer margin directly."""
-    return wealth + 5.0 + 0.01 * next_illiquid
+    return wealth + 5.0 + 0.01 * new_durable
 
 
 def test_resources_base_reading_the_outer_margin_is_rejected():

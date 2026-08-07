@@ -6,7 +6,7 @@ illiquid/durable margin `illiquid` (Z) with a withdrawal penalty (a kink at
 `illiquid_investment = 0`) and a `Z >= 0` floor. The brute oracle for the
 equivalent spec is committed in `kinked_toy_oracle.py`.
 
-The NEGM reparametrisation fixes the outer post-decision `next_illiquid`
+The NEGM reparametrisation fixes the outer post-decision `new_durable`
 (`s' = Z + Iz`) per outer-grid node; the inner consumption-savings problem is
 then a standard 1-D DC-EGM solve on `wealth`:
 
@@ -16,7 +16,7 @@ then a standard 1-D DC-EGM solve on `wealth`:
   withdrawal/deposit) and indexes the child durable state `illiquid`,
 - the credit-card rate kink lives in the inner Euler law `next_wealth`.
 
-The outer search runs over `next_illiquid` with the no-adjustment candidate
+The outer search runs over `new_durable` with the no-adjustment candidate
 `s' = illiquid` (`Iz = 0`, the withdrawal-penalty kink).
 """
 
@@ -47,7 +47,7 @@ N_AZ = 25
 N_PERIODS = 4
 
 ILLIQUID_FLOW = 0.05  # iota
-WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (next_illiquid < illiquid)
+WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (new_durable < illiquid)
 BORROW_RATE = 0.12  # credit-card rate on liquid_savings < 0
 SAVE_RATE = 0.03  # rate on liquid_savings >= 0
 RISK_AVERSION = 2.0
@@ -60,13 +60,25 @@ class RegimeId:
     dead: ScalarInt
 
 
-def credited(illiquid: ContinuousState, next_illiquid: ContinuousState) -> FloatND:
-    """Net liquid cost of moving the durable to `next_illiquid` (`s'`).
+def new_durable(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """The durable stock chosen this period, `s' = Z + Iz`.
+
+    The outer post-decision margin: an ordinary function of this period's state
+    and action, so the credited cost and the `illiquid` law of motion read one
+    value.
+    """
+    return illiquid + illiquid_investment
+
+
+def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
+    """Net liquid cost of moving the durable to `new_durable` (`s'`).
 
     A deposit (`s' > Z`) costs its face value; a withdrawal (`s' < Z`) returns
     only `(1 - kappa)` of the amount pulled out — the penalty kink at `s' = Z`.
     """
-    investment = next_illiquid - illiquid
+    investment = new_durable - illiquid
     return jnp.where(
         investment < 0.0,
         (1.0 - WITHDRAWAL_PENALTY) * investment,
@@ -96,17 +108,14 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
     return (1.0 + rate) * liquid_savings
 
 
-def durable_transition(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
-) -> ContinuousState:
-    """Durable law of motion `s' = Z + Iz`, the `illiquid` state transition.
+def durable_transition(new_durable: ContinuousState) -> ContinuousState:
+    """Durable law of motion: the stock chosen this period is next period's.
 
-    Used as the `illiquid` state transition, so pylcm refers to its output as
-    the auto-generated `next_illiquid`; the NEGM solver names that value as its
-    `outer_post_decision`, which the inner `resources` reads as a kernel-bound
-    constant per outer-grid node.
+    The chosen level is `new_durable`, which the NEGM solver names as its
+    `outer_post_decision` and binds per outer-grid node; the inner `resources`
+    reads it there as a constant.
     """
-    return illiquid + illiquid_investment
+    return new_durable
 
 
 def keep_illiquid(illiquid: ContinuousState) -> FloatND:
@@ -161,7 +170,8 @@ NEGM_SOLVER = NEGM(
         savings_grid=SAVINGS_GRID,
     ),
     outer_action="illiquid_investment",
-    outer_post_decision="next_illiquid",
+    outer_state="illiquid",
+    outer_post_decision="new_durable",
     outer_grid=OUTER_GRID,
     outer_no_adjustment_candidate="keep_illiquid",
     outer_cost="credited",
@@ -186,6 +196,7 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> Regime:
         transition=next_regime,
         functions={
             "utility": utility,
+            "new_durable": new_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
             "keep_illiquid": keep_illiquid,

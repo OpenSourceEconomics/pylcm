@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
@@ -68,36 +68,47 @@ def create_regime_params_template(
         The regime parameter template with type annotations as values.
 
     """
-    # Every state the regime declares a law for produces a `next_<state>` in the
-    # target's bundle, so a law reading one reads a DAG value, not a parameter.
-    # Reading `state_transitions` and not only `states` is what makes that hold
-    # for a state the source hands over without carrying — a declared entry into
-    # a target's process is the case, and its physical value is available to its
-    # neighbours exactly as any other transition's output is.
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
-        # `next_<state>` is an engine-provided DAG node for EVERY declared state
-        # transition, including target-only states (in `state_transitions` but not
-        # `states`). Discovering it only from `states` would misclassify a
-        # target-only `next_<state>` read by utility/a constraint as a user
-        # parameter, silently disconnecting the decision from the transition.
-        *(f"next_{name}" for name in user_regime.states),
-        *(f"next_{name}" for name in user_regime.state_transitions),
         "period",
         "age",
         "CE",
     }
-    # A target's state is next-period vocabulary only where next-period values
-    # exist: inside a transition, and inside whatever feeds one. `utility` and
-    # `constraints` are evaluated at this period's states, so `next_<state>`
-    # there names an ordinary parameter and stays one.
-    transition_role = _function_names_in_transition_role(user_regime)
-    variables_in_transition_role = variables | {
-        f"next_{name}" for name in other_regime_state_names
-    }
+    # `next_<state>` names a value, never a parameter. Whether a consumer may
+    # read it is a question of whether that value exists where the consumer runs.
+    #
+    # `next_<state>` names a value a transition produces, and only a transition —
+    # or a function feeding one — is evaluated where that value exists. Three
+    # families of name are transition outputs there:
+    #
+    # - `next_<state>` for a state this regime carries;
+    # - `next_<state>` for a state it declares a law for — which covers a state
+    #   handed over without being carried, a declared entry into a target's
+    #   process being the case;
+    # - `next_<state>` for a state some other regime declares, since the value
+    #   belongs to a target and is produced by the entry or is a draw.
+    #
+    # Anywhere else the name has no value behind it, and admitting it as a
+    # parameter would answer a next-period question with a constant the user
+    # supplies. That is rejected rather than classified.
+    _fail_if_a_next_name_is_read_outside_a_transition(user_regime)
 
+    # Every illegitimate read is already rejected, so the subtraction below only
+    # has to be permissive enough for the legitimate ones: a name in transition
+    # role in either phase keeps its `next_` arguments out of the template.
+    transition_role = _function_names_in_transition_role(
+        user_regime, phase="solve"
+    ) | _function_names_in_transition_role(user_regime, phase="simulate")
+    variables_in_transition_role = variables | {
+        f"next_{name}"
+        for name in (
+            *user_regime.states,
+            *user_regime.state_transitions,
+            *other_regime_state_names,
+        )
+    }
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
 
@@ -179,6 +190,160 @@ def create_regime_params_template(
     )
 
 
+def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -> None:
+    """Check that only a state transition, or a function feeding one, reads `next_`.
+
+    Whether a consumer may name a next-period value is a question about *when*
+    that consumer runs, so the check is indexed by consumer and by phase rather
+    than by name:
+
+    - a state transition, and every regime function it feeds, runs where
+      next-period values exist and may read them;
+    - utility, constraints, derived categoricals, the Koopmans aggregator and the
+      certainty equivalent are this period's payoff and see none;
+    - the regime transition selects the target *before* that target's state laws
+      run, so it sees none either.
+
+    The reach through helpers is what makes this a walk rather than a signature
+    test. A helper feeding both a law and utility is legitimate on the law's path
+    and not on utility's, and permission granted for the one would otherwise
+    cover the other silently.
+
+    Args:
+        user_regime: User-form `Regime` instance.
+
+    Raises:
+        InvalidNameError: If a consumer that runs before next-period values exist
+            reads one, directly or through a regime function.
+
+    """
+    for phase in ("solve", "simulate"):
+        transition_role = _function_names_in_transition_role(user_regime, phase=phase)
+        consumers: dict[str, object] = {
+            name: func
+            for name, func in _collect_all_functions_for_template(user_regime).items()
+            if tree_path_from_qname(name)[0] not in transition_role
+        }
+        if user_regime.koopmans_aggregator is not None:
+            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        for name, func in consumers.items():
+            _fail_if_a_next_name_is_read(
+                consumer_name=name,
+                reserved=_next_names_reachable_from(
+                    func, user_regime.functions, phase=phase
+                ),
+            )
+
+    # A certainty equivalent declares parameter names rather than a signature to
+    # walk, so its public names get the same test the walk applies to arguments.
+    if user_regime.certainty_equivalent is not None:
+        _fail_if_a_next_name_is_read(
+            consumer_name="certainty_equivalent",
+            reserved={
+                param_name: ()
+                for param_name in user_regime.certainty_equivalent.param_names
+                if param_name.startswith("next_")
+            },
+        )
+
+
+def _next_names_reachable_from(
+    func: object,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    *,
+    phase: Literal["solve", "simulate"],
+) -> dict[str, tuple[FunctionName, ...]]:
+    """Return every `next_`-prefixed argument reachable from `func`, with its route.
+
+    Args:
+        func: Regime slot value to walk — a callable, a `Phased` entry, or a
+            per-target dict.
+        functions: The regime's functions, which the walk descends into.
+        phase: Phase whose variant is taken from each `Phased` entry.
+
+    Returns:
+        Mapping of each reachable `next_<name>` to the chain of regime functions
+        leading to it, empty for one named in `func`'s own signature.
+
+    """
+    reached: dict[str, tuple[FunctionName, ...]] = {}
+    walked: set[FunctionName] = set()
+    frontier: list[tuple[UserFunction, tuple[FunctionName, ...]]] = [
+        (variant, ()) for variant in _callables_in(func, phase=phase)
+    ]
+    while frontier:
+        current, chain = frontier.pop()
+        for arg in dt.create_tree_with_input_types({"_": current}):
+            arg_name = tree_path_from_qname(arg)[-1]
+            if arg_name.startswith("next_"):
+                reached.setdefault(arg_name, chain)
+            elif arg_name in functions and arg_name not in walked:
+                walked.add(arg_name)
+                frontier.extend(
+                    (variant, (*chain, arg_name))
+                    for variant in _callables_in(functions[arg_name], phase=phase)
+                )
+    return reached
+
+
+def _fail_if_a_next_name_is_read(
+    *, consumer_name: FunctionName, reserved: Mapping[str, tuple[FunctionName, ...]]
+) -> None:
+    """Reject a consumer that names a next-period value where none exists.
+
+    `next_<name>` names a value, never a parameter. Admitting it here would hand
+    the user a parameter slot under a name that says it is a next-period value,
+    and answer a next-period question with a constant supplied at solve time.
+
+    The prefix stays reserved outside a transition even for a quantity that is in
+    fact determined within the period, such as a post-decision stock. What
+    `next_<name>` denotes depends on where the value is going: with one law per
+    target it is target-specific, and with a stochastic law it is a distribution
+    rather than a number. Admitting the name wherever the declaration happens to
+    make it single-valued would make a utility function's legality depend on the
+    regime's transition topology, so that adding a second target invalidates a
+    payoff that never mentioned targets. A quantity a payoff or a constraint needs
+    is an ordinary function of this period's states and actions; the law reads that
+    function, and so does everything else.
+
+    Args:
+        consumer_name: Consumer being checked, named in the message.
+            `koopmans_aggregator` and `certainty_equivalent` enter under their
+            pseudo-function names.
+        reserved: Mapping of each reserved name the consumer reads to the chain of
+            regime functions leading to it, empty for a direct read.
+
+    Raises:
+        InvalidNameError: If `reserved` is non-empty.
+
+    """
+    if not reserved:
+        return
+    names = sorted(reserved)
+    routes = [
+        f"'{name}' (read by '{consumer_name}' through "
+        f"{' -> '.join(repr(step) for step in reserved[name])})"
+        if reserved[name]
+        else f"'{name}'"
+        for name in names
+    ]
+    example = names[0].removeprefix("next_")
+    raise InvalidNameError(
+        f"'{consumer_name}' reads {', '.join(routes)}, but the 'next_' prefix "
+        f"names the output of a state transition and is never a parameter. Only a "
+        f"transition law, and what feeds one, may read a next-period value; "
+        f"elsewhere the name would be bound to a constant supplied at solve time, "
+        f"answering a next-period question with a number that has nothing to do "
+        f"with next period. If the quantity is determined within this period — a "
+        f"post-decision stock, or next period's assets as this period's assets "
+        f"minus consumption — give it its own name as an ordinary function of this "
+        f"period's states and actions, and have both '{consumer_name}' and the law "
+        f"read that function: define `new_{example}(...)`, then declare "
+        f"`state_transitions={{'{example}': lambda new_{example}: new_{example}}}`. "
+        f"If a parameter was meant, rename the argument."
+    )
+
+
 def _add_koopmans_aggregator_params(
     function_params: dict[FunctionName, dict[str, str]],
     user_regime: UserRegime,
@@ -213,15 +378,13 @@ def _add_koopmans_aggregator_params(
         *set(user_regime.states),
         *set(user_regime.actions),
         *user_regime.functions,
-        *(f"next_{name}" for name in user_regime.states),
         "period",
         "age",
         "utility",
         "CE",
     }
-    function_params["koopmans_aggregator"] = {
-        k: v for k, v in sorted(tree.items()) if k not in variables
-    }
+    params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+    function_params["koopmans_aggregator"] = params
 
 
 def _add_certainty_equivalent_params(
@@ -310,53 +473,90 @@ def _fail_if_runtime_grid_shadows_function(
         )
 
 
-def _function_names_in_transition_role(user_regime: UserRegime) -> frozenset[str]:
+def _callables_in(
+    value: object, *, phase: Literal["solve", "simulate"] | None = None
+) -> list[UserFunction]:
+    """Return the callables a regime slot value stands for.
+
+    A law and a regime function accept the same shapes, so one traversal serves
+    both and they cannot come to disagree about what is walkable:
+
+    - a plain callable stands for itself;
+    - a `Phased` entry is two implementations rather than one, so a caller
+      naming a phase gets that variant and a caller naming none gets both;
+    - a per-target dict holds one law per target, each walked in turn;
+    - `None` masks a model-level entry and stands for no implementation at all,
+      so there is no signature to read.
+
+    Args:
+        value: A `state_transitions` or `functions` entry.
+        phase: Phase whose variant to take from a `Phased` entry. `None` takes
+            both, which is what the parameter template wants — it unions the two
+            phases' parameters. Anything deciding what a consumer may *read*
+            names its phase, since a variant reaching a law in one phase says
+            nothing about the other.
+
+    Returns:
+        List of the callables it stands for, empty when it stands for none.
+
+    """
+    if value is None:
+        return []
+    if isinstance(value, Phased):
+        if phase == "solve":
+            return _callables_in(value.solve, phase=phase)
+        if phase == "simulate":
+            return _callables_in(value.simulate, phase=phase)
+        return [*_callables_in(value.solve), *_callables_in(value.simulate)]
+    if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
+        return [
+            callable_
+            for member in value.values()
+            for callable_ in _callables_in(member, phase=phase)
+        ]
+    return [cast("UserFunction", value)]
+
+
+def _function_names_in_transition_role(
+    user_regime: UserRegime, *, phase: Literal["solve", "simulate"]
+) -> frozenset[str]:
     """Return the names of functions that compute, or feed, a state transition.
+
+    A state transition is the only consumer evaluated where next-period values
+    exist, so it and the regime functions feeding it are the only ones that may
+    read a `next_<name>`. The regime transition is deliberately absent: it
+    selects the target and runs *before* that target's state laws, so a regime
+    probability naming a next-period state names something not yet computed.
 
     Args:
         user_regime: User-form `Regime` instance.
+        phase: Phase whose variants are walked. A `Phased` helper feeding a law
+            in one phase carries no permission into the other.
 
     Returns:
-        Frozenset of the regime's transition function names together with every
-        regime function they read, directly or through other regime functions.
+        Frozenset of the regime's state-transition function names together with
+        every regime function they read, directly or through other regime
+        functions.
 
     """
-    roots: list[UserFunction] = []
-    frontier_laws: list[object] = list(user_regime.state_transitions.values())
-    while frontier_laws:
-        law = frontier_laws.pop()
-        if isinstance(law, Phased):
-            frontier_laws.extend([law.solve, law.simulate])
-        elif isinstance(law, Mapping) and not isinstance(law, MarkovTransition):
-            frontier_laws.extend(law.values())
-        elif law is not None:
-            roots.append(cast("UserFunction", law))
-
     functions = user_regime.functions
     feeders: set[str] = set()
-    frontier: list[object] = list(roots)
+    frontier = [
+        variant
+        for law in user_regime.state_transitions.values()
+        for variant in _callables_in(law, phase=phase)
+    ]
     while frontier:
         func = frontier.pop()
-        # A regime FUNCTION can be phase-variant too, not just a transition law.
-        # The loop above unwraps a `Phased` law; this one is reached once a law
-        # READS a `Phased` helper, and the wrapper is not callable, so
-        # `inspect.signature` inside `dags` rejects it. Both variants can feed
-        # the transition -- the role is a union over the phases, exactly as the
-        # law-side unwrapping above treats it -- so both are walked.
-        if isinstance(func, Phased):
-            frontier.extend([func.solve, func.simulate])
-            continue
         for arg in dt.create_tree_with_input_types({"_": func}):
             arg_name = tree_path_from_qname(arg)[-1]
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.append(functions[arg_name])
+            frontier.extend(_callables_in(functions[arg_name], phase=phase))
 
     return frozenset(
-        {f"next_{name}" for name in user_regime.state_transitions}
-        | {"next_regime"}
-        | feeders
+        {f"next_{name}" for name in user_regime.state_transitions} | feeders
     )
 
 

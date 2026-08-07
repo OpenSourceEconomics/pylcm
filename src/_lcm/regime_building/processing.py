@@ -93,7 +93,6 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
 )
 from _lcm.regime_building.Q_and_F import (
-    LAW_SOURCE_ATTR,
     get_Q_and_F,
     get_Q_and_F_terminal,
     partition_continuation_targets,
@@ -113,10 +112,8 @@ from _lcm.solution.contract import (
 )
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
-    SupportAxes,
     TransitionLawInfo,
     TransitionLaws,
-    all_stochastic_next_state_names,
 )
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -529,7 +526,6 @@ def process_regimes(
             solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
-            solve_support_axes=solution.support_axes,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
@@ -895,9 +891,6 @@ def _build_solution_phase(
         state_grids=state_grids,
         regime_params_template=regime_params_template,
         variables=variables,
-        coarse_state_law_names=_phase_coarse_state_law_names(
-            user_regime=user_regimes[regime_name], phase="solve"
-        ),
         phase_reachability=phase_reachability,
         source_regime_name=regime_name,
         phase_name="solution",
@@ -914,8 +907,6 @@ def _build_solution_phase(
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
 
-    next_state_names = _declared_next_state_names(user_regimes[regime_name])
-
     if spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
@@ -923,7 +914,6 @@ def _build_solution_phase(
             flat_param_names=flat_param_names,
             functions=core.functions,
             constraints=core.constraints,
-            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -982,7 +972,6 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
-            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -990,7 +979,6 @@ def _build_solution_phase(
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
-            next_state_names=next_state_names,
             grid_schedule=grid_schedule,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
@@ -1002,7 +990,6 @@ def _build_solution_phase(
             constraints=core.constraints,
             transitions=core.transitions,
             transition_laws=core.transition_laws,
-            support_axes=core.support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_space,
@@ -1010,7 +997,6 @@ def _build_solution_phase(
             enable_jit=enable_jit,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
-            next_state_names=next_state_names,
             # F4: diagnostics recompute on the SAME period-specific target grid as the
             # primary solve (not the representative grid).
             grid_schedule=grid_schedule,
@@ -1115,7 +1101,6 @@ def _build_solution_phase(
         constraints=core.constraints,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
-        support_axes=core.support_axes,
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
@@ -1403,7 +1388,6 @@ def _build_simulation_phase(
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
     solve_transition_laws: TransitionLaws,
-    solve_support_axes: SupportAxes,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
     solver: Solver,
@@ -1457,8 +1441,6 @@ def _build_simulation_phase(
             a declared entry law into a process is split into node indices plus
             weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
-        solve_support_axes: Immutable mapping of target regime names to their
-            private node axes, as the solution phase built them.
         solve_transition_laws: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
@@ -1488,9 +1470,6 @@ def _build_simulation_phase(
         state_grids=state_grids,
         regime_params_template=regime_params_template,
         variables=variables,
-        coarse_state_law_names=_phase_coarse_state_law_names(
-            user_regime=user_regime, phase="simulate"
-        ),
         phase_reachability=simulation_reachability,
         source_regime_name=regime_name,
         phase_name="simulation",
@@ -1550,15 +1529,12 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
-    next_state_names = _declared_next_state_names(user_regime)
-
     if spec.terminal:
         compute_regime_transition_probs = None
         terminal_func = get_Q_and_F_terminal(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
-            next_state_names=next_state_names,
         )
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(range(ages.n_periods), terminal_func)
@@ -1626,7 +1602,6 @@ def _build_simulation_phase(
             constraints=constraints,
             transitions=solve_transitions,
             transition_laws=solve_transition_laws,
-            support_axes=solve_support_axes,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             flat_param_names=flat_param_names,
@@ -1634,11 +1609,6 @@ def _build_simulation_phase(
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             continuation_functions=solve_functions,
-            flow_transitions=core.transitions,
-            flow_stochastic_transition_names=all_stochastic_next_state_names(
-                core.transition_laws
-            ),
-            next_state_names=next_state_names,
             grid_schedule=grid_schedule,
         )
 
@@ -1892,14 +1862,6 @@ class _CoreResult:
     transition_laws: TransitionLaws
     """Immutable mapping of target regime names to their transition laws."""
 
-    support_axes: SupportAxes
-    """Immutable mapping of target regime names to their private node axes.
-
-    One entry per `next_<state>` whose law is an interpolation basis: the node
-    index vector the target's value function is indexed by, which the physical
-    value the same law publishes is interpolated over. Empty in the simulate
-    phase, which stores physical process values and indexes nothing."""
-
     next_regime_func: TransitionFunction | None
     """The coarse regime transition function; `None` for terminal regimes and
     for per-target regime transitions."""
@@ -1924,7 +1886,6 @@ def _process_regime_core(
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variables: Variables,
-    coarse_state_law_names: frozenset[StateName],
     phase_reachability: PhaseReachability,
     source_regime_name: RegimeName,
     phase_name: PhaseName,
@@ -1949,12 +1910,6 @@ def _process_regime_core(
             of their states only, which is what a target offers a source to enter.
         regime_params_template: The regime's parameter template.
         variables: States and actions of the regime with kind/topology/process tags.
-        coarse_state_law_names: State names whose deterministic law is COARSE
-            (a bare law, not a per-target dict) in THIS phase. A coarse law's
-            `next_<state>` cells are stamped at the shared bare location so a
-            within-period read MERGES; a per-target law's cells keep their
-            target-qualified location so the read CONFLICTS. See
-            `_phase_coarse_state_law_names`.
         phase_reachability: This phase's static regime graph, the sole source
             of which targets need a continuation built.
         source_regime_name: This regime's name, used to read its retained
@@ -2035,27 +1990,12 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        # `func_name` is `<target>__next_<state>`; its last path part is the bare
-        # law name `next_<state>` and the state name drops the `next_` prefix.
-        bare_law_name = tree_path_from_qname(func_name)[-1]
-        state_name = bare_law_name.removeprefix("next_")
-        # Provenance location keys a within-period read's merge/conflict (see
-        # `_law_sources_differ`). For a law COARSE in THIS phase, stamp at the bare
-        # `next_<state>` shared by all its target cells so the read MERGES; a
-        # per-target law keeps its target-qualified `names_key` so the read CONFLICTS.
-        # Decoupled from `names_key` (param binding), so the coarse side of a
-        # map-vs-bare `Phased` merges even though the phase-union template binds its
-        # params per target.
         names_key = _extract_template_names_key(func_name, regime_params_template)
-        law_source_location = (
-            bare_law_name if state_name in coarse_state_law_names else names_key
-        )
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
             names_key=names_key,
-            law_source_location=law_source_location,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -2201,21 +2141,6 @@ def _process_regime_core(
         }
     )
 
-    # The node axis a declared entry is interpolated over. It is keyed by the
-    # public `next_<state>` name but is emphatically not that function: the
-    # public name produces the physical value every dependent law reads, and
-    # this array is what the target's value function is indexed by. Kept in its
-    # own mapping rather than in the transition bundle, so no builder that
-    # iterates transitions can mistake it for one.
-    axes_by_target: dict[RegimeName, dict[TransitionFunctionName, Int1D]] = {}
-    for (user_regime, process), grid in split_entry_process_grids.items():
-        axes_by_target.setdefault(user_regime, {})[f"next_{process}"] = jnp.arange(
-            grid.to_jax().shape[0], dtype=jnp.int32
-        )
-    support_axes: SupportAxes = MappingProxyType(
-        {target: MappingProxyType(axes) for target, axes in axes_by_target.items()}
-    )
-
     process_transition_keys = {
         f"{user_regime}__next_{process}"
         for user_regime, process in (*target_process_grids, *split_entry_process_grids)
@@ -2254,7 +2179,6 @@ def _process_regime_core(
     )
 
     fail_if_transition_namespaces_are_mixed(
-        phase_name=phase_name,
         source_regime_name=source_regime_name,
         transitions=transitions,
         transition_laws=transition_laws,
@@ -2282,7 +2206,6 @@ def _process_regime_core(
         constraints=processed_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
-        support_axes=support_axes,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
@@ -2554,50 +2477,6 @@ def _get_stochastic_transition_names(
     )
 
 
-def _declared_next_state_names(user_regime: UserRegime) -> frozenset[str]:
-    """Engine `next_<state>` node names for a regime (own + target-only states).
-
-    A `next_<state>` DAG node exists for every state the regime grids AND every
-    target-only state it hands off (a `state_transitions` key not in `states`). This
-    is phase-invariant and read from the USER declaration, so it still lists a
-    target-only state whose carrier does not grid it in some phase — exactly the
-    no-producer case the read guard must catch. A user may LEGALLY name a current
-    state/action `next_stock`; its own node is `next_next_stock`, so `next_stock`
-    itself is absent here and a read of it is not mistaken for a next-state node.
-    """
-    return frozenset(
-        f"next_{name}"
-        for name in set(user_regime.states) | set(user_regime.state_transitions)
-    )
-
-
-def _phase_coarse_state_law_names(
-    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
-) -> frozenset[StateName]:
-    """State names whose deterministic law is COARSE (bare) in the given phase.
-
-    A coarse law binds ONE shared law across all its target cells, so a within-period
-    read of its `next_<state>` is unambiguous and must MERGE across targets; a
-    per-target dict binds a distinct cell per target, so the read is target-dependent
-    and CONFLICTS. `Phased` resolves per phase — the side facing `phase` decides.
-
-    Read from the USER declaration shape (bare callable vs `Mapping`), because after
-    canonicalization a broadcast coarse law and a per-target dict that reuses one
-    callable are indistinguishable by object identity — the very ambiguity the
-    provenance stamp exists to resolve. `Phased(solve=coarse, simulate={...})` (and its
-    mirror) is therefore coarse in exactly one phase, which is why the location must be
-    keyed per phase rather than off the phase-union template.
-    """
-    coarse: set[StateName] = set()
-    for state_name, raw in user_regime.state_transitions.items():
-        side: object = raw
-        if isinstance(raw, Phased):
-            side = raw.solve if phase == "solve" else raw.simulate
-        if side is not None and not isinstance(side, Mapping):
-            coarse.add(state_name)
-    return frozenset(coarse)
-
-
 def _process_one_function(
     *,
     func: UserFunction | PeriodizedUserFunction,
@@ -2647,7 +2526,6 @@ def _rename_params_to_qnames(
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
     names_key: str | None = None,
-    law_source_location: str | None = None,
 ) -> EconFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -2662,15 +2540,6 @@ def _rename_params_to_qnames(
             differs from `param_key` — a coarse law's names sit at the bare
             law name while its params bind per target. Defaults to
             `param_key`.
-        law_source_location: The location recorded in the provenance stamp used
-            by `_law_sources_differ` for the within-period conflict guard, when
-            it must differ from `names_key`. This decouples a `next_<state>`
-            cell's merge/conflict identity from where its params BIND: the caller
-            passes the bare `next_<state>` for a law that is COARSE in THIS phase
-            (so its cells share a location and MERGE) and the target-qualified
-            `names_key` for a per-target law (so its cells CONFLICT), even in a
-            `Phased` map-vs-bare law whose phase-union template would otherwise
-            give the coarse side per-target leaves. Defaults to `names_key`.
 
     Returns:
         The function with renamed parameters.
@@ -2689,30 +2558,9 @@ def _rename_params_to_qnames(
     own_args = get_union_of_args([func])
     param_names = [p for p in branch if p in own_args]
     if not param_names:
-        # No engine wrapper is added, so no provenance stamp: the cell's own object
-        # identity distinguishes one coarse law (the same object broadcast to every
-        # target) from distinct per-target laws. A parameter-free law reused across
-        # per-target cells is genuinely identical (no parameter can differ), so
-        # shared identity is the right verdict here. See `_law_sources_differ`.
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
-    renamed = rename_arguments(func, mapper=mapper)
-    # Stamp the engine-created wrapper with (user law, provenance location). The
-    # conflict guard compares this token instead of unwrapping (which cannot tell the
-    # engine's rename layer from a user's own `rename_arguments` wrapper). The location
-    # is decisive: a COARSE law (this phase) is stamped at the BARE `next_<state>`,
-    # shared by every target cell (same location -> merge), whereas a PER-TARGET dict's
-    # cells carry a TARGET-QUALIFIED location, distinct per cell -- so cells that reuse
-    # the SAME callable still get different tokens and remain a conflict. The caller
-    # supplies `law_source_location` from this phase's declaration shape; it defaults to
-    # `names_key`. Keep the base user law, not a nested token, as origin.
-    location = law_source_location
-    if location is None:
-        location = names_key if names_key is not None else param_key
-    prior = getattr(func, LAW_SOURCE_ATTR, None)
-    base = prior[0] if isinstance(prior, tuple) else (func if prior is None else prior)
-    setattr(renamed, LAW_SOURCE_ATTR, (base, location))
-    return cast("EconFunction", renamed)
+    return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 
 def _engine_flat_param_names(
@@ -3383,7 +3231,12 @@ def _get_explicit_entry_weights_for_process(
         # Outside the support every hat is zero, which would read as a silent
         # zero continuation. Poison it instead, so the solve-time check names
         # the regime and period rather than publishing an unjustified value.
-        on_support = (coordinate >= 0.0) & (coordinate <= n_points - 1)
+        #
+        # The test is on the physical value, not its coordinate. A coordinate
+        # only stands in for the value where the map is invertible, which it is
+        # not on a support of one node: there every value shares the sole index,
+        # so a coordinate test would accept the whole real line.
+        on_support = (value >= lower) & (value <= upper)
         return jnp.where(on_support, weights, jnp.nan)
 
     return explicit_entry_weights
@@ -3976,7 +3829,6 @@ def _build_Q_and_F_per_period(
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
-    support_axes: SupportAxes,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -3987,9 +3839,6 @@ def _build_Q_and_F_per_period(
     ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
     continuation_functions: EconFunctionsMapping | None = None,
-    flow_transitions: TransitionFunctionsMapping | None = None,
-    flow_stochastic_transition_names: frozenset[TransitionFunctionName] | None = None,
-    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
     grid_schedule: AgeGridSchedule | None = None,
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each active period of a non-terminal regime.
@@ -4016,8 +3865,6 @@ def _build_Q_and_F_per_period(
         transitions: Immutable mapping of regime-to-regime transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
-        support_axes: Immutable mapping of target regime names to their private
-            node axes.
         compute_regime_transition_probs: Regime transition probability function.
         regime_to_v_interpolation_info: Mapping of regime names to representative
             V-interpolation info (the age-invariant fallback).
@@ -4028,13 +3875,6 @@ def _build_Q_and_F_per_period(
             regime, or `None`.
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
             against; `None` in the solve phase, where it coincides with `functions`.
-        flow_transitions: Simulate-phase transitions the flow `next_<state>` nodes are
-            taken from; `None` in the solve phase, where they coincide with
-            `transitions`. See `get_Q_and_F` for the phase-closure contract.
-        flow_stochastic_transition_names: Stochastic names of `flow_transitions`.
-        next_state_names: Declared `next_<state>` node names for this regime,
-            used by the no-producer guard to distinguish a genuine missing
-            next-state producer from a current variable merely named `next_*`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
         period_to_regime_v_interp: Per-period continuation interpolation info
             built from the schedule, or `None`.
@@ -4102,7 +3942,6 @@ def _build_Q_and_F_per_period(
             scalar_targets=scalar_targets,
             transitions=transitions,
             transition_laws=transition_laws,
-            support_axes=support_axes,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
@@ -4122,9 +3961,6 @@ def _build_Q_and_F_per_period(
                 if continuation_functions is not None
                 else None
             ),
-            flow_transitions=flow_transitions,
-            flow_stochastic_transition_names=flow_stochastic_transition_names,
-            next_state_names=next_state_names,
         )
 
     return expand_groups_to_periods(configs, built)

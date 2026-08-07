@@ -208,6 +208,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
         no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
         resolved[user_regime.solver.outer_post_decision] = (
             _keeper_no_adjustment_function(
+                durable_state=user_regime.solver.outer_state,
                 outer_post_decision=user_regime.solver.outer_post_decision,
                 no_adjustment_func=(
                     resolved[no_adjustment_name]
@@ -235,6 +236,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
 
 def _keeper_no_adjustment_function(
     *,
+    durable_state: StateName,
     outer_post_decision: FunctionName,
     no_adjustment_func: UserFunction | None,
     functions: dict[str, UserFunction],
@@ -248,7 +250,6 @@ def _keeper_no_adjustment_function(
     annotation-consistency check (which requires every consumer of a leaf to
     agree) stays satisfied.
     """
-    durable_state = outer_post_decision.removeprefix("next_")
     annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
 
     @with_signature(args={durable_state: annotation}, return_annotation=annotation)

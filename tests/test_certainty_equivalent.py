@@ -1008,7 +1008,8 @@ def _minimal_nnbegm() -> Any:
             savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         ),
         outer_action="investment",
-        outer_post_decision="next_stock",
+        outer_state="stock",
+        outer_post_decision="new_stock",
         outer_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         outer_no_adjustment_candidate="keep_stock",
     )
