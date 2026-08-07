@@ -7,6 +7,12 @@ import jax.numpy as jnp
 from dags import concatenate_functions, get_annotations, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.probability import (
+    is_negative,
+    is_represented_zero,
+    rescaled_lottery_weights,
+    rescaled_weight_group,
+)
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -430,22 +436,63 @@ def _get_compute_CE(
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in period_targets}
         )
+        # Every target's own lottery is built before any of them is weighted,
+        # because the common factor that puts the whole continuation on a scale
+        # the dtype can multiply depends on both halves of each node's
+        # probability — the regime's and the node's. A regime probability lifted
+        # only into the normal range lands back under it as soon as a quadrature
+        # weight of a sixth multiplies it.
+        target_node_weights = {
+            target_regime_name: continuations[target_regime_name].joint_lottery_weights(
+                **continuations[target_regime_name].lottery_weights(
+                    **states_actions_params
+                )
+            )
+            for target_regime_name in period_targets
+        }
+        # The unscaled probabilities stay in `active_regime_probs` — they are
+        # published, and the mass guard has to see the mass the model actually
+        # specified rather than a rescaled one.
+        weighting_regime_probs = MappingProxyType(
+            dict(
+                zip(
+                    period_targets,
+                    rescaled_weight_group(
+                        [active_regime_probs[r] for r in period_targets],
+                        cofactors=[target_node_weights[r] for r in period_targets],
+                    ),
+                    strict=True,
+                )
+            )
+            if period_targets
+            else {}
+        )
 
         CE = zero
         probability_mass = zero
         # Unit mass alone does not make a collection of weights a distribution:
-        # 1.5 and -0.5 sum to one. The smallest weight is tracked alongside the
-        # sum so non-negativity is arithmetic too, and the two together give the
-        # whole range — non-negative weights summing to one each lie in [0, 1].
-        smallest_probability = zero + jnp.inf
+        # 1.5 and -0.5 sum to one. Non-negativity is tracked alongside the sum
+        # so it is arithmetic too, and the two together give the whole range —
+        # non-negative weights summing to one each lie in [0, 1].
+        #
+        # It is tracked as a decision, not as the smallest weight: reducing the
+        # weights with `jnp.minimum` and testing the survivor's sign loses a
+        # negative probability the dtype cannot hold as a normal number, which
+        # arrives at the test as `-0` and passes it. Each target's sign is read
+        # off its own bits, while it still has them.
+        has_negative_probability = jnp.zeros(jnp.shape(zero), dtype=bool)
+        # The rescaled counterpart of `probability_mass`: the denominator the
+        # per-target route divides by, carrying the same common factor as the
+        # numerator it accumulates so the ratio is the model's.
+        weighting_mass = zero
         lottery_values: list[FloatND] = []
         lottery_weights: list[FloatND] = []
         for target_regime_name in period_targets:
             continuation = continuations[target_regime_name]
             next_states = continuation.next_states(**states_actions_params)
-            joint_next_stochastic_states_weights = continuation.joint_lottery_weights(
-                **continuation.lottery_weights(**states_actions_params)
-            )
+            joint_next_stochastic_states_weights = target_node_weights[
+                target_regime_name
+            ]
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
@@ -471,15 +518,18 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            # The mass sum, the range guard and the liveness test read the
-            # weight as the arithmetic sees it: a probability too small for the
-            # dtype to use contributes nothing to any of them, which is the
-            # right answer for all three. Whether it contributes nothing to the
-            # *continuation* depends on the value standing at it, so that is
-            # settled per term rather than here.
+            # The mass sum reads the weight as the arithmetic sees it: a
+            # probability too small for the dtype to hold contributes nothing
+            # to a total of order one, which is the right answer. Its sign is a
+            # different question, and one arithmetic cannot answer at that size,
+            # so it is read from the bits.
             target_probability = active_regime_probs[target_regime_name]
+            weighting_probability = weighting_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
-            smallest_probability = jnp.minimum(smallest_probability, target_probability)
+            has_negative_probability = has_negative_probability | is_negative(
+                target_probability
+            )
+            weighting_mass = weighting_mass + weighting_probability
 
             if reduces_per_target:
                 # We then take the weighted average of the next value function at the
@@ -492,7 +542,7 @@ def _get_compute_CE(
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
                 CE = CE + zero_safe_weighted_term(
-                    target_probability, next_V_expected_arr
+                    weighting_probability, next_V_expected_arr
                 )
             else:
                 values, node_weights = _as_lottery(
@@ -512,7 +562,7 @@ def _get_compute_CE(
                 lottery_weights.append(
                     joint_weight(
                         jnp.stack(
-                            jnp.broadcast_arrays(target_probability, node_weights)
+                            jnp.broadcast_arrays(weighting_probability, node_weights)
                         )
                     )
                 )
@@ -531,7 +581,19 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
-            CE = CE / _unit_regime_mass_or_nan(probability_mass, smallest_probability)
+            #
+            # Numerator and denominator carry the same common factor, so it
+            # cancels; where no target needed rescaling the factor is one and
+            # the arithmetic is the same operation on the same bits. Whether
+            # the lottery is a distribution is asked of the mass the model
+            # specified, which is the unscaled one.
+            CE = CE / jnp.where(
+                _regime_mass_is_a_distribution(
+                    probability_mass, has_negative_probability
+                ),
+                weighting_mass,
+                jnp.nan,
+            )
         elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
@@ -543,7 +605,9 @@ def _get_compute_CE(
             # the initialized `CE`. The mask is `False` there regardless, since
             # a mass of zero is not unit mass.
             CE = jnp.where(
-                _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+                _regime_mass_is_a_distribution(
+                    probability_mass, has_negative_probability
+                ),
                 _aggregate_joint_lottery(
                     certainty_equivalent=certainty_equivalent,
                     lottery_values=lottery_values,
@@ -956,11 +1020,16 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
       operation feeding the sum and can be contracted into a fused
       multiply-add. Selecting on the product instead forces it to round before
       the sum rounds again, which every well-specified node pays for;
-    - the test is `== 0`, not `> 0`. A negative weight is a malformed
-      specification and a `NaN` weight is not a probability at all; `> 0` is
-      false for both and would launder either into a zero contribution, turning
-      a broken transition into a plausible number.
+    - the test is for a represented zero, not for positivity. A negative weight
+      is a malformed specification and a `NaN` weight is not a probability at
+      all; `> 0` is false for both and would launder either into a zero
+      contribution, turning a broken transition into a plausible number.
+
+    The target's nodes are rescaled by one common power of two first, which
+    leaves every ratio between them exactly as supplied and keeps a weight
+    below the normal range out of the multiplication that would flush it.
     """
+    weights = rescaled_lottery_weights(weights, axis=None)
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
     weighted = zero_safe_weighted_term(weights, values)
@@ -1143,12 +1212,12 @@ _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 
 
 def _regime_mass_is_a_distribution(
-    probability_mass: FloatND, smallest_probability: FloatND
+    probability_mass: FloatND, has_negative_probability: BoolND
 ) -> BoolND:
     """Whether the retained targets carry a distribution rather than merely unit mass.
 
-    Two arithmetic conditions, both holding at every log level because they are
-    computed rather than validated:
+    Two conditions, both holding at every log level because they are computed
+    rather than validated:
 
     - the represented mass is one, within tolerance;
     - no target carries a negative weight.
@@ -1156,9 +1225,24 @@ def _regime_mass_is_a_distribution(
     Together they give the full range: non-negative weights summing to one each
     lie in `[0, 1]`. Unit mass alone does not, since 1.5 and -0.5 sum to one,
     and a NaN weight fails both tests rather than passing the first by accident.
+
+    Non-negativity arrives as a decision rather than as a weight to inspect.
+    Taken here it would have to be taken on a number the accumulation already
+    reduced, and reducing with `jnp.minimum` turns a negative probability the
+    dtype cannot hold as a normal number into `-0` — which is a zero, and would
+    pass. The caller reads each target's sign off its own bits instead.
+
+    Args:
+        probability_mass: The retained targets' probabilities, summed.
+        has_negative_probability: Whether any of them carried the sign bit on a
+            nonzero magnitude.
+
+    Returns:
+        Whether the retained targets carry a probability distribution.
+
     """
     is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
-    return is_unit & (smallest_probability >= 0.0)
+    return is_unit & ~has_negative_probability
 
 
 def _aggregate_joint_lottery(
@@ -1186,7 +1270,13 @@ def _aggregate_joint_lottery(
 
     """
     values = jnp.concatenate(list(lottery_values))
-    weights = jnp.concatenate(list(lottery_weights))
+    # The lottery is prepared once, here, where the concatenated weights are
+    # final: rescaling per target would multiply each target's segment by a
+    # different constant and rewrite the regime probabilities. `aggregate` is a
+    # public interface and may multiply by the weights it is handed, so it is
+    # handed weights the dtype can multiply — including a `aggregate` written
+    # by a user, which this file cannot inspect.
+    weights = rescaled_lottery_weights(jnp.concatenate(list(lottery_weights)))
     return certainty_equivalent.aggregate(
         values=_values_without_impossible_nodes(values=values, weights=weights),
         weights=weights,
@@ -1218,8 +1308,13 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
     an arbitrary constant need not lie in the transform's domain -- `log` at
     zero is the ordinary case. A value already in the lottery always does.
 
-    Only an exactly-zero weight is replaced. A negative or NaN weight is not a
-    node that cannot occur, and both stay visible.
+    Only a weight that is zero *in its bits* is replaced. `weights == 0` also
+    catches every probability below the dtype's normal range, and replacing one
+    of those is not a neutralization but a loss: the node can occur, and a `-inf`
+    standing at a state where no action is feasible would be overwritten by a
+    neighbour's finite value, turning an infinite continuation into an ordinary
+    number. A negative or NaN weight is not a node that cannot occur either, and
+    both stay visible.
 
     Args:
         values: Continuation values of the joint lottery.
@@ -1230,18 +1325,18 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
 
     """
     stand_in = jnp.take(values, jnp.argmax(weights, axis=-1), axis=-1)
-    return jnp.where(weights == 0.0, stand_in, values)
+    return jnp.where(is_represented_zero(weights), stand_in, values)
 
 
 def _unit_regime_mass_or_nan(
-    probability_mass: FloatND, smallest_probability: FloatND
+    probability_mass: FloatND, has_negative_probability: BoolND
 ) -> FloatND:
     """Return the mass itself, or NaN where the weights are not a distribution.
 
     For the per-target route, which divides by the mass it accumulated.
     """
     return jnp.where(
-        _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+        _regime_mass_is_a_distribution(probability_mass, has_negative_probability),
         probability_mass,
         jnp.nan,
     )

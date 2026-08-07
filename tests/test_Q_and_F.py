@@ -973,7 +973,8 @@ def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
     perturb a well-formed model however the surrounding solve is fused.
     """
     mass = jnp.ones((3,), dtype=dtype)
-    assert _unit_regime_mass_or_nan(mass, mass).tolist() == [1.0] * 3
+    no_negative = jnp.zeros((3,), dtype=bool)
+    assert _unit_regime_mass_or_nan(mass, no_negative).tolist() == [1.0] * 3
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
@@ -987,4 +988,5 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     ulps of one, three orders of magnitude inside it.
     """
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
-    assert bool(_regime_mass_is_a_distribution(accumulated, accumulated))
+    no_negative = jnp.zeros((), dtype=bool)
+    assert bool(_regime_mass_is_a_distribution(accumulated, no_negative))

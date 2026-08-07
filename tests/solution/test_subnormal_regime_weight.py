@@ -37,7 +37,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.certainty_equivalent import CertaintyEquivalent
+from lcm.certainty_equivalent import CertaintyEquivalent, QuasiArithmeticMean
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
@@ -218,3 +218,56 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
     np.testing.assert_allclose(
         float(func(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
     )
+
+
+def _negative_smallest_subnormal() -> ScalarFloat:
+    """A negative probability the dtype cannot hold as a normal number."""
+    dtype = _active_dtype()
+    return jnp.asarray(-np.finfo(dtype).smallest_subnormal, dtype=dtype)
+
+
+def test_a_negative_weight_below_the_normal_range_is_refused_at_unit_mass() -> None:
+    """Negative mass too small for the total to notice is still not a distribution.
+
+    Adding it to one leaves one, so the mass budget alone accepts the pair, and
+    the arithmetic sign test cannot see it either — the backend reports such a
+    weight as `-0`. Dropping the target instead would publish the value of a
+    model that placed all its mass on the other one.
+    """
+    model = _model(_negative_smallest_subnormal)
+
+    assert bool(jnp.all(jnp.isnan(_source_value(model))))
+
+
+def _pays_the_smallest_normal(shock: ScalarFloat) -> FloatND:
+    """A payoff a harmonic transform sends to the top of the dtype's range."""
+    return (
+        jnp.asarray(_active_dtype().type(np.finfo(_active_dtype()).tiny)) + 0.0 * shock
+    )
+
+
+def test_a_user_written_certainty_equivalent_prices_a_weight_the_dtype_cannot_use():
+    """A rare target reaches a user's `aggregate` at the share the model gave it.
+
+    `transform` is arbitrary user code and can be unbounded, so a weight below
+    the normal range is not a negligible term there: against a near-zero value
+    the harmonic transform makes its contribution order one. The engine hands
+    `aggregate` a lottery it can multiply, rather than one the hardware
+    flushes.
+    """
+    dtype = _active_dtype()
+    tiny = np.longdouble(np.finfo(dtype).tiny)
+    rare = np.longdouble(np.asarray(_largest_subnormal()))
+    model = _model(
+        _largest_subnormal,
+        rare_payoff=_pays_the_smallest_normal,
+        certainty_equivalent=QuasiArithmeticMean(
+            transform=lambda value: 1.0 / value,
+            inverse=lambda value: 1.0 / value,
+        ),
+    )
+
+    value = np.longdouble(np.asarray(_source_value(model)))
+    exact = (np.longdouble(1.0) + rare) / (np.longdouble(1.0) + rare / tiny)
+
+    np.testing.assert_allclose(float(value), float(exact), rtol=1e-5, atol=0)
