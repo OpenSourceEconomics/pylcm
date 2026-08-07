@@ -131,29 +131,46 @@ def _compute_targets(
     if not subject_batch_size or subject_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
-        return {k: jnp.squeeze(v) for k, v in result.items()}
+        return {k: _one_value_per_row(v, n_rows=n_rows) for k, v in result.items()}
 
     # Slice the (host-resident) inputs and move only one chunk to the device at a
-    # time. Squeeze the *concatenated* result, never a chunk — an uneven final
-    # chunk of one row would otherwise lose its row axis.
+    # time, so the fused DAG's workspace is bounded by the chunk.
     chunk_outputs: list[dict[str, np.ndarray]] = []
     for start in range(0, n_rows, subject_batch_size):
         stop = min(start + subject_batch_size, n_rows)
         chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
-        chunk_outputs.append({k: np.asarray(v) for k, v in chunk_result.items()})
+        chunk_outputs.append(
+            {
+                k: np.asarray(_one_value_per_row(v, n_rows=stop - start))
+                for k, v in chunk_result.items()
+            }
+        )
 
-    result: dict[str, FloatND | IntND | BoolND | np.ndarray] = {}
-    for name in chunk_outputs[0]:
-        per_chunk = [out[name] for out in chunk_outputs]
-        # A target with no per-subject variable (a constant, e.g. a terminal-regime
-        # `utility`) yields the same scalar from every chunk; keep one as a 0-d
-        # jax.Array to match the single-pass dtype rather than concatenating scalars.
-        if per_chunk[0].ndim == 0:
-            result[name] = jnp.asarray(per_chunk[0])
-        else:
-            result[name] = np.squeeze(np.concatenate(per_chunk))
-    return result
+    return {
+        name: np.concatenate([out[name] for out in chunk_outputs])
+        for name in chunk_outputs[0]
+    }
+
+
+def _one_value_per_row(
+    values: FloatND | IntND | BoolND | np.ndarray | float,
+    *,
+    n_rows: int,
+) -> FloatND | IntND | BoolND:
+    """Return a target's values shaped as exactly one entry per row.
+
+    A target that reads no per-subject variable — a terminal regime's constant
+    `utility` is the ordinary case — comes back from the vectorized DAG without
+    a row axis, and a single row's chunk comes back with one of length one that
+    a squeeze would remove. Either shape put into a `DataFrame` gives a column
+    of array objects rather than numbers, which then compares by identity and
+    carries no dtype.
+    """
+    arr = jnp.asarray(values)
+    if arr.ndim == 0:
+        return jnp.full((n_rows,), arr)
+    return arr.reshape(n_rows)
 
 
 def _fail_if_targets_depend_on_age_specialized(
