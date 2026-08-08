@@ -74,7 +74,12 @@ def test_a_positive_subnormal_remains_live_in_a_power_mean(*, compile_it: bool) 
     weights = jnp.asarray([1.0, rare_weight], dtype=dtype)
     fn: Callable = jax.jit(weighted_power_mean) if compile_it else weighted_power_mean
 
-    got = fn(values=values, weights=weights, exponent=jnp.asarray(-1.0, dtype=dtype))
+    got = fn(
+        values=values,
+        weights=weights,
+        exponent=jnp.asarray(-1.0, dtype=dtype),
+        shifts=jnp.zeros((), jnp.int32),
+    )
     exact = (np.longdouble(1) + np.longdouble(rare_weight)) / (
         np.longdouble(1) + np.longdouble(rare_weight) / np.longdouble(tiny)
     )
@@ -252,6 +257,7 @@ def test_a_subnormal_weight_is_priced_in_the_pair_power_mean(rare_weight) -> Non
         values=jnp.asarray([1.0, tiny], dtype=dtype),
         weights=jnp.asarray([1.0, rare], dtype=dtype),
         exponent=jnp.asarray(-1.0, dtype=dtype),
+        shifts=jnp.zeros((), jnp.int32),
     )
 
     np.testing.assert_allclose(

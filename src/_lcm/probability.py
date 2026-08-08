@@ -141,28 +141,34 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
     return scaled_by_power_of_two(arr, jnp.minimum(needed, room))
 
 
-def on_common_scale(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
-    """Return weights carrying per-entry scales brought onto one shared scale.
+def reconcile_scales(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
+    """Return weights carrying per-entry scales, moved as close to one as they fit.
 
     Each entry stands for `values * 2**-shifts`, which is how a joint product
     too small for the normal range travels. Read together they have to mean one
-    thing, so every entry is lifted onto the largest scale present.
+    thing, so every entry is lifted toward the largest scale present.
 
     The shared scale is capped at what the entry with the least headroom can
     absorb, because lifting one past the top of the range would replace a
     finite weight with an infinite one. Where the spread is wider than the
-    exponent range — the entries then differ by more than the format can hold
-    on any one scale — the smallest keep a scale of their own and are
-    understated by the difference. Reaching that cap means one weight is
-    smaller than another by more binades than the largest representable value
-    has, so its contribution cannot change a sum of the two.
+    exponent range, an entry cannot reach that scale, and it keeps the residual
+    of its own rather than being read against a scale it never moved to. What
+    every entry satisfies, capped or not, is
+
+    ```{math}
+    w_i^{out} \\, 2^{-s_i^{out}} = w_i^{in} \\, 2^{-s_i^{in}},
+    ```
+
+    so nothing here understates a probability and nothing enlarges one. A
+    consumer that has to put the entries on one scale to reduce them is where
+    that question arises, and it is answered there.
 
     Args:
         values: The scaled weights.
         shifts: Each one's own base-two scale.
 
     Returns:
-        Tuple of the weights on one scale and the scale they now carry.
+        Tuple of the lifted weights and the scale each one now carries.
 
     """
     arr = jnp.asarray(values)
@@ -172,7 +178,55 @@ def on_common_scale(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]
     liftable = jnp.where(is_live(arr) & jnp.isfinite(arr), room, largest)
     common = jnp.minimum(largest, jnp.min(liftable)).astype(jnp.int32)
     lift = jnp.maximum(common - shifts, jnp.zeros_like(shifts))
-    return scaled_by_power_of_two(arr, lift), common
+    return scaled_by_power_of_two(arr, lift), shifts + lift
+
+
+def flattened_to_one_scale(
+    *, coefficients: FloatND, shifts: _BitsND, values: FloatND
+) -> FloatND:
+    """Return scaled weights as plain numbers, on the one scale they all reach.
+
+    `reconcile_scales` leaves an entry that could not reach the shared scale
+    carrying a residual of its own, which is what keeps it exact. A consumer
+    that reduces the lottery as numbers rather than as logarithms has nowhere
+    to put that residual, so the entries come down onto the largest scale every
+    one of them reaches. An entry further below it than the format can express
+    underflows to zero: understated, the direction the contract allows, and
+    never enlarged.
+
+    The value standing at the node decides whether that is the whole story,
+    which is the same split `zero_safe_weighted_term` makes one level down:
+
+    - against a **finite** value the underflow is the smallest error available
+      to anything that has to name the weight as a number, and the node's
+      contribution was negligible at the scale it came in on;
+    - against `±inf` it is not an error but a lost answer. Every strictly
+      positive weight yields the same infinity there, so the weight is floored
+      at the smallest normal magnitude, keeping its sign — normal, not merely
+      nonzero, because a subnormal operand is what the backend flushes, and
+      `0 * -inf` is the NaN this is here to avoid. No magnitude is lost by the
+      substitution, while letting it round to zero would make an event that can
+      occur impossible and report an ordinary number for a continuation that
+      has none.
+
+    Args:
+        coefficients: The scaled weights' significands.
+        shifts: Each one's own base-two scale.
+        values: What each weight stands against, read only for finiteness.
+
+    Returns:
+        The weights on one scale, as ordinary numbers.
+
+    """
+    arr = jnp.asarray(coefficients)
+    shifts = jnp.asarray(shifts)
+    common = jnp.min(shifts)
+    lowered = jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
+    smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
+    vanished_against_infinity = (
+        is_live(arr) & ~is_live(lowered) & jnp.isinf(jnp.asarray(values))
+    )
+    return jnp.where(vanished_against_infinity, jnp.copysign(smallest, arr), lowered)
 
 
 def rescaled_weight_pair(
