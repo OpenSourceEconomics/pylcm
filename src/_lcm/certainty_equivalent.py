@@ -224,6 +224,11 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         # infinity: `0 * inf` is NaN, which would take the well-specified nodes
         # down with it. Transforming a stand-in value instead keeps the
         # reduction finite and changes nothing, the node's weight being zero.
+        # The stand-in is copied from the heaviest node rather than being a
+        # constant, because an arbitrary constant need not lie in `transform`'s
+        # domain while a value already in the lottery always does. A constant
+        # `transform` is unbounded at would leave `0 * inf` on the branch the
+        # mask discards — absent from the value, NaN in its derivative.
         # `transform` can be unbounded, so a weight the dtype cannot multiply
         # is not a negligible term here: `g(v)` at a near-zero value can be
         # large enough that the product is of order one. Rescaling the lottery
@@ -237,7 +242,10 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         weights = rescaled_lottery_weights(weights)
         weights = jnp.where(is_negative(weights), jnp.nan, weights)
         live = is_live(weights)
-        safe_values = jnp.where(live, values, jnp.ones_like(values))
+        stand_in = jnp.take_along_axis(
+            values, jnp.argmax(weights, axis=-1, keepdims=True), axis=-1
+        )
+        safe_values = jnp.where(live, values, stand_in)
         transformed = self.transform(
             value=safe_values, **_args_for(self.transform, params)
         )

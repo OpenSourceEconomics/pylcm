@@ -1342,6 +1342,28 @@ def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
     assert jnp.isnan(got)
 
 
+def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node():
+    """A node that cannot occur perturbs nothing, whatever `transform` is unbounded at.
+
+    The stand-in transformed in place of an impossible node's value is taken
+    from the lottery itself, so it lies in `transform`'s domain by construction.
+    A constant need not, and `transform` unbounded there would leave a `0 * inf`
+    on the discarded branch — invisible in the value, NaN in the derivative.
+    """
+    singular_at_one = QuasiArithmeticMean(
+        transform=lambda value: 1.0 / (value - 1.0),
+        inverse=lambda value: 1.0 / value + 1.0,
+    )
+
+    got = jax.grad(
+        lambda weights: singular_at_one.aggregate(
+            values=jnp.array([2.0, -jnp.inf]), weights=weights, params={}
+        )
+    )(jnp.array([1.0, 0.0]))
+
+    np.testing.assert_allclose(np.asarray(got), np.array([0.0, 1.0]), atol=1e-6)
+
+
 def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node():
     """A weight of exactly zero remains a null event, whatever value stands there."""
     got = QuasiArithmeticMean(
