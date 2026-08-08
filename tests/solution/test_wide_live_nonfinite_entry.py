@@ -163,6 +163,17 @@ def _identity_quasi_arithmetic_mean() -> QuasiArithmeticMean:
     )
 
 
+def _harmonic_quasi_arithmetic_mean() -> QuasiArithmeticMean:
+    """A supported transform that carries an in-support value to infinity.
+
+    Zero lies inside the target's income support, so a model entering there is
+    well specified; what the mean averages at that node is nonetheless `1/0`.
+    """
+    return QuasiArithmeticMean(
+        transform=lambda value: 1.0 / value, inverse=lambda value: 1.0 / value
+    )
+
+
 def _build_model(
     *,
     rare_entry: float,
@@ -246,6 +257,27 @@ def test_an_off_support_entry_survives_a_general_transform(*, enable_jit: bool) 
     )
 
     assert bool(jnp.all(jnp.isnan(_source_value(model))))
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_a_live_node_whose_transform_is_nonfinite_is_not_made_null(
+    *, enable_jit: bool
+) -> None:
+    """A finite entry may still be non-finite after the mean's own transform.
+
+    The all-rare node has strictly positive probability and enters income at
+    zero, which lies on the target's support, so the model is well specified.
+    Under the harmonic transform that node's transformed value is an infinity,
+    and every strictly positive weight against it gives the same certainty
+    equivalent of zero — not the common nodes' value of one.
+    """
+    model = _build_model(
+        rare_entry=0.0,
+        enable_jit=enable_jit,
+        certainty_equivalent=_harmonic_quasi_arithmetic_mean(),
+    )
+
+    np.testing.assert_array_equal(np.asarray(_source_value(model)), 0.0)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

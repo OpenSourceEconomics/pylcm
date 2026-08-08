@@ -68,6 +68,11 @@ def _relative_tolerance() -> float:
     return 5e-6 if jnp.asarray(0.0).dtype == jnp.float32 else 1e-12
 
 
+def _square_root(value: jnp.ndarray) -> jnp.ndarray:
+    """`√·`, named because the transform slot reads the argument name."""
+    return jnp.sqrt(value)
+
+
 def test_normalizing_keeps_a_rare_node_at_its_own_probability():
     """Given unit mass, the rarest node's share is still the share it had."""
     coefficients, shifts, true_log2_ratio = _wide_spread_witness()
@@ -210,6 +215,94 @@ def test_a_rare_node_keeps_its_nan_through_a_general_transform():
     ).aggregate_scaled(
         values=jnp.asarray([2.0, jnp.nan], dtype=dtype),
         coefficients=coefficients,
+        shifts=shifts,
+        params={},
+    )
+
+    assert bool(jnp.isnan(got))
+
+
+def test_a_rare_node_whose_transform_is_infinite_carries_the_answer():
+    """A node stays live on the finiteness of `g(v)`, not of `v`.
+
+    Under the harmonic transform a value of zero is an infinity, and every
+    strictly positive weight against it gives the same certainty equivalent of
+    zero. The raw value is an ordinary finite number, so a rule reading the
+    value the user supplied rather than the one the mean actually averages would
+    read this node as impossible and price the lottery at the common node.
+    """
+    coefficients, shifts, _ = _wide_spread_witness()
+    dtype = jnp.asarray(0.0).dtype
+
+    got = QuasiArithmeticMean(
+        transform=lambda value: 1.0 / value, inverse=lambda value: 1.0 / value
+    ).aggregate_scaled(
+        values=jnp.asarray([1.0, 0.0], dtype=dtype),
+        coefficients=coefficients,
+        shifts=shifts,
+        params={},
+    )
+
+    np.testing.assert_array_equal(np.asarray(got), np.zeros((), dtype=dtype))
+
+
+def test_a_rare_node_outside_the_transforms_domain_stays_poison():
+    """A node whose transformed value is `NaN` fails loudly however rare it is.
+
+    A negative value under a square-root transform is outside the transform's
+    domain, which is a misspecified model rather than a node to be averaged over.
+    Its weight being too small to state does not make the specification valid.
+    """
+    coefficients, shifts, _ = _wide_spread_witness()
+    dtype = jnp.asarray(0.0).dtype
+
+    got = QuasiArithmeticMean(
+        transform=_square_root, inverse=lambda value: value**2
+    ).aggregate_scaled(
+        values=jnp.asarray([1.0, -1.0], dtype=dtype),
+        coefficients=coefficients,
+        shifts=shifts,
+        params={},
+    )
+
+    assert bool(jnp.isnan(got))
+
+
+def test_a_node_that_cannot_occur_stays_outside_a_transforms_domain_safely():
+    """A represented-zero node contributes nothing even where `g` is unbounded.
+
+    Its value is replaced before the transform is applied, so an unbounded
+    transform at that node produces no infinity to multiply the zero weight by.
+    """
+    dtype = jnp.asarray(0.0).dtype
+
+    got = QuasiArithmeticMean(
+        transform=lambda value: 1.0 / value, inverse=lambda value: 1.0 / value
+    ).aggregate_scaled(
+        values=jnp.asarray([2.0, 0.0], dtype=dtype),
+        coefficients=jnp.asarray([1.0, 0.0], dtype=dtype),
+        shifts=jnp.asarray([0, 0], dtype=jnp.int32),
+        params={},
+    )
+
+    np.testing.assert_allclose(np.asarray(got), 2.0, rtol=_relative_tolerance())
+
+
+def test_a_negative_coefficient_is_not_read_as_a_node_that_cannot_occur():
+    """A negative weight stays visible where the shared scale cannot state it.
+
+    `1.5` and `-0.5` sum to one while naming no lottery. A rule that read a
+    negative weight through a liveness test alone would drop it and publish the
+    surviving nodes' mean for a specification that is not a distribution.
+    """
+    coefficients, shifts, _ = _wide_spread_witness()
+    dtype = jnp.asarray(0.0).dtype
+
+    got = QuasiArithmeticMean(
+        transform=lambda value: value, inverse=lambda value: value
+    ).aggregate_scaled(
+        values=jnp.asarray([1.0, 2.0], dtype=dtype),
+        coefficients=-coefficients,
         shifts=shifts,
         params={},
     )

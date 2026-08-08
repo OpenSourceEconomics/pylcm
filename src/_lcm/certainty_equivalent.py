@@ -19,6 +19,7 @@ from _lcm.probability import (
     flattened_to_one_scale,
     is_live,
     is_negative,
+    is_represented_zero,
     rescaled_lottery_weights,
     restored_against_a_nonfinite_value,
 )
@@ -305,6 +306,80 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         return self.inverse(
             value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
             / weight_sum,
+            **_args_for(self.inverse, params),
+        )
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce the scaled lottery, deciding liveness on `g(v)` rather than `v`.
+
+        The base implementation lowers the pairs and hands the result to
+        `aggregate`, which is where `transform` is applied — so a weight the
+        lowering could not state is classified before the mean has seen the
+        quantity it actually averages. `transform` is arbitrary user code and
+        may be unbounded inside its domain: `1/v` at a value of zero, `log v`
+        likewise. A node whose value is ordinary and whose *transformed* value
+        is an infinity carries the whole certainty equivalent, and a node whose
+        transformed value is `NaN` is a specification outside the transform's
+        domain that must fail loudly. Neither may be read as an event that
+        cannot occur because its probability is too small to write down.
+
+        The order is therefore: replace the values that genuinely cannot occur,
+        transform, then decide what a vanished weight was standing against.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            coefficients: The weights' significands, over the same axis.
+            shifts: Each weight's own base-two scale, broadcast against them.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        coefficients = jnp.asarray(coefficients)
+        lowered = flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
+        # The null events are the represented zeros of the coefficient, which no
+        # scale can change. Reading them off `lowered` instead would take with
+        # them every node the shared scale cannot state — the ones this method
+        # exists to keep. The stand-in comes from the heaviest node that can
+        # occur, because an arbitrary constant need not lie in `transform`'s
+        # domain while a value already in the lottery always does.
+        stand_in = jnp.take_along_axis(
+            values,
+            jnp.argmax(
+                jnp.where(is_live(coefficients), lowered, -jnp.inf),
+                axis=-1,
+                keepdims=True,
+            ),
+            axis=-1,
+        )
+        safe_values = jnp.where(is_represented_zero(coefficients), stand_in, values)
+        transformed = self.transform(
+            value=safe_values, **_args_for(self.transform, params)
+        )
+        # A negative coefficient is not a probability. It reaches the result
+        # through the mass rather than the numerator, exactly as in `aggregate`:
+        # the liveness test would read a NaN weight as a node that cannot occur.
+        weights = jnp.where(
+            is_negative(coefficients),
+            jnp.nan,
+            restored_against_a_nonfinite_value(
+                coefficients=coefficients, lowered=lowered, values=transformed
+            ),
+        )
+        live = is_live(weights)
+        return self.inverse(
+            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
+            / jnp.sum(weights, axis=-1),
             **_args_for(self.inverse, params),
         )
 
