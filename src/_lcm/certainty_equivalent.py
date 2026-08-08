@@ -17,6 +17,7 @@ from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import is_live, is_negative, rescaled_lottery_weights
 from _lcm.utils.functools import get_union_of_args
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND
 
@@ -122,12 +123,20 @@ class LinearExpectation(CertaintyEquivalent):
             The expectation, reduced over the last axis.
 
         """
-        # Rescaling by a common power of two leaves the mean unchanged and
-        # keeps a weight below the normal range out of the multiplication,
-        # where a backend that flushes it would turn a rare node's `-inf` into
-        # `0 * -inf` and take the whole lottery down as NaN.
+        # Two different weights would otherwise meet `-inf` and produce NaN, and
+        # they need different answers:
+        #
+        # - a weight below the normal range is a node that *can* occur, so
+        #   rescaling by a common power of two lifts it into the range the
+        #   multiplication can use. A common factor leaves the mean unchanged;
+        # - a weight of exactly zero is a node that cannot occur, and no scale
+        #   reaches it. It contributes nothing whatever value stands there,
+        #   which the weighted term states and a bare multiplication does not.
         weights = rescaled_lottery_weights(weights)
-        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+        weighted = zero_safe_weighted_term(
+            weight=weights, value=values, subnormal_is_accounted_for=True
+        )
+        return jnp.sum(weighted, axis=-1) / jnp.sum(weights, axis=-1)
 
 
 @beartype(conf=REGIME_CONF)
