@@ -657,7 +657,8 @@ def _savings_stage_candidates(
 
     Args:
         user_regime: The regime whose savings-stage functions are enumerated.
-        solver: The inner DC-EGM config naming the Euler state.
+        solver: The DC-EGM config naming the Euler state. A nested solver passes
+            its inner config, so the enumeration is over the inner margin.
         exclude_states: States whose laws of motion are left out. A caller
             excludes a state when its law is part of the margin under test
             rather than something that might couple to it.

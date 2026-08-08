@@ -376,6 +376,73 @@ regime level, never both (ambiguity errors, also when the grids match). Function
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
+### Case-piece solver (NB-EGM)
+
+`NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
+regime whose budget is split by a binary case boundary on the liquid state (e.g. a
+Medicaid asset test). The model author exposes the split with metadata-only decorators
+(`lcm.case_boundary`, `lcm.piece`, `lcm.boundary`); the solver runs EGM per case,
+NaN-dead masks each case to the region where its predicate is consistent with the
+recovered state, and merges the cases on the liquid grid with the branch-aware upper
+envelope.
+
+```python
+import jax.numpy as jnp
+
+import lcm
+from lcm.typing import BoolND, ContinuousState, FloatND
+
+
+@lcm.case_boundary(
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
+)
+def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
+    """Medicaid asset test: eligible while liquid wealth is below the limit."""
+    return liquid < medicaid_asset_limit
+
+
+@lcm.piece(output="subsidy", when=medicaid_eligible)
+def subsidy_medicaid(subsidy_high: float) -> FloatND:
+    """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
+    return jnp.asarray(subsidy_high)
+
+
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
+def subsidy_private(subsidy_low: float) -> FloatND:
+    """Subsidy into market resources for the private (high-asset) case."""
+    return jnp.asarray(subsidy_low)
+
+
+def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
+    return liquid + subsidy
+```
+
+- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
+  `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
+  `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
+  `(variable, threshold)` tuple is rejected.
+- `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
+  `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
+  output. The decorators only attach metadata and return the function unchanged, so the
+  model still solves identically under `GridSearch`.
+- The case-piece route is scoped narrowly, and everything outside it is refused at model
+  build. A case-piece regime must split exactly one output, named `subsidy`, on a
+  boundary that is `equality="otherwise"`, `kind="jump"`, and declared on the liquid
+  state; each piece reads only flat params, never a state or action; and the regime
+  declares no discrete action and no taste shocks. Kinks, floors, and every other
+  bracket shape go through `lcm.piecewise_affine` instead — see
+  `docs/user_guide/nbegm.md`.
+- The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
+  nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
+  mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to
+  exempt it.
+
 ### SimulationResult
 
 `simulate()` returns a `SimulationResult` object:
@@ -556,9 +623,20 @@ Choose the instrument by what is being asserted:
 Which invariances a structural predicate has to satisfy is not uniform, so assert only
 the ones that carry numerical content:
 
-- **Across batch size — required, exactly.** `batch_size` partitions a computation whose
-  result does not depend on the partition, so any difference in a published value or
-  policy is a defect, never rounding. Test it as equality of the discrete choice.
+- **Across batch size — required, but not bit for bit.** A `batch_size` or block-size
+  knob partitions a computation whose *result* does not depend on the partition: no
+  operation and no operand order changes. What does change is the vmap width each block
+  is compiled for, and XLA emits a differently vectorized kernel per width — so two
+  partitions can land on adjacent representable neighbours of the same real number.
+  (Turning the backend optimizer off collapses every width onto one bit pattern, which
+  is what identifies the effect as code generation rather than arithmetic.) Assert
+  accordingly: structural properties — which discrete choice is taken, which nodes carry
+  a feasible action — exactly; published values with
+  `tests.conftest.assert_agrees_to_ulp`, which bounds the gap in units of the working
+  format's spacing and so says the same thing at either precision. The defect this
+  guards against is a partition-dependent *reduction* — a sum or max evaluated over a
+  block instead of the whole axis, or padding cells left in it — which moves a value by
+  orders of magnitude more than a few ULP.
 - **Across precision — not required.** Two candidates separated at float64 can be
   indistinguishable at float32, and the honest float32 answer is then a *deterministic*
   tie-break, not agreement with float64. Requiring the two to match would forbid the

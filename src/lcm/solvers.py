@@ -17,6 +17,13 @@ backward induction:
   discrete kinks. Inverting the Euler equation on the post-decision savings
   grid solves such a period exactly, so this is the specialization whose step
   needs no upper envelope at all.
+- `NBEGM(...)`: the non-convex-budget endogenous grid method for a 1-D
+  consumption-savings regime whose budget carries declared breakpoints — a
+  means-tested cliff split into case pieces, or a piecewise-affine schedule of
+  kinks, jumps, and floors. See `docs/user_guide/nbegm.md`.
+- `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
+  `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
+  their exact NB-EGM treatment inside every outer candidate.
 - `TwoAssetEGM(...)`: the two-continuous-state endogenous grid method. Name the
   regime's two continuous states with `liquid_state=` and `pension_state=`;
   `envelope=` picks the refinement that resolves the resulting candidate cloud,
@@ -33,13 +40,17 @@ from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
 from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
+from _lcm.solution.nnbegm import NNBEGM
 from _lcm.solution.two_asset_egm import TwoAssetEGM
 
 __all__ = [
     "DCEGM",
     "EGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
     "GridSearch",
     "SolutionKernels",
     "Solver",

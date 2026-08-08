@@ -22,6 +22,8 @@ from _lcm.egm.ez_kernel import (
     ez_transform_partials,
     ez_transform_scalar,
 )
+from _lcm.egm.nbegm_step import _ez_flow_power_structure
+from lcm import CESAggregator
 
 # These are float64 specs of the kernel algebra (closed-form identities,
 # finite-difference checks, and float32-versus-float64 comparisons), so the
@@ -628,6 +630,34 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
     )
 
 
+def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
+    """`xi = phi (1-rho) - 1 = 0` yields a NaN exponent, not a spurious policy.
+
+    At `xi = 0` the Euler equation is constant in consumption — the closed-form
+    inversion `c = x^(1/xi)` is undefined. The exponent `phi` and the inverse
+    EIS `rho` are runtime parameters, so the degenerate combination cannot be
+    rejected at model build; the structure reader poisons the exponent with NaN
+    so the solve's NaN fail-fast surfaces the (regime, period) instead of the
+    inversion computing a finite but meaningless consumption.
+    """
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption**2,
+        inverse_eis=jnp.asarray(0.5),
+    )
+    assert bool(jnp.isnan(flow_exponent))
+    assert bool(jnp.isfinite(log_flow_coefficient))
+
+
+def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
+    """For `q = c` and `rho = 2` the structure is `(log 1, -rho) = (0, -2)` exactly."""
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: consumption,
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_allclose(np.asarray(log_flow_coefficient), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(flow_exponent), -2.0, rtol=1e-12)
+
+
 def test_continuation_marginal_is_finite_for_gamma_below_one_extreme_ratio() -> None:
     """`gamma < 1` with extreme child-value ratios keeps `dnu/ds` finite.
 
@@ -770,6 +800,39 @@ def test_marginal_of_resource_is_computed_in_the_log_domain() -> None:
     np.testing.assert_allclose(float(got), expected, rtol=1e-4)
 
 
+def test_flow_power_structure_returns_a_finite_log_coefficient() -> None:
+    """A tiny flow scale yields a finite log coefficient where the raw overflows.
+
+    For `q = A c^phi` with `A = 1e-14` and `rho = 25`, the raw coefficient
+    `A^(1-rho) phi` is ~1e336 — past float64 — while its logarithm (~773) is
+    ordinary. The Euler inversion consumes the log form, so the exact solution
+    `c = 1` (at `nu = A`, `dnu/ds = phi A`, `beta = 1/2`) comes out exactly.
+    """
+    scale = 1e-14
+    power = 0.5
+    rho = 25.0
+
+    log_coefficient, flow_exponent = _ez_flow_power_structure(
+        utility_of_action=lambda consumption: scale * consumption**power,
+        inverse_eis=jnp.asarray(rho),
+    )
+    consumption = ez_consumption_from_euler(
+        nu=jnp.asarray(scale),
+        dnu_ds=jnp.asarray(power * scale),
+        discount_factor=0.5,
+        inverse_eis=rho,
+        log_flow_coefficient=log_coefficient,
+        flow_exponent=flow_exponent,
+    )
+
+    expected_log_coefficient = (1.0 - rho) * np.log(scale) + np.log(power)
+    assert bool(jnp.isfinite(log_coefficient))
+    np.testing.assert_allclose(
+        float(log_coefficient), expected_log_coefficient, rtol=1e-12
+    )
+    np.testing.assert_allclose(float(consumption), 1.0, rtol=1e-12)
+
+
 def test_marginal_of_resource_consumes_the_log_flow_marginal() -> None:
     """A large Euler-form flow marginal enters as its log, exact in float32.
 
@@ -879,3 +942,26 @@ def test_continuation_is_stable_near_unit_gamma_for_quadrature_roundoff_mass() -
         )
         np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
         np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
+
+
+def test_the_public_aggregator_and_the_nbegm_period_kernel_agree() -> None:
+    """`GridSearch` and NBEGM evaluate one CES aggregator, bit for bit.
+
+    The brute solver reads `CESAggregator` while NBEGM reads
+    `ez_period_value`; publishing different cardinal values for the same
+    model would break cross-solver validation, so the public aggregator must
+    be the same computation.
+    """
+    got_public = CESAggregator()(
+        utility=jnp.asarray(2.0),
+        CE=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        intertemporal_elasticity_of_substitution=jnp.asarray(0.5),
+    )
+    got_kernel = ez_period_value(
+        flow=jnp.asarray(2.0),
+        nu=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_array_equal(np.asarray(got_public), np.asarray(got_kernel))

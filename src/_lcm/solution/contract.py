@@ -400,6 +400,18 @@ class Solver(ABC):
         return False
 
     @property
+    def publishes_one_sided_jump_reads(self) -> bool:
+        """Whether the published carry duplicates abscissae across a value jump.
+
+        A solver that resolves a declared jump one-sidedly publishes two rows
+        at (essentially) the same abscissa, one per side of the jump. Those
+        abscissae move with any state entering the jump's variable or its
+        threshold, so a parent must not fold its stochastic node axes into a
+        single read across states that move them.
+        """
+        return False
+
+    @property
     def n_stacked_carry_candidates(self) -> int:
         """Length of the published carry's stacked outer-candidate axis.
 
@@ -427,5 +439,21 @@ class Solver(ABC):
         the value array, so it needs none. The engine reads this off every
         regime's solver to decide whether terminal regimes produce their
         closed-form continuations, without forking on the solver type.
+        """
+        return False
+
+    @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """Whether this solver's continuation step implements the EZ recursion.
+
+        Reading a continuation and assuming expected utility are separate
+        properties. An Euler inversion written against `E[V']` is only valid
+        under `LinearExpectation`, so by default a solver that reads a
+        continuation refuses a nonlinear certainty equivalent rather than
+        solving a recursion the regime does not declare. A solver whose step
+        inverts the recursive Euler equation instead — carrying the certainty
+        equivalent's transform through the marginal — overrides this to `True`
+        and is admitted. Grid search never consults it: reading only the value
+        array, it aggregates any certainty equivalent in concrete values.
         """
         return False

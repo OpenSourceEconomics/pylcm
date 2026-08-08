@@ -21,6 +21,7 @@ from _lcm.egm.budget import (
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
 from _lcm.egm.negm_validation import validate_negm_regimes
+from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -297,14 +298,15 @@ def process_regimes(
     # DC-EGM regimes must satisfy the EGM model contract before any kernel is built.
     # `Model.__init__` validates earlier (so contract violations beat the generic
     # unused-variable check); this call covers direct `process_regimes` callers.
-    # Both read the representative regimes: the contract is about a state's kind and
-    # shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is not
-    # a `Grid`, so a type-filtered collection of continuous states would drop it.
+    # All three read the representative regimes: the contract is about a state's kind
+    # and shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is
+    # not a `Grid`, so a type-filtered collection of continuous states would drop it.
     validate_dcegm_regimes(
         user_regimes=representative_user_regimes,
         solution_reachability=reachability.solution,
     )
     validate_negm_regimes(user_regimes=representative_user_regimes)
+    validate_nnbegm_regimes(user_regimes=representative_user_regimes)
 
     # Per-period continuation interpolation info, built from the schedule's cached
     # concrete grids (never an age factory). `None` for an age-invariant model.
