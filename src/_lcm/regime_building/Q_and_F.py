@@ -12,7 +12,6 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
-    restored_against_a_nonfinite_value,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -41,7 +40,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import (
+    scaled_joint_weight,
+    scaled_weighted_terms,
+    zero_safe_weighted_term,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -1041,23 +1044,18 @@ def _expectation_over_stochastic_nodes(
         The weighted mean over the nodes.
 
     """
-    lowered = flattened_to_one_scale(coefficients=weights, shifts=shifts)
-    weight_sum = jnp.sum(lowered)
+    # The mass is a sum of weights and can be taken from the lowered ones: an
+    # entry too far below the likeliest to name there contributes nothing to a
+    # total of order one, which is what its share of the mass actually is. The
+    # numerator cannot be taken that way. A node's contribution is `w 2**-s v`,
+    # and lowering the weight on its own asks the format for `w 2**-s` without
+    # the value's binades — a subnormal, flushed on a backend that does not
+    # carry them — so a rare node against a large value would be lost even
+    # though its contribution is an ordinary number.
+    weight_sum = jnp.sum(flattened_to_one_scale(coefficients=weights, shifts=shifts))
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    # Only the weighted term restores a weight that vanished against a
-    # non-finite value, and only it therefore reads the values at all. A live
-    # node standing against one carries the result whatever the mass is, so the
-    # mass stays a function of the weights alone — which keeps the whole value
-    # surface out of the weight computation, where it would otherwise have to
-    # live for as long as the weights do.
-    weighted = zero_safe_weighted_term(
-        weight=restored_against_a_nonfinite_value(
-            coefficients=weights, lowered=lowered, values=values
-        ),
-        value=values,
-        subnormal_is_accounted_for=True,
-    )
-    return jnp.sum(weighted) / safe_weight_sum
+    terms = scaled_weighted_terms(coefficients=weights, shifts=shifts, values=values)
+    return jnp.sum(terms) / safe_weight_sum
 
 
 def _as_lottery(

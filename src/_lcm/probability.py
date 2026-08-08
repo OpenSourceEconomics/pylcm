@@ -756,6 +756,29 @@ def _largest_live_exponent(values: FloatND) -> _BitsND:
     return jnp.max(exponents)
 
 
+def binades_above_smallest_normal(values: FloatND) -> _BitsND:
+    """How far each entry can be halved before it leaves the normal range.
+
+    A caller with a power of two to apply to a product decides how much of it
+    the weight can absorb before it becomes a subnormal the backend may flush,
+    and how much has to be applied to the product instead. An entry already
+    below the normal range has no room at all.
+
+    Args:
+        values: Entries whose headroom is wanted.
+
+    Returns:
+        The number of binades each entry has above the smallest normal.
+
+    """
+    arr = jnp.asarray(values)
+    return jnp.where(
+        is_below_smallest_normal(arr),
+        jnp.zeros((), jnp.int32),
+        (_unbiased_exponent(arr) - (1 - _exponent_bias(arr))).astype(jnp.int32),
+    )
+
+
 def _unbiased_exponent(values: FloatND) -> _BitsND:
     """Return each entry's base-two exponent, subnormals included."""
     arr = jnp.asarray(values)

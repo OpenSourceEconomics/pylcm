@@ -27,6 +27,7 @@ from _lcm.probability import (
     scaled_exact_product,
 )
 from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
+from _lcm.zero_safe import scaled_weighted_terms
 
 # A competing continuation the exact lottery loses to and an enlarged one wins.
 _ALTERNATIVE = 0.47
@@ -195,3 +196,44 @@ def test_a_rare_node_keeps_its_infinity_through_a_general_transform():
     )
 
     assert float(np.asarray(got)) == float("-inf")
+
+
+def test_a_terms_scale_is_split_so_a_large_value_does_not_overflow_it():
+    """A node's contribution stays in range when its value is near the top of it.
+
+    An ordinary weight meeting a value near the format's largest, at a scale
+    that brings the product back down, has an answer the format holds. Applying
+    the whole scale to the product first would overflow on the way to it.
+    """
+    dtype = jnp.zeros(()).dtype
+    largest = jnp.finfo(dtype).max
+
+    terms = scaled_weighted_terms(
+        coefficients=jnp.asarray([1.9, 1.0], dtype=dtype),
+        shifts=jnp.asarray([10, 0], dtype=jnp.int32),
+        values=jnp.asarray([largest, 1.0], dtype=dtype),
+    )
+
+    expected = np.ldexp(np.longdouble(1.9) * np.longdouble(largest), -10)
+    np.testing.assert_allclose(
+        np.asarray(terms)[0], np.float64(expected), rtol=_relative_tolerance()
+    )
+
+
+def test_a_node_that_cannot_occur_contributes_nothing_against_an_infinity():
+    """A represented-zero weight annihilates its value however the scale falls.
+
+    The scale is applied around the product rather than to the weight alone, so
+    the null event has to survive that reordering: `0 * -inf` is the NaN the
+    weighted term exists to prevent, and it would take the well-specified node
+    beside it down too.
+    """
+    dtype = jnp.zeros(()).dtype
+
+    terms = scaled_weighted_terms(
+        coefficients=jnp.asarray([1.0, 0.0], dtype=dtype),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
+        values=jnp.asarray([2.0, -jnp.inf], dtype=dtype),
+    )
+
+    np.testing.assert_allclose(np.asarray(terms), np.asarray([2.0, 0.0]))
