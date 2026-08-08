@@ -250,9 +250,12 @@ def test_a_terms_scale_is_split_so_a_large_value_does_not_overflow_it():
         values=jnp.asarray([largest, 1.0], dtype=dtype),
     )
 
-    expected = np.ldexp(np.longdouble(1.9) * np.longdouble(largest), -10)
+    # Scale the weight before it meets the value, so the oracle stays inside the
+    # dtype's range: `1.9 · 2**-10` is exact, and the product is the answer itself
+    # rather than an overflow the oracle has to hold on the way to it.
+    expected = np.float64(np.ldexp(1.9, -10)) * np.float64(largest)
     np.testing.assert_allclose(
-        np.asarray(terms)[0], np.float64(expected), rtol=_relative_tolerance()
+        np.asarray(terms)[0], expected, rtol=_relative_tolerance()
     )
 
 
