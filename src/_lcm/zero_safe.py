@@ -41,26 +41,39 @@ the disagreement reaches order one. Buying agreement instead would mean
 adopting the flushing backend's answer everywhere — discarding a contribution
 the other hardware computed correctly — so the arithmetic is left to be as
 right as each machine can make it. Tests must therefore assert the invariants
-(nonzero in its bits, never above the true weight, below the normal range)
 rather than any particular value, because which of the two answers appears is a
-property of the executing backend.
+property of the executing backend:
+
+- the weight is nonzero in its bits;
+- it agrees with its node to within the smallest representable magnitude;
+- it stays below the normal range;
+- a published quantity compared against an exactly-computed reference carries
+  one representable step at the active precision. An exact inequality on a
+  reported value asserts the rounding direction, which is not contractual — a
+  backend that prices the node returns the nearest representable value to the
+  exact answer, and that lies above it half the time.
 
 Total-mass conventions are not settled here. They differ by call site — a
 target represented with no mass contributes `0`, while a whole continuation
 lottery with no mass anywhere is malformed and aggregates to NaN — so each
 caller states its own denominator.
 
-This module implements an arithmetic and nothing else, so its functions keep
-the spelling their operation is known by and take their operands positionally
-rather than keyword-only.
+Every argument is keyword-only, as everywhere else in the package. These read
+as arithmetic and arithmetic invites positional operands, but the operands are
+not interchangeable and one of them carries a claim about what the caller has
+already established, so the call site says which is which.
 """
 
-import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, FloatND
-
-_FLOAT32_BYTES = 4
+from _lcm.probability import (
+    balanced_product,
+    is_below_smallest_normal,
+    is_represented_zero,
+    nonzero_exact_product,
+    scaled_exact_product,
+)
+from lcm.typing import FloatND, IntND
 
 
 def joint_weight(factors: FloatND) -> FloatND:
@@ -109,20 +122,44 @@ def joint_weight(factors: FloatND) -> FloatND:
         representable magnitude of the same sign.
 
     """
-    arr = jnp.asarray(factors)
-    product = jnp.prod(arr, axis=0)
-    every_factor_can_occur = ~jnp.any(_is_represented_zero(arr), axis=0)
-    smallest_magnitude = jnp.asarray(
-        jnp.finfo(product.dtype).smallest_subnormal, dtype=product.dtype
-    )
-    return jnp.where(
-        every_factor_can_occur & _is_represented_zero(product),
-        jnp.copysign(smallest_magnitude, product),
-        product,
-    )
+    return nonzero_exact_product(jnp.asarray(factors))
 
 
-def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
+def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
+    """Return `joint_weight`'s product with its scale carried alongside it.
+
+    The node's probability is `weights * 2**-shift`. A joint product that lands
+    below the dtype's normal range cannot be carried as a plain float on this
+    backend — it is representable, but only as a subnormal, and a subnormal
+    that exists only as an intermediate reads back as zero once it is consumed
+    inside a fused region. Keeping the scale separate leaves every returned
+    number normal, so the event stays distinguishable from one that cannot
+    occur no matter what the consumer does with it.
+
+    One shift covers the whole array, so the weights keep their sizes relative
+    to each other and a consumer that normalizes by their own total can ignore
+    it entirely. A consumer that concatenates weights from several calls has to
+    bring them onto a common scale first, which is what the shift is for.
+
+    The shift is whatever the smallest product in the array needs, so nothing
+    that can occur is left below the format and none of `joint_weight`'s
+    substitution applies. A node that can occur therefore keeps its exact
+    probability, not an approximation of it.
+
+    Args:
+        factors: The factors stacked along the leading axis, one entry per
+            stochastic axis of the node. Trailing axes broadcast.
+
+    Returns:
+        Tuple of the scaled product and the base-two scale it carries.
+
+    """
+    return scaled_exact_product(jnp.asarray(factors))
+
+
+def zero_safe_weighted_term(
+    *, weight: FloatND, value: FloatND, subnormal_is_accounted_for: bool
+) -> FloatND:
     """Return `weight * value`, exactly `0.0` wherever `weight` is zero.
 
     The mask sits on the *value*, an operand of the multiplication, rather than
@@ -160,9 +197,31 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
     masking unconditionally would flatten to zero at exactly the coordinates
     where a weight vanishes.
 
+    The exponent is moved from the value onto the weight so that a weight
+    below the normal range multiplies exactly rather than being flushed as an
+    operand. That runs at every term, and two callers can say in advance that
+    no weight of theirs needs it, because a weight below the range there cannot
+    change what they return:
+
+    - the nodes of one target arrive on a common base-two scale, and one still
+      below the range after it is one that scale's own cap has declared
+      understated; moving its exponent would price a node the contract says is
+      not priced;
+    - an interpolation corner weight below the range means the coordinate lies
+      within a subnormal of a node, so the corner beside it carries weight one
+      and the whole read.
+
+    Both pass `subnormal_is_accounted_for=True`. Every other caller passes
+    `False` — a regime transition probability arrives at whatever size the
+    model chose, and nothing upstream has accounted for a small one. There is
+    no default: which of the two a call site is cannot be guessed from the
+    operands, so it is stated.
+
     Args:
         weight: Probability, quadrature, or interpolation weight.
         value: The value being weighted, possibly `+-inf` at a zero-weight node.
+        subnormal_is_accounted_for: Whether the caller has already established
+            that a weight below the normal range cannot change its result.
 
     Returns:
         The elementwise product, broadcast as `weight * value` would be.
@@ -171,7 +230,7 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
     weight_arr = jnp.asarray(weight)
     value_arr = jnp.asarray(value)
 
-    weight_is_null = _is_represented_zero(weight_arr)
+    weight_is_null = is_represented_zero(weight_arr)
     weight_is_unusable = ~weight_is_null & is_below_smallest_normal(weight_arr)
     smallest_normal = jnp.asarray(
         jnp.finfo(weight_arr.dtype).tiny, dtype=weight_arr.dtype
@@ -186,35 +245,6 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
         jnp.zeros((), value_arr.dtype),
         value_arr,
     )
-    return effective_weight * safe_value
-
-
-def _is_represented_zero(values: FloatND) -> BoolND:
-    """Whether each entry is `+0` or `-0`, read from its bits.
-
-    `values == 0` cannot answer this: a subnormal compares equal to zero under
-    the same flush that would drop it.
-    """
-    arr = jnp.asarray(values)
-    int_dtype = jnp.int32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.int64
-    magnitude = jax.lax.bitcast_convert_type(arr, int_dtype) & jnp.asarray(
-        (1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype
-    )
-    return magnitude == 0
-
-
-def is_below_smallest_normal(values: FloatND) -> BoolND:
-    """Whether each entry's magnitude is zero or subnormal, read from its bits.
-
-    The two cases are one question here: a product arriving either way has lost
-    the size it was meant to carry.
-    """
-    arr = jnp.asarray(values)
-    int_dtype = jnp.int32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.int64
-    magnitude = jax.lax.bitcast_convert_type(arr, int_dtype) & jnp.asarray(
-        (1 << (8 * arr.dtype.itemsize - 1)) - 1, dtype=int_dtype
-    )
-    smallest_normal = jax.lax.bitcast_convert_type(
-        jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), int_dtype
-    )
-    return magnitude < smallest_normal
+    if subnormal_is_accounted_for:
+        return effective_weight * safe_value
+    return balanced_product(effective_weight, safe_value)
