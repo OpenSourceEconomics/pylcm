@@ -155,6 +155,7 @@ def test_a_subnormal_weight_does_not_distort_a_nonlinear_aggregation() -> None:
             values=jnp.asarray([1.0, 0.5], dtype=dtype),
             weights=jnp.stack([jnp.asarray(1.0, dtype=dtype), underflowed]),
             exponent=jnp.asarray(-1.0, dtype=dtype),
+            shifts=jnp.zeros((), jnp.int32),
         )
     )
 

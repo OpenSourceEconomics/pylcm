@@ -282,6 +282,7 @@ def _pair_and_general(
             axis=-1,
         ),
         exponent=1.0 - 1.0 / ies,
+        shifts=jnp.zeros((), jnp.int32),
     )
     return np.asarray(got), np.asarray(expected)
 
