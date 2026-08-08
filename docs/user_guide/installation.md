@@ -107,6 +107,32 @@ pylcm sets three JAX configuration defaults on import:
 
 All three only apply if you have not already set the variable yourself.
 
+### Import order does not matter
+
+JAX reads its environment variables once, while it defines its configuration — so a
+value exported after `import jax` never reaches it. pylcm therefore applies both
+compilation-cache settings through `jax.config` as well, and they hold whether `lcm` is
+imported before or after `jax`. This matters in practice: test suites, notebooks, and
+other libraries routinely import `jax` first, and a cache that is switched off reports
+nothing at all — it simply recompiles, which on a large model costs minutes per process.
+
+`XLA_PYTHON_CLIENT_PREALLOCATE` is read by XLA when the backend is first initialised
+rather than at import, so it is enough to import `lcm` before running any computation.
+
+To confirm caching is live in a given process:
+
+```python
+import jax
+
+import lcm
+
+print(jax.config.jax_compilation_cache_dir)  # a path
+print(jax.config.jax_persistent_cache_min_compile_time_secs)  # 0.0
+```
+
+A directory of `None` means the cache is off and every fresh process is recompiling the
+whole model.
+
 On HPC systems where the home directory is on a slow network filesystem, you may want to
 point the compilation cache at a fast local disk. Set the environment variable before
 importing pylcm:

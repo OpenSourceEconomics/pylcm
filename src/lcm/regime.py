@@ -114,6 +114,8 @@ class Regime:
         UserFunction
         | MarkovTransition
         | Phased
+        # `Phased` inside a per-target dict passes the type check so the
+        # validator can reject it with the outermost-only explanation.
         | Mapping[RegimeName, UserFunction | MarkovTransition | Phased]
         | None,
     ] = field(default_factory=lambda: MappingProxyType({}))

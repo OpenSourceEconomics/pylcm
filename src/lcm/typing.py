@@ -32,6 +32,9 @@ type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
 
+type Float2D = Float[Array, "_ _"]
+type Int2D = Int32[Array, "_ _"]
+
 # Zero-dimensional JAX scalars — pylcm's canonical scalar form post boundary cast.
 type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]

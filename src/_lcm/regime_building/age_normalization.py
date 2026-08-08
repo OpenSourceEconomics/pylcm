@@ -47,6 +47,7 @@ from _lcm.regime_building.age_specialization import (
 )
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
+from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import EconFunction, RegimeName, StateName
 from lcm.ages import AgeGrid
@@ -323,6 +324,9 @@ def continuation_group_key(
     functions: Mapping[str, object],
     constraints: Mapping[str, object],
     grid_schedule: AgeGridSchedule | None,
+    continuation_info: (
+        Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
 ) -> Callable[[int], tuple[tuple[RegimeName, ...], Hashable]]:
     """Build the per-period grouping key shared by Q_and_F construction and diagnostics.
 
@@ -330,6 +334,24 @@ def continuation_group_key(
     continuation-grid signature): with no age-specialized node the policy
     signature is constant and the grouping collapses to the target
     configuration alone.
+
+    Args:
+        phase_reachability: Static reachability graph for the phase.
+        source_regime_name: Name of the regime whose periods are grouped.
+        functions: Mapping of function names to functions, for the policy signature.
+        constraints: Mapping of constraint names to functions, for the policy
+            signature.
+        grid_schedule: Age-grid schedule, or `None` when no state is
+            age-specialized.
+        continuation_info: Per-period continuation interpolation info. When given,
+            the stateless/carry partition of the targets enters the signature, so
+            periods that read a target's continuation differently never share one
+            compiled program. Omit only where the caller builds nothing that
+            depends on that partition.
+
+    Returns:
+        A callable mapping a period to its grouping key.
+
     """
 
     def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
@@ -343,10 +365,17 @@ def continuation_group_key(
             target_period=period + 1,
             target_regimes=complete,
         )
+        scalar_targets: tuple[RegimeName, ...] = ()
+        if continuation_info is not None:
+            _, scalar_targets = partition_continuation_targets(
+                targets=complete,
+                regime_to_v_interpolation_info=continuation_info(period),
+            )
         signature = (
             periodized_tree_signature(functions, period),
             periodized_tree_signature(constraints, period),
             continuation_sig,
+            scalar_targets,
         )
         return (complete, signature)
 

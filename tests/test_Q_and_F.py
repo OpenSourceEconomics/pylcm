@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from dags import concatenate_functions
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
@@ -109,7 +109,7 @@ def test_get_Q_and_F_function():
         labor_supply=labor_supply,
         wealth=wealth,
         **flat_params["working_life"],
-        next_regime_to_V_arr=jnp.empty(0),
+        next_regime_to_V_arr=MappingProxyType({}),
         period=3,
         age=ages.period_to_age(3),
     )
@@ -411,9 +411,28 @@ def test_partial_state_laws_solve_with_declared_targets():
         work_transition=work_transition, next_regime_func=_next_regime
     )
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
+
+    # Consumption is unconstrained by wealth in this model, so the optimum is
+    # the largest consumption node (c = 2) in every state, giving flow utility
+    # log(2) each active period. The value is the discounted sum of log(2) over
+    # the remaining active periods (discount_factor 0.9) and is constant across
+    # the (health, wealth) grid; the terminal "dead" regime yields exactly 0.
+    log_two = float(jnp.log(2.0))
+    beta = 0.9
+    expected_alive = {
+        0: log_two * (1 + beta + beta**2),
+        1: log_two * (1 + beta),
+        2: log_two,
+    }
+    for period, expected in expected_alive.items():
+        for regime_name in ("work", "retire"):
+            V_arr = period_to_regime_to_V_arr[period][regime_name]
+            assert V_arr.shape == (2, 3)
+            assert_allclose(V_arr, expected, atol=1e-5)
     for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for V_arr in regime_to_V_arr.values():
-            assert not jnp.any(jnp.isnan(V_arr))
+        dead_V = regime_to_V_arr["dead"]
+        assert dead_V.shape == ()
+        assert_allclose(dead_V, 0.0, atol=1e-6)
 
 
 def _sum_utility(utility_level: FloatND) -> FloatND:
@@ -454,6 +473,8 @@ def _build_two_target_closure(
     flat_param_names: frozenset[str] = frozenset(
         {"certainty_equivalent__risk_aversion"}
     ),
+    period_targets: tuple[str, ...] = ("low", "high"),
+    scalar_targets: tuple[str, ...] = (),
 ) -> Callable:
     """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
     return builder(
@@ -462,7 +483,8 @@ def _build_two_target_closure(
         functions=MappingProxyType({"utility": _sum_utility}),
         koopmans_aggregator=_epstein_zin_W,
         constraints=MappingProxyType({}),
-        period_targets=("low", "high"),
+        period_targets=period_targets,
+        scalar_targets=scalar_targets,
         transitions=MappingProxyType({}),
         transition_laws=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
@@ -563,6 +585,46 @@ def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
     np.testing.assert_allclose(jitted, expected, rtol=rtol, atol=0.0)
     assert int(np.argmax(eager)) == 1
     assert int(np.argmax(jitted)) == 1
+
+
+def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
+    x64_enabled: None,
+):
+    """A stateless target's probability counts toward the mass the fast path divides by.
+
+    Every reachable target here carries no state, so the whole continuation is
+    seeded from the stateless route and none of it flows through the loop over
+    targets that carry state. The represented mass is still the sum over both
+    targets, so a lottery paying the same value at every node is worth exactly
+    that value.
+    """
+    Q_and_F = _build_two_target_closure(
+        get_Q_and_F,
+        certainty_equivalent=LinearExpectation(),
+        probs_function=_raw_low_and_high_probs,
+        flat_param_names=frozenset(),
+        period_targets=(),
+        scalar_targets=("low", "high"),
+    )
+    represented_mass = 0.5 + 0.500005
+    assert jnp.allclose(jnp.asarray(represented_mass), 1.0)
+
+    value = 3.0
+    got = Q_and_F(
+        next_regime_to_V_arr=MappingProxyType(
+            {
+                "low": jnp.asarray(value),
+                "high": jnp.asarray(value),
+            }
+        ),
+        utility_level=jnp.asarray(0.0),
+        regime_prob_low=jnp.asarray(0.5),
+        regime_prob_high=jnp.asarray(0.500005),
+        age=jnp.asarray(25),
+        period=jnp.asarray(0),
+    )[0]
+
+    np.testing.assert_allclose(np.asarray(got), value, rtol=1e-12, atol=0.0)
 
 
 def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):

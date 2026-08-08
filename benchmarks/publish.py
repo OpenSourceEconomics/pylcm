@@ -41,6 +41,7 @@ def publish() -> None:
 
     subprocess.run(["asv", "publish"], check=True)
     _patch_html_title(html_dir / "index.html")
+    _default_x_axis_to_date(html_dir / "graphdisplay.js")
     _pad_sparse_graphs(html_dir / "graphs")
 
     _generate_comparison(results_dir)
@@ -208,6 +209,35 @@ def _pad_sparse_graphs(graphs_dir: Path) -> None:
             total += _pad_graphs_in_folder(leaf)
     if total:
         print(f"Padded sparse benchmark graphs with {total} null entries.")
+
+
+def _default_x_axis_to_date(graphdisplay_js: Path) -> None:
+    """Default the per-benchmark graph x-axis to the date scale.
+
+    asv's detail-view defaults the x-axis to the revision index and switches to a
+    real date axis only when the `x-axis-scale=date` URL param is present. Add an
+    `else` branch to the param parser so the date scale is the default when no
+    param is given. Best-effort — a parser change upstream just leaves the asv
+    default in place.
+    """
+    if not graphdisplay_js.is_file():
+        logger.warning("graphdisplay.js not found — skipping date-axis default")
+        return
+    anchor = "            delete params['x-axis-scale'];\n        }\n"
+    replacement = (
+        "            delete params['x-axis-scale'];\n"
+        "        } else {\n"
+        "            $('#date-scale').addClass('active');\n"
+        "            date_scale = true;\n"
+        "        }\n"
+    )
+    text = graphdisplay_js.read_text(encoding="utf-8")
+    if anchor not in text:
+        logger.warning(
+            "x-axis-scale parser not found in graphdisplay.js — skipping date default"
+        )
+        return
+    graphdisplay_js.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
 
 
 def _patch_html_title(index_html: Path) -> None:

@@ -327,10 +327,8 @@ def test_terminal_regime_value_unchanged_by_W():
     )
 
 
-# ---------------------------------------------------------------------------
 # DAG-output feeds `W`: `discount_factor` computed by a DAG function that
 # indexes a per-type Series by the `pref_type` state.
-# ---------------------------------------------------------------------------
 
 
 def test_model_constructs_when_state_reachable_only_via_w_dag():

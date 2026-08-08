@@ -62,6 +62,7 @@ project:
         - file: explanations/beta_delta.ipynb
         - file: explanations/iskhakov_et_al_2017.ipynb
         - file: explanations/architecture.md
+        - file: explanations/adding_a_solver.md
     - file: examples/index.md
       title: Examples
       children:
@@ -78,6 +79,8 @@ project:
         - file: development/setup.md
         - file: development/conventions.md
         - file: development/benchmarking.md
+    - file: credits.md
+      title: Credits & Acknowledgments
   error_rules:
     - rule: link-resolves
       severity: ignore

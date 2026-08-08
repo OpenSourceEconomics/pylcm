@@ -23,7 +23,6 @@ from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import DCEGM
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -501,8 +500,18 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - only `GridSearch` supports a nonlinear certainty equivalent (the
-      Euler inversion in DC-EGM assumes expected utility)
+    - a solver that reads a continuation payload inverts the Euler equation
+      against it, and that inversion assumes expected utility, so a declared
+      nonlinear certainty equivalent must be rejected rather than silently
+      ignored; a solver that reads only the value array (grid search) supports
+      the Epstein-Zin recursion
+    - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
+      logsum is not invariant under the certainty-equivalent transform, so the
+      combination is rejected
+
+    `LinearExpectation` is the expected-utility default every solver and every
+    taste-shock regime implements, so only a nonlinear certainty equivalent is
+    subject to the composition rules.
     """
     if regime.certainty_equivalent is None:
         return []
@@ -512,13 +521,21 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if isinstance(regime.solver, DCEGM) and not isinstance(
-        regime.certainty_equivalent, LinearExpectation
-    ):
+    if isinstance(regime.certainty_equivalent, LinearExpectation):
+        return error_messages
+    if regime.solver.requires_continuation:
         error_messages.append(
-            "The DCEGM solver does not support a nonlinear "
-            "`certainty_equivalent`: the Euler inversion assumes expected "
-            "utility. Use GridSearch() for this regime."
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "nonlinear `certainty_equivalent`: its Euler inversion assumes "
+            "expected utility. Use GridSearch() for "
+            "this regime."
+        )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine `certainty_equivalent` with "
+            "`taste_shocks`: the extreme-value logsum is not invariant under "
+            "the certainty-equivalent transform, so the Epstein-Zin recursion "
+            "and taste shocks do not compose."
         )
     return error_messages
 

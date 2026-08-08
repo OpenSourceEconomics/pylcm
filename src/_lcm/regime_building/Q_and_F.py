@@ -4,7 +4,11 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, get_annotations, with_signature
+from dags import (
+    concatenate_functions,
+    get_annotations,
+    with_signature,
+)
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
@@ -36,6 +40,7 @@ from _lcm.typing import (
     TransitionFunction,
     TransitionFunctionName,
     TransitionFunctionsMapping,
+    _ParamsLeaf,
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
@@ -55,6 +60,7 @@ def get_Q_and_F(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -73,8 +79,13 @@ def get_Q_and_F(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Graph targets whose continuation enters the certainty
-            equivalent this period.
+        period_targets: Carry targets — reachable, active next period, and
+            carrying at least one state, so their continuation is read at the
+            next states their laws produce.
+        scalar_targets: Graph targets active next period that carry no state.
+            Their value function is rank-zero, so it enters `E[V]` as a single
+            degenerate lottery node weighted only by the regime transition
+            probability.
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
@@ -100,6 +111,7 @@ def get_Q_and_F(
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
+        scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -123,8 +135,8 @@ def get_Q_and_F(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -163,6 +175,7 @@ def get_compute_intermediates(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -184,8 +197,12 @@ def get_compute_intermediates(
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Graph targets whose continuation enters the certainty
-            equivalent this period.
+        period_targets: Carry targets — reachable, active next period, and
+            carrying at least one state.
+        scalar_targets: Graph stateless targets active next period, whose
+            rank-zero value enters `E[V]` weighted only by the regime transition
+            probability. Must match what `get_Q_and_F` was built with, or the
+            diagnostics disagree with the solve they explain.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         transition_laws: Immutable mapping of target regime names to their
@@ -211,6 +228,7 @@ def get_compute_intermediates(
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
         functions=functions,
         period_targets=period_targets,
+        scalar_targets=scalar_targets,
         transitions=transitions,
         transition_laws=transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -238,8 +256,8 @@ def get_compute_intermediates(
         ),
     )
     def compute_intermediates(
-        next_regime_to_V_arr: FloatND,
-        **states_actions_params: FloatND | IntND | BoolND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
@@ -297,8 +315,8 @@ def get_Q_and_F_terminal(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_regime_to_V_arr: FloatND,  # noqa: ARG001
-        **states_actions_params: FloatND | IntND | BoolND,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+        **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
 
@@ -319,10 +337,43 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
+def partition_continuation_targets(
+    *,
+    targets: tuple[RegimeName, ...],
+    regime_to_v_interpolation_info: Mapping[RegimeName, VInterpolationInfo],
+) -> tuple[tuple[RegimeName, ...], tuple[RegimeName, ...]]:
+    """Partition canonical graph targets into stateful and stateless tuples.
+
+    Membership comes entirely from `targets`. Interpolation metadata classifies how
+    each continuation is read without adding or removing graph edges.
+
+    Args:
+        targets: Canonical graph targets for one source and period.
+        regime_to_v_interpolation_info: Mapping of regime names to interpolation
+            metadata whose state names determine the continuation representation.
+
+    Returns:
+        Tuple of `(stateful_targets, scalar_targets)` preserving graph order.
+
+    """
+    stateful_targets = tuple(
+        target
+        for target in targets
+        if regime_to_v_interpolation_info[target].state_names
+    )
+    scalar_targets = tuple(
+        target
+        for target in targets
+        if not regime_to_v_interpolation_info[target].state_names
+    )
+    return stateful_targets, scalar_targets
+
+
 def _get_compute_CE(
     *,
     functions: EconFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -350,10 +401,15 @@ def _get_compute_CE(
       before aggregating is what lets `PowerMean` anchor the transform, which
       a per-target `transform -> reduce -> inverse` decomposition cannot.
 
+    A target carrying no state joins that same lottery as a single degenerate
+    node, so it is transformed with every other node rather than on its own.
+
     Args:
         functions: Immutable mapping of function names to internal user functions.
-        period_targets: Graph targets whose continuation enters the certainty
-            equivalent this period.
+        period_targets: Carry targets whose continuation is read at the next
+            states their laws produce.
+        scalar_targets: Targets carrying no state, whose rank-zero value enters
+            as one degenerate lottery node.
         transitions: Immutable mapping of transition names to transition functions.
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
@@ -433,7 +489,7 @@ def _get_compute_CE(
             compute_regime_transition_probs(**states_actions_params)
         )
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
         # Every target's own lottery is built before any of them is weighted,
         # because the common factor that puts the whole continuation on a scale
@@ -459,8 +515,6 @@ def _get_compute_CE(
         }
         target_node_weights = {r: target_lotteries[r][0] for r in period_targets}
         target_node_shifts = {r: target_lotteries[r][1] for r in period_targets}
-        CE = zero
-        probability_mass = zero
         # Unit mass alone does not make a collection of weights a distribution:
         # 1.5 and -0.5 sum to one. Non-negativity is tracked alongside the sum
         # so it is arithmetic too, and the two together give the whole range —
@@ -471,10 +525,24 @@ def _get_compute_CE(
         # negative probability the dtype cannot hold as a normal number, which
         # arrives at the test as `-0` and passes it. Each target's sign is read
         # off its own bits, while it still has them.
-        has_negative_probability = jnp.zeros(jnp.shape(zero), dtype=bool)
-        lottery_values: list[FloatND] = []
-        lottery_weights: list[FloatND] = []
-        lottery_shifts: list[IntND] = []
+        #
+        # The accumulators are seeded with the stateless targets, which carry no
+        # node axis of their own but do carry mass, a sign, and — under a
+        # nonlinear certainty equivalent — one lottery node each.
+        (
+            CE,
+            lottery_values,
+            lottery_weights,
+            lottery_shifts,
+            probability_mass,
+            has_negative_probability,
+        ) = _scalar_target_contribution(
+            scalar_targets=scalar_targets,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            active_regime_probs=active_regime_probs,
+            as_lottery=not reduces_per_target,
+            zero=zero,
+        )
         for target_regime_name in period_targets:
             continuation = continuations[target_regime_name]
             next_states = continuation.next_states(**states_actions_params)
@@ -573,13 +641,7 @@ def _get_compute_CE(
                 )
                 lottery_shifts.append(product_shift + own_shift)
 
-        # An empty retained target set is not "no continuation to aggregate": a
-        # non-terminal regime always emits unit mass, so retaining nothing means
-        # every bit of it was placed on a regime that is inactive next period.
-        # The represented mass is zero, and the backstop has to say so — leaving
-        # `CE` at its initialized zero would return a plausible, utility-only
-        # Bellman value for a model that cannot be solved.
-        if reduces_per_target:
+        if reduces_per_target and (period_targets or scalar_targets):
             # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
             # the represented mass to state the same quantity as
             # `LinearExpectation.aggregate`. Regime-transition validation accepts
@@ -1002,6 +1064,89 @@ def _build_target_continuation(
     )
 
 
+def _scalar_target_contribution(
+    *,
+    scalar_targets: tuple[RegimeName, ...],
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    active_regime_probs: Mapping[RegimeName, FloatND],
+    as_lottery: bool,
+    zero: FloatND,
+) -> tuple[FloatND, list[FloatND], list[FloatND], list[IntND], FloatND, BoolND]:
+    """Seed the continuation accumulators with the stateless targets.
+
+    A target carrying no state has a rank-zero value function: there is no next
+    state to evaluate it at and no stochastic node to average over, so it
+    contributes exactly one node whose only weight is the probability of going
+    there. Under a certainty equivalent that node joins the joint lottery, so it
+    is transformed together with every other target's nodes rather than on its
+    own; under the linear expectation it is added straight to the running
+    certainty equivalent.
+
+    Args:
+        scalar_targets: Targets active next period that carry no state.
+        next_regime_to_V_arr: Mapping of target regime names to next period's
+            value function arrays.
+        active_regime_probs: Mapping of target regime names to their regime
+            transition probabilities.
+        as_lottery: Whether a nonlinear certainty equivalent aggregates the
+            continuation, so the nodes must be handed over unaggregated.
+        zero: Zero at the shape and dtype of the value being built up.
+
+    Returns:
+        Tuple of the seeded certainty equivalent, the lottery values, their
+        weights, the base-two scale each weight arm carries, the probability
+        mass these targets represent, and whether any of their probabilities is
+        negative.
+
+    """
+    CE = zero
+    values: list[FloatND] = []
+    weights: list[FloatND] = []
+    shifts: list[IntND] = []
+    probability_mass = zero
+    has_negative_probability = jnp.zeros(jnp.shape(zero), dtype=bool)
+    for target_regime_name in scalar_targets:
+        scalar_V = next_regime_to_V_arr[target_regime_name]
+        # The mass sum and the liveness test read the weight as the arithmetic
+        # sees it, exactly as the stateful route does: a probability too small
+        # for the dtype to use contributes nothing to either, which is the right
+        # answer for both.
+        prob = active_regime_probs[target_regime_name]
+        # A stateless target contributes to the represented mass on either
+        # route, so the linear fast path divides by the mass of *every* target
+        # it summed, not just the ones carrying state.
+        probability_mass = probability_mass + prob
+        # Read off the bits while the probability still has them: a negative
+        # weight the dtype cannot hold as a normal number arrives at an
+        # arithmetic sign test as `-0` and passes it.
+        has_negative_probability = has_negative_probability | is_negative(prob)
+        if as_lottery:
+            # A stateless target has no stochastic node to multiply against, so
+            # its regime probability is already the whole weight, and it goes on
+            # a scale for the same reason a joint product does: an arm of the
+            # lottery that is subnormal cannot be classified once it is read
+            # inside a fused region. Broadcasting rather than multiplying by
+            # ones keeps that from happening on the way in.
+            node = jnp.ravel(scalar_V)
+            values.append(node)
+            weighted_nodes, shift = reconcile_scales(
+                *scaled_joint_weight(
+                    jnp.stack([jnp.broadcast_to(prob, jnp.shape(node))])
+                )
+            )
+            weights.append(weighted_nodes)
+            shifts.append(shift)
+        else:
+            # Nothing upstream has accounted for a small regime probability on
+            # this route, so this is the product that has to stay exact.
+            CE = CE + zero_safe_weighted_term(
+                weight=prob,
+                value=scalar_V,
+                subnormal_is_accounted_for=False,
+            )
+    return CE, values, weights, shifts, probability_mass, has_negative_probability
+
+
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
     """Return the weighted mean of one target's continuation over its nodes.
 
@@ -1167,12 +1312,13 @@ def _get_U_and_F(
         The instantaneous utility and feasibility function.
 
     """
-    combined = {
-        "feasibility": _get_feasibility(functions=functions, constraints=constraints),
-        **functions,
-    }
     return concatenate_functions(
-        functions=combined,
+        functions={
+            "feasibility": _get_feasibility(
+                functions=functions, constraints=constraints
+            ),
+            **dict(functions),
+        },
         targets=["utility", "feasibility"],
         enforce_signature=False,
         set_annotations=True,

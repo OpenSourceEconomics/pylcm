@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from scipy.interpolate import interp1d as scipy_interp1d
+from scipy.interpolate import make_interp_spline
 
 from lcm import (
     AgeGrid,
@@ -618,20 +618,56 @@ def _interpolate_knots(
     period_range: np.ndarray,
     flat_after: int | None = None,
 ) -> np.ndarray:
-    """Cubic spline interpolation of age-keyed knots over a period range.
+    """Interpolate age-keyed knots over a period range with a cubic spline.
+
+    A period outside the knot range has no knot on one side, so the cubic
+    continues on its leading term alone and reports an artifact of the fit
+    rather than a calibrated number. Such a query is refused rather than
+    served, because the value would flow into the model's disutility and
+    change what it says without any sign that it had.
+
+    Periods the caller declares flat are not extrapolation: they take the last
+    knot's value by construction, so they are exempt from the check.
 
     Args:
         age_keyed_dict: Dict mapping age strings to values.
         period_range: Array of periods to interpolate over.
         flat_after: If set, extend the last knot value for periods beyond this.
 
+    Returns:
+        Array of interpolated values, one per period in `period_range`.
+
     """
     knot_periods, knot_values = _age_keys_to_periods(age_keyed_dict=age_keyed_dict)
-    spline = scipy_interp1d(knot_periods, knot_values, kind="cubic")
+    spline = make_interp_spline(knot_periods, knot_values, k=3)
     values = np.asarray(spline(period_range))
-    if flat_after is not None:
-        values[period_range >= flat_after] = knot_values[-1]
+    held_flat = (
+        np.zeros_like(period_range, dtype=bool)
+        if flat_after is None
+        else period_range >= flat_after
+    )
+    values[held_flat] = knot_values[-1]
+    _fail_if_periods_leave_the_knot_range(
+        period_range=period_range, knot_periods=knot_periods, exempt=held_flat
+    )
     return values
+
+
+def _fail_if_periods_leave_the_knot_range(
+    *, period_range: np.ndarray, knot_periods: np.ndarray, exempt: np.ndarray
+) -> None:
+    """Raise when a period the spline is read at lies outside the knot range."""
+    low, high = knot_periods[0], knot_periods[-1]
+    outside = ~exempt & ((period_range < low) | (period_range > high))
+    if outside.any():
+        offending = np.asarray(period_range)[outside]
+        msg = (
+            f"Periods {offending.tolist()} are outside the knot range "
+            f"[{low}, {high}], so the spline would extrapolate rather than "
+            f"interpolate. Add knots covering them, or declare them flat via "
+            f"`flat_after`."
+        )
+        raise ValueError(msg)
 
 
 def create_work_disutility_grid(
@@ -694,7 +730,12 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-EFFORT_FIELD_NAMES = np.array([f.name for f in dataclasses.fields(Effort)])  # ty: ignore[invalid-argument-type]
+def _category_names(category_class: type) -> list[str]:
+    """Return the category names of a `@categorical` class, in declaration order."""
+    return [f.name for f in dataclasses.fields(category_class)]  # ty: ignore[invalid-argument-type]
+
+
+EFFORT_FIELD_NAMES = np.array(_category_names(Effort))
 
 
 def _build_type_distribution() -> pd.DataFrame:
@@ -707,10 +748,10 @@ def _build_type_distribution() -> pd.DataFrame:
     raw = np.loadtxt(_DATA_DIR / "init_distr_2b2t2h.txt", skiprows=1)
     index = pd.MultiIndex.from_product(
         [
-            [f.name for f in dataclasses.fields(Education)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(DiscountType)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(ProductivityType)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(HealthType)],  # ty: ignore[invalid-argument-type]
+            _category_names(Education),
+            _category_names(DiscountType),
+            _category_names(ProductivityType),
+            _category_names(HealthType),
         ],
         names=["education", "discount_type", "productivity", "health_type"],
     )

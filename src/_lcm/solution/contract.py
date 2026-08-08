@@ -6,28 +6,84 @@ then `solver.build_period_kernels(context)` — with no switch on solver type.
 Add a solver by subclassing `Solver` and implementing `build_period_kernels`;
 override `validate` for a build-time model-contract check (the default is a
 no-op). `SolverBuildContext` carries everything a solver may read to build one
-regime's kernels; `SolverKernels` is what it hands back.
+regime's kernels; `SolutionKernels` is what it hands back.
 
-This module is an engine leaf: it imports only `_lcm.engine` / `_lcm.grids` /
-`_lcm.typing` (none of which reach `lcm.solvers`), so the public solver façade
-can re-export it without forming an import cycle.
+Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
+non-jitted period adapter that wraps the solver's shared jitted core, calls it
+with the solver's own argument layout, and assembles a `KernelResult` outside
+JIT. The solve loop invokes the same adapter for every solver, branching only on
+which optional outputs (`continuation`, `simulation_policy`) are present, never
+on solver type.
+
+This module is an engine leaf. Resolving finalized user-regime or
+`VInterpolationInfo` types at runtime would close an import cycle through the
+`lcm.solvers` façade, which re-exports `Solver` from here. They are therefore
+referenced through two-form aliases: precise element types for ty under
+`TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
+remaining engine types (`StateActionSpace`, `EGMCarry`, `EGMSimPolicy`) live in
+sibling leaves with no path back to `lcm.solvers`, so they import normally and
+beartype checks them precisely. The widened runtime aliases are required because
+the claw beartypes each dataclass `__init__`, and under PEP 649 that forces the
+field annotations to resolve to real objects when an instance is constructed.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
-    MaxQOverAFunction,
+    ConstraintFunctionsMapping,
+    EconFunction,
+    EconFunctionsMapping,
+    FlatParams,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
     QAndFFunction,
     RegimeName,
+    RegimeTransitionFunction,
     StateName,
     StateOrActionName,
+    TransitionFunctionsMapping,
 )
+from lcm.ages import AgeGrid
+from lcm.typing import Float1D, FloatND
+
+# The cross-period continuation channel a continuation-based parent
+# interpolates. Named solver-agnostically on the seam so the engine threads it
+# without knowing it is an EGM carry; today the only continuation payload is
+# the EGM carry itself.
+type ContinuationPayload = EGMCarry
+
+# The published off-grid simulation-policy artifact, under the same rule: the
+# engine stores and returns it opaquely; today the only implementation is the
+# EGM-published policy.
+type SimulationPolicy = EGMSimPolicy
+
+if TYPE_CHECKING:
+    from _lcm.regime_building.finalize import FinalizedUserRegime
+    from _lcm.regime_building.V import VInterpolationInfo
+
+    UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
+        RegimeName, FinalizedUserRegime
+    ]
+    RegimeToVInterpolationInfo: TypeAlias = MappingProxyType[  # noqa: UP040
+        RegimeName, VInterpolationInfo
+    ]
+else:
+    # Resolving the element types closes a cycle via the `lcm.solvers` façade,
+    # which re-exports `Solver` from this module. ty reads the precise types
+    # above; the beartype claw checks only the outer container at runtime.
+    UserRegimesMapping = Mapping
+    RegimeToVInterpolationInfo = MappingProxyType
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,6 +93,12 @@ class SolverBuildContext:
     Bundled so the solver method signature stays stable as solvers with
     different needs are added; each solver reads only the fields it uses.
     """
+
+    regime_name: RegimeName
+    """Name of the regime the kernels are built for."""
+
+    user_regimes: UserRegimesMapping
+    """Mapping of regime names to user-provided `Regime` instances."""
 
     state_action_space: StateActionSpace
     """The regime's state-action space."""
@@ -48,7 +110,86 @@ class SolverBuildContext:
     """Immutable mapping of period to Q-and-F closures."""
 
     grids: MappingProxyType[StateOrActionName, Grid]
-    """Immutable mapping of the regime's variable names to grid objects."""
+    """Immutable mapping of the regime's variable names to grid objects.
+
+    Age-invariant: for an `AgeSpecializedGrid` state this holds the representative
+    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype,
+    `batch_size` — which are invariant across ages by contract. For a grid's *node
+    values* in a particular period, read `period_to_state_nodes`.
+    """
+
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    ) = None
+    """Immutable mapping of period to that period's age-specialized state nodes.
+
+    `None` when the regime has no age-specialized state, in which case `grids` is
+    already the whole story. A solver that lifts a state's nodes into a numerical
+    computation must consult this per period: capturing one array outside its
+    per-period loop silently pins every period to the representative age.
+    """
+
+    functions: EconFunctionsMapping
+    """The regime's processed functions (params renamed to qualified names)."""
+
+    koopmans_aggregator: EconFunction | None
+    """The regime's processed Koopmans aggregator, or `None` in a terminal regime.
+
+    Processed like every other function, so its parameters carry their qualified
+    names — a solver that reads them off the runtime pool must use this object,
+    not the user-facing `LinearAggregator`.
+    """
+
+    constraints: ConstraintFunctionsMapping
+    """Immutable mapping of the regime's constraint names to functions."""
+
+    transitions: TransitionFunctionsMapping
+    """Immutable mapping of target regime names to transition functions."""
+
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
+
+    compute_regime_transition_probs: RegimeTransitionFunction | None
+    """Regime transition probability function, or `None` for terminal regimes."""
+
+    regime_to_v_interpolation_info: RegimeToVInterpolationInfo
+    """Immutable mapping of regime names to V-interpolation info."""
+
+    period_to_regime_v_interp: (
+        MappingProxyType[int, RegimeToVInterpolationInfo] | None
+    ) = None
+    """Immutable mapping of period to that period's V-interpolation info per regime.
+
+    A period-`t` kernel reads its continuation on the *target's* period-`t+1` grid,
+    so a solver that interpolates `V_{t+1}` must look the target's info up under
+    `period + 1` rather than reuse `regime_to_v_interpolation_info`, which carries
+    the representative age. `None` when no regime has an age-specialized state.
+    """
+
+    period_to_regime_grid_signature: (
+        MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
+    ) = None
+    """Immutable mapping of period to each regime's age-specialized grid signature.
+
+    The user's own `AgeSpecializedGrid.signature(age)` values, so a solver that
+    groups periods into shared compiled programs can fold its targets' signatures
+    at `period + 1` into the group key. Periods whose continuation grids differ
+    then never share a trace. `None` when no regime has an age-specialized state.
+    """
+
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
+    """Immutable mapping of regime names to their active period tuples."""
+
+    flat_param_names: frozenset[str]
+    """Frozenset of flat parameter names for the regime."""
+
+    regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]]
+    """Immutable mapping of every regime name to its flat parameter names.
+
+    A DC-EGM source carrying into a different target regime reads the target's
+    params in its per-asset-node solve, so the kernel build admits and binds
+    the union of the source and its reachable carry targets' params.
+    """
 
     enable_jit: bool
     """Whether to JIT-compile the kernels."""
@@ -82,13 +223,142 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SolverKernels:
-    """Per-period solve kernels produced by a solver."""
+class KernelResult:
+    """One regime-period solve output, assembled outside JIT.
 
-    max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
-    """Immutable mapping of period to max-Q-over-actions kernels.
+    The solve loop reads `V_arr` from every kernel and branches only on whether
+    the optional generic outputs are present — never on solver type:
 
-    Empty for solvers that replace the grid search with their own kernels.
+    - `continuation` is the cross-period payload a continuation-based parent
+      interpolates; `None` for a regime that publishes no continuation.
+    - `simulation_policy` is the off-grid policy forward simulation can
+      interpolate; `None` for a regime that publishes none.
+    """
+
+    V_arr: FloatND
+    """The regime's value-function array on its exogenous state grid."""
+
+    continuation: ContinuationPayload | None = None
+    """Continuation payload for a continuation-based parent, or `None`."""
+
+    simulation_policy: SimulationPolicy | None = None
+    """Published off-grid simulation policy, or `None`."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackwardInductionResult:
+    """The generic outputs of one backward-induction run.
+
+    Internal to the engine: the public `Model.solve` unpacks it into its
+    documented mapping-or-tuple return shape.
+    """
+
+    value_functions: PeriodToRegimeToVArr
+    """Immutable mapping of period to each regime's value-function array."""
+
+    simulation_policies: PeriodToRegimeToSimulationPolicy
+    """Immutable mapping of period to each regime's published simulation policy.
+
+    Sparse over regimes: only kernels that publish a policy contribute entries.
+    """
+
+
+@runtime_checkable
+class PeriodKernel(Protocol):
+    """One regime's per-period solve adapter — the loop's uniform call target.
+
+    A single non-jitted closure per regime-period that wraps the solver's shared
+    jitted core(s) (deduped across periods by core identity), calls them with the
+    solver's own argument layout, and assembles a `KernelResult` outside JIT.
+    Plain closures satisfy this structurally; the loop never inspects the solver
+    type. `cores()` exposes the shared jitted function(s) keyed by a stable
+    per-kernel name so AOT compilation can deduplicate and lower each;
+    `build_lower_args` builds a named core's lowering kwargs.
+
+    Most kernels carry exactly one core (`{"main": ...}`); a multi-core kernel
+    carries several under its own keys, one per distinct traced program it must
+    lower (for example a passive keeper alongside an adjuster sweep). The AOT
+    contract lowers, compiles, and dispatches each core by its key, so a
+    multi-core kernel never collapses into one program.
+    """
+
+    def cores(self) -> Mapping[str, Callable]:
+        """Return the shared jitted core(s), keyed by stable per-kernel name.
+
+        Each value is a distinct traced program AOT compilation lowers and
+        deduplicates independently; `build_lower_args(core_key=...)` builds the
+        matching lowering kwargs and `__call__` reads the compiled cores back by
+        the same key.
+        """
+        ...
+
+    @property
+    def core(self) -> Callable:
+        """The kernel's `"main"` core, for any single-core reader.
+
+        Defaults to `cores()["main"]`; multi-core kernels override or omit it.
+        """
+        ...
+
+    def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> PeriodKernel:
+        """Return a copy with the regime's fixed params bound into the core(s).
+
+        The adapter owns its solver's binding rule — which fixed params reach
+        the core (and any inline closure it wraps) — so the engine binds fixed
+        params without a solver-type switch.
+        """
+        ...
+
+    def build_lower_args(
+        self,
+        *,
+        core_key: str,
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> Mapping[str, object]:
+        """Build the named core's lowering arguments for this period.
+
+        Single-core kernels ignore `core_key`; a multi-core kernel dispatches
+        its per-core lowering off it.
+        """
+        ...
+
+    def __call__(
+        self,
+        *,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Invoke the compiled core(s) and assemble the period's `KernelResult`.
+
+        Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
+        reads each of its own core keys.
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class SolutionKernels:
+    """Per-period solve adapters produced by a solver."""
+
+    period_kernels: Mapping[int, PeriodKernel]
+    """Immutable mapping of period to the regime's uniform period adapter."""
+
+    continuation_template: ContinuationPayload | None = None
+    """All-finite template continuation with the regime's static shapes.
+
+    `None` for a regime that publishes no continuation. Initializes the rolling
+    `next_regime_to_continuation` mapping and serves as the lowering argument when
+    AOT-compiling a parent's kernel.
     """
 
 
@@ -102,8 +372,60 @@ class Solver(ABC):
     """
 
     @abstractmethod
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolverKernels:
-        """Build the regime's per-period solve kernels."""
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build the regime's per-period solve adapters."""
+
+    @property
+    def carry_retains_discrete_action_rows(self) -> bool:
+        """Whether this regime's continuation carry keeps per-discrete-action rows.
+
+        A reading parent aggregates the child's discrete choices (the DC-EGM
+        logsum) only when the carry retains a row per discrete-action combo. A
+        value-only solver that publishes an already-action-maxed value array
+        (brute `GridSearch`, the case-piece `NBEGM`) sets this `False`, so the
+        parent reads the maxed value directly without spurious action rows.
+        """
+        return True
+
+    @property
+    def carry_rows_share_state_grid(self) -> bool:
+        """Whether every published carry row shares the state grid as abscissae.
+
+        Grid-aligned rows (a value array published on the regime's own state
+        grid) all interpolate with the same bracket structure, so reads that
+        are linear in the rows commute with expectations over the carry's
+        node axes. Endogenous-grid solvers publish per-row abscissae and set
+        this `False`.
+        """
+        return False
+
+    @property
+    def n_stacked_carry_candidates(self) -> int:
+        """Length of the published carry's stacked outer-candidate axis.
+
+        A solver that publishes one carry row per outer durable candidate
+        (keeper plus one per outer-grid node), stacked on an axis before the
+        grid axis, declares that axis length here; a reading parent broadcasts
+        its queries over exactly that many candidates and collapses them by
+        the hard max. A solver whose carry has no candidate axis — no outer
+        margin, or an outer margin already folded inside the solve — declares
+        `0`, and the parent queries each carry row once.
+        """
+        return 0
 
     def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Check the regime is in scope for this solver. Default: no-op."""
+
+    @property
+    def requires_continuation(self) -> bool:
+        """Whether this solver reads a continuation payload from its targets.
+
+        An endogenous-grid solver inverts the Euler equation against its
+        target regimes' value *and marginal* on a continuation grid, so each
+        target — including a terminal one — must publish a continuation the
+        engine rolls alongside `next_regime_to_V_arr`. Grid search reads only
+        the value array, so it needs none. The engine reads this off every
+        regime's solver to decide whether terminal regimes produce their
+        closed-form continuations, without forking on the solver type.
+        """
+        return False

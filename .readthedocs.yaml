@@ -11,7 +11,12 @@ build:
       - asdf install pixi latest
       - asdf global pixi latest
     install:
-      - pixi install -e docs
+      # `--frozen` installs straight from the lock. Re-solving on the builder
+      # pulls in the cuda environment, whose `__cuda` virtual package the
+      # CPU-only RTD host cannot satisfy, and the build dies initializing a
+      # dispatch it never needed. Lock drift then fails fast and legibly here
+      # rather than as that dispatch error.
+      - pixi install -e docs --frozen
     post_build:
       # Jupyter Book 2.0 builds site content to _build/html.
       # For ReadTheDocs, we build and then copy to the expected output location.

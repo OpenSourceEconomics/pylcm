@@ -7,6 +7,61 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixes
+
+- The marginal a brute (`GridSearch`) child publishes to an endogenous-grid
+  parent is one-sided next to a feasibility boundary. A central difference
+  straddling an infeasible state said nothing, so the first feasible state above
+  a borrowing constraint carried a zero marginal and biased the parent's Euler
+  inversion toward over-consumption there.
+
+- A constraint reading an auto-named `next_<state>` (the NEGM budget cut on the
+  next durable stock) no longer breaks `simulate()`. The initial-conditions
+  feasibility check, its per-constraint diagnostic, and the additional-target
+  pool now resolve that name the way the within-period decision does.
+
+- `envelope="mss"`: a value decrease no larger than rounding noise is no
+  longer read as a branch boundary. Along a near-linear tail the sign of the
+  difference between consecutive candidate values is set by rounding, and
+  splitting there silently dropped the top of the published row. A candidate
+  whose value is not finite now costs only its own nodes instead of poisoning
+  every node it covers with NaN.
+
+- `envelope="exact"`: a handover between two links the pair's arithmetic
+  cannot separate is refused rather than placed at a fabricated abscissa.
+
+- An endogenous-grid regime reads its continuation on the grid the *target*
+  regime tabulates at period `t+1`, not on its own period-`t` grid. The two
+  differ whenever the target is a different regime whose grid differs, or
+  whenever an `AgeSpecializedGrid` moves the nodes with age; before, such a
+  model either raised on the length mismatch or published values inverted
+  against the wrong abscissae. A target that does not carry the state now
+  raises instead of falling back.
+
+- `EGM` and `TwoAssetEGM` validate their regime when the model is built:
+  the number of continuous states, the declared roles, and — for the
+  two-asset solver — the retirement boundary target. The errors name the
+  regime's own state names and the field that fixes them.
+
+### Solver naming
+
+- The endogenous-grid solvers are named by the problem they solve rather than
+  by the dimension count they were built around: `OneAssetEGM` is now `EGM`
+  and `TwoDimEGM` is now `TwoAssetEGM`. There are no aliases.
+
+- `TwoAssetEGM` takes the regime's two continuous states by name —
+  `liquid_state=` and `pension_state=` — instead of requiring them to be
+  spelled `liquid` and `pension`.
+
+- The refinement argument is `envelope=` on both `TwoAssetEGM` and `DCEGM`
+  (was `upper_envelope=`). The `_lcm/egm/upper_envelope/` package keeps its
+  name: it is the FUES backend, not the field.
+
+### Platform support
+
+- There is no `metal` / `tests-metal` pixi environment: macOS runs on CPU, and
+  Apple-Silicon GPU acceleration is not installable from this project.
+
 ### Phase grammar, cross-regime transitions, and model-level regime slots
 
 - `Phased(solve=..., simulate=...)` gives any regime-slot value a per-phase
@@ -64,6 +119,28 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   other model-level slots: a name declared at model level and regime level is
   an ambiguity error, also when the grids match.
 
+### Discrete-continuous choice: DC-EGM, NEGM, and taste shocks
+
+- Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a
+  per-regime alternative to grid search: `Regime(solver=lcm.DCEGM(...))`.
+  Euler-equation inversion on an exogenous savings grid with a fast
+  upper-envelope scan (Dobrescu & Shanker 2022) — no consumption grid enters
+  the solve, and the credit-constrained segment is exact. Requires declared
+  `resources`, post-decision, and `inverse_marginal_utility` regime functions;
+  the model contract is validated at `Model` construction. Supports discrete
+  states and actions, EV1 taste shocks, stochastic processes, and passive
+  continuous states. Forward simulation works with grid-restricted consumption
+  (the intrinsic budget constraint is applied as a feasibility mask).
+
+- Adds regime-level EV1 taste shocks as a model property:
+  `Regime(taste_shocks=lcm.ExtremeValueTasteShocks())` with the scale as the
+  runtime param `{"taste_shocks": {"scale": ...}}`. The solve aggregates
+  discrete actions by the smoothed expected maximum and simulation draws the
+  discrete action by Gumbel-max — identical solutions under either solver.
+
+- Promotes the Iskhakov et al. (2017) retirement model to
+  `lcm_examples.iskhakov_et_al_2017` (brute-force and DC-EGM variants) with an
+  explanation notebook comparing the two solvers.
 
 ## 0.0.1
 
