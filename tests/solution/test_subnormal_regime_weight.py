@@ -210,13 +210,20 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
     """
     dtype = _active_dtype()
     subnormal = _largest_subnormal()
-    func = jax.jit(zero_safe_weighted_term) if compile_it else zero_safe_weighted_term
+    func = (
+        jax.jit(zero_safe_weighted_term, static_argnames="subnormal_is_accounted_for")
+        if compile_it
+        else zero_safe_weighted_term
+    )
     negative_infinity = jnp.asarray(-jnp.inf, dtype=dtype)
 
-    assert bool(jnp.isneginf(func(subnormal, negative_infinity)))
-    assert float(func(jnp.asarray(0.0, dtype=dtype), negative_infinity)) == 0.0
+    def term(weight: ScalarFloat, value: ScalarFloat) -> FloatND:
+        return func(weight=weight, value=value, subnormal_is_accounted_for=False)
+
+    assert bool(jnp.isneginf(term(subnormal, negative_infinity)))
+    assert float(term(jnp.asarray(0.0, dtype=dtype), negative_infinity)) == 0.0
     np.testing.assert_allclose(
-        float(func(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
+        float(term(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
     )
 
 

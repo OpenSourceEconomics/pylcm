@@ -530,8 +530,13 @@ def _get_compute_CE(
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
+                # The regime probability arrives at whatever size the model
+                # gave it, and nothing upstream has accounted for a small one,
+                # so this is the product that has to stay exact.
                 CE = CE + zero_safe_weighted_term(
-                    target_probability, next_V_expected_arr
+                    weight=target_probability,
+                    value=next_V_expected_arr,
+                    subnormal_is_accounted_for=False,
                 )
             else:
                 values, node_weights = _as_lottery(
@@ -1027,7 +1032,9 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
     """
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    weighted = zero_safe_weighted_term(weights, values)
+    weighted = zero_safe_weighted_term(
+        weight=weights, value=values, subnormal_is_accounted_for=True
+    )
     return jnp.sum(weighted) / safe_weight_sum
 
 

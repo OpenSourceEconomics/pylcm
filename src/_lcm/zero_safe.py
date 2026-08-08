@@ -58,9 +58,10 @@ target represented with no mass contributes `0`, while a whole continuation
 lottery with no mass anywhere is malformed and aggregates to NaN — so each
 caller states its own denominator.
 
-This module implements an arithmetic and nothing else, so its functions keep
-the spelling their operation is known by and take their operands positionally
-rather than keyword-only.
+Every argument is keyword-only, as everywhere else in the package. These read
+as arithmetic and arithmetic invites positional operands, but the operands are
+not interchangeable and one of them carries a claim about what the caller has
+already established, so the call site says which is which.
 """
 
 import jax.numpy as jnp
@@ -156,7 +157,9 @@ def scaled_joint_weight(factors: FloatND) -> tuple[FloatND, IntND]:
     return scaled_exact_product(jnp.asarray(factors))
 
 
-def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
+def zero_safe_weighted_term(
+    *, weight: FloatND, value: FloatND, subnormal_is_accounted_for: bool
+) -> FloatND:
     """Return `weight * value`, exactly `0.0` wherever `weight` is zero.
 
     The mask sits on the *value*, an operand of the multiplication, rather than
@@ -194,9 +197,31 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
     masking unconditionally would flatten to zero at exactly the coordinates
     where a weight vanishes.
 
+    The exponent is moved from the value onto the weight so that a weight
+    below the normal range multiplies exactly rather than being flushed as an
+    operand. That runs at every term, and two callers can say in advance that
+    no weight of theirs needs it, because a weight below the range there cannot
+    change what they return:
+
+    - the nodes of one target arrive on a common base-two scale, and one still
+      below the range after it is one that scale's own cap has declared
+      understated; moving its exponent would price a node the contract says is
+      not priced;
+    - an interpolation corner weight below the range means the coordinate lies
+      within a subnormal of a node, so the corner beside it carries weight one
+      and the whole read.
+
+    Both pass `subnormal_is_accounted_for=True`. Every other caller passes
+    `False` — a regime transition probability arrives at whatever size the
+    model chose, and nothing upstream has accounted for a small one. There is
+    no default: which of the two a call site is cannot be guessed from the
+    operands, so it is stated.
+
     Args:
         weight: Probability, quadrature, or interpolation weight.
         value: The value being weighted, possibly `+-inf` at a zero-weight node.
+        subnormal_is_accounted_for: Whether the caller has already established
+            that a weight below the normal range cannot change its result.
 
     Returns:
         The elementwise product, broadcast as `weight * value` would be.
@@ -220,4 +245,6 @@ def zero_safe_weighted_term(weight: FloatND, value: FloatND) -> FloatND:
         jnp.zeros((), value_arr.dtype),
         value_arr,
     )
+    if subnormal_is_accounted_for:
+        return effective_weight * safe_value
     return balanced_product(effective_weight, safe_value)
