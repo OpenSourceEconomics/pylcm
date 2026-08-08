@@ -23,6 +23,7 @@ from _lcm.probability import (
     flattened_to_one_scale,
     is_live,
     normalized_scaled_weights,
+    restored_against_a_nonfinite_value,
     scaled_exact_product,
 )
 from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
@@ -151,11 +152,7 @@ def test_flattening_never_states_a_probability_larger_than_it_is():
     """Put on one scale as numbers, a node is understated rather than enlarged."""
     coefficients, shifts, true_log2_ratio = _wide_spread_witness()
 
-    flattened = flattened_to_one_scale(
-        coefficients=coefficients,
-        shifts=shifts,
-        values=jnp.ones_like(coefficients),
-    )
+    flattened = flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
 
     ratio = np.longdouble(np.asarray(flattened)[1]) / np.longdouble(
         np.asarray(flattened)[0]
@@ -174,9 +171,9 @@ def test_flattening_keeps_an_event_that_can_occur_live():
     """
     coefficients, shifts, _ = _wide_spread_witness()
 
-    flattened = flattened_to_one_scale(
+    flattened = restored_against_a_nonfinite_value(
         coefficients=coefficients,
-        shifts=shifts,
+        lowered=flattened_to_one_scale(coefficients=coefficients, shifts=shifts),
         values=jnp.asarray([2.0, -jnp.inf], dtype=coefficients.dtype),
     )
 

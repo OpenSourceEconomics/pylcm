@@ -20,6 +20,7 @@ from _lcm.probability import (
     is_live,
     is_negative,
     rescaled_lottery_weights,
+    restored_against_a_nonfinite_value,
 )
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import zero_safe_weighted_term
@@ -113,8 +114,12 @@ class CertaintyEquivalent(ABC):
         """
         return self.aggregate(
             values=values,
-            weights=flattened_to_one_scale(
-                coefficients=coefficients, shifts=shifts, values=values
+            weights=restored_against_a_nonfinite_value(
+                coefficients=coefficients,
+                lowered=flattened_to_one_scale(
+                    coefficients=coefficients, shifts=shifts
+                ),
+                values=values,
             ),
             params=params,
         )

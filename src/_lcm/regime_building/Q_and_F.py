@@ -12,6 +12,7 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
+    restored_against_a_nonfinite_value,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -1040,11 +1041,21 @@ def _expectation_over_stochastic_nodes(
         The weighted mean over the nodes.
 
     """
-    lowered = flattened_to_one_scale(coefficients=weights, shifts=shifts, values=values)
+    lowered = flattened_to_one_scale(coefficients=weights, shifts=shifts)
     weight_sum = jnp.sum(lowered)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    # Only the weighted term restores a weight that vanished against a
+    # non-finite value, and only it therefore reads the values at all. A live
+    # node standing against one carries the result whatever the mass is, so the
+    # mass stays a function of the weights alone — which keeps the whole value
+    # surface out of the weight computation, where it would otherwise have to
+    # live for as long as the weights do.
     weighted = zero_safe_weighted_term(
-        weight=lowered, value=values, subnormal_is_accounted_for=True
+        weight=restored_against_a_nonfinite_value(
+            coefficients=weights, lowered=lowered, values=values
+        ),
+        value=values,
+        subnormal_is_accounted_for=True,
     )
     return jnp.sum(weighted) / safe_weight_sum
 

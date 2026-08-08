@@ -203,9 +203,7 @@ def normalized_scaled_weights(
     )
 
 
-def flattened_to_one_scale(
-    *, coefficients: FloatND, shifts: _BitsND, values: FloatND
-) -> FloatND:
+def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND:
     """Return scaled weights as plain numbers, on the one scale they all reach.
 
     Every entry carries a scale of its own, which is what keeps it exact. A
@@ -215,31 +213,17 @@ def flattened_to_one_scale(
     underflows to zero: understated, the direction the contract allows, and
     never enlarged.
 
-    The value standing at the node decides whether that is the whole story,
-    which is the same split `zero_safe_weighted_term` makes one level down:
-
-    - against a **finite** value the underflow is the smallest error available
-      to anything that has to name the weight as a number, and the node's
-      contribution was negligible at the scale it came in on;
-    - against a **non-finite** value it is not a small error but a lost answer,
-      so the weight is floored at the smallest normal magnitude, keeping its
-      sign — normal, not merely nonzero, because a subnormal operand is what
-      the backend flushes, and `0 * -inf` is the NaN this is here to avoid.
-      Every strictly positive weight yields the same `±inf`, and the same
-      `NaN`, so no magnitude is lost by the substitution. Letting the weight
-      round to zero would instead make an event that can occur impossible: an
-      infinite continuation would be reported as an ordinary number, and a
-      misspecified one — a node whose entry lies outside the target's support —
-      would be reported as a well-posed answer.
-
-    Which of the two a node falls under is decided by the value, never by how
-    small the weight is. A weight the format cannot express is understated, and
-    understating a weight is not the same as ruling the node out.
+    Against a finite value that understatement is the whole story, and the
+    smallest error available to anything that has to name the weight as a
+    number. Against a non-finite one it is a lost answer instead, and
+    `restored_against_a_nonfinite_value` is what puts such a weight back. The
+    two are separate because only the second reads the values, and a consumer
+    that also needs the lottery's mass wants that mass to depend on the weights
+    alone.
 
     Args:
         coefficients: The scaled weights' significands.
         shifts: Each one's own base-two scale.
-        values: What each weight stands against, read only for finiteness.
 
     Returns:
         The weights on one scale, as ordinary numbers.
@@ -248,7 +232,48 @@ def flattened_to_one_scale(
     arr = jnp.asarray(coefficients)
     shifts = jnp.asarray(shifts)
     common = jnp.min(shifts)
-    lowered = jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
+    return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
+
+
+def restored_against_a_nonfinite_value(
+    *, coefficients: FloatND, lowered: FloatND, values: FloatND
+) -> FloatND:
+    """Return the lowered weights, with a vanished live one put back.
+
+    Lowering understates a weight too far below the scale to express, and
+    against a finite value that is the whole story. Against a non-finite one it
+    is a lost answer instead, so the weight comes back at the smallest normal
+    magnitude, keeping its sign — normal, not merely nonzero, because a
+    subnormal operand is what the backend flushes, and `0 * -inf` is the NaN
+    this is here to avoid.
+
+    Both non-finite values are ones whose contribution does not shrink with the
+    weight: every strictly positive weight against `+-inf` yields the same
+    infinity, and every strictly positive weight against a `NaN` yields the same
+    `NaN`. Letting the weight round to zero would make an event that can occur
+    impossible — reporting an ordinary number for a continuation that has none,
+    or a well-posed answer for a node whose entry lies outside the target's
+    support. What decides is the value at the node, never how small the weight
+    is: a weight the format cannot express is understated, and understating a
+    weight is not ruling the node out.
+
+    This is separate from the lowering because it is the only step that makes a
+    weight depend on the value beside it. A consumer that needs the mass of the
+    lottery as well as its weighted sum takes the mass from the lowered weights
+    and applies this to the weighted term alone, where the value is an operand
+    already — a live node against a non-finite value carries the result whatever
+    the mass is, so the mass never needs the restored weight.
+
+    Args:
+        coefficients: The scaled weights' significands, as they arrived.
+        lowered: The same weights on one scale, from `flattened_to_one_scale`.
+        values: What each weight stands against, read only for finiteness.
+
+    Returns:
+        The lowered weights, with every vanished live non-finite one restored.
+
+    """
+    arr = jnp.asarray(coefficients)
     smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
     vanished_against_nonfinite = (
         is_live(arr) & ~is_live(lowered) & ~jnp.isfinite(jnp.asarray(values))
