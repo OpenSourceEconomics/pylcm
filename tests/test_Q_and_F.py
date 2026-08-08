@@ -204,10 +204,10 @@ def test_get_multiply_weights():
     a = jnp.array([1.0, 2.0])
     b = jnp.array([3.0, 4.0])
 
-    got, shift = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
+    got, shifts = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3.0, 4.0], [6.0, 8.0]])
     assert_array_equal(got, expected)
-    assert int(shift) == 0
+    assert_array_equal(shifts, jnp.zeros_like(expected, dtype=jnp.int32))
 
 
 def test_joint_weights_axes_follow_the_declared_variable_order():

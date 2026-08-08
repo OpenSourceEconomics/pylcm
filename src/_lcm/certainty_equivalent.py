@@ -15,11 +15,16 @@ from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
-from _lcm.probability import is_live, is_negative, rescaled_lottery_weights
+from _lcm.probability import (
+    flattened_to_one_scale,
+    is_live,
+    is_negative,
+    rescaled_lottery_weights,
+)
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import FloatND
+from lcm.typing import FloatND, IntND
 
 # Reserved argument name through which transform callables receive values.
 CE_VALUE_ARG = "value"
@@ -71,6 +76,48 @@ class CertaintyEquivalent(ABC):
             The certainty equivalent, reduced over the last axis.
 
         """
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce a continuation lottery whose weights carry per-entry scales.
+
+        Node `i` carries probability `coefficients[i] * 2**-shifts[i]`. A joint
+        probability formed from several rare factors can sit further below the
+        likeliest node than the exponent field spans, and the pair is then the
+        only form in which the lottery is exact — on any single scale the
+        rarest node has to be rounded.
+
+        This default flattens onto one scale and defers to `aggregate`, which
+        understates a node it cannot represent there. That is the declared
+        approximation and it is safe in the direction that matters, a node
+        never being made likelier than it is. A certainty equivalent that can
+        take the scales exactly overrides this; `PowerMean` does, reducing in
+        the log domain where the spread costs nothing.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            coefficients: The weights' significands, over the same axis.
+            shifts: Each weight's own base-two scale, broadcast against them.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        return self.aggregate(
+            values=values,
+            weights=flattened_to_one_scale(
+                coefficients=coefficients, shifts=shifts, values=values
+            ),
+            params=params,
+        )
 
     @property
     def flat_param_names(self) -> MappingProxyType[str, str]:
@@ -371,6 +418,31 @@ class PowerMean(QuasiArithmeticMean):
             values=values,
             weights=weights,
             exponent=1.0 - params["risk_aversion"],
+            # Weights given as plain numbers already share one scale.
+            shifts=jnp.zeros((), jnp.int32),
+        )
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the power mean of a lottery carrying per-entry scales, exactly.
+
+        `weighted_power_mean` reduces in the log domain, where a node's scale
+        is a subtraction rather than a magnitude the format has to hold. The
+        lottery is therefore priced at whatever spread it arrives with, and
+        nothing is understated.
+        """
+        return weighted_power_mean(
+            values=values,
+            weights=coefficients,
+            exponent=1.0 - params["risk_aversion"],
+            shifts=shifts,
         )
 
 
