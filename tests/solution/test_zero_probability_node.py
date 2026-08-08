@@ -11,6 +11,7 @@ occur is a misspecified model and still shows up as `NaN`.
 
 from collections.abc import Mapping
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -193,6 +194,89 @@ def test_a_nan_weight_stays_poison() -> None:
     )
 
     assert bool(jnp.isnan(jnp.asarray(got)))
+
+
+def _wide_spread() -> int:
+    """A scale gap no ordinary weight can be named across.
+
+    Wider than the exponent range, so the rare node's weight is zero once both
+    are read against one base-two scale.
+    """
+    return 300 if jnp.zeros(()).dtype == jnp.float32 else 2800
+
+
+def _mean_of_a_common_and_a_rare_node(
+    *, rare_value: float, rare_weight: float, compile_it: bool
+) -> FloatND:
+    """The mean over a node of weight one and one a whole scale gap below it."""
+    reduce = (
+        jax.jit(_expectation_over_stochastic_nodes)
+        if compile_it
+        else _expectation_over_stochastic_nodes
+    )
+    return jnp.asarray(
+        reduce(
+            values=jnp.asarray([1.0, rare_value]),
+            weights=jnp.asarray([1.0, rare_weight]),
+            shifts=jnp.asarray([0, _wide_spread()], dtype=jnp.int32),
+        )
+    )
+
+
+@pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
+def test_a_node_too_rare_to_weigh_against_a_nan_stays_poison(
+    *, compile_it: bool
+) -> None:
+    """A live node keeps its `NaN` however far its weight is below the mass.
+
+    Its weight cannot be named as a number on the scale the mean reads, but a
+    weight the format cannot express is understated, not zero, and the node can
+    still occur. Reporting an ordinary continuation for it would be an answer to
+    a question the model does not pose.
+    """
+    got = _mean_of_a_common_and_a_rare_node(
+        rare_value=float(jnp.nan), rare_weight=1.0, compile_it=compile_it
+    )
+
+    assert bool(jnp.isnan(got))
+
+
+@pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
+def test_a_node_too_rare_to_weigh_against_an_infinity_keeps_it(
+    *, compile_it: bool
+) -> None:
+    """Every strictly positive weight yields the same infinity, so it is kept."""
+    got = _mean_of_a_common_and_a_rare_node(
+        rare_value=float(jnp.inf), rare_weight=1.0, compile_it=compile_it
+    )
+
+    assert bool(jnp.isposinf(got))
+
+
+@pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
+def test_a_node_too_rare_to_weigh_against_a_finite_value_is_omitted(
+    *, compile_it: bool
+) -> None:
+    """A finite value at such a node cannot move the mean, so it is left out.
+
+    This is the one omission the contract accepts, and it is one-sided: the
+    node's contribution is understated rather than enlarged.
+    """
+    got = _mean_of_a_common_and_a_rare_node(
+        rare_value=2.0, rare_weight=1.0, compile_it=compile_it
+    )
+
+    np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
+
+
+@pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
+def test_a_node_of_no_probability_stays_null_at_any_scale(*, compile_it: bool) -> None:
+    """A represented zero is the null event whatever scale it is written against."""
+    got = _mean_of_a_common_and_a_rare_node(
+        rare_value=float(jnp.nan), rare_weight=0.0, compile_it=compile_it
+    )
+
+    np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
 
 
 class _PlainWeightedMean(CertaintyEquivalent):

@@ -221,14 +221,20 @@ def flattened_to_one_scale(
     - against a **finite** value the underflow is the smallest error available
       to anything that has to name the weight as a number, and the node's
       contribution was negligible at the scale it came in on;
-    - against `±inf` it is not an error but a lost answer. Every strictly
-      positive weight yields the same infinity there, so the weight is floored
-      at the smallest normal magnitude, keeping its sign — normal, not merely
-      nonzero, because a subnormal operand is what the backend flushes, and
-      `0 * -inf` is the NaN this is here to avoid. No magnitude is lost by the
-      substitution, while letting it round to zero would make an event that can
-      occur impossible and report an ordinary number for a continuation that
-      has none.
+    - against a **non-finite** value it is not a small error but a lost answer,
+      so the weight is floored at the smallest normal magnitude, keeping its
+      sign — normal, not merely nonzero, because a subnormal operand is what
+      the backend flushes, and `0 * -inf` is the NaN this is here to avoid.
+      Every strictly positive weight yields the same `±inf`, and the same
+      `NaN`, so no magnitude is lost by the substitution. Letting the weight
+      round to zero would instead make an event that can occur impossible: an
+      infinite continuation would be reported as an ordinary number, and a
+      misspecified one — a node whose entry lies outside the target's support —
+      would be reported as a well-posed answer.
+
+    Which of the two a node falls under is decided by the value, never by how
+    small the weight is. A weight the format cannot express is understated, and
+    understating a weight is not the same as ruling the node out.
 
     Args:
         coefficients: The scaled weights' significands.
@@ -244,10 +250,10 @@ def flattened_to_one_scale(
     common = jnp.min(shifts)
     lowered = jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
     smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
-    vanished_against_infinity = (
-        is_live(arr) & ~is_live(lowered) & jnp.isinf(jnp.asarray(values))
+    vanished_against_nonfinite = (
+        is_live(arr) & ~is_live(lowered) & ~jnp.isfinite(jnp.asarray(values))
     )
-    return jnp.where(vanished_against_infinity, jnp.copysign(smallest, arr), lowered)
+    return jnp.where(vanished_against_nonfinite, jnp.copysign(smallest, arr), lowered)
 
 
 def rescaled_weight_pair(
