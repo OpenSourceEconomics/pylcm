@@ -1028,12 +1028,13 @@ def _expectation_over_stochastic_nodes(
       contribution, turning a broken transition into a plausible number.
 
     Each node arrives with a scale of its own, and a mean taken as numbers has
-    nowhere to put one, so the nodes come down onto the largest scale all of
-    them reach before anything is multiplied. A node too far below it to
-    register there drops out of both sums — which, against a finite value, is
-    what a probability that many orders of magnitude down contributes to a mean
-    of order one. Reading the weights as they stand instead would state the
-    rarest of them at the size of the likeliest.
+    nowhere to put one, so each half of the quotient names the scale where it
+    can. The mass comes down onto the largest scale all the nodes reach: an
+    entry too far below it to register there contributes nothing to a total of
+    order one, which is what its share of the mass is. The numerator keeps each
+    node's own scale and splits it across the product, because `w · 2**-s · v`
+    is an ordinary number however rare the node is whenever the value is large,
+    so no node may be lowered on its own before it meets its value.
 
     Args:
         values: Next period's value at this target's stochastic nodes.
@@ -1044,14 +1045,10 @@ def _expectation_over_stochastic_nodes(
         The weighted mean over the nodes.
 
     """
-    # The mass is a sum of weights and can be taken from the lowered ones: an
-    # entry too far below the likeliest to name there contributes nothing to a
-    # total of order one, which is what its share of the mass actually is. The
-    # numerator cannot be taken that way. A node's contribution is `w 2**-s v`,
-    # and lowering the weight on its own asks the format for `w 2**-s` without
-    # the value's binades — a subnormal, flushed on a backend that does not
-    # carry them — so a rare node against a large value would be lost even
-    # though its contribution is an ordinary number.
+    # Lowering a weight on its own asks the format for `w 2**-s` without the
+    # value's binades — a subnormal, flushed on a backend that does not carry
+    # them — so the numerator forms each term with the scale split across the
+    # product instead.
     weight_sum = jnp.sum(flattened_to_one_scale(coefficients=weights, shifts=shifts))
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
     terms = scaled_weighted_terms(coefficients=weights, shifts=shifts, values=values)

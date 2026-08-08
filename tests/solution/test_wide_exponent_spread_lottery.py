@@ -181,6 +181,42 @@ def test_flattening_keeps_an_event_that_can_occur_live():
     assert bool(np.asarray(is_live(flattened))[1])
 
 
+def test_flattening_keeps_an_event_carrying_a_nan_live():
+    """A node too rare for the shared scale stays an event where `NaN` stands there.
+
+    A `NaN` at a node that can occur is a misspecified model, and the answer is
+    that `NaN` whatever the node's probability is. Rounding the weight to a
+    represented zero would let the zero-safe reduction read the node as the null
+    event and report an ordinary number for a model that has none.
+    """
+    coefficients, shifts, _ = _wide_spread_witness()
+
+    flattened = restored_against_a_nonfinite_value(
+        coefficients=coefficients,
+        lowered=flattened_to_one_scale(coefficients=coefficients, shifts=shifts),
+        values=jnp.asarray([2.0, jnp.nan], dtype=coefficients.dtype),
+    )
+
+    assert bool(np.asarray(is_live(flattened))[1])
+
+
+def test_a_rare_node_keeps_its_nan_through_a_general_transform():
+    """`NaN` at a node that can occur survives a lottery reduced as numbers."""
+    coefficients, shifts, _ = _wide_spread_witness()
+    dtype = jnp.asarray(0.0).dtype
+
+    got = QuasiArithmeticMean(
+        transform=lambda value: value, inverse=lambda value: value
+    ).aggregate_scaled(
+        values=jnp.asarray([2.0, jnp.nan], dtype=dtype),
+        coefficients=coefficients,
+        shifts=shifts,
+        params={},
+    )
+
+    assert bool(jnp.isnan(got))
+
+
 def test_a_rare_node_keeps_its_infinity_through_a_general_transform():
     """`-inf` at a node that can occur survives a lottery reduced as numbers."""
     coefficients, shifts, _ = _wide_spread_witness()

@@ -18,9 +18,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CertaintyEquivalent,
     DiscreteGrid,
+    LinearExpectation,
     MarkovTransition,
     Model,
+    QuasiArithmeticMean,
     Regime,
     UniformIIDProcess,
     categorical,
@@ -148,10 +151,28 @@ def _make_entry(rare_entry: float):
     return entry_income
 
 
-def _build_model(*, rare_entry: float, enable_jit: bool) -> Model:
+def _identity_quasi_arithmetic_mean() -> QuasiArithmeticMean:
+    """A general transform the engine has no log-domain form for.
+
+    Its value is the plain mean, so what it changes is the route rather than the
+    answer: the reduction has to hand the weights to a callable it did not write,
+    and therefore has to name them as ordinary numbers.
+    """
+    return QuasiArithmeticMean(
+        transform=lambda value: value, inverse=lambda value: value
+    )
+
+
+def _build_model(
+    *,
+    rare_entry: float,
+    enable_jit: bool,
+    certainty_equivalent: CertaintyEquivalent,
+) -> Model:
     """A source entering the target's income process at several rare draws."""
     axis_names = tuple(f"draw_{index}" for index in range(_n_axes()))
     return Model(
+        certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
                 transition={"target": MarkovTransition(_certain)},
@@ -200,7 +221,29 @@ def test_an_off_support_entry_at_a_rare_node_still_fails_loudly(
     misspecified and the continuation is `NaN` rather than the average over the
     nodes whose weights the format happens to be able to name.
     """
-    model = _build_model(rare_entry=_OFF_SUPPORT_ENTRY, enable_jit=enable_jit)
+    model = _build_model(
+        rare_entry=_OFF_SUPPORT_ENTRY,
+        enable_jit=enable_jit,
+        certainty_equivalent=LinearExpectation(),
+    )
+
+    assert bool(jnp.all(jnp.isnan(_source_value(model))))
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_an_off_support_entry_survives_a_general_transform(*, enable_jit: bool) -> None:
+    """The same misspecification fails loudly under a user-supplied transform.
+
+    A certainty equivalent the engine has no log-domain form for must hand the
+    weights to that transform as ordinary numbers, so the all-rare node's weight
+    cannot be stated at all. The node is still one that can occur, and the `NaN`
+    standing there reaches the value function.
+    """
+    model = _build_model(
+        rare_entry=_OFF_SUPPORT_ENTRY,
+        enable_jit=enable_jit,
+        certainty_equivalent=_identity_quasi_arithmetic_mean(),
+    )
 
     assert bool(jnp.all(jnp.isnan(_source_value(model))))
 
@@ -211,11 +254,16 @@ def test_an_in_support_entry_at_the_same_rare_node_is_priced_as_usual(
 ) -> None:
     """The same node carrying an ordinary value gives the ordinary mean.
 
-    Its probability is far below what the mean can resolve, so the continuation
-    is the common nodes' entry. This is the control for the loud failure above:
-    what makes that one `NaN` is the value outside support, not the rarity.
+    Its contribution is smaller than the mass it is divided by by more than the
+    tolerance can see, so the continuation is the common nodes' entry. This is
+    the control for the loud failure above: what makes that one `NaN` is the
+    value outside support, not the rarity.
     """
-    model = _build_model(rare_entry=_IN_SUPPORT_ENTRY, enable_jit=enable_jit)
+    model = _build_model(
+        rare_entry=_IN_SUPPORT_ENTRY,
+        enable_jit=enable_jit,
+        certainty_equivalent=LinearExpectation(),
+    )
 
     value = float(jnp.max(_source_value(model)))
 
