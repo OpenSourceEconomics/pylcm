@@ -229,13 +229,20 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
     """
     dtype = _active_dtype()
     subnormal = _largest_subnormal()
-    func = jax.jit(zero_safe_weighted_term) if compile_it else zero_safe_weighted_term
+    func = (
+        jax.jit(zero_safe_weighted_term, static_argnames="subnormal_is_accounted_for")
+        if compile_it
+        else zero_safe_weighted_term
+    )
     negative_infinity = jnp.asarray(-jnp.inf, dtype=dtype)
 
-    assert bool(jnp.isneginf(func(subnormal, negative_infinity)))
-    assert float(func(jnp.asarray(0.0, dtype=dtype), negative_infinity)) == 0.0
+    def term(weight: ScalarFloat, value: ScalarFloat) -> FloatND:
+        return func(weight=weight, value=value, subnormal_is_accounted_for=False)
+
+    assert bool(jnp.isneginf(term(subnormal, negative_infinity)))
+    assert float(term(jnp.asarray(0.0, dtype=dtype), negative_infinity)) == 0.0
     np.testing.assert_allclose(
-        float(func(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
+        float(term(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
     )
 
 
@@ -251,14 +258,14 @@ def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> No
 
     Promoting the weight to `tiny` would add about four units here. Omitting it
     costs at most `tiny * |V|`, which is the declared accepted approximation, so
-    the bound is one-sided.
+    the assertion is one-sided: the answer must not exceed the exact one.
 
-    The comparison is against the exact answer computed in long double, while
-    the engine publishes at the active precision, so the upper bound carries one
-    representable step: a backend that prices the node returns the nearest
-    representable value to the exact one, which lies above it half the time.
-    That step is smaller than the substitution error being tested by many orders
-    of magnitude, so it cannot hide one.
+    The upper bound carries one representable step at the answer's magnitude.
+    `exact` is computed in long double while the engine publishes at the active
+    precision, so a backend that prices the node returns the nearest
+    representable value to the exact answer — which lies above it half the time.
+    That step is seven orders of magnitude below the overstatement this test
+    exists to catch, so it cannot hide one.
     """
     dtype = _active_dtype()
     p = np.longdouble(np.asarray(_smallest_subnormal(), dtype=dtype))
@@ -272,8 +279,8 @@ def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> No
             )
         )
     )
-    rounding = np.longdouble(np.spacing(np.asarray(got, dtype=dtype)))
 
+    rounding = np.longdouble(np.spacing(np.asarray(got, dtype=dtype)))
     assert got <= exact + rounding
     assert got >= exact - np.longdouble(np.finfo(dtype).tiny) * value
 

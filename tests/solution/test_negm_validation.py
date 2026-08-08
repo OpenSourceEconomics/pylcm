@@ -489,3 +489,57 @@ def test_no_adjustment_candidate_with_extra_arguments_is_rejected():
     )
     with pytest.raises(ModelInitializationError, match="unary function of the durable"):
         _validate(regime)
+
+
+def _next_wealth_from_savings(liquid_savings):
+    """An inner Euler law: next period's wealth is what was saved."""
+    return liquid_savings
+
+
+def _outer_law_reading_a_sibling_law(new_durable, next_wealth):
+    """An outer law that reaches the inner margin through a sibling law."""
+    return new_durable + 0.1 * next_wealth
+
+
+def test_outer_law_coupled_through_another_transition_is_rejected():
+    """An outer law reaching the inner margin via a sibling law is rejected.
+
+    Chained state transitions are supported, so a law may read another law's
+    output. That makes the chain a path to the inner margin: an outer law
+    reading `next_wealth`, where `next_wealth` reads `liquid_savings`, carries
+    a stock that depends on the consumption the inner Euler inversion solves
+    for, exactly as a direct read would.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "illiquid": _outer_law_reading_a_sibling_law,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="inner margin"):
+        _validate(regime)
+
+
+def _next_wealth_from_the_state_alone(wealth):
+    """A sibling law that reads a state and nothing else."""
+    return wealth
+
+
+def _outer_law_reading_an_independent_sibling(new_durable, next_wealth):
+    """An outer law chained only through a law that never sees the inner margin."""
+    return new_durable + 0.1 * next_wealth
+
+
+def test_outer_law_chained_through_an_independent_law_is_accepted():
+    """A chain that never reaches the inner margin is legitimate and builds.
+
+    Rejecting every chained law would forbid the supported pattern rather than
+    the coupling, so the traversal must follow the chain and then find nothing.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": _next_wealth_from_the_state_alone,
+            "illiquid": _outer_law_reading_an_independent_sibling,
+        },
+    )
+    _validate(regime)

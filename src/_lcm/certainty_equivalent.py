@@ -15,8 +15,8 @@ from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
+from _lcm.probability import is_live, is_negative, rescaled_lottery_weights
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND
 
@@ -114,9 +114,6 @@ class LinearExpectation(CertaintyEquivalent):
 
         Args:
             values: Continuation values of the lottery along the last axis.
-                A node whose weight is exactly zero contributes nothing
-                whatever it carries, `-inf` included; a node with positive
-                weight keeps its value, infinite or not.
             weights: Nonnegative weights over `values`, normalized by their
                 sum; a lottery carrying no mass aggregates to NaN.
             params: Unused — the plain expectation has no parameters.
@@ -125,9 +122,12 @@ class LinearExpectation(CertaintyEquivalent):
             The expectation, reduced over the last axis.
 
         """
-        return jnp.sum(zero_safe_weighted_term(weights, values), axis=-1) / jnp.sum(
-            weights, axis=-1
-        )
+        # Rescaling by a common power of two leaves the mean unchanged and
+        # keeps a weight below the normal range out of the multiplication,
+        # where a backend that flushes it would turn a rare node's `-inf` into
+        # `0 * -inf` and take the whole lottery down as NaN.
+        weights = rescaled_lottery_weights(weights)
+        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
 
 
 @beartype(conf=REGIME_CONF)
@@ -215,13 +215,19 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         # infinity: `0 * inf` is NaN, which would take the well-specified nodes
         # down with it. Transforming a stand-in value instead keeps the
         # reduction finite and changes nothing, the node's weight being zero.
+        # `transform` can be unbounded, so a weight the dtype cannot multiply
+        # is not a negligible term here: `g(v)` at a near-zero value can be
+        # large enough that the product is of order one. Rescaling the lottery
+        # by a common power of two leaves every ratio exactly as supplied and
+        # puts every live weight where the arithmetic can use it.
         # A negative weight is not a lottery. Mapping it to NaN makes it
         # propagate like any other malformed weight instead of being read as
-        # "dead" by the `> 0` test below and silently dropped — which would
+        # "dead" by the liveness test below and silently dropped — which would
         # return the surviving nodes' mean as though the caller had asked for
         # it. `weighted_power_mean` opens the same way, for the same reason.
-        weights = jnp.where(weights < 0.0, jnp.nan, weights)
-        live = weights > 0.0
+        weights = rescaled_lottery_weights(weights)
+        weights = jnp.where(is_negative(weights), jnp.nan, weights)
+        live = is_live(weights)
         safe_values = jnp.where(live, values, jnp.ones_like(values))
         transformed = self.transform(
             value=safe_values, **_args_for(self.transform, params)

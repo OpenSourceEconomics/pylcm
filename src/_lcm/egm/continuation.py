@@ -587,7 +587,16 @@ def _fold_stochastic_dims(
         broadcast_weights = weights.reshape(
             (weights.shape[0],) + (1,) * (moved.ndim - 1)
         )
-        return jnp.sum(zero_safe_weighted_term(broadcast_weights, moved), axis=0)
+        # One axis's own marginal weights, folded as they were declared, so
+        # nothing upstream has moved an exponent onto them.
+        return jnp.sum(
+            zero_safe_weighted_term(
+                weight=broadcast_weights,
+                value=moved,
+                subnormal_is_accounted_for=False,
+            ),
+            axis=0,
+        )
 
     weight_by_name = dict(zip(read.stochastic_state_names, weight_vecs, strict=True))
     endog_grid = carry.endog_grid
@@ -1030,7 +1039,15 @@ def _expect_over_stochastic_nodes(
         # A zero-weight node contributes exactly 0.0 even when its smoothed
         # value is -inf, while a NaN weight still poisons the sum and a
         # negative one stays visible rather than collapsing to zero.
-        return jnp.sum(zero_safe_weighted_term(weights, values))
+        #
+        # `joint_weights` above is a plain product across the child's stochastic
+        # axes, so no exponent has been moved onto it and each term has to move
+        # its own.
+        return jnp.sum(
+            zero_safe_weighted_term(
+                weight=weights, value=values, subnormal_is_accounted_for=False
+            )
+        )
 
     # The expectation mesh (the product of the child's stochastic-node counts)
     # is the dominant `egm_step` working buffer's child-node axis. A positive

@@ -73,7 +73,7 @@ from _lcm.egm.validation import (
     _without,
 )
 from _lcm.grids import ContinuousGrid
-from _lcm.typing import FunctionName, RegimeName
+from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
@@ -338,9 +338,16 @@ def _fail_if_outer_law_reads_the_inner_margin(
     inner = solver.inner
     inner_margin_names = {inner.continuous_action, inner.post_decision_function}
     opaque_functions = _without(functions=functions, names={solver.outer_post_decision})
+    sibling_laws = {
+        f"next_{state_name}": value
+        for state_name, value in user_regime.state_transitions.items()
+        if state_name != solver.outer_state
+    }
     for label, transition_func in _transition_variants(value=law):
-        ancestors = _dag_ancestors(
-            functions=opaque_functions, target_func=transition_func
+        ancestors = _ancestors_through_sibling_laws(
+            functions=opaque_functions,
+            target_func=transition_func,
+            sibling_laws=sibling_laws,
         )
         coupled = ancestors & inner_margin_names
         if coupled:
@@ -357,6 +364,49 @@ def _fail_if_outer_law_reads_the_inner_margin(
                 f"(G2EGM / multidim-RFC), not NEGM."
             )
             raise ModelInitializationError(msg)
+
+
+def _ancestors_through_sibling_laws(
+    *,
+    functions: dict[FunctionName, UserFunction],
+    target_func: UserFunction,
+    sibling_laws: Mapping[TransitionFunctionName, object],
+) -> set[str]:
+    """Ancestors of a law of motion, following the other laws it reads.
+
+    A chained transition is supported — one law may consume another law's
+    output — so a `next_<state>` name reached from the target is a producer to
+    walk into, not a leaf. Treating it as a leaf stops the traversal one step
+    short of whatever that sibling reads, which is exactly where a path to the
+    inner margin hides: `next_illiquid(new_durable, next_wealth)` looks clean
+    until `next_wealth(liquid_savings)` is opened.
+
+    Every variant of a sibling is walked, because a per-target or phased law
+    reaches the inner margin if *any* of its cells does. Expansion runs to a
+    fixed point, so a chain of any length is covered.
+
+    Args:
+        functions: The regime's solve functions, with the outer post-decision
+            already removed so it stays opaque.
+        target_func: The law of motion whose ancestors are wanted.
+        sibling_laws: Mapping of `next_<state>` names to the other states'
+            `state_transitions` entries, excluding the target's own state.
+
+    Returns:
+        Set of function names and leaf inputs reachable from `target_func`,
+        including everything reachable through the sibling laws it reads.
+
+    """
+    reached = _dag_ancestors(functions=functions, target_func=target_func)
+    expanded: set[TransitionFunctionName] = set()
+    while True:
+        pending = {name for name in reached & set(sibling_laws) if name not in expanded}
+        if not pending:
+            return reached
+        for name in pending:
+            expanded.add(name)
+            for _label, variant in _transition_variants(value=sibling_laws[name]):
+                reached |= _dag_ancestors(functions=functions, target_func=variant)
 
 
 def _fail_if_utility_couples_action_and_outer_margin(
