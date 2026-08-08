@@ -17,7 +17,7 @@ on:
       - '**.md'
       - '**.ipynb'
 jobs:
-  gpu32:
+  run:
     name: Run fp32 GPU tests for ubuntu-latest-gpu on 3.14
     # Config:
     # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
@@ -40,3 +40,20 @@ jobs:
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
         run: pixi run -e tests-cuda12 tests-32bit
+  # A required status check matches by exact check-run name, and `name:` above
+  # overrides what gets reported -- so branch protection's context `gpu32`
+  # never matched `Run fp32 GPU tests for ubuntu-latest-gpu on 3.14` and sat
+  # "Expected -- Waiting for status to be reported" forever, even after `run`
+  # passed. Mirrors `cpu`'s gate job in cpu.yml, which is why that one already
+  # worked.
+  gpu32:
+    name: gpu32
+    needs:
+      - run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless the check succeeded
+        run: |-
+          echo "run: ${{ needs.run.result }}"
+          test "${{ needs.run.result }}" = "success"

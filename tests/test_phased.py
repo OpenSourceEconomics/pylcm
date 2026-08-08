@@ -29,7 +29,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
 def _solve_variant(wealth: float) -> FloatND:
@@ -801,3 +801,60 @@ def test_regime_draw_reads_carried_value() -> None:
     sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
     assert sim.loc[(0, 1), "regime_name"] == "working"
     assert sim.loc[(1, 1), "regime_name"] == "dead"
+
+
+def test_model_builds_when_a_transition_reads_a_phased_function():
+    """A model whose state transition reads a `Phased` function builds.
+
+    Both slots accept `Phased`, so a law reaching a phased function through the
+    functions it reads is ordinary. The template carries both variants' params.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working: ScalarInt
+        dead: ScalarInt
+
+    def solve_adjustment(wealth: ScalarFloat, solve_rate: ScalarFloat) -> ScalarFloat:
+        return wealth * solve_rate
+
+    def simulate_adjustment(
+        wealth: ScalarFloat, simulate_rate: ScalarFloat
+    ) -> ScalarFloat:
+        return wealth * simulate_rate
+
+    def next_wealth(adjustment: ScalarFloat) -> ScalarFloat:
+        return adjustment
+
+    def utility(wealth: ScalarFloat) -> ScalarFloat:
+        return wealth
+
+    wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+    model = Model(
+        regimes={
+            "working": UserRegime(
+                transition={"dead": MarkovTransition(lambda: jnp.float32(1))},
+                active=lambda age: age < 22,
+                states={"wealth": wealth_grid},
+                state_transitions={"wealth": {"dead": next_wealth}},
+                functions={
+                    "utility": utility,
+                    "adjustment": Phased(
+                        solve=solve_adjustment, simulate=simulate_adjustment
+                    ),
+                },
+            ),
+            "dead": UserRegime(
+                transition=None,
+                states={"wealth": wealth_grid},
+                functions={"utility": utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+    assert model.get_params_template()["working"]["adjustment"] == {
+        "solve_rate": "ScalarFloat",
+        "simulate_rate": "ScalarFloat",
+    }

@@ -19,11 +19,12 @@ from _lcm.params.processing import (
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
+    _aggregate_joint_lottery,
     _as_lottery,
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
-    _regime_mass_is_unit,
+    _regime_mass_is_a_distribution,
     _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
@@ -195,25 +196,38 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 
 
 def test_get_multiply_weights():
-    def next_a():
-        return jnp.array([0.1, 0.9])
-
-    def next_b():
-        return jnp.array([0.2, 0.8])
-
-    transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
-        transitions=transitions,  # ty: ignore[invalid-argument-type]
-        stochastic_transition_names=frozenset({"next_a", "next_b"}),
+        variables=("next_a", "next_b"),
     )
 
-    a = jnp.array([1, 2])
-    b = jnp.array([3, 4])
+    a = jnp.array([1.0, 2.0])
+    b = jnp.array([3.0, 4.0])
 
-    got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
-    expected = jnp.array([[3, 4], [6, 8]])
+    got, shifts = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
+    expected = jnp.array([[3.0, 4.0], [6.0, 8.0]])
     assert_array_equal(got, expected)
+    assert_array_equal(shifts, jnp.zeros_like(expected, dtype=jnp.int32))
+
+
+def test_joint_weights_axes_follow_the_declared_variable_order():
+    """The axis order of the outer product is the order the caller passes in.
+
+    The caller productmaps the value surface over the same tuple, so the two
+    orderings have to agree; reversing the tuple must transpose the result.
+    """
+    a = jnp.array([1.0, 2.0])
+    b = jnp.array([3.0, 4.0, 5.0])
+
+    forward, _ = _get_joint_weights_function(
+        regime_name="test", variables=("next_a", "next_b")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+    reversed_order, _ = _get_joint_weights_function(
+        regime_name="test", variables=("next_b", "next_a")
+    )(weight_test__next_a=a, weight_test__next_b=b)
+
+    assert forward.shape == (2, 3)
+    assert_array_equal(reversed_order, forward.T)
 
 
 def test_get_combined_constraint():
@@ -450,7 +464,7 @@ def _build_two_target_closure(
         constraints=MappingProxyType({}),
         period_targets=("low", "high"),
         transitions=MappingProxyType({}),
-        stochastic_transition_names=frozenset(),
+        transition_laws=MappingProxyType({}),
         compute_regime_transition_probs=concatenate_functions(
             functions={"regime_transition_probs": probs_function},
             targets="regime_transition_probs",
@@ -777,9 +791,10 @@ def test_as_lottery_gives_a_degenerate_target_no_mass():
     lottery alongside every other target, so a NaN there would destroy the
     certainty equivalent of branches that are perfectly well specified.
     """
-    _, weights = _as_lottery(
+    _, weights, _ = _as_lottery(
         values=jnp.array([1.0, 2.0]),
         weights=jnp.array([0.0, 0.0]),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
         has_stochastic_states=True,
     )
     assert_array_equal(np.asarray(weights), np.zeros(2))
@@ -960,7 +975,9 @@ def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
     Division by exactly one is the identity in IEEE754, so the check cannot
     perturb a well-formed model however the surrounding solve is fused.
     """
-    assert _unit_regime_mass_or_nan(jnp.ones((3,), dtype=dtype)).tolist() == [1.0] * 3
+    mass = jnp.ones((3,), dtype=dtype)
+    no_negative = jnp.zeros((3,), dtype=bool)
+    assert _unit_regime_mass_or_nan(mass, no_negative).tolist() == [1.0] * 3
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
@@ -974,4 +991,79 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     ulps of one, three orders of magnitude inside it.
     """
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
-    assert bool(_regime_mass_is_unit(accumulated))
+    no_negative = jnp.zeros((), dtype=bool)
+    assert bool(_regime_mass_is_a_distribution(accumulated, no_negative))
+
+
+def _dtype() -> np.dtype:
+    """The precision the suite is running at."""
+    return np.dtype(jnp.zeros(()).dtype)
+
+
+def test_joint_weights_of_one_target_keep_each_nodes_own_scale() -> None:
+    """Nodes whose products need different scales each come back holding one.
+
+    A node's joint product picks the scale that keeps it a normal number, and
+    keeps it: the pair of coefficient and scale states the model's probability
+    exactly, at a spread no single scale for the lottery could hold.
+    """
+    dtype = _dtype()
+    smallest_normal = np.finfo(dtype).tiny
+    factor = dtype.type(2.0**-20)
+    first = jnp.asarray([1.0, smallest_normal], dtype=dtype)
+    second = jnp.asarray([1.0, factor], dtype=dtype)
+
+    weights, shifts = _get_joint_weights_function(
+        regime_name="test", variables=("next_a", "next_b")
+    )(weight_test__next_a=first, weight_test__next_b=second)
+
+    def decoded(index: tuple[int, int]) -> np.longdouble:
+        return np.longdouble(np.asarray(weights)[index]) * np.exp2(
+            -np.longdouble(np.asarray(shifts)[index])
+        )
+
+    exact = np.longdouble(smallest_normal) * np.longdouble(factor)
+    assert decoded((1, 1)) / decoded((0, 0)) == exact
+    assert float(np.asarray(weights)[1, 1]) > 0.0
+
+
+def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
+    """Two targets whose weights carry different scales aggregate as one lottery.
+
+    Each arm arrives holding its weights at whatever scale kept them normal, so
+    laying the coefficients end to end while dropping the scales would compare a
+    probability in one currency against a probability in another.
+    """
+    dtype = _dtype()
+
+    class _Linear(CertaintyEquivalent):
+        @property
+        def param_names(self) -> tuple[str, ...]:
+            return ()
+
+        def aggregate(
+            self, *, values: FloatND, weights: FloatND, params: Any
+        ) -> FloatND:
+            del params
+            return jnp.sum(weights * values) / jnp.sum(weights)
+
+    # The second arm's weight stands for `1.0 * 2**-40` — the same number the
+    # first arm's second entry carries outright.
+    got = _aggregate_joint_lottery(
+        certainty_equivalent=_Linear(),
+        lottery_values=[
+            jnp.asarray([1.0, 5.0], dtype=dtype),
+            jnp.asarray([5.0], dtype=dtype),
+        ],
+        lottery_weights=[
+            jnp.asarray([1.0, dtype.type(2.0**-40)], dtype=dtype),
+            jnp.asarray([1.0], dtype=dtype),
+        ],
+        lottery_shifts=[jnp.zeros((), jnp.int32), jnp.asarray(40, jnp.int32)],
+        ce_flat_param_names={},
+        states_actions_params={},
+    )
+
+    rare = np.longdouble(2.0**-40)
+    exact = (np.longdouble(1.0) + 5 * rare + 5 * rare) / (np.longdouble(1.0) + 2 * rare)
+    np.testing.assert_allclose(float(np.asarray(got)), float(exact), rtol=1e-6)

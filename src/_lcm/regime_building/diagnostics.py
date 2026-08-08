@@ -30,6 +30,7 @@ from _lcm.regime_building.age_normalization import (
 )
 from _lcm.regime_building.Q_and_F import get_compute_intermediates
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -39,7 +40,6 @@ from _lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
@@ -55,7 +55,7 @@ def _build_compute_intermediates_per_period(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -84,8 +84,8 @@ def _build_compute_intermediates_per_period(
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition
             functions.
-        stochastic_transition_names: Frozenset of stochastic transition
-            function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability
             function for the current regime.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -147,7 +147,7 @@ def _build_compute_intermediates_per_period(
             ),
             period_targets=period_targets,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             koopmans_aggregator=koopmans_aggregator,

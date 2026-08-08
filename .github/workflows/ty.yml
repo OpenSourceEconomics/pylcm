@@ -16,7 +16,7 @@ on:
     branches:
       - '**'
 jobs:
-  ty:
+  run:
     name: Run ty on the codebase on 3.14
     runs-on: ubuntu-latest
     steps:
@@ -33,3 +33,19 @@ jobs:
         # The prek `ty` hook is skipped on pre-commit.ci (no pixi envs there);
         # this job runs it against the `type-checking` env instead.
         run: pixi run -e type-checking prek run ty --all-files
+  # A required status check matches by exact check-run name, and `name:` above
+  # overrides what gets reported -- so branch protection's context `ty` never
+  # matched `Run ty on the codebase on 3.14` and sat "Expected -- Waiting for
+  # status to be reported" forever, even after `run` passed. Mirrors `cpu`'s
+  # gate job in cpu.yml, which is why that one already worked.
+  ty:
+    name: ty
+    needs:
+      - run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless the check succeeded
+        run: |-
+          echo "run: ${{ needs.run.result }}"
+          test "${{ needs.run.result }}" = "success"

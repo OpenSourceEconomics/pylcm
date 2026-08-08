@@ -102,6 +102,7 @@ def broadcast_to_template(
     params: Mapping,
     template: Mapping[str, Mapping],
     required: bool = True,
+    already_consumed: frozenset[str] = frozenset(),
 ) -> FlatParams:
     """Broadcast user params to template shape via most-to-least-specific resolution.
 
@@ -122,6 +123,11 @@ def broadcast_to_template(
         params: User-provided values at any nesting depth.
         template: Target structure defining all valid keys.
         required: If True, raise when any template key has no match.
+        already_consumed: Flat keys an earlier stage resolved and acted on, so
+            that a value which pinned something no longer in the template is not
+            reported as unknown. A process law bound into its grid is the case:
+            binding removes its slot, and a broadcast that bound it may serve
+            other slots too, so the key stays in the params it is passed here.
 
     Returns:
         Immutable mapping from regime name to mapping of `func__param`
@@ -142,7 +148,7 @@ def broadcast_to_template(
     missing: list[str] = []
 
     for qname in template_flat:
-        candidates = _find_candidates(qname=qname, params_flat=params_flat)
+        candidates = find_param_candidates(qname=qname, params_flat=params_flat)
 
         if len(candidates) > 1:
             raise InvalidNameError(
@@ -160,7 +166,7 @@ def broadcast_to_template(
         elif required:
             missing.append(qname)
 
-    unknown = set(params_flat) - used_keys
+    unknown = set(params_flat) - used_keys - already_consumed
     if missing or unknown:
         messages = []
         if missing:
@@ -340,12 +346,16 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     raise InvalidParamsError(msg)
 
 
-def _find_candidates(
+def find_param_candidates(
     *,
     qname: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
     """Find candidate matches for a template qname, most to least specific.
+
+    This is the project's one resolution rule. Every consumer that asks where a
+    user wrote a value calls it — the params template and the process-law binder
+    alike — so a spelling one accepts cannot be a spelling another refuses.
 
     Resolution levels:
 
@@ -355,6 +365,15 @@ def _find_candidates(
        `regime__function__param` — one value broadcasts over the targets
     3. Regime level: `regime__param`
     4. Model level: `param`
+
+    Args:
+        qname: Qualified name of the template slot to fill.
+        params_flat: Flattened user params, keyed by qualified name.
+
+    Returns:
+        List of the matching keys of `params_flat`, most specific first. More
+        than one entry means the user wrote the value at several levels, which
+        the caller reports as ambiguous.
 
     """
     tree_path = tree_path_from_qname(qname)
