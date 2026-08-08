@@ -46,7 +46,7 @@ the segments that could still reach it), which peaks at `(n_query, block)`
 instead of `(n_query, n_segment)` and returns the identical result.
 """
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -65,6 +65,9 @@ from _lcm.egm.upper_envelope.double_double import (
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
+# Which arithmetic decides envelope ownership; see `envelope_at_query`.
+type EnvelopeArithmetic = Literal["certified", "ordinary"]
+
 
 def _along_link(
     *,
@@ -73,6 +76,7 @@ def _along_link(
     query: FloatND,
     left_grid: FloatND,
     right_grid: FloatND,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> FloatND:
     """Read a channel along a link at `query`.
 
@@ -91,6 +95,18 @@ def _along_link(
     on the cancellation, and what survives is not enough to report, let alone to
     decide on.
     """
+    if arithmetic == "ordinary":
+        at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
+            query=query,
+            left_grid=left_grid,
+            right_grid=right_grid,
+            left=left,
+            right=right,
+        )
+        inside = ((divisor_grid - query) * left + (query - left_grid) * right) / (
+            divisor_grid - left_grid
+        )
+        return jnp.where(at_endpoint, endpoint, inside)
     numerator, divisor, endpoint, at_endpoint = _link_terms(
         left=left,
         right=right,
@@ -259,6 +275,7 @@ def envelope_at_query(
     segment_id: Float1D,
     x_query: FloatND,
     segment_block_size: int = 0,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[FloatND, FloatND, FloatND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
@@ -275,6 +292,20 @@ def envelope_at_query(
             dense `(n_query, n_segment)` reduction. A positive value below the
             segment count instead runs the two-pass blocked scan, peaking at
             `(n_query, segment_block_size)`; the result is identical.
+        arithmetic: Which arithmetic decides ownership.
+            - `"certified"` compares candidates in double-double precision and
+              publishes NaN wherever no candidate is separated, so a reported
+              winner is one the arithmetic could prove. Ordering survives the
+              cancellation between endpoint values that a nearly-tied crossing
+              produces.
+            - `"ordinary"` reads each link in the working format and takes the
+              largest. It decides every bracketed query — there is no certificate
+              to abstain on — and costs roughly an order of magnitude less per
+              read. Adequate where candidate values are separated by much more
+              than the format's resolution at their own magnitude.
+            The choice is made when the function is traced, so `"ordinary"`
+            emits none of the error-free transforms rather than masking them.
+            Implemented for the dense reduction only.
 
     Returns:
         Tuple of the envelope value, the winning segment's policy, and the
@@ -323,11 +354,30 @@ def envelope_at_query(
     query = jnp.asarray(x_query)
     n_segment = links.left_grid.shape[0]
     if 0 < segment_block_size < n_segment:
+        _fail_if_blocked_scan_cannot_serve(arithmetic=arithmetic)
         return _envelope_blocked(
             links=links, query=query, block_size=segment_block_size
         ).published
 
-    return _envelope_dense(links=links, query=query).published
+    return _envelope_dense(links=links, query=query, arithmetic=arithmetic).published
+
+
+def _fail_if_blocked_scan_cannot_serve(*, arithmetic: EnvelopeArithmetic) -> None:
+    """The blocked scan carries only the certified arithmetic.
+
+    Refusing is the point: silently serving the certified result for an
+    `"ordinary"` request would report the arithmetic's cost as if the choice had
+    been honoured, which is exactly the measurement the setting exists to make.
+    """
+    if arithmetic != "certified":
+        msg = (
+            f"envelope arithmetic {arithmetic!r} is implemented for the dense "
+            "reduction only, but a positive `segment_block_size` below the "
+            "segment count selected the blocked scan. Set "
+            "`segment_block_size=0` to use the dense reduction, or leave the "
+            "arithmetic at 'certified'."
+        )
+        raise ValueError(msg)
 
 
 class _EnvelopeReduction(NamedTuple):
@@ -337,7 +387,12 @@ class _EnvelopeReduction(NamedTuple):
     """Value, policy, and marginal of the winning candidate at each query."""
 
 
-def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReduction:
+def _envelope_dense(
+    *,
+    links: _SegmentLinks,
+    query: FloatND,
+    arithmetic: EnvelopeArithmetic = "certified",
+) -> _EnvelopeReduction:
     """Evaluate the envelope at every query as one `(n_query, n_segment)` reduction."""
     flat = query.reshape(-1)[:, None]
     left_grid, right_grid = links.left_grid, links.right_grid
@@ -355,14 +410,21 @@ def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
         "right_grid": right_grid[None, :],
     }
     value_interp = _along_link(
-        left=left_value[None, :], right=right_value[None, :], **abscissae
+        left=left_value[None, :],
+        right=right_value[None, :],
+        arithmetic=arithmetic,
+        **abscissae,
     )
     policy_interp = _along_link(
-        left=links.left_policy[None, :], right=links.right_policy[None, :], **abscissae
+        left=links.left_policy[None, :],
+        right=links.right_policy[None, :],
+        arithmetic=arithmetic,
+        **abscissae,
     )
     marginal_interp = _along_link(
         left=links.left_marginal[None, :],
         right=links.right_marginal[None, :],
+        arithmetic=arithmetic,
         **abscissae,
     )
 
@@ -373,26 +435,36 @@ def _envelope_dense(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     # still be the largest — its upper bound reaches the best lower bound any
     # candidate certifies — so a link is never dropped for an error its own
     # arithmetic already declared.
-    pivot = _pivot_index(brackets=brackets, value=value_interp)
-    numerator, divisor = _value_quotient(
-        left=left_value[None, :],
-        right=right_value[None, :],
-        level=jnp.take_along_axis(value_interp, pivot, axis=1),
-        **abscissae,
-    )
-    margin = certified_quotient_margin(
-        left_numerator=numerator,
-        left_divisor=divisor,
-        right_numerator=_take_column(numerator, pivot),
-        right_divisor=_take_column(divisor, pivot),
-    )
-    certain_lower = jnp.max(
-        jnp.where(brackets, margin.value - margin.bound, -jnp.inf),
-        axis=1,
-        keepdims=True,
-    )
-    near_max = brackets & (margin.value + margin.bound >= certain_lower)
-    decided = any_bracket & ~jnp.any(brackets & ~margin.trustworthy, axis=1)
+    if arithmetic == "ordinary":
+        # No certificate, so no abstention: the largest read wins outright, and a
+        # query anything brackets is decided. Ties are left to the shared
+        # right-continuous rank below, exactly as in the certified branch.
+        best_read = jnp.max(
+            jnp.where(brackets, value_interp, -jnp.inf), axis=1, keepdims=True
+        )
+        near_max = brackets & (value_interp >= best_read)
+        decided = any_bracket
+    else:
+        pivot = _pivot_index(brackets=brackets, value=value_interp)
+        numerator, divisor = _value_quotient(
+            left=left_value[None, :],
+            right=right_value[None, :],
+            level=jnp.take_along_axis(value_interp, pivot, axis=1),
+            **abscissae,
+        )
+        margin = certified_quotient_margin(
+            left_numerator=numerator,
+            left_divisor=divisor,
+            right_numerator=_take_column(numerator, pivot),
+            right_divisor=_take_column(divisor, pivot),
+        )
+        certain_lower = jnp.max(
+            jnp.where(brackets, margin.value - margin.bound, -jnp.inf),
+            axis=1,
+            keepdims=True,
+        )
+        near_max = brackets & (margin.value + margin.bound >= certain_lower)
+        decided = any_bracket & ~jnp.any(brackets & ~margin.trustworthy, axis=1)
     # Among candidates no arithmetic separates, break the tie right-continuously,
     # matching the kernel's `side="right"` read: prefer one that extends strictly
     # to the right of the query (so "larger value-slope is higher just to the
@@ -478,19 +550,28 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
 
     width = (right_grid - left_grid)[None, :]
     safe_width = jnp.where(width == 0.0, 1.0, width)
-    abscissae = {
-        "query": q,
-        "left_grid": left_grid[None, :],
-        "right_grid": right_grid[None, :],
-    }
+    spread_left_grid = left_grid[None, :]
+    spread_right_grid = right_grid[None, :]
     value_interp = _along_link(
-        left=left_value[None, :], right=right_value[None, :], **abscissae
+        left=left_value[None, :],
+        right=right_value[None, :],
+        query=q,
+        left_grid=spread_left_grid,
+        right_grid=spread_right_grid,
     )
     policy_interp = _along_link(
-        left=left_policy[None, :], right=right_policy[None, :], **abscissae
+        left=left_policy[None, :],
+        right=right_policy[None, :],
+        query=q,
+        left_grid=spread_left_grid,
+        right_grid=spread_right_grid,
     )
     marginal_interp = _along_link(
-        left=left_marginal[None, :], right=right_marginal[None, :], **abscissae
+        left=left_marginal[None, :],
+        right=right_marginal[None, :],
+        query=q,
+        left_grid=spread_left_grid,
+        right_grid=spread_right_grid,
     )
     slope = (right_value - left_value)[None, :] / safe_width
     return _BlockTerms(
