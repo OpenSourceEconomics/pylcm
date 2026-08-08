@@ -162,6 +162,7 @@ def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -
     got = _expectation_over_stochastic_nodes(
         values=jnp.asarray([1.0, jnp.nan]),
         weights=jnp.asarray([1.0, 0.0]),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
@@ -177,6 +178,7 @@ def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
     got = _expectation_over_stochastic_nodes(
         values=jnp.asarray([1.0, 2.0]),
         weights=jnp.asarray([1.0, -1.0]),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(-1.0))
@@ -187,6 +189,7 @@ def test_a_nan_weight_stays_poison() -> None:
     got = _expectation_over_stochastic_nodes(
         values=jnp.asarray([1.0, 2.0]),
         weights=jnp.asarray([1.0, jnp.nan]),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
     )
 
     assert bool(jnp.isnan(jnp.asarray(got)))

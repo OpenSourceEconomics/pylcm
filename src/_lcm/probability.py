@@ -141,44 +141,66 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
     return scaled_by_power_of_two(arr, jnp.minimum(needed, room))
 
 
-def reconcile_scales(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
-    """Return weights carrying per-entry scales, moved as close to one as they fit.
+def normalized_scaled_weights(
+    *, coefficients: FloatND, shifts: _BitsND
+) -> tuple[FloatND, _BitsND]:
+    """Return the same scaled measure with unit mass, still carrying its scales.
 
-    Each entry stands for `values * 2**-shifts`, which is how a joint product
-    too small for the normal range travels. Read together they have to mean one
-    thing, so every entry is lifted toward the largest scale present.
+    Each entry stands for `coefficients * 2**-shifts`, which is how a joint
+    product too small for the normal range travels. Dividing such entries by
+    their mass as plain numbers is what a lottery cannot survive: the mass is
+    the size of the largest entry, and the ratio of the smallest to it is
+    exactly the quantity the format cannot hold — so the rarest node reaches
+    the consumer as a represented zero, and the scale it still carries has
+    nothing left to restore.
 
-    The shared scale is capped at what the entry with the least headroom can
-    absorb, because lifting one past the top of the range would replace a
-    finite weight with an infinite one. Where the spread is wider than the
-    exponent range, an entry cannot reach that scale, and it keeps the residual
-    of its own rather than being read against a scale it never moved to. What
-    every entry satisfies, capped or not, is
+    The division is therefore taken between each entry's significand and the
+    mass measured on that entry's own scale, and the exponents go where they
+    can be held exactly. What every entry satisfies is
 
     ```{math}
-    w_i^{out} \\, 2^{-s_i^{out}} = w_i^{in} \\, 2^{-s_i^{in}},
+    c_i^{out} \\, 2^{-s_i^{out}} = \\frac{c_i^{in} \\, 2^{-s_i^{in}}}
+                                        {\\sum_j c_j^{in} \\, 2^{-s_j^{in}}},
     ```
 
-    so nothing here understates a probability and nothing enlarges one. A
-    consumer that has to put the entries on one scale to reduce them is where
-    that question arises, and it is answered there.
+    with every returned coefficient within a factor of the number of entries of
+    one, so no spread of probabilities can push one out of the normal range.
+    On a lottery the format can already hold, the coefficient is the same
+    quotient the plain division returns, times the exact power of two its scale
+    names.
+
+    The mass is read on the scale of the largest entry, so an entry too far
+    below it to register there contributes nothing to it — which is what a
+    probability that many orders of magnitude down does contribute to a total
+    of order one. Its own share is unaffected: it keeps its scale.
+
+    A mass that is not strictly positive leaves the entries as they are rather
+    than dividing. There is no distribution to normalize to, and every consumer
+    of this reads the mass itself to decide what to do about that.
 
     Args:
-        values: The scaled weights.
+        coefficients: The scaled weights' significands.
         shifts: Each one's own base-two scale.
 
     Returns:
-        Tuple of the lifted weights and the scale each one now carries.
+        Tuple of the normalized coefficients and the scale each one carries.
 
     """
-    arr = jnp.asarray(values)
+    arr = jnp.asarray(coefficients)
     shifts = jnp.asarray(shifts)
-    largest = jnp.max(shifts).astype(jnp.int32)
-    room = shifts + (_exponent_bias(arr) - 1) - _unbiased_exponent(arr)
-    liftable = jnp.where(is_live(arr) & jnp.isfinite(arr), room, largest)
-    common = jnp.minimum(largest, jnp.min(liftable)).astype(jnp.int32)
-    lift = jnp.maximum(common - shifts, jnp.zeros_like(shifts))
-    return scaled_by_power_of_two(arr, lift), shifts + lift
+    own_exponent = _unbiased_exponent(arr)
+    exponent = own_exponent - shifts
+    live = is_live(arr) & jnp.isfinite(arr)
+    peak = jnp.max(jnp.where(live, exponent, jnp.min(exponent)))
+    mass = jnp.sum(jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)))
+    safe_mass = jnp.where(mass > 0.0, mass, jnp.ones_like(mass))
+    carries_a_scale = ~is_represented_zero(arr) & jnp.isfinite(arr)
+    return (
+        jnp.ldexp(arr, -own_exponent.astype(jnp.int32)) / safe_mass,
+        jnp.where(carries_a_scale, peak - exponent, jnp.zeros_like(shifts)).astype(
+            jnp.int32
+        ),
+    )
 
 
 def flattened_to_one_scale(
@@ -186,11 +208,10 @@ def flattened_to_one_scale(
 ) -> FloatND:
     """Return scaled weights as plain numbers, on the one scale they all reach.
 
-    `reconcile_scales` leaves an entry that could not reach the shared scale
-    carrying a residual of its own, which is what keeps it exact. A consumer
-    that reduces the lottery as numbers rather than as logarithms has nowhere
-    to put that residual, so the entries come down onto the largest scale every
-    one of them reaches. An entry further below it than the format can express
+    Every entry carries a scale of its own, which is what keeps it exact. A
+    consumer that reduces the lottery as numbers rather than as logarithms has
+    nowhere to put that scale, so the entries come down onto the largest one
+    all of them reach. An entry further below it than the format can express
     underflows to zero: understated, the direction the contract allows, and
     never enlarged.
 

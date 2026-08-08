@@ -8,9 +8,10 @@ from dags import concatenate_functions, get_annotations, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
+    flattened_to_one_scale,
     is_negative,
     is_represented_zero,
-    reconcile_scales,
+    normalized_scaled_weights,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -443,16 +444,17 @@ def _get_compute_CE(
         # weight of a sixth multiplies it.
         #
         # Each target's nodes arrive carrying their own scales — a joint
-        # product below the normal range travels as a number and a shift — so
-        # they are put on one scale per target first. Within a target that
-        # scale is invisible to any consumer that normalizes by the target's
-        # own mass; across targets it is not, and the loop below carries it.
+        # product below the normal range travels as a number and a shift — and
+        # they keep them. Forcing them onto one scale here is what no lottery
+        # survives: the ratio between the rarest node and the likeliest is
+        # exactly the quantity the format cannot hold, so the node that decides
+        # a nonlinear continuation is the one that would be lost. Each consumer
+        # below takes the pairs and reduces them where the spread costs
+        # nothing.
         target_lotteries = {
-            target_regime_name: reconcile_scales(
-                *continuations[target_regime_name].joint_lottery_weights(
-                    **continuations[target_regime_name].lottery_weights(
-                        **states_actions_params
-                    )
+            target_regime_name: continuations[target_regime_name].joint_lottery_weights(
+                **continuations[target_regime_name].lottery_weights(
+                    **states_actions_params
                 )
             )
             for target_regime_name in period_targets
@@ -527,6 +529,7 @@ def _get_compute_CE(
                     next_V_expected_arr = _expectation_over_stochastic_nodes(
                         values=next_V_at_stochastic_states_arr,
                         weights=joint_next_stochastic_states_weights,
+                        shifts=target_node_shifts[target_regime_name],
                     )
                 else:
                     next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
@@ -539,9 +542,10 @@ def _get_compute_CE(
                     subnormal_is_accounted_for=False,
                 )
             else:
-                values, node_weights = _as_lottery(
+                values, node_weights, node_shifts = _as_lottery(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
+                    shifts=target_node_shifts[target_regime_name],
                     has_stochastic_states=continuation.has_lottery_axes,
                 )
                 # An impossible node is neutralized once, downstream in
@@ -552,26 +556,17 @@ def _get_compute_CE(
                 lottery_values.append(values)
                 # The regime probability and the node weight are two more
                 # factors of the same joint event, so their product carries the
-                # same refusal as the product across the stochastic axes — and
-                # the same scale, which is this target's own until the arms are
-                # brought together below.
-                weighted_nodes, product_shift = reconcile_scales(
-                    *scaled_joint_weight(
-                        jnp.stack(
-                            jnp.broadcast_arrays(target_probability, node_weights)
-                        )
-                    )
+                # same refusal as the product across the stochastic axes. The
+                # node weights arrive normalized, within a factor of the node
+                # count of one, so the product spans no more than they do and
+                # one scale covers this arm. Whatever spread the target's
+                # lottery had is in the node scales, and it passes through
+                # untouched.
+                weighted_nodes, product_shift = scaled_joint_weight(
+                    jnp.stack(jnp.broadcast_arrays(target_probability, node_weights))
                 )
                 lottery_weights.append(weighted_nodes)
-                # A target with no stochastic axes contributes one node whose
-                # weight `_as_lottery` fabricates, so the scale its own lottery
-                # would have carried is not part of this arm.
-                own_shift = (
-                    target_node_shifts[target_regime_name]
-                    if continuation.has_lottery_axes
-                    else jnp.zeros((), jnp.int32)
-                )
-                lottery_shifts.append(product_shift + own_shift)
+                lottery_shifts.append(product_shift + node_shifts)
 
         # An empty retained target set is not "no continuation to aggregate": a
         # non-terminal regime always emits unit mass, so retaining nothing means
@@ -1002,7 +997,9 @@ def _build_target_continuation(
     )
 
 
-def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
+def _expectation_over_stochastic_nodes(
+    *, values: FloatND, weights: FloatND, shifts: IntND
+) -> FloatND:
     """Return the weighted mean of one target's continuation over its nodes.
 
     Normalized explicitly rather than with `jnp.average`, for the reason
@@ -1026,14 +1023,28 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
       all; `> 0` is false for both and would launder either into a zero
       contribution, turning a broken transition into a plausible number.
 
-    The nodes arrive on one common base-two scale, chosen where the joint
-    product was formed, so every weight here is a number the dtype can
-    multiply and every ratio between them is the one the model supplied.
+    Each node arrives with a scale of its own, and a mean taken as numbers has
+    nowhere to put one, so the nodes come down onto the largest scale all of
+    them reach before anything is multiplied. A node too far below it to
+    register there drops out of both sums — which, against a finite value, is
+    what a probability that many orders of magnitude down contributes to a mean
+    of order one. Reading the weights as they stand instead would state the
+    rarest of them at the size of the likeliest.
+
+    Args:
+        values: Next period's value at this target's stochastic nodes.
+        weights: The nodes' scaled joint weights.
+        shifts: Each node's own base-two scale.
+
+    Returns:
+        The weighted mean over the nodes.
+
     """
-    weight_sum = jnp.sum(weights)
+    lowered = flattened_to_one_scale(coefficients=weights, shifts=shifts, values=values)
+    weight_sum = jnp.sum(lowered)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
     weighted = zero_safe_weighted_term(
-        weight=weights, value=values, subnormal_is_accounted_for=True
+        weight=lowered, value=values, subnormal_is_accounted_for=True
     )
     return jnp.sum(weighted) / safe_weight_sum
 
@@ -1042,36 +1053,47 @@ def _as_lottery(
     *,
     values: FloatND,
     weights: FloatND,
+    shifts: IntND,
     has_stochastic_states: bool,
-) -> tuple[Float1D, Float1D]:
+) -> tuple[Float1D, Float1D, IntND]:
     """Flatten one target regime's continuation into a unit-mass lottery.
+
+    The nodes stay scaled pairs. Dividing them by their mass as plain numbers
+    is where a lottery loses the node a nonlinear continuation is decided by:
+    the mass is the size of its likeliest node, so the ratio the division has
+    to represent for the rarest one is the very quantity that does not fit, and
+    the scale it still carries has a zero left to restore. The scale each node
+    reaches the caller with already accounts for the target's own.
+
+    A target whose joint weights carry no mass contributes no branch. It must
+    not contribute NaN either: every target's nodes are concatenated into one
+    lottery, so a NaN here would destroy the certainty equivalent of the
+    well-specified targets alongside it.
 
     Args:
         values: Next period's value at this target's stochastic nodes.
         weights: Joint weights over those nodes; ignored when the target has
             no stochastic states.
+        shifts: Each node's own base-two scale; ignored likewise.
         has_stochastic_states: Whether the target's transition draws stochastic
             states.
 
     Returns:
-        Tuple of the flattened values and their probabilities, which sum to
-        one — or to zero for a target whose weights carry no mass at all.
+        Tuple of the flattened values, their probabilities' coefficients, and
+        the scale each coefficient carries. The probabilities sum to one — or
+        to zero for a target whose weights carry no mass at all.
 
     """
     flat_values = jnp.ravel(values)
     if has_stochastic_states:
-        flat_weights = jnp.ravel(weights)
-        weight_sum = jnp.sum(flat_weights)
-        # A target whose joint weights carry no mass contributes no branch. It
-        # must not contribute NaN either: every target's nodes are concatenated
-        # into one lottery, so a NaN here would destroy the certainty
-        # equivalent of the well-specified targets alongside it.
-        safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-        return flat_values, flat_weights / safe_weight_sum
+        coefficients, node_shifts = normalized_scaled_weights(
+            coefficients=jnp.ravel(weights), shifts=jnp.ravel(jnp.asarray(shifts))
+        )
+        return flat_values, coefficients, node_shifts
     uniform = jnp.full(
         flat_values.shape, 1.0 / flat_values.size, dtype=flat_values.dtype
     )
-    return flat_values, uniform
+    return flat_values, uniform, jnp.zeros(flat_values.shape, dtype=jnp.int32)
 
 
 def _get_arg_names_of_Q_and_F(
@@ -1117,7 +1139,7 @@ def _get_joint_weights_function(
 
     Returns:
         A function that computes the outer product of the variables' weights,
-        with the one base-two scale those weights are held at.
+        each node with the base-two scale its own product needed.
 
     """
     arg_names = [f"weight_{regime_name}__{key}" for key in variables]
@@ -1131,20 +1153,9 @@ def _get_joint_weights_function(
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
-    over_the_product_space = productmap(
+    return productmap(
         func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
     )
-
-    @with_signature(args=arg_names)
-    def _joint(**kwargs: Float1D) -> tuple[FloatND, IntND]:
-        # Each node picks the scale its own product needs, so the array comes
-        # back holding one number per node in a different currency. The nodes
-        # are a single lottery and only their ratios mean anything, so they go
-        # onto one scale before anyone reads them together.
-        node_weights, node_shifts = over_the_product_space(**kwargs)
-        return reconcile_scales(node_weights, node_shifts)
-
-    return _joint
 
 
 def _get_U_and_F(
@@ -1288,20 +1299,18 @@ def _aggregate_joint_lottery(
 
     """
     values = jnp.concatenate(list(lottery_values))
-    # Each arm carries its own base-two scale, so they are brought onto one
-    # before they are read as a single lottery — rescaling per target instead
-    # would multiply each segment by a different constant and rewrite the
-    # regime probabilities. `aggregate` is a public interface and may multiply
-    # by the weights it is handed, including an `aggregate` written by a user
-    # that this file cannot inspect, so what it receives is normal throughout.
-    per_node_shifts = jnp.concatenate(
+    # Every node arrives as a coefficient and a scale that together state its
+    # probability exactly, and the arms are read as one lottery by laying them
+    # end to end in both. Bringing them onto a shared scale first is what the
+    # pair exists to avoid: the shared scale can only be the one the widest
+    # spread fits into, and no scale fits a lottery whose rarest node is
+    # further below its likeliest than the format is wide.
+    coefficients = jnp.concatenate(list(lottery_weights))
+    shifts = jnp.concatenate(
         [
             jnp.broadcast_to(jnp.asarray(s), jnp.asarray(w).shape).astype(jnp.int32)
             for w, s in zip(lottery_weights, lottery_shifts, strict=True)
         ]
-    )
-    coefficients, shifts = reconcile_scales(
-        jnp.concatenate(list(lottery_weights)), per_node_shifts
     )
     return certainty_equivalent.aggregate_scaled(
         values=_values_without_impossible_nodes(values=values, weights=coefficients),
@@ -1330,10 +1339,12 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
     beside it. Neutralizing such a node here makes that guarantee the engine's
     rather than something each certainty equivalent has to rediscover.
 
-    The stand-in is copied from the largest-weight node rather than being a
-    constant, because `aggregate` may transform the values before averaging and
-    an arbitrary constant need not lie in the transform's domain -- `log` at
-    zero is the ordinary case. A value already in the lottery always does.
+    The stand-in is copied from the node with the largest coefficient rather
+    than being a constant, because `aggregate` may transform the values before
+    averaging and an arbitrary constant need not lie in the transform's domain
+    -- `log` at zero is the ordinary case. A value already in the lottery
+    always does. Which live node donates it does not matter, only that one
+    does, so the coefficient is read without its scale.
 
     Only a weight that is zero *in its bits* is replaced. `weights == 0` also
     catches every probability below the dtype's normal range, and replacing one

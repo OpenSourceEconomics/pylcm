@@ -1,11 +1,15 @@
 """A lottery spanning more binades than the exponent field can hold.
 
 A joint probability formed from several rare factors travels as a coefficient
-beside a base-two scale. Where the spread between the likeliest and the rarest
-node exceeds what one shared scale can carry, the rare node may be understated
-or dropped — the declared approximation — but never made likelier than it is.
-Under a power mean with a large exponent that ratio is what the continuation
-value is made of, so enlarging it moves the value and reverses choices.
+beside a base-two scale, and every step that reads several such pairs together
+keeps each one's own scale. The rarest node of such a lottery is therefore
+neither dropped nor made likelier than it is, however far below the likeliest
+one it sits. Under a power mean with a large exponent that ratio is what the
+continuation value is made of, so losing it moves the value and reverses
+choices.
+
+A consumer that has to name the weights as plain numbers is the one place a
+node may be understated — the declared approximation — and never enlarged.
 """
 
 import jax
@@ -18,9 +22,10 @@ from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import (
     flattened_to_one_scale,
     is_live,
-    reconcile_scales,
+    normalized_scaled_weights,
     scaled_exact_product,
 )
+from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
 
 # A competing continuation the exact lottery loses to and an enlarged one wins.
 _ALTERNATIVE = 0.47
@@ -44,32 +49,51 @@ def _decoded_ratio(coefficients: jnp.ndarray, shifts: jnp.ndarray) -> np.longdou
     return decoded[1] / decoded[0]
 
 
-def _reconciled_witness() -> tuple[jnp.ndarray, jnp.ndarray, int]:
-    """Return the reconciled two-node lottery and the true log2 of its ratio."""
+def _wide_spread_witness() -> tuple[jnp.ndarray, jnp.ndarray, int]:
+    """Return a two-node lottery as scaled pairs, and the true log2 of its ratio."""
     factor_exponent, n_factors, _ = _witness()
     dtype = jnp.asarray(0.0).dtype
     factors = jnp.full((n_factors, 1), jnp.asarray(2.0**factor_exponent, dtype=dtype))
     rare, rare_shift = scaled_exact_product(factors)
-    coefficients, shifts = reconcile_scales(
-        jnp.concatenate([jnp.ones((1,), dtype=dtype), rare]),
-        jnp.concatenate([jnp.zeros((1,), jnp.int32), jnp.full((1,), rare_shift)]),
+    coefficients = jnp.concatenate([jnp.ones((1,), dtype=dtype), rare])
+    shifts = jnp.concatenate(
+        [jnp.zeros((1,), jnp.int32), jnp.full((1,), rare_shift, dtype=jnp.int32)]
     )
     return coefficients, shifts, factor_exponent * n_factors
 
 
-def test_a_capped_scale_never_makes_a_rare_node_likelier_than_it_is():
-    """The stored probability of an unliftable node is at most its true one."""
-    coefficients, shifts, true_log2_ratio = _reconciled_witness()
+def _relative_tolerance() -> float:
+    return 5e-6 if jnp.asarray(0.0).dtype == jnp.float32 else 1e-12
 
-    assert _decoded_ratio(coefficients, shifts) <= np.exp2(
-        np.longdouble(true_log2_ratio)
+
+def test_normalizing_keeps_a_rare_node_at_its_own_probability():
+    """Given unit mass, the rarest node's share is still the share it had."""
+    coefficients, shifts, true_log2_ratio = _wide_spread_witness()
+
+    normalized, normalized_shifts = normalized_scaled_weights(
+        coefficients=coefficients, shifts=shifts
     )
+
+    np.testing.assert_allclose(
+        float(_decoded_ratio(normalized, normalized_shifts)),
+        float(np.exp2(np.longdouble(true_log2_ratio))),
+        rtol=_relative_tolerance(),
+    )
+
+
+def test_normalizing_leaves_no_node_at_a_represented_zero():
+    """A node that can occur is still a coefficient the format holds."""
+    coefficients, shifts, _ = _wide_spread_witness()
+
+    normalized, _ = normalized_scaled_weights(coefficients=coefficients, shifts=shifts)
+
+    assert bool(jnp.all(is_live(normalized)))
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_a_wide_spread_lottery_prices_at_its_exact_continuation(*, compiled: bool):
     """`(Σ w̃ v^p)^(1/p)` holds when the lottery spans more than the exponent range."""
-    coefficients, shifts, true_log2_ratio = _reconciled_witness()
+    coefficients, shifts, true_log2_ratio = _wide_spread_witness()
     _, _, power_exponent = _witness()
     dtype = jnp.asarray(0.0).dtype
     mean = jax.jit(weighted_power_mean) if compiled else weighted_power_mean
@@ -82,14 +106,12 @@ def test_a_wide_spread_lottery_prices_at_its_exact_continuation(*, compiled: boo
     )
 
     expected = float(np.exp2(np.longdouble(true_log2_ratio) / power_exponent))
-    np.testing.assert_allclose(
-        np.asarray(got), expected, rtol=5e-6 if dtype == jnp.float32 else 1e-12
-    )
+    np.testing.assert_allclose(np.asarray(got), expected, rtol=_relative_tolerance())
 
 
 def test_a_wide_spread_lottery_loses_to_the_alternative_it_should_lose_to():
     """The exact continuation sits below the competing one, so the choice is it."""
-    coefficients, shifts, true_log2_ratio = _reconciled_witness()
+    coefficients, shifts, true_log2_ratio = _wide_spread_witness()
     _, _, power_exponent = _witness()
     dtype = jnp.asarray(0.0).dtype
 
@@ -106,9 +128,28 @@ def test_a_wide_spread_lottery_loses_to_the_alternative_it_should_lose_to():
     assert float(np.asarray(got)) < _ALTERNATIVE
 
 
+def test_the_linear_mean_reads_a_node_at_the_scale_it_carries():
+    """A node's scale is part of its probability, not a detail of its storage.
+
+    Two nodes with the same coefficient and different scales are two different
+    probabilities. Reading the coefficients alone would price a node `2**-300`
+    likely as an even one, and a large value there would then carry the mean.
+    """
+    dtype = jnp.asarray(0.0).dtype
+    large = jnp.asarray(2.0**100, dtype=dtype)
+
+    got = _expectation_over_stochastic_nodes(
+        values=jnp.asarray([1.0, large], dtype=dtype),
+        weights=jnp.ones(2, dtype=dtype),
+        shifts=jnp.asarray([0, 300], dtype=jnp.int32),
+    )
+
+    np.testing.assert_allclose(float(np.asarray(got)), 1.0, rtol=_relative_tolerance())
+
+
 def test_flattening_never_states_a_probability_larger_than_it_is():
     """Put on one scale as numbers, a node is understated rather than enlarged."""
-    coefficients, shifts, true_log2_ratio = _reconciled_witness()
+    coefficients, shifts, true_log2_ratio = _wide_spread_witness()
 
     flattened = flattened_to_one_scale(
         coefficients=coefficients,
@@ -131,7 +172,7 @@ def test_flattening_keeps_an_event_that_can_occur_live():
     ordinary number for a continuation that has none. Every strictly positive
     weight gives the same infinity, so flooring the weight loses nothing.
     """
-    coefficients, shifts, _ = _reconciled_witness()
+    coefficients, shifts, _ = _wide_spread_witness()
 
     flattened = flattened_to_one_scale(
         coefficients=coefficients,
@@ -144,7 +185,7 @@ def test_flattening_keeps_an_event_that_can_occur_live():
 
 def test_a_rare_node_keeps_its_infinity_through_a_general_transform():
     """`-inf` at a node that can occur survives a lottery reduced as numbers."""
-    coefficients, shifts, _ = _reconciled_witness()
+    coefficients, shifts, _ = _wide_spread_witness()
     dtype = jnp.asarray(0.0).dtype
 
     got = QuasiArithmeticMean(
