@@ -1089,6 +1089,22 @@ def test_linear_expectation_takes_no_runtime_parameters():
     assert LinearExpectation().param_names == frozenset()
 
 
+def test_linear_expectation_annihilates_a_zero_weight_infinity() -> None:
+    """A node that cannot occur contributes nothing, whatever value stands there.
+
+    `LinearExpectation` is public API and is the reference the engine's cheaper
+    per-target route is checked against, so the guarantee has to hold when it is
+    called directly and not only where the engine masks impossible nodes first.
+    """
+    got = LinearExpectation().aggregate(
+        values=jnp.asarray([2.0, -jnp.inf]),
+        weights=jnp.asarray([1.0, 0.0]),
+        params={},
+    )
+
+    np.testing.assert_allclose(np.asarray(got), 2.0)
+
+
 def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
     """The engine's per-target reduction agrees with the reference aggregation.
 
