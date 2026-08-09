@@ -36,6 +36,7 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.upper_envelope.query import EnvelopeArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
@@ -178,6 +179,21 @@ class NBEGM(Solver):
     streams it in blocks of that many segments (identical result, smaller peak
     intermediate). Raise it when the query grid is large enough that the per-cell
     bracket matrix dominates the per-cell memory budget.
+    """
+    envelope_arithmetic: EnvelopeArithmetic = "certified"
+    """Which arithmetic decides ownership in the merged upper envelope.
+
+    Every case, corner, and node candidate is read at each liquid query point and
+    the largest owns it. How that comparison is made is this knob:
+
+    - `"certified"` compares in double-double precision and publishes NaN wherever
+      no candidate is separated, so a reported winner is one the arithmetic could
+      prove. Ordering survives the cancellation a nearly-tied crossing produces.
+    - `"ordinary"` takes the largest read in the working format. It decides every
+      bracketed query and costs a small fraction of the certified read, which is
+      the dominant per-cell arithmetic in a case-piece solve. Adequate wherever
+      candidate values are separated by much more than the format's resolution at
+      their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
     """Batch size for the per-interval continuation read.
@@ -413,12 +429,14 @@ class NBEGM(Solver):
                         target=target,
                         spec=schedule_discrete_spec,
                         taste_shock_scale=0.0,
+                        envelope_arithmetic=self.envelope_arithmetic,
                     )
                 elif schedule_spec is not None:
                     core = _build_nbegm_continuous_core(
                         savings_grid=savings_grid,
                         target=target,
                         schedule_spec=schedule_spec,
+                        envelope_arithmetic=self.envelope_arithmetic,
                     )
                 elif discrete_spec is not None:
                     core = _build_nbegm_discrete_core(
@@ -426,6 +444,7 @@ class NBEGM(Solver):
                         target=target,
                         discrete_spec=discrete_spec,
                         taste_shock_scale=0.0,
+                        envelope_arithmetic=self.envelope_arithmetic,
                     )
                 else:
                     if case_spec is None:
@@ -438,7 +457,10 @@ class NBEGM(Solver):
                         )
                         raise RegimeInitializationError(msg)
                     core = _build_nbegm_core(
-                        savings_grid=savings_grid, target=target, case_spec=case_spec
+                        savings_grid=savings_grid,
+                        target=target,
+                        case_spec=case_spec,
+                        envelope_arithmetic=self.envelope_arithmetic,
                     )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
@@ -662,6 +684,7 @@ class NBEGM(Solver):
                     schedule_spec=schedule_spec,
                     continuation_plan=plan,
                     envelope_segment_block_size=self.envelope_segment_block_size,
+                    envelope_arithmetic=self.envelope_arithmetic,
                     cell_block_size=self.cell_block_size,
                     interval_batch_size=self.interval_batch_size,
                     branch_batch_size=self.branch_batch_size,
@@ -1481,7 +1504,11 @@ def _collect_nbegm_case_spec(
 
 
 def _build_nbegm_core(
-    *, savings_grid: Float1D, target: RegimeName, case_spec: _NBEGMCaseSpec
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    case_spec: _NBEGMCaseSpec,
+    envelope_arithmetic: EnvelopeArithmetic = "certified",
 ) -> Callable:
     """Build the jittable case-piece EGM core closing over the case split.
 
@@ -1524,6 +1551,7 @@ def _build_nbegm_core(
             subsidy_otherwise=subsidy_otherwise,
             asset_limit=asset_limit,
             equality_owner=case_spec.equality_owner,
+            arithmetic=envelope_arithmetic,
         )
         carry = EGMCarry(
             endog_grid=liquid,
@@ -2606,6 +2634,7 @@ def _solve_cliffed_budget(
     is_mixed: bool,
     jump_mask: tuple[bool, ...],
     flat_mask: tuple[bool, ...] | None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a cliffed single-liquid budget, dispatching on kind.
 
@@ -2640,6 +2669,7 @@ def _solve_cliffed_budget(
             subsidy_otherwise=coh_intercepts[1],
             asset_limit=breakpoints[0],
             equality_owner="otherwise",
+            arithmetic=arithmetic,
         )
     if is_multi_jump:
         # N cliffs: each affine segment has slope 1, so its intercept is the additive
@@ -2657,6 +2687,7 @@ def _solve_cliffed_budget(
             subsidy_levels=coh_intercepts,
             jump_breakpoints=breakpoints,
             equality_owner="otherwise",
+            arithmetic=arithmetic,
         )
     if is_mixed:
         # Jumps and kinks together: the unified step solves each continuous case by
@@ -2675,6 +2706,7 @@ def _solve_cliffed_budget(
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
             jump_mask=jump_mask,
+            arithmetic=arithmetic,
         )
     return nbegm_multi_interval_step(
         next_value=next_value,
@@ -2689,11 +2721,16 @@ def _solve_cliffed_budget(
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
         flat_interval_mask=flat_mask,
+        arithmetic=arithmetic,
     )
 
 
 def _build_nbegm_continuous_core(
-    *, savings_grid: Float1D, target: RegimeName, schedule_spec: _NBEGMScheduleSpec
+    *,
+    savings_grid: Float1D,
+    target: RegimeName,
+    schedule_spec: _NBEGMScheduleSpec,
+    envelope_arithmetic: EnvelopeArithmetic = "certified",
 ) -> Callable:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -2759,6 +2796,7 @@ def _build_nbegm_continuous_core(
             is_mixed=is_mixed,
             jump_mask=jump_mask,
             flat_mask=flat_mask,
+            arithmetic=envelope_arithmetic,
         )
         carry = EGMCarry(
             endog_grid=liquid,
@@ -2853,6 +2891,7 @@ def _solve_ride_along_cell_step(
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
     inverse_eis: FloatND | None = None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
@@ -2892,6 +2931,7 @@ def _solve_ride_along_cell_step(
             jump_positions=jump_positions,
             extra_savings=extra_savings,
             extra_cont_value=extra_cont_value,
+            arithmetic=arithmetic,
         )
     return nbegm_multi_interval_step_savings(
         cont_value=cont_value,
@@ -2905,6 +2945,7 @@ def _solve_ride_along_cell_step(
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
         inverse_eis=inverse_eis,
+        arithmetic=arithmetic,
     )
 
 
@@ -3056,6 +3097,9 @@ class _NBEGMRideAlongStatics:
     envelope_segment_block_size: int
     """Block size for streaming the merged upper envelope over candidate segments;
     `0` keeps the one-shot dense envelope (see `NBEGM.envelope_segment_block_size`)."""
+    envelope_arithmetic: EnvelopeArithmetic
+    """Which arithmetic decides envelope ownership (see
+    `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
     """Block size for streaming both ride-along cores over ride cells; `0` vmaps
     the whole flattened mesh at once (see `NBEGM.cell_block_size`)."""
@@ -3092,6 +3136,7 @@ def _nbegm_ride_along_statics(
     schedule_spec: _NBEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
+    envelope_arithmetic: EnvelopeArithmetic = "certified",
     cell_block_size: int = 0,
     interval_batch_size: int = 0,
     branch_batch_size: int = 0,
@@ -3216,6 +3261,7 @@ def _nbegm_ride_along_statics(
         n_intervals=len(sources) + 1,
         n_savings=int(savings_grid.shape[0]),
         envelope_segment_block_size=envelope_segment_block_size,
+        envelope_arithmetic=envelope_arithmetic,
         cell_block_size=cell_block_size,
         interval_batch_size=interval_batch_size,
         branch_batch_size=branch_batch_size,
@@ -3945,6 +3991,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         breakpoints=branch_breakpoints,
                         coh_grid=coh_grid,
                         envelope_segment_block_size=statics.envelope_segment_block_size,
+                        arithmetic=statics.envelope_arithmetic,
                         extra_savings=branch_cliff_savings,
                         extra_cont_value=branch_extra_cont_value,
                     )
@@ -3964,6 +4011,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     coh_intercepts=coh_intercepts,
                     breakpoints=branch_breakpoints,
                     inverse_eis=inverse_eis,
+                    arithmetic=statics.envelope_arithmetic,
                 )
 
             # A discrete action is enveloped over per cell: each branch solves the
@@ -4276,6 +4324,7 @@ def _build_nbegm_schedule_discrete_core(
     target: RegimeName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
+    envelope_arithmetic: EnvelopeArithmetic = "certified",
 ) -> Callable:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
@@ -4342,6 +4391,7 @@ def _build_nbegm_schedule_discrete_core(
                 is_mixed=is_mixed,
                 jump_mask=jump_mask,
                 flat_mask=flat_mask,
+                arithmetic=envelope_arithmetic,
             )
             values.append(branch_value)
             marginals.append(branch_marginal)
@@ -4368,6 +4418,7 @@ def _build_nbegm_discrete_core(
     target: RegimeName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
+    envelope_arithmetic: EnvelopeArithmetic = "certified",
 ) -> Callable:
     """Build the jittable discrete-envelope core for one continuation target.
 
@@ -4420,6 +4471,7 @@ def _build_nbegm_discrete_core(
             income=params[f"{target}__next_liquid__income"],
             choices=tuple(choices),
             taste_shock_scale=taste_shock_scale,
+            arithmetic=envelope_arithmetic,
         )
         carry = EGMCarry(
             endog_grid=liquid,

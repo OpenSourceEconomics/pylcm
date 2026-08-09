@@ -19,8 +19,13 @@ which `test_CESAggregator_equals_the_general_power_mean` pins.
 
 import jax.numpy as jnp
 
-from _lcm.zero_safe import is_below_smallest_normal
-from lcm.typing import FloatND
+from _lcm.probability import (
+    is_live,
+    is_negative,
+    rescaled_lottery_weights,
+    rescaled_weight_pair,
+)
+from lcm.typing import BoolND, FloatND, IntND
 
 # Deviation ratio at which `weighted_power_mean` switches from the `log1p`
 # moment representation to the `log` one. Either side of it both are accurate
@@ -34,6 +39,7 @@ def weighted_power_mean(
     values: FloatND,
     weights: FloatND,
     exponent: FloatND,
+    shifts: IntND,
 ) -> FloatND:
     """Return `(Σ w̃ · v^p)^(1/p)` over the last axis, stably.
 
@@ -84,17 +90,31 @@ def weighted_power_mean(
             continuation lottery.
         exponent: The power, broadcast against the reduced shape. `0` is the
             weighted geometric mean `exp(E[log v])`, `1` the arithmetic mean.
+        shifts: Each weight's own base-two scale, broadcast against them, so
+            that node `i` carries probability `weights[i] * 2**-shifts[i]`. A
+            scalar `0` says the weights are already on one scale, which is what
+            a caller holding them as plain numbers passes. The moment and the
+            mass are both formed in the log domain, where a scale is a
+            subtraction, so a lottery spanning more binades than the exponent
+            field can express is still priced exactly.
 
     Returns:
         The weighted power mean, reduced over the last axis.
 
     """
+    # The mean depends on the weights only through their ratios, so lifting the
+    # whole lottery onto a scale the dtype can multiply changes nothing about
+    # the answer and everything about whether it can be computed: a weight
+    # below the normal range is flushed as an operand, and its term — which
+    # after the `v^p` transform can be of order one however small the weight —
+    # would drop out of the moment entirely.
+    weights = rescaled_lottery_weights(weights)
     # A negative weight is not a lottery. Mapping it to NaN makes it propagate
     # like any other malformed weight instead of being read as "dead" by the
-    # `> 0` test below and silently dropped — which would return the surviving
-    # nodes' mean as though the caller had asked for it.
-    weights = jnp.where(weights < 0.0, jnp.nan, weights)
-    live = weights > 0.0
+    # liveness test below and silently dropped — which would return the
+    # surviving nodes' mean as though the caller had asked for it.
+    weights = jnp.where(is_negative(weights), jnp.nan, weights)
+    live = is_live(weights)
     # A node carrying no weight must not be able to inject a non-finite
     # quantity into the reductions. `log(0)` is `-inf` and its derivative
     # `1/0` is infinite, and a weight of exactly zero cancels neither —
@@ -117,18 +137,14 @@ def weighted_power_mean(
     # exponent, the moment diverges, and the mean goes to zero — which is
     # what `v^p -> inf` gives.
     #
-    # Only a node whose weight the format can *use* may anchor. The claim above
-    # — that the anchor's own term sits at exactly its weight, so the moment
-    # cannot underflow — holds only if that weight is a normal number. Anchored
-    # on a node carrying a subnormal weight, every term of the moment is below
-    # the smallest normal, the sum flushes to exactly zero, `log M` is `-inf`,
-    # and the mean comes back as an infinity for a lottery whose answer is
-    # ordinary. Such a node still contributes; it just may not set the scale.
-    anchorable = live & jnp.isfinite(log_v) & ~is_below_smallest_normal(weights)
-    # A lottery whose every live weight is subnormal has no usable scale to
-    # anchor on, and there the original rule is still the best available.
-    has_usable_anchor = jnp.any(anchorable, axis=-1, keepdims=True)
-    anchorable = jnp.where(has_usable_anchor, anchorable, live & jnp.isfinite(log_v))
+    # The claim above — that the anchor's own term sits at exactly its weight,
+    # so the moment cannot underflow — needs that weight to be a normal number.
+    # Anchored on a node the dtype cannot multiply, every term of the moment
+    # would be below the smallest normal, the sum would flush to exactly zero,
+    # `log M` would be `-inf`, and the mean would come back as an infinity for
+    # a lottery whose answer is ordinary. The rescaling above is what makes it
+    # hold: no live weight is subnormal by the time any node anchors.
+    anchorable = live & jnp.isfinite(log_v)
     anchor_high = jnp.max(jnp.where(anchorable, log_v, -jnp.inf), axis=-1)
     anchor_low = jnp.min(jnp.where(anchorable, log_v, jnp.inf), axis=-1)
     anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
@@ -145,17 +161,32 @@ def weighted_power_mean(
     centered = jnp.where(live, log_v - anchor[..., None], 0.0)
     broadcast_live = jnp.broadcast_to(live, centered.shape)
     broadcast_weights = jnp.broadcast_to(weights, centered.shape)
+    # Each node's probability is `w 2**-s`, so its logarithm is the only form
+    # in which the whole lottery fits: the spread between the likeliest node
+    # and the rarest can exceed the exponent range, and on any one scale the
+    # rarest would have to be rounded — upward, if its coefficient were left
+    # standing against a scale it never moved to. In logs it is exact, however
+    # wide the spread.
+    log_weights = jnp.where(
+        broadcast_live,
+        jnp.log(jnp.where(broadcast_live, broadcast_weights, 1.0))
+        - jnp.asarray(shifts, dtype=centered.dtype) * jnp.log(2.0),
+        jnp.where(jnp.isnan(broadcast_weights), jnp.nan, -jnp.inf),
+    )
     # A NaN weight is deliberately kept rather than masked away: a
     # malformed lottery must surface as NaN, not silently lose a branch.
-    masked_weights = jnp.where(
-        broadcast_live | jnp.isnan(broadcast_weights), broadcast_weights, 0.0
-    )
-    weight_sum = jnp.sum(masked_weights, axis=-1)
+    log_mass = _log_sum(log_weights)
     # A lottery carrying no mass has no mean. The linear path's `jnp.average`
     # reports the same NaN, so either aggregation reaches the NaN diagnostics
     # on the same model.
-    safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
-    normalized_weights = masked_weights / safe_weight[..., None]
+    safe_log_mass = jnp.where(jnp.isfinite(log_mass), log_mass, jnp.nan)
+    # The mass-normalized weights, for the two reductions that need them as
+    # numbers rather than as logarithms. A node further below the mass than the
+    # format can express underflows to zero here — understating it, which is
+    # the declared approximation, rather than enlarging it. Both reductions
+    # that use them are bounded in the value, so a node that vanishes here
+    # cannot move the result the way one lost from the moment could.
+    normalized = jnp.exp(log_weights - safe_log_mass[..., None])
     # `exponent` broadcasts against the reduced shape, so it needs the lottery
     # axis inserted before it multiplies `centered`. Without it, ordinary
     # broadcasting aligns the exponent's trailing dimension with the lottery
@@ -174,22 +205,102 @@ def weighted_power_mean(
     #   lottery carrying near-zero mass on the anchor, where every other
     #   `expm1` rounds to `-1`, the deviation ratio rounds to `-1` too,
     #   and `log1p` would report a mathematically positive moment as zero.
-    deviation_ratio = jnp.sum(normalized_weights * jnp.expm1(scaled), axis=-1)
-    moment = jnp.sum(normalized_weights * jnp.exp(scaled), axis=-1)
+    #
+    # The mass division comes after the sum in both, not before it. Normalizing
+    # each weight first divides the rarest node's weight by the total and can
+    # put it back below the normal range, undoing the rescaling above.
+    deviation_ratio = jnp.sum(normalized * jnp.expm1(scaled), axis=-1)
     # `jnp.where` evaluates both branches, so each has to stay finite even
     # where it is discarded — an infinity in the dead branch would still
     # reach a gradient.
     near_geometric = deviation_ratio > _DEVIATION_RATIO_CROSSOVER
     safe_deviation_ratio = jnp.where(near_geometric, deviation_ratio, 0.0)
-    safe_moment = jnp.where(near_geometric, 1.0, moment)
     log_moment = jnp.where(
         near_geometric,
         jnp.log1p(safe_deviation_ratio),
-        jnp.log(safe_moment),
+        _log_moment(
+            log_weights=log_weights,
+            scaled=scaled,
+            log_mass=safe_log_mass,
+            discarded=near_geometric,
+        ),
     )
     log_mean_power = anchor + log_moment / safe_exponent
-    log_mean_geometric = jnp.sum(normalized_weights * log_v, axis=-1)
+    log_mean_geometric = jnp.sum(normalized * log_v, axis=-1)
     return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
+
+
+def _log_sum(log_terms: FloatND) -> FloatND:
+    """Return `log(Σ exp(log_terms))` over the last axis, without forming `exp`.
+
+    The peak is subtracted before exponentiating, so the largest term sits at
+    exactly one and no term overflows. A lottery of nothing but `-inf` sums to
+    `-inf`; a NaN anywhere carries through.
+    """
+    peak = jnp.max(log_terms, axis=-1, keepdims=True)
+    safe_peak = jnp.where(jnp.isfinite(peak), peak, 0.0)
+    return jnp.squeeze(safe_peak, axis=-1) + jnp.log(
+        jnp.sum(jnp.exp(log_terms - safe_peak), axis=-1)
+    )
+
+
+def _log_moment(
+    *,
+    log_weights: FloatND,
+    scaled: FloatND,
+    log_mass: FloatND,
+    discarded: BoolND,
+) -> FloatND:
+    """Return `log(Σ w exp(s) / Σ w)` without forming `exp(s)` on its own.
+
+    The anchoring keeps every `exp(s)` at or below one, which stops the moment
+    overflowing, but not underflowing: a lottery whose values span more than
+    the dtype's exponent range — a harmonic mean of a value at `1` beside one
+    at `tiny` is exactly that — sends the far node's `exp(s)` below the
+    smallest subnormal, where it becomes zero. The node lost that way is not
+    negligible. It is the one the anchor measures everything else against, and
+    dropping it moves the mean by its whole share, which for the two-node
+    lottery above is a factor of two.
+
+    Adding `log w` before exponentiating puts each term at the scale it
+    actually contributes at, so a term is only lost when the *product* is
+    genuinely below the format, and the peak subtraction leaves at least one
+    term at exactly one.
+
+    Args:
+        log_weights: `log(w) - s log 2` at every live node, `-inf` at a dead
+            one and NaN at a NaN weight.
+        scaled: The anchored exponents `p (log v - a)`.
+        log_mass: The log of the lottery's total mass, already NaN where there
+            is none.
+        discarded: Where the caller takes its other branch, and this one only
+            has to stay finite for the gradient.
+
+    Returns:
+        The log moment of the mass-normalized, anchored lottery.
+
+    """
+    # A dead node's `log w` is `-inf` and its anchored exponent zero, so it
+    # contributes nothing; a NaN weight is not a probability and has to reach
+    # the result rather than be dropped as one. Both follow from the sum.
+    log_terms = jnp.where(discarded[..., None], 0.0, log_weights + scaled)
+    return _log_sum(log_terms) - log_mass
+
+
+def _log_term(
+    *,
+    weight: FloatND,
+    masked_weight: FloatND,
+    scaled: FloatND,
+    live: BoolND,
+    discarded: BoolND,
+) -> FloatND:
+    """Return `log(w) + s` at a live node, `-inf` at a dead one, NaN at a NaN."""
+    log_weight = jnp.log(jnp.where(live, masked_weight, 1.0))
+    term = jnp.where(
+        live, log_weight + scaled, jnp.where(jnp.isnan(weight), jnp.nan, -jnp.inf)
+    )
+    return jnp.where(discarded, 0.0, term)
 
 
 def weighted_power_mean_of_pair(
@@ -223,14 +334,17 @@ def weighted_power_mean_of_pair(
         The weighted power mean of the pair.
 
     """
+    # One common power of two puts both weights on a scale the dtype can
+    # multiply, leaving their ratio — all the mean depends on — untouched.
+    first_weight, second_weight = rescaled_weight_pair(first_weight, second_weight)
     # A negative weight is malformed and propagates as NaN rather than reading
     # as a dead node — see `weighted_power_mean`. For `CESAggregator` this is
     # what a `discount_factor` outside `[0, 1]` produces, and dropping the node
     # would silently return the other argument unchanged.
-    first_weight = jnp.where(first_weight < 0.0, jnp.nan, first_weight)
-    second_weight = jnp.where(second_weight < 0.0, jnp.nan, second_weight)
-    first_live = first_weight > 0.0
-    second_live = second_weight > 0.0
+    first_weight = jnp.where(is_negative(first_weight), jnp.nan, first_weight)
+    second_weight = jnp.where(is_negative(second_weight), jnp.nan, second_weight)
+    first_live = is_live(first_weight)
+    second_live = is_live(second_weight)
     log_first = jnp.log(jnp.where(first_live, first, 1.0))
     log_second = jnp.log(jnp.where(second_live, second, 1.0))
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
@@ -257,26 +371,54 @@ def weighted_power_mean_of_pair(
     )
     weight_sum = masked_first_weight + masked_second_weight
     safe_weight = jnp.where(weight_sum > 0.0, weight_sum, jnp.nan)
-    normalized_first = masked_first_weight / safe_weight
-    normalized_second = masked_second_weight / safe_weight
 
     # Dead nodes are pinned to the anchor for the reason `weighted_power_mean`
     # states: their substituted `log v = 0` is outside the anchored range and
     # would overflow `exp`, and `0 * inf` is NaN, not the zero their weight says.
     scaled_first = exponent * jnp.where(first_live, log_first - anchor, 0.0)
     scaled_second = exponent * jnp.where(second_live, log_second - anchor, 0.0)
-    deviation_ratio = normalized_first * jnp.expm1(
-        scaled_first
-    ) + normalized_second * jnp.expm1(scaled_second)
-    moment = normalized_first * jnp.exp(scaled_first) + normalized_second * jnp.exp(
-        scaled_second
-    )
+    # Dividing by the mass after the sum rather than before it, for the reason
+    # `weighted_power_mean` states: normalizing first can push the rarer of the
+    # two weights back below the normal range.
+    deviation_ratio = (
+        masked_first_weight * jnp.expm1(scaled_first)
+        + masked_second_weight * jnp.expm1(scaled_second)
+    ) / safe_weight
     near_geometric = deviation_ratio > _DEVIATION_RATIO_CROSSOVER
+    # Each term is formed as `exp(log w + s)` rather than as `w * exp(s)`, for
+    # the reason `_log_moment` states: `exp(s)` alone underflows once the pair
+    # spans more than the dtype's exponent range, and the term it loses is the
+    # anchor's own.
+    log_first_term = _log_term(
+        weight=first_weight,
+        masked_weight=masked_first_weight,
+        scaled=scaled_first,
+        live=first_live,
+        discarded=near_geometric,
+    )
+    log_second_term = _log_term(
+        weight=second_weight,
+        masked_weight=masked_second_weight,
+        scaled=scaled_second,
+        live=second_live,
+        discarded=near_geometric,
+    )
+    peak = jnp.maximum(log_first_term, log_second_term)
+    safe_peak = jnp.where(jnp.isfinite(peak), peak, 0.0)
+    log_moment_power = (
+        safe_peak
+        + jnp.log(
+            jnp.exp(log_first_term - safe_peak) + jnp.exp(log_second_term - safe_peak)
+        )
+        - jnp.log(safe_weight)
+    )
     log_moment = jnp.where(
         near_geometric,
         jnp.log1p(jnp.where(near_geometric, deviation_ratio, 0.0)),
-        jnp.log(jnp.where(near_geometric, 1.0, moment)),
+        log_moment_power,
     )
     log_mean_power = anchor + log_moment / safe_exponent
-    log_mean_geometric = normalized_first * log_first + normalized_second * log_second
+    log_mean_geometric = (
+        masked_first_weight * log_first + masked_second_weight * log_second
+    ) / safe_weight
     return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))

@@ -185,3 +185,71 @@ def test_model_build_runs_the_nnbegm_contract_check():
             ages=AgeGrid(start=20, stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
         )
+
+
+def _outer_law_reading_the_inner_savings(
+    new_illiquid: ContinuousState, liquid_savings: FloatND
+) -> ContinuousState:
+    """A durable law whose carried stock depends on the inner savings choice."""
+    return new_illiquid + 0.01 * liquid_savings
+
+
+def test_an_outer_law_reading_the_inner_savings_margin_is_rejected():
+    """A durable law depending on the inner savings choice is not an NNBEGM model.
+
+    The solver evaluates the declared law to find what the next period carries.
+    Reading the inner post-decision ties the stock carried forward to the
+    consumption the inner Euler inversion is solving for, so the outer max stops
+    ranging over independent problems and the nesting is no longer valid.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": _outer_law_reading_the_inner_savings,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="belongs to the inner margin"):
+        _validate(regime)
+
+
+def _outer_law_reading_a_sibling_law(
+    new_illiquid: ContinuousState, next_wealth: ContinuousState
+) -> ContinuousState:
+    """A durable law reaching the inner margin through the Euler state's law."""
+    return new_illiquid + 0.01 * next_wealth
+
+
+def test_an_outer_law_reaching_the_inner_margin_through_a_sibling_is_rejected():
+    """The coupling is caught even when a sibling law stands between.
+
+    `next_illiquid` reads `next_wealth`, which reads the inner post-decision. A
+    check that stopped at the sibling's name would see a law reading only states
+    and miss the coupling entirely.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": _outer_law_reading_a_sibling_law,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="belongs to the inner margin"):
+        _validate(regime)
+
+
+def test_a_depreciating_outer_law_is_accepted():
+    """A law reading only the chosen stock stays in scope.
+
+    `next_z = alpha * s'` is the ordinary durable law; the guard must not reject
+    it while catching the coupled shapes above.
+    """
+
+    def depreciating(new_illiquid: ContinuousState) -> ContinuousState:
+        return 0.7 * new_illiquid
+
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": depreciating,
+        },
+    )
+    _validate(regime)
