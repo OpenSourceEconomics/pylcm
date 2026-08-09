@@ -1,3 +1,4 @@
+import functools
 import inspect
 import math
 from collections.abc import Callable, Mapping
@@ -405,7 +406,14 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
             "parameters. Reaching this means that guarantee was bypassed."
         )
         raise ValueError(msg) from exc
-    return zero_safe_average if has_zero else jnp.average
+    if not has_zero:
+        return jnp.average
+    # `shifts` is bound here rather than at the two call sites because only this
+    # function knows which kernel it handed back, and `jnp.average` has no such
+    # parameter. `None` is the answer for a fold axis: its weights are the folded
+    # process's own quadrature marginal, which never passed through
+    # `scaled_joint_weight` and so carries no base-two scale to reconcile.
+    return functools.partial(zero_safe_average, shifts=None)
 
 
 def get_argmax_and_max_Q_over_a(

@@ -341,7 +341,7 @@ def zero_safe_average(
     a: FloatND,
     *,
     weights: FloatND,
-    shifts: IntND | None = None,
+    shifts: IntND | None,
     axis: int | None = None,
 ) -> FloatND:
     """Zero-weight-safe replacement for ``jnp.average(a, weights=weights, axis=axis)``.
@@ -359,8 +359,21 @@ def zero_safe_average(
     returns one scale per node rather than one for the whole lottery. Weights
     from different nodes are therefore not comparable as plain floats, and a
     reduction that ignored the scales would weight the nodes by their
-    coefficients alone. Pass `None` only where every weight is already on one
-    scale; the ratios are then exact without any of this.
+    coefficients alone, valuing a near-impossible node as an even chance.
+
+    It has **no default**, following upstream's rule that a coefficient cannot
+    be supplied without its scale: a caller states either the scales or `None`,
+    and no call can leave the question unasked. `None` means every weight is
+    already on one scale, which makes their ratios exact without any of this —
+    the fold-state and Pareto-weight reductions, whose weights never passed
+    through `scaled_joint_weight` at all.
+
+    `None` is a distinct path rather than a shift array of zeros because the
+    two are not numerically equivalent here: an `ldexp` by a zero shift still
+    costs the FMA contraction, and MEASURED on this fixture it moves the result
+    off `jnp.average`'s bits, which
+    `test_zero_safe_average_matches_jnp_average_on_the_finite_path` pins. Zeros
+    would therefore change the unscaled callers' arithmetic to buy nothing.
 
     The two reductions treat the scale differently, following
     `_expectation_over_stochastic_nodes` in `Q_and_F.py`, against which this is

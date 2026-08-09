@@ -30,6 +30,7 @@ multi-period node-count reduction until continuation support for a
 persistent fold lands.
 """
 
+import functools
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -631,7 +632,7 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     # kernels, so the assertion below has something to catch. The module
     # defaults do NOT — without this, a future edit to the fixture could
     # silently defang the test into passing against the pre-fix code.
-    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights)
+    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights, shifts=None)
     assert _bits(oracle) != _bits(guarded)
 
     assert _bits(folded_V) == _bits(oracle)
@@ -710,10 +711,16 @@ def test_select_fold_reducer_takes_the_guard_only_when_a_weight_is_zero():
         _select_fold_reducer(weight=jnp.array([0.25, 0.5, 0.25]), name="s")
         is jnp.average
     )
-    assert (
-        _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
-        is zero_safe_average
+    # A fold axis's weights are a quadrature marginal and carry no base-two
+    # scale, so the selector binds `shifts=None` onto the zero-safe kernel
+    # rather than leaving that question to its callers. The identity is
+    # therefore on the function the partial wraps.
+    zero_weight_reducer = _select_fold_reducer(
+        weight=jnp.array([0.0, 1.0, 0.0]), name="s"
     )
+    assert isinstance(zero_weight_reducer, functools.partial)
+    assert zero_weight_reducer.func is zero_safe_average
+    assert zero_weight_reducer.keywords == {"shifts": None}
     # Per AXIS, not per model: each axis gets the kernel its own weights need.
     assert _select_fold_reducer(weight=jnp.array([1.0]), name="s") is jnp.average
 
@@ -748,7 +755,8 @@ def test_zero_weight_fold_axis_still_averages_infinities_safely():
         axis=0,
         weights=jnp.array([0.0, 1.0, 0.0]),
     )
-    assert reducer is zero_safe_average
+    assert isinstance(reducer, functools.partial)
+    assert reducer.func is zero_safe_average
     np.testing.assert_array_equal(np.asarray(out), np.float32(4.0))
 
 
