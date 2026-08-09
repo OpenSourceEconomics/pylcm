@@ -8,7 +8,6 @@ from dags import concatenate_functions, get_annotations, with_signature
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
-    flattened_to_one_scale,
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
@@ -40,11 +39,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import (
-    scaled_joint_weight,
-    scaled_weighted_terms,
-    zero_safe_weighted_term,
-)
+from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -1027,14 +1022,14 @@ def _expectation_over_stochastic_nodes(
       all; `> 0` is false for both and would launder either into a zero
       contribution, turning a broken transition into a plausible number.
 
-    Each node arrives with a scale of its own, and a mean taken as numbers has
-    nowhere to put one, so each half of the quotient names the scale where it
-    can. The mass comes down onto the largest scale all the nodes reach: an
-    entry too far below it to register there contributes nothing to a total of
-    order one, which is what its share of the mass is. The numerator keeps each
-    node's own scale and splits it across the product, because `w · 2**-s · v`
-    is an ordinary number however rare the node is whenever the value is large,
-    so no node may be lowered on its own before it meets its value.
+    Each node arrives with a scale of its own. The denominator names the
+    weights on the largest scale all nodes reach. The numerator first forms
+    `w · v` and then applies that node's relative scale. This order is exact for
+    the scaled joint-probability coefficients supplied here: every live
+    coefficient is normal and no larger than one, so multiplying it by a
+    finite continuation cannot overflow, while applying the scale to the
+    weight first can flush a decision-relevant contribution before the value
+    supplies its binades.
 
     Args:
         values: Next period's value at this target's stochastic nodes.
@@ -1045,13 +1040,26 @@ def _expectation_over_stochastic_nodes(
         The weighted mean over the nodes.
 
     """
-    # Lowering a weight on its own asks the format for `w 2**-s` without the
-    # value's binades — a subnormal, flushed on a backend that does not carry
-    # them — so the numerator forms each term with the scale split across the
-    # product instead.
-    weight_sum = jnp.sum(flattened_to_one_scale(coefficients=weights, shifts=shifts))
+    shifts_arr = jnp.asarray(shifts)
+    common_shift = jnp.min(shifts_arr)
+    relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
+
+    # The mass only needs the weights on one scale. A live node too far below
+    # that scale to register contributes no share to a total of order one.
+    lowered_weights = jnp.ldexp(weights, relative_scale)
+    weight_sum = jnp.sum(lowered_weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    terms = scaled_weighted_terms(coefficients=weights, shifts=shifts, values=values)
+
+    # The numerator is different: a tiny probability can meet a large value and
+    # make an ordinary contribution. Form the product while the coefficient is
+    # still normal, then scale the product down. Only a represented-zero
+    # coefficient is a null event; a live NaN or infinity must remain visible.
+    safe_values = jnp.where(
+        is_represented_zero(weights) & ~jnp.isfinite(values),
+        jnp.zeros((), dtype=values.dtype),
+        values,
+    )
+    terms = jnp.ldexp(weights * safe_values, relative_scale)
     return jnp.sum(terms) / safe_weight_sum
 
 
