@@ -52,6 +52,20 @@ def _array(values: list[float]) -> Float1D:
     return jnp.asarray(values, dtype=dtype)
 
 
+def _expectation(*, values: Float1D, weights: Float1D) -> ScalarFloat:
+    """The per-target expectation of weights that carry no scale of their own.
+
+    A node's probability is `coefficient * 2**-shift`; every witness in this
+    file states its probabilities directly, so the shift is zero throughout and
+    the coefficient *is* the probability.
+    """
+    return _expectation_over_stochastic_nodes(
+        values=values,
+        weights=weights,
+        shifts=jnp.zeros(jnp.shape(weights), dtype=jnp.int32),
+    )
+
+
 def _scalar_lottery(
     *, live_V: float, dead_V: float, live_prob: float, dead_prob: float
 ) -> tuple[Float1D, Float1D, ScalarFloat]:
@@ -74,7 +88,7 @@ def _scalar_lottery(
 
 def test_zero_probability_node_carrying_minus_inf_is_a_null_event() -> None:
     """A node of probability zero drops out, whatever value it carries."""
-    got = _expectation_over_stochastic_nodes(
+    got = _expectation(
         values=_array([-jnp.inf, 1.0, 2.0]),
         weights=_array([0.0, 0.5, 0.5]),
     )
@@ -83,7 +97,7 @@ def test_zero_probability_node_carrying_minus_inf_is_a_null_event() -> None:
 
 def test_zero_probability_node_under_jit_is_a_null_event() -> None:
     """The null-event rule survives compilation."""
-    got = jax.jit(_expectation_over_stochastic_nodes)(
+    got = jax.jit(_expectation)(
         values=_array([-jnp.inf, 1.0, 2.0]),
         weights=_array([0.0, 0.5, 0.5]),
     )
@@ -92,7 +106,7 @@ def test_zero_probability_node_under_jit_is_a_null_event() -> None:
 
 def test_zero_probability_node_does_not_reverse_the_action() -> None:
     """The action ranked best against a null-event continuation is the true one."""
-    continuation = _expectation_over_stochastic_nodes(
+    continuation = _expectation(
         values=_array([-jnp.inf, 1.0, 2.0]),
         weights=_array([0.0, 0.5, 0.5]),
     )
@@ -115,7 +129,7 @@ def test_zero_probability_node_is_null_at_every_position(
         live = weights > 0.0
         expected = float(np.sum(weights[live] * values[live]))
 
-        got = _expectation_over_stochastic_nodes(
+        got = _expectation(
             values=_array(values.tolist()),
             weights=_array(weights.tolist()),
         )
@@ -125,7 +139,7 @@ def test_zero_probability_node_is_null_at_every_position(
 
 def test_positive_probability_minus_inf_survives() -> None:
     """A node that can happen keeps its value, infinite or not."""
-    got = _expectation_over_stochastic_nodes(
+    got = _expectation(
         values=_array([-jnp.inf, 1.0]),
         weights=_array([0.5, 0.5]),
     )
@@ -134,7 +148,7 @@ def test_positive_probability_minus_inf_survives() -> None:
 
 def test_nan_weight_stays_poison() -> None:
     """A NaN weight is not a probability, and is not quietly absorbed."""
-    got = _expectation_over_stochastic_nodes(
+    got = _expectation(
         values=_array([1.0, 2.0]),
         weights=_array([jnp.nan, 0.5]),
     )
@@ -143,7 +157,7 @@ def test_nan_weight_stays_poison() -> None:
 
 def test_target_with_no_mass_at_all_contributes_nothing() -> None:
     """A target whose nodes carry no mass contributes zero, not NaN."""
-    got = _expectation_over_stochastic_nodes(
+    got = _expectation(
         values=_array([1.0, 2.0]),
         weights=_array([0.0, 0.0]),
     )
@@ -152,7 +166,7 @@ def test_target_with_no_mass_at_all_contributes_nothing() -> None:
 
 def test_target_with_no_mass_contributes_nothing_even_carrying_infinities() -> None:
     """No mass anywhere means no branch, whatever the dead nodes carry."""
-    got = _expectation_over_stochastic_nodes(
+    got = _expectation(
         values=_array([-jnp.inf, -jnp.inf]),
         weights=_array([0.0, 0.0]),
     )
@@ -169,7 +183,7 @@ def test_a_null_node_leaves_both_cotangents_finite() -> None:
     """
 
     def expectation(values: Float1D, weights: Float1D) -> ScalarFloat:
-        return _expectation_over_stochastic_nodes(values=values, weights=weights)
+        return _expectation(values=values, weights=weights)
 
     values = _array([-jnp.inf, 1.0, 2.0])
     weights = _array([0.0, 0.5, 0.5])
