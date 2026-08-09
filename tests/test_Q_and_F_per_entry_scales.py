@@ -13,9 +13,13 @@ even chance — and when that node carries a large payoff, the action ranked bes
 against it is not the one the model specifies.
 """
 
+import inspect
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.probability import scaled_exact_product
@@ -36,6 +40,22 @@ class _InheritedLinearExpectation(LinearExpectation):
     reaches `aggregate` even when it overrides nothing — that is the point of
     testing against this class rather than `LinearExpectation` itself.
     """
+
+
+@pytest.mark.parametrize("consumer", [_expectation_over_stochastic_nodes, _as_lottery])
+def test_a_coefficient_cannot_be_supplied_without_its_scale(
+    consumer: Callable[..., object],
+) -> None:
+    """Neither consumer of a scaled weight can be called without the shift.
+
+    The scale is not an optional refinement of the coefficient, so the
+    signature does not offer a way to leave it out: `shifts` is required, and
+    a caller that passes weights alone raises rather than silently valuing a
+    near-impossible node as an even chance.
+    """
+    parameter = inspect.signature(consumer).parameters["shifts"]
+
+    assert parameter.default is inspect.Parameter.empty
 
 
 def _dtype() -> jnp.dtype:
