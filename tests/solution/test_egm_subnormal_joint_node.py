@@ -23,7 +23,11 @@ and still contributes nothing, whatever value stands at it.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.continuation import _joint_node_weights, _on_node_scale
+from _lcm.egm.continuation import (
+    _joint_node_weights,
+    _on_node_scale,
+    _partials_on_node_scale,
+)
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
@@ -150,3 +154,59 @@ def test_ordinary_weights_keep_the_plain_product_and_need_no_scale() -> None:
     np.testing.assert_array_equal(
         np.asarray(weights), np.asarray([0.125, 0.125, 0.375, 0.375], dtype=dtype)
     )
+
+
+def test_the_epstein_zin_partials_come_down_by_the_same_scale() -> None:
+    """The scale reaches the two weight sums and the marginal log scale only.
+
+    The anchored partials are `(a, W, E, b, T~)`. `W` and `E` are sums of the
+    weights themselves, so they carry the factor; `b` is the peak of a log
+    magnitude that includes `log w`, so it carries the factor's logarithm; the
+    value log anchor `a` and the marginal mantissa `T~` are ratios and do not
+    move.
+    """
+    dtype = _active_dtype()
+    shift = jnp.asarray(3, jnp.int32)
+    anchor, weight_sum, deviation, marginal_log_scale, marginal_mantissa = (
+        jnp.asarray(v, dtype=dtype) for v in (0.5, 8.0, -2.0, 1.0, 0.25)
+    )
+
+    lowered = _partials_on_node_scale(
+        partials=(
+            anchor,
+            weight_sum,
+            deviation,
+            marginal_log_scale,
+            marginal_mantissa,
+        ),
+        shift=shift,
+    )
+
+    assert float(lowered[0]) == 0.5
+    assert float(lowered[1]) == 1.0
+    assert float(lowered[2]) == -0.25
+    np.testing.assert_allclose(
+        float(lowered[3]), 1.0 - 3.0 * float(np.log(2.0)), rtol=1e-6
+    )
+    assert float(lowered[4]) == 0.25
+
+
+def test_an_unlifted_mesh_leaves_the_epstein_zin_partials_alone() -> None:
+    """With no scale to undo, every partial is returned as it was handed in."""
+    dtype = _active_dtype()
+    anchor, weight_sum, deviation, marginal_log_scale, marginal_mantissa = (
+        jnp.asarray(v, dtype=dtype) for v in (0.5, 8.0, -2.0, 1.0, 0.25)
+    )
+
+    lowered = _partials_on_node_scale(
+        partials=(
+            anchor,
+            weight_sum,
+            deviation,
+            marginal_log_scale,
+            marginal_mantissa,
+        ),
+        shift=jnp.zeros((), jnp.int32),
+    )
+
+    assert [float(v) for v in lowered] == [0.5, 8.0, -2.0, 1.0, 0.25]

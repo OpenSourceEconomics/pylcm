@@ -14,7 +14,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
     is_negative,
     is_represented_zero,
-    on_common_scale,
+    reconcile_scales,
 )
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -504,7 +504,7 @@ def _get_compute_CE(
         # scale is invisible to any consumer that normalizes by the target's
         # own mass; across targets it is not, and the loop below carries it.
         target_lotteries = {
-            target_regime_name: on_common_scale(
+            target_regime_name: reconcile_scales(
                 *continuations[target_regime_name].joint_lottery_weights(
                     **continuations[target_regime_name].lottery_weights(
                         **states_actions_params
@@ -623,7 +623,7 @@ def _get_compute_CE(
                 # same refusal as the product across the stochastic axes — and
                 # the same scale, which is this target's own until the arms are
                 # brought together below.
-                weighted_nodes, product_shift = on_common_scale(
+                weighted_nodes, product_shift = reconcile_scales(
                     *scaled_joint_weight(
                         jnp.stack(
                             jnp.broadcast_arrays(target_probability, node_weights)
@@ -1129,7 +1129,7 @@ def _scalar_target_contribution(
             # ones keeps that from happening on the way in.
             node = jnp.ravel(scalar_V)
             values.append(node)
-            weighted_nodes, shift = on_common_scale(
+            weighted_nodes, shift = reconcile_scales(
                 *scaled_joint_weight(
                     jnp.stack([jnp.broadcast_to(prob, jnp.shape(node))])
                 )
@@ -1287,7 +1287,7 @@ def _get_joint_weights_function(
         # are a single lottery and only their ratios mean anything, so they go
         # onto one scale before anyone reads them together.
         node_weights, node_shifts = over_the_product_space(**kwargs)
-        return on_common_scale(node_weights, node_shifts)
+        return reconcile_scales(node_weights, node_shifts)
 
     return _joint
 
@@ -1442,16 +1442,17 @@ def _aggregate_joint_lottery(
     # that this file cannot inspect, so what it receives is normal throughout.
     per_node_shifts = jnp.concatenate(
         [
-            jnp.full(jnp.asarray(w).shape, s, dtype=jnp.int32)
+            jnp.broadcast_to(jnp.asarray(s), jnp.asarray(w).shape).astype(jnp.int32)
             for w, s in zip(lottery_weights, lottery_shifts, strict=True)
         ]
     )
-    weights, _ = on_common_scale(
+    coefficients, shifts = reconcile_scales(
         jnp.concatenate(list(lottery_weights)), per_node_shifts
     )
-    return certainty_equivalent.aggregate(
-        values=_values_without_impossible_nodes(values=values, weights=weights),
-        weights=weights,
+    return certainty_equivalent.aggregate_scaled(
+        values=_values_without_impossible_nodes(values=values, weights=coefficients),
+        coefficients=coefficients,
+        shifts=shifts,
         # The params template types every certainty-equivalent parameter as a
         # float, so its runtime values are float arrays.
         params=cast(
