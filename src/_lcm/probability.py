@@ -141,78 +141,89 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
     return scaled_by_power_of_two(arr, jnp.minimum(needed, room))
 
 
-def reconcile_scales(values: FloatND, shifts: _BitsND) -> tuple[FloatND, _BitsND]:
-    """Return weights carrying per-entry scales, moved as close to one as they fit.
+def normalized_scaled_weights(
+    *, coefficients: FloatND, shifts: _BitsND
+) -> tuple[FloatND, _BitsND]:
+    """Return the same scaled measure with unit mass, still carrying its scales.
 
-    Each entry stands for `values * 2**-shifts`, which is how a joint product
-    too small for the normal range travels. Read together they have to mean one
-    thing, so every entry is lifted toward the largest scale present.
+    Each entry stands for `coefficients * 2**-shifts`, which is how a joint
+    product too small for the normal range travels. Dividing such entries by
+    their mass as plain numbers is what a lottery cannot survive: the mass is
+    the size of the largest entry, and the ratio of the smallest to it is
+    exactly the quantity the format cannot hold — so the rarest node reaches
+    the consumer as a represented zero, and the scale it still carries has
+    nothing left to restore.
 
-    The shared scale is capped at what the entry with the least headroom can
-    absorb, because lifting one past the top of the range would replace a
-    finite weight with an infinite one. Where the spread is wider than the
-    exponent range, an entry cannot reach that scale, and it keeps the residual
-    of its own rather than being read against a scale it never moved to. What
-    every entry satisfies, capped or not, is
+    The division is therefore taken between each entry's significand and the
+    mass measured on that entry's own scale, and the exponents go where they
+    can be held exactly. What every entry satisfies is
 
     ```{math}
-    w_i^{out} \\, 2^{-s_i^{out}} = w_i^{in} \\, 2^{-s_i^{in}},
+    c_i^{out} \\, 2^{-s_i^{out}} = \\frac{c_i^{in} \\, 2^{-s_i^{in}}}
+                                        {\\sum_j c_j^{in} \\, 2^{-s_j^{in}}},
     ```
 
-    so nothing here understates a probability and nothing enlarges one. A
-    consumer that has to put the entries on one scale to reduce them is where
-    that question arises, and it is answered there.
+    with every returned coefficient within a factor of the number of entries of
+    one, so no spread of probabilities can push one out of the normal range.
+    On a lottery the format can already hold, the coefficient is the same
+    quotient the plain division returns, times the exact power of two its scale
+    names.
 
-    Args:
-        values: The scaled weights.
-        shifts: Each one's own base-two scale.
+    The mass is read on the scale of the largest entry, so an entry too far
+    below it to register there contributes nothing to it — which is what a
+    probability that many orders of magnitude down does contribute to a total
+    of order one. Its own share is unaffected: it keeps its scale.
 
-    Returns:
-        Tuple of the lifted weights and the scale each one now carries.
-
-    """
-    arr = jnp.asarray(values)
-    shifts = jnp.asarray(shifts)
-    largest = jnp.max(shifts).astype(jnp.int32)
-    room = shifts + (_exponent_bias(arr) - 1) - _unbiased_exponent(arr)
-    liftable = jnp.where(is_live(arr) & jnp.isfinite(arr), room, largest)
-    common = jnp.minimum(largest, jnp.min(liftable)).astype(jnp.int32)
-    lift = jnp.maximum(common - shifts, jnp.zeros_like(shifts))
-    return scaled_by_power_of_two(arr, lift), shifts + lift
-
-
-def flattened_to_one_scale(
-    *, coefficients: FloatND, shifts: _BitsND, values: FloatND
-) -> FloatND:
-    """Return scaled weights as plain numbers, on the one scale they all reach.
-
-    `reconcile_scales` leaves an entry that could not reach the shared scale
-    carrying a residual of its own, which is what keeps it exact. A consumer
-    that reduces the lottery as numbers rather than as logarithms has nowhere
-    to put that residual, so the entries come down onto the largest scale every
-    one of them reaches. An entry further below it than the format can express
-    underflows to zero: understated, the direction the contract allows, and
-    never enlarged.
-
-    The value standing at the node decides whether that is the whole story,
-    which is the same split `zero_safe_weighted_term` makes one level down:
-
-    - against a **finite** value the underflow is the smallest error available
-      to anything that has to name the weight as a number, and the node's
-      contribution was negligible at the scale it came in on;
-    - against `±inf` it is not an error but a lost answer. Every strictly
-      positive weight yields the same infinity there, so the weight is floored
-      at the smallest normal magnitude, keeping its sign — normal, not merely
-      nonzero, because a subnormal operand is what the backend flushes, and
-      `0 * -inf` is the NaN this is here to avoid. No magnitude is lost by the
-      substitution, while letting it round to zero would make an event that can
-      occur impossible and report an ordinary number for a continuation that
-      has none.
+    A mass that is not strictly positive leaves the entries as they are rather
+    than dividing. There is no distribution to normalize to, and every consumer
+    of this reads the mass itself to decide what to do about that.
 
     Args:
         coefficients: The scaled weights' significands.
         shifts: Each one's own base-two scale.
-        values: What each weight stands against, read only for finiteness.
+
+    Returns:
+        Tuple of the normalized coefficients and the scale each one carries.
+
+    """
+    arr = jnp.asarray(coefficients)
+    shifts = jnp.asarray(shifts)
+    own_exponent = _unbiased_exponent(arr)
+    exponent = own_exponent - shifts
+    live = is_live(arr) & jnp.isfinite(arr)
+    peak = jnp.max(jnp.where(live, exponent, jnp.min(exponent)))
+    mass = jnp.sum(jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)))
+    safe_mass = jnp.where(mass > 0.0, mass, jnp.ones_like(mass))
+    carries_a_scale = ~is_represented_zero(arr) & jnp.isfinite(arr)
+    return (
+        jnp.ldexp(arr, -own_exponent.astype(jnp.int32)) / safe_mass,
+        jnp.where(carries_a_scale, peak - exponent, jnp.zeros_like(shifts)).astype(
+            jnp.int32
+        ),
+    )
+
+
+def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND:
+    """Return scaled weights as plain numbers, on the one scale they all reach.
+
+    Every entry carries a scale of its own, which is what keeps it exact. A
+    consumer that reduces the lottery as numbers rather than as logarithms has
+    nowhere to put that scale, so the entries come down onto the largest one
+    all of them reach. An entry further below it than the format can express
+    underflows to zero: understated, the direction the contract allows, and
+    never enlarged.
+
+    Against a finite value that understatement is the whole story, and the
+    smallest error available to anything that has to name the weight as a
+    number. Against a non-finite one it is a lost answer instead, and
+    `restored_against_a_nonfinite_value` is what puts such a weight back. The
+    two are separate because only the second reads the values, and a consumer
+    that also needs the lottery's mass wants that mass to depend on the weights
+    alone.
+
+    Args:
+        coefficients: The scaled weights' significands.
+        shifts: Each one's own base-two scale.
 
     Returns:
         The weights on one scale, as ordinary numbers.
@@ -221,12 +232,53 @@ def flattened_to_one_scale(
     arr = jnp.asarray(coefficients)
     shifts = jnp.asarray(shifts)
     common = jnp.min(shifts)
-    lowered = jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
+    return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
+
+
+def restored_against_a_nonfinite_value(
+    *, coefficients: FloatND, lowered: FloatND, values: FloatND
+) -> FloatND:
+    """Return the lowered weights, with a vanished live one put back.
+
+    Lowering understates a weight too far below the scale to express, and
+    against a finite value that is the whole story. Against a non-finite one it
+    is a lost answer instead, so the weight comes back at the smallest normal
+    magnitude, keeping its sign — normal, not merely nonzero, because a
+    subnormal operand is what the backend flushes, and `0 * -inf` is the NaN
+    this is here to avoid.
+
+    Both non-finite values are ones whose contribution does not shrink with the
+    weight: every strictly positive weight against `+-inf` yields the same
+    infinity, and every strictly positive weight against a `NaN` yields the same
+    `NaN`. Letting the weight round to zero would make an event that can occur
+    impossible — reporting an ordinary number for a continuation that has none,
+    or a well-posed answer for a node whose entry lies outside the target's
+    support. What decides is the value at the node, never how small the weight
+    is: a weight the format cannot express is understated, and understating a
+    weight is not ruling the node out.
+
+    This is separate from the lowering because it is the only step that makes a
+    weight depend on the value beside it. A consumer that needs the mass of the
+    lottery as well as its weighted sum takes the mass from the lowered weights
+    and applies this to the weighted term alone, where the value is an operand
+    already — a live node against a non-finite value carries the result whatever
+    the mass is, so the mass never needs the restored weight.
+
+    Args:
+        coefficients: The scaled weights' significands, as they arrived.
+        lowered: The same weights on one scale, from `flattened_to_one_scale`.
+        values: What each weight stands against, read only for finiteness.
+
+    Returns:
+        The lowered weights, with every vanished live non-finite one restored.
+
+    """
+    arr = jnp.asarray(coefficients)
     smallest = jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype)
-    vanished_against_infinity = (
-        is_live(arr) & ~is_live(lowered) & jnp.isinf(jnp.asarray(values))
+    vanished_against_nonfinite = (
+        is_live(arr) & ~is_live(lowered) & ~jnp.isfinite(jnp.asarray(values))
     )
-    return jnp.where(vanished_against_infinity, jnp.copysign(smallest, arr), lowered)
+    return jnp.where(vanished_against_nonfinite, jnp.copysign(smallest, arr), lowered)
 
 
 def rescaled_weight_pair(
@@ -702,6 +754,29 @@ def _largest_live_exponent(values: FloatND) -> _BitsND:
         live, _unbiased_exponent(arr), jnp.zeros_like(live, jnp.int32)
     )
     return jnp.max(exponents)
+
+
+def binades_above_smallest_normal(values: FloatND) -> _BitsND:
+    """How far each entry can be halved before it leaves the normal range.
+
+    A caller with a power of two to apply to a product decides how much of it
+    the weight can absorb before it becomes a subnormal the backend may flush,
+    and how much has to be applied to the product instead. An entry already
+    below the normal range has no room at all.
+
+    Args:
+        values: Entries whose headroom is wanted.
+
+    Returns:
+        The number of binades each entry has above the smallest normal.
+
+    """
+    arr = jnp.asarray(values)
+    return jnp.where(
+        is_below_smallest_normal(arr),
+        jnp.zeros((), jnp.int32),
+        (_unbiased_exponent(arr) - (1 - _exponent_bias(arr))).astype(jnp.int32),
+    )
 
 
 def _unbiased_exponent(values: FloatND) -> _BitsND:

@@ -853,9 +853,10 @@ def test_as_lottery_gives_a_degenerate_target_no_mass():
     lottery alongside every other target, so a NaN there would destroy the
     certainty equivalent of branches that are perfectly well specified.
     """
-    _, weights = _as_lottery(
+    _, weights, _ = _as_lottery(
         values=jnp.array([1.0, 2.0]),
         weights=jnp.array([0.0, 0.0]),
+        shifts=jnp.zeros(2, dtype=jnp.int32),
         has_stochastic_states=True,
     )
     assert_array_equal(np.asarray(weights), np.zeros(2))
@@ -1061,13 +1062,12 @@ def _dtype() -> np.dtype:
     return np.dtype(jnp.zeros(()).dtype)
 
 
-def test_joint_weights_of_one_target_come_back_on_a_single_scale() -> None:
-    """Nodes whose products need different scales stay comparable to each other.
+def test_joint_weights_of_one_target_keep_each_nodes_own_scale() -> None:
+    """Nodes whose products need different scales each come back holding one.
 
-    Each node's joint product picks the scale that keeps it a normal number, so
-    read straight off they would be held in different currencies and a node far
-    rarer than its neighbour would price as its equal. The lottery is put on one
-    scale, and every ratio in it is the one the model supplied.
+    A node's joint product picks the scale that keeps it a normal number, and
+    keeps it: the pair of coefficient and scale states the model's probability
+    exactly, at a spread no single scale for the lottery could hold.
     """
     dtype = _dtype()
     smallest_normal = np.finfo(dtype).tiny
@@ -1075,23 +1075,26 @@ def test_joint_weights_of_one_target_come_back_on_a_single_scale() -> None:
     first = jnp.asarray([1.0, smallest_normal], dtype=dtype)
     second = jnp.asarray([1.0, factor], dtype=dtype)
 
-    weights, _ = _get_joint_weights_function(
+    weights, shifts = _get_joint_weights_function(
         regime_name="test", variables=("next_a", "next_b")
     )(weight_test__next_a=first, weight_test__next_b=second)
 
-    rarest = np.longdouble(np.asarray(weights[1, 1]))
-    commonest = np.longdouble(np.asarray(weights[0, 0]))
+    def decoded(index: tuple[int, int]) -> np.longdouble:
+        return np.longdouble(np.asarray(weights)[index]) * np.exp2(
+            -np.longdouble(np.asarray(shifts)[index])
+        )
+
     exact = np.longdouble(smallest_normal) * np.longdouble(factor)
-    assert rarest / commonest == exact
-    assert float(rarest) > 0.0
+    assert decoded((1, 1)) / decoded((0, 0)) == exact
+    assert float(np.asarray(weights)[1, 1]) > 0.0
 
 
-def test_a_joint_lottery_brings_its_arms_onto_one_scale() -> None:
+def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
     """Two targets whose weights carry different scales aggregate as one lottery.
 
     Each arm arrives holding its weights at whatever scale kept them normal, so
-    concatenating them without reconciling would compare a probability in one
-    currency against a probability in another.
+    laying the coefficients end to end while dropping the scales would compare a
+    probability in one currency against a probability in another.
     """
     dtype = _dtype()
 
