@@ -53,6 +53,7 @@ from _lcm.egm.ez_kernel import (
 from _lcm.egm.nbegm_crra import crra_utility
 from _lcm.egm.nbegm_segments import mask_dead_candidates, segment_ids_from_folds
 from _lcm.egm.upper_envelope.query import (
+    EnvelopeArithmetic,
     _binade_exponent,
     _framed_difference,
     envelope_at_query,
@@ -97,6 +98,7 @@ def nbegm_multi_interval_step(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
@@ -140,6 +142,12 @@ def nbegm_multi_interval_step(
         breakpoints: Sorted ascending liquid breakpoints, length N.
         flat_interval_mask: Static per-interval flag, length N+1, marking the
             hard-constraint (slope-0) floor intervals. `None` means no floor.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -254,6 +262,7 @@ def nbegm_multi_interval_step(
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -438,6 +447,7 @@ def nbegm_multi_interval_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     inverse_eis: ScalarFloat | None = None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
@@ -478,6 +488,12 @@ def nbegm_multi_interval_step_savings(
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -604,6 +620,7 @@ def nbegm_multi_interval_step_savings(
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -722,6 +739,7 @@ def nbegm_per_interval_continuation_step_savings(
     envelope_segment_block_size: int = 0,
     extra_savings: FloatND | None = None,
     extra_cont_value: FloatND | None = None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -765,6 +783,12 @@ def nbegm_per_interval_continuation_step_savings(
             `(n_query, n_segment)` bracket matrix; `0` keeps the one-shot dense
             envelope. The result is identical either way — the knob trades peak
             memory against a sequential scan.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -984,6 +1008,7 @@ def nbegm_per_interval_continuation_step_savings(
         ),
         x_query=liquid_grid,
         segment_block_size=envelope_segment_block_size,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -1105,6 +1130,7 @@ def nbegm_unified_step_savings(
     jump_positions: tuple[Any, ...],
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
 
@@ -1141,6 +1167,12 @@ def nbegm_unified_step_savings(
         jump_positions: Indices (into the sorted breakpoints) of the jump
             breakpoints, length J. Static for a single variable; a per-cell traced
             array when breakpoints declared on several variables reorder per cell.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -1267,6 +1299,7 @@ def nbegm_unified_step_savings(
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -1320,6 +1353,7 @@ def nbegm_discrete_envelope_step(
     income: ScalarFloat | float,
     choices: tuple[Mapping[str, Float1D], ...],
     taste_shock_scale: float = 0.0,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D, IntND]:
     """Compose per-discrete-choice NBEGM solves into a discrete upper envelope.
 
@@ -1348,6 +1382,12 @@ def nbegm_discrete_envelope_step(
         choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
             `coh_intercepts`, and `breakpoints` for `nbegm_multi_interval_step`.
         taste_shock_scale: EV1 taste-shock scale; `0` is the hard maximum.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, consumption policy,
@@ -1370,6 +1410,7 @@ def nbegm_discrete_envelope_step(
             coh_slopes=choice["coh_slopes"],
             coh_intercepts=choice["coh_intercepts"],
             breakpoints=choice["breakpoints"],
+            arithmetic=arithmetic,
         )
         values.append(value)
         marginals.append(marginal)
@@ -1414,6 +1455,7 @@ def nbegm_unified_step(  # noqa: PLR0915
     breakpoints: Float1D,
     jump_mask: tuple[bool, ...],
     equality_owner: EqualityOwner = "otherwise",
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a mixed jump-and-kink piecewise-affine budget by EGM.
 
@@ -1443,6 +1485,12 @@ def nbegm_unified_step(  # noqa: PLR0915
         breakpoints: Sorted ascending liquid breakpoints, length N.
         jump_mask: Static per-breakpoint flag, length N, `True` for a jump.
         equality_owner: Side owning each exact jump point (`when` or `otherwise`).
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -1589,6 +1637,7 @@ def nbegm_unified_step(  # noqa: PLR0915
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -1689,6 +1738,7 @@ def nbegm_recurring_jump_step(
     subsidy_levels: Float1D,
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner = "otherwise",
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of an N-cliff budget with a recurring jumped continuation.
 
@@ -1713,6 +1763,12 @@ def nbegm_recurring_jump_step(
         subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
         jump_breakpoints: Sorted ascending liquid cliffs, length N.
         equality_owner: Side owning each exact cliff point (`when` or `otherwise`).
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -1770,6 +1826,7 @@ def nbegm_recurring_jump_step(
         marginal=jnp.concatenate(marginal_parts),
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, policy
 
@@ -1949,6 +2006,7 @@ def nbegm_one_asset_step(
     subsidy_otherwise: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of the Medicaid one-asset toy by case-piece EGM.
 
@@ -1965,6 +2023,12 @@ def nbegm_one_asset_step(
         subsidy_otherwise: Subsidy where the predicate fails.
         asset_limit: Medicaid asset limit; the predicate is `liquid < asset_limit`.
         equality_owner: Predicate side owning the exact boundary point.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -1983,6 +2047,7 @@ def nbegm_one_asset_step(
         subsidy=subsidy_when,
         asset_limit=asset_limit,
         equality_owner=equality_owner,
+        arithmetic=arithmetic,
     )
     otherwise_value, otherwise_marginal, otherwise_policy = _case_step(
         next_value=next_value,
@@ -1996,6 +2061,7 @@ def nbegm_one_asset_step(
         subsidy=subsidy_otherwise,
         asset_limit=asset_limit,
         equality_owner=equality_owner,
+        arithmetic=arithmetic,
     )
 
     # The owning side keeps the exact boundary point: `equality_owner="otherwise"`
@@ -2040,6 +2106,7 @@ def nbegm_one_asset_step(
         marginal=marginal,
         segment_id=segment_id,
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return env_value, env_marginal, env_policy
 
@@ -2057,6 +2124,7 @@ def _case_step(
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
+    arithmetic: EnvelopeArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one case's 1-D consumption--saving sub-problem as an upper envelope.
 
@@ -2161,6 +2229,7 @@ def _case_step(
             [interior_segment, kink_segment, above_segment, s0_segment]
         ),
         x_query=liquid_grid,
+        arithmetic=arithmetic,
     )
     return value, marginal, consumption_on_grid
 
@@ -2395,6 +2464,12 @@ def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
     Args:
         marginal: Expected marginal continuation at each savings node.
         consumption: The consumption the Euler inversion recovered there.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
 
     Returns:
         Per-node flag, `True` where the node contributes no usable candidate.

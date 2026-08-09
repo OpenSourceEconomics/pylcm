@@ -1807,6 +1807,22 @@ def test_linear_expectation_takes_no_runtime_parameters():
     assert LinearExpectation().param_names == frozenset()
 
 
+def test_linear_expectation_annihilates_a_zero_weight_infinity() -> None:
+    """A node that cannot occur contributes nothing, whatever value stands there.
+
+    `LinearExpectation` is public API and is the reference the engine's cheaper
+    per-target route is checked against, so the guarantee has to hold when it is
+    called directly and not only where the engine masks impossible nodes first.
+    """
+    got = LinearExpectation().aggregate(
+        values=jnp.asarray([2.0, -jnp.inf]),
+        weights=jnp.asarray([1.0, 0.0]),
+        params={},
+    )
+
+    np.testing.assert_allclose(np.asarray(got), 2.0)
+
+
 def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
     """The engine's per-target reduction agrees with the reference aggregation.
 
@@ -2042,6 +2058,28 @@ def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
     )
 
     assert jnp.isnan(got)
+
+
+def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node():
+    """A node that cannot occur perturbs nothing, whatever `transform` is unbounded at.
+
+    The stand-in transformed in place of an impossible node's value is taken
+    from the lottery itself, so it lies in `transform`'s domain by construction.
+    A constant need not, and `transform` unbounded there would leave a `0 * inf`
+    on the discarded branch — invisible in the value, NaN in the derivative.
+    """
+    singular_at_one = QuasiArithmeticMean(
+        transform=lambda value: 1.0 / (value - 1.0),
+        inverse=lambda value: 1.0 / value + 1.0,
+    )
+
+    got = jax.grad(
+        lambda weights: singular_at_one.aggregate(
+            values=jnp.array([2.0, -jnp.inf]), weights=weights, params={}
+        )
+    )(jnp.array([1.0, 0.0]))
+
+    np.testing.assert_allclose(np.asarray(got), np.array([0.0, 1.0]), atol=1e-6)
 
 
 def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node():
