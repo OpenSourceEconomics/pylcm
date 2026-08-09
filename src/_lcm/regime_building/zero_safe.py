@@ -338,7 +338,11 @@ def zero_safe_weighted_term(
 
 
 def zero_safe_average(
-    a: FloatND, *, weights: FloatND, axis: int | None = None
+    a: FloatND,
+    *,
+    weights: FloatND,
+    shifts: IntND | None = None,
+    axis: int | None = None,
 ) -> FloatND:
     """Zero-weight-safe replacement for ``jnp.average(a, weights=weights, axis=axis)``.
 
@@ -349,6 +353,30 @@ def zero_safe_average(
     `+-inf` value cannot inject a `nan`. Used for the stochastic-node /
     regime-mixture / fold-state weighted averages in the collective solve
     core (`Q_and_F.py`, `max_Q_over_a.py`).
+
+    `shifts` carries the base-two scale each weight is held at — a node's
+    probability is ``weights * 2**-shift`` — as `scaled_joint_weight` now
+    returns one scale per node rather than one for the whole lottery. Weights
+    from different nodes are therefore not comparable as plain floats, and a
+    reduction that ignored the scales would weight the nodes by their
+    coefficients alone. Pass `None` only where every weight is already on one
+    scale; the ratios are then exact without any of this.
+
+    The two reductions treat the scale differently, following
+    `_expectation_over_stochastic_nodes` in `Q_and_F.py`, against which this is
+    tested:
+
+    - the **mass** lowers each weight onto the common scale before summing. A
+      live node too far below that scale to register contributes no share of a
+      total of order one, which is the right answer for a denominator;
+    - the **numerator** forms ``w * a`` first and applies the node's relative
+      scale to the product. A tiny probability meeting a large value makes an
+      ordinary contribution, and scaling the weight first would flush it before
+      the value supplied its binades.
+
+    The common scale is the smallest shift — the largest node — so every
+    relative scale is a power of two no greater than one and the lowering
+    cannot overflow.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -370,6 +398,7 @@ def zero_safe_average(
     """
     a_arr = jnp.asarray(a)
     weights_arr = jnp.asarray(weights)
+    shifts_arr = None if shifts is None else jnp.asarray(shifts)
 
     if a_arr.shape != weights_arr.shape:
         if axis is None:
@@ -386,8 +415,24 @@ def zero_safe_average(
             for i in range(a_arr.ndim)
         )
         weights_arr = jnp.reshape(weights_arr, new_shape)
+        # A scale belongs to its weight, so it is carried through exactly the
+        # same reshape rather than broadcast on its own.
+        if shifts_arr is not None:
+            shifts_arr = jnp.reshape(shifts_arr, new_shape)
 
-    total_weight = jnp.sum(weights_arr, axis=axis)
+    if shifts_arr is None:
+        relative_scale = None
+        lowered_weights = weights_arr
+    else:
+        common_shift = (
+            jnp.min(shifts_arr)
+            if axis is None
+            else jnp.min(shifts_arr, axis=axis, keepdims=True)
+        )
+        relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
+        lowered_weights = jnp.ldexp(weights_arr, relative_scale)
+
+    total_weight = jnp.sum(lowered_weights, axis=axis)
     _raise_if_concretely_zero(total_weight, context="zero_safe_average")
     # The masked numerator is used unconditionally -- see the ROUND-6 note below and
     # the module CAVEAT. A whole-expression branch that keeps a RAW `sum(w*a)`
@@ -403,7 +448,13 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64 (ROUND-7).
-    numerator = jnp.sum(zero_safe_weighted_term(weights_arr, a_arr), axis=axis)
+    terms = zero_safe_weighted_term(weights_arr, a_arr)
+    if relative_scale is not None:
+        # The product, not the weight: see the docstring. `zero_safe_weighted_term`
+        # has already made a zero-weight `+-inf` an exact zero, and `ldexp` leaves
+        # that zero alone.
+        terms = jnp.ldexp(terms, relative_scale)
+    numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
 
 
