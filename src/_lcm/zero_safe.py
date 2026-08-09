@@ -68,6 +68,7 @@ import jax.numpy as jnp
 
 from _lcm.probability import (
     balanced_product,
+    binades_above_smallest_normal,
     is_below_smallest_normal,
     is_represented_zero,
     nonzero_exact_product,
@@ -248,3 +249,60 @@ def zero_safe_weighted_term(
     if subnormal_is_accounted_for:
         return effective_weight * safe_value
     return balanced_product(effective_weight, safe_value)
+
+
+def scaled_weighted_terms(
+    *, coefficients: FloatND, shifts: IntND, values: FloatND
+) -> FloatND:
+    """Return each node's contribution, formed before its scale is applied.
+
+    A node's contribution to a weighted sum is `w 2**-s v`, and the order the
+    three are combined in decides whether the format can hold it. Lowering the
+    weight first asks the format for `w 2**-s` on its own, which for a node far
+    below the likeliest one is a subnormal — flushed to zero on a backend that
+    does not carry them — and the value never gets to supply the binades it was
+    holding. A rare node against a large value is then lost even though its
+    contribution is an ordinary number: a probability of `2**-128` against a
+    value of `2**126` contributes a quarter, not nothing.
+
+    Multiplying first and scaling the product keeps every intermediate in range,
+    because the scale is only ever applied downwards — `common` is the smallest
+    shift, so no term is scaled up — and `zero_safe_weighted_term` forms the
+    product itself with the exponent moved between its operands, so a large
+    value meeting an ordinary weight cannot overflow on the way.
+
+    The non-finite protection that a lowered weight needs is unnecessary here:
+    an infinity or a `NaN` at a live node survives the multiplication and no
+    power of two reaches it, so the term carries the answer on its own. What is
+    still dropped is a node whose contribution is genuinely below the sum's last
+    place, which is the declared approximation and is one-sided.
+
+    Args:
+        coefficients: The scaled weights' significands.
+        shifts: Each one's own base-two scale.
+        values: What each weight stands against.
+
+    Returns:
+        Each node's contribution, on the one scale the sum is taken at.
+
+    """
+    arr = jnp.asarray(coefficients)
+    shifts = jnp.asarray(shifts)
+    common = jnp.min(shifts)
+    scale = (common - shifts).astype(jnp.int32)
+    # The scale is only ever applied downwards, and neither end of it is safe on
+    # its own: all of it on the weight underflows a rare node before the value
+    # can supply the binades it was holding, and all of it on the product
+    # overflows an ordinary weight meeting a value near the top of the range.
+    # So the weight takes as much as it has room for while staying normal, and
+    # the product takes what is left.
+    room = binades_above_smallest_normal(arr)
+    on_the_weight = jnp.maximum(scale, -room)
+    return jnp.ldexp(
+        zero_safe_weighted_term(
+            weight=jnp.ldexp(arr, on_the_weight),
+            value=values,
+            subnormal_is_accounted_for=False,
+        ),
+        scale - on_the_weight,
+    )
