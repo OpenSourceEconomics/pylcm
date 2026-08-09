@@ -346,7 +346,14 @@ class QuasiArithmeticMean(CertaintyEquivalent):
 
         """
         coefficients = jnp.asarray(coefficients)
-        lowered = flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
+        # Lowering onto one scale is what makes a weight nameable at all;
+        # rescaling is what makes it usable. A weight that survives the lowering
+        # as a subnormal is live, so nothing restores it, and the arithmetic
+        # still cannot multiply it — which against an unbounded `transform` loses
+        # a term of order one just as surely as flushing it to zero would.
+        lowered = rescaled_lottery_weights(
+            flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
+        )
         # The null events are the represented zeros of the coefficient, which no
         # scale can change. Reading them off `lowered` instead would take with
         # them every node the shared scale cannot state — the ones this method
