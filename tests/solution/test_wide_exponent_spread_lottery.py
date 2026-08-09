@@ -327,6 +327,25 @@ def test_a_rare_node_keeps_its_infinity_through_a_general_transform():
     assert float(np.asarray(got)) == float("-inf")
 
 
+def test_a_terms_scale_is_split_so_a_rare_weight_does_not_underflow():
+    """Committing the whole residual to the weight drops a representable term."""
+    dtype = jnp.zeros(()).dtype
+    spread = 200 if dtype == jnp.float32 else 1500
+    value_exponent = 100 if dtype == jnp.float32 else 1000
+
+    terms = scaled_weighted_terms(
+        coefficients=jnp.asarray([1.0, 0.75], dtype=dtype),
+        shifts=jnp.asarray([0, spread], dtype=jnp.int32),
+        values=jnp.asarray(
+            [0.0, jnp.ldexp(jnp.asarray(1.5, dtype=dtype), value_exponent)],
+            dtype=dtype,
+        ),
+    )
+
+    expected = jnp.ldexp(jnp.asarray(1.125, dtype=dtype), value_exponent - spread)
+    np.testing.assert_array_equal(np.asarray(terms[1]), np.asarray(expected))
+
+
 def test_a_terms_scale_is_split_so_a_large_value_does_not_overflow_it():
     """A node's contribution stays in range when its value is near the top of it.
 
