@@ -12,6 +12,11 @@ from dags import (
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.probability import (
+    is_negative,
+    is_represented_zero,
+    reconcile_scales,
+)
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
@@ -50,7 +55,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -150,7 +155,12 @@ def _sum_regime_mixture(
     # contribution multiset -- provably invariant to an economically-inert
     # alpha-renaming of the regimes -- where the previous name-sort made the bits
     # (and a non-tied argmax) depend on the arbitrary regime labels. See the docstring.
-    contributions = zero_safe_weighted_term(probs, values)
+    # `subnormal_is_accounted_for=False`: these weights are regime transition
+    # probabilities straight from the model, and nothing has put them on a common
+    # scale, so the term has to move the exponent itself.
+    contributions = zero_safe_weighted_term(
+        weight=probs, value=values, subnormal_is_accounted_for=False
+    )
     return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
 
 
@@ -1076,7 +1086,14 @@ def get_Q_and_F_collective(
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
             ](**states_actions_params)
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+            # `_get_joint_weights_function` returns the node weights together with
+            # the one base-two scale they are held at. The scale is dropped here
+            # and only here: this branch reduces with `zero_safe_average`, which
+            # divides by the weight sum, and a scale common to every node of the
+            # lottery is a power of two that cancels exactly out of that ratio.
+            # The scalar branch below keeps its shifts because it hands the arms
+            # of several targets to one reduction, where the scales do not cancel.
+            joint_next_stochastic_states_weights, _ = joint_weights_from_marginals[
                 target_regime_name
             ](**marginal_next_stochastic_states_weights)
 
@@ -1469,17 +1486,51 @@ def _get_compute_CE(
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
-
+        # Every target's own lottery is built before any of them is weighted,
+        # because the common factor that puts the whole continuation on a scale
+        # the dtype can multiply depends on both halves of each node's
+        # probability — the regime's and the node's. A regime probability lifted
+        # only into the normal range lands back under it as soon as a quadrature
+        # weight of a sixth multiplies it.
+        #
+        # Each target's nodes arrive carrying their own scales — a joint
+        # product below the normal range travels as a number and a shift — so
+        # they are put on one scale per target first. Within a target that
+        # scale is invisible to any consumer that normalizes by the target's
+        # own mass; across targets it is not, and the loop below carries it.
+        target_lotteries = {
+            target_regime_name: reconcile_scales(
+                *continuations[target_regime_name].joint_lottery_weights(
+                    **continuations[target_regime_name].lottery_weights(
+                        **states_actions_params
+                    )
+                )
+            )
+            for target_regime_name in period_targets
+        }
+        target_node_weights = {r: target_lotteries[r][0] for r in period_targets}
+        target_node_shifts = {r: target_lotteries[r][1] for r in period_targets}
         # Unit mass alone does not make a collection of weights a distribution:
-        # 1.5 and -0.5 sum to one. The smallest weight is tracked alongside the
-        # sum so non-negativity is arithmetic too, and the two together give the
-        # whole range — non-negative weights summing to one each lie in [0, 1].
+        # 1.5 and -0.5 sum to one. Non-negativity is tracked alongside the sum
+        # so it is arithmetic too, and the two together give the whole range —
+        # non-negative weights summing to one each lie in [0, 1].
+        #
+        # It is tracked as a decision, not as the smallest weight: reducing the
+        # weights with `jnp.minimum` and testing the survivor's sign loses a
+        # negative probability the dtype cannot hold as a normal number, which
+        # arrives at the test as `-0` and passes it. Each target's sign is read
+        # off its own bits, while it still has them.
+        #
+        # The accumulators are seeded with the stateless targets, which carry no
+        # node axis of their own but do carry mass, a sign, and — under a
+        # nonlinear certainty equivalent — one lottery node each.
         (
             mixture_terms,
             lottery_values,
             lottery_weights,
+            lottery_shifts,
             probability_mass,
-            smallest_probability,
+            has_negative_probability,
         ) = _scalar_target_contribution(
             scalar_targets=scalar_targets,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1490,9 +1541,9 @@ def _get_compute_CE(
         for target_regime_name in period_targets:
             continuation = continuations[target_regime_name]
             next_states = continuation.next_states(**states_actions_params)
-            joint_next_stochastic_states_weights = continuation.joint_lottery_weights(
-                **continuation.lottery_weights(**states_actions_params)
-            )
+            joint_next_stochastic_states_weights = target_node_weights[
+                target_regime_name
+            ]
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
@@ -1518,20 +1569,19 @@ def _get_compute_CE(
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
             # per-target route in `_expectation_over_stochastic_nodes`, the
             # lottery route in the certainty equivalent's own `aggregate`.
-            # The mass sum, the range guard and the liveness test read the
-            # weight as the arithmetic sees it: a probability too small for the
-            # dtype to use contributes nothing to any of them, which is the
-            # right answer for all three. Whether it contributes nothing to the
-            # *continuation* depends on the value standing at it, so that is
-            # settled per term rather than here.
+            # The mass sum reads the weight as the arithmetic sees it: a
+            # probability too small for the dtype to hold contributes nothing
+            # to a total of order one, which is the right answer. Its sign is a
+            # different question, and one arithmetic cannot answer at that size,
+            # so it is read from the bits. The probability enters the weighted
+            # term at its own size — `balanced_product` moves the exponent onto
+            # it from the value it meets — so no rescaling stands between the
+            # model's number and the one that is multiplied.
             target_probability = active_regime_probs[target_regime_name]
             probability_mass = probability_mass + target_probability
-            # Both routes drop a node on being *exactly* zero. A negative
-            # probability is not a target that is never consulted, and dropping
-            # it would answer with the value the remaining targets would have
-            # produced on their own, so it stays in the sum and is caught by the
-            # smallest weight instead.
-            smallest_probability = jnp.minimum(smallest_probability, target_probability)
+            has_negative_probability = has_negative_probability | is_negative(
+                target_probability
+            )
 
             if reduces_per_target:
                 # Weighted average of the next value function at the stochastic
@@ -1583,22 +1633,27 @@ def _get_compute_CE(
                 # with the constant this route rejects.
                 lottery_values.append(values)
                 # The regime probability and the node weight are two more
-                # factors of the same joint event, so their product goes through
-                # the same treatment as the product across the stochastic axes.
-                # The weight collected here is therefore each node's *final*
-                # weight, which is what the downstream neutralization tests: a
-                # target reached with certainty still carries nodes of
-                # probability zero -- a Markov row with a zero entry beside a
-                # state where every action is infeasible -- and one that merely
-                # underflowed arrives as the smallest representable magnitude
-                # instead, so it is not mistaken for that null event.
-                lottery_weights.append(
-                    joint_weight(
+                # factors of the same joint event, so their product carries the
+                # same refusal as the product across the stochastic axes — and
+                # the same scale, which is this target's own until the arms are
+                # brought together below.
+                weighted_nodes, product_shift = reconcile_scales(
+                    *scaled_joint_weight(
                         jnp.stack(
                             jnp.broadcast_arrays(target_probability, node_weights)
                         )
                     )
                 )
+                lottery_weights.append(weighted_nodes)
+                # A target with no stochastic axes contributes one node whose
+                # weight `_as_lottery` fabricates, so the scale its own lottery
+                # would have carried is not part of this arm.
+                own_shift = (
+                    target_node_shifts[target_regime_name]
+                    if continuation.has_lottery_axes
+                    else jnp.zeros((), jnp.int32)
+                )
+                lottery_shifts.append(product_shift + own_shift)
 
         # ONE reduction for the whole regime mixture: stack the operands and
         # contract once, value-ordered, rather than folding `CE = CE + p*V` per
@@ -1616,14 +1671,13 @@ def _get_compute_CE(
             # tolerance the undivided sum reverses the Bellman argmax. Dividing is
             # exact whenever the mass is exactly one, so a well-formed lottery
             # keeps its floating-point association.
-            #
-            # A regime with no target at all — neither carrying state nor
-            # stateless — carries no continuation, and its `CE` stays at zero
-            # rather than becoming `0 / 0`, matching the lottery route, which
-            # leaves `CE` at zero when it collects no nodes.
-            # A represented mass of zero across targets that do exist is a
-            # massless lottery, and NaN there is the same answer both routes give.
-            CE = CE / _unit_regime_mass_or_nan(probability_mass, smallest_probability)
+            CE = CE / jnp.where(
+                _regime_mass_is_a_distribution(
+                    probability_mass, has_negative_probability
+                ),
+                probability_mass,
+                jnp.nan,
+            )
         elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
@@ -1635,11 +1689,14 @@ def _get_compute_CE(
             # the initialized `CE`. The mask is `False` there regardless, since
             # a mass of zero is not unit mass.
             CE = jnp.where(
-                _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+                _regime_mass_is_a_distribution(
+                    probability_mass, has_negative_probability
+                ),
                 _aggregate_joint_lottery(
                     certainty_equivalent=certainty_equivalent,
                     lottery_values=lottery_values,
                     lottery_weights=lottery_weights,
+                    lottery_shifts=lottery_shifts,
                     ce_flat_param_names=ce_flat_param_names,
                     states_actions_params=states_actions_params,
                 )
@@ -1668,7 +1725,7 @@ class _TargetContinuation:
     lottery_weights: Callable[..., dict[str, FloatND | IntND]]
     """Marginal probabilities of the target's stochastic laws."""
 
-    joint_lottery_weights: Callable[..., FloatND]
+    joint_lottery_weights: Callable[..., tuple[FloatND, IntND]]
     """Outer product of the lottery marginals, over the node axes."""
 
     next_V: Callable[..., FloatND]
@@ -2040,8 +2097,9 @@ def _scalar_target_contribution(
     list[tuple[RegimeName, FloatND, FloatND]],
     list[FloatND],
     list[FloatND],
+    list[IntND],
     FloatND,
-    FloatND,
+    BoolND,
 ]:
     """Seed the continuation accumulators with the stateless targets.
 
@@ -2064,16 +2122,16 @@ def _scalar_target_contribution(
 
     Returns:
         Tuple of the linear mixture terms, the lottery values, their weights,
-        the probability mass these targets represent, and the smallest weight
-        among them — infinite when there are none, so a later `jnp.minimum`
-        against a stateful target's weight is the identity.
+        the base-two scale each weight arm carries, the probability mass these
+        targets represent, and whether any of their probabilities is negative.
 
     """
     mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
     values: list[FloatND] = []
     weights: list[FloatND] = []
+    shifts: list[IntND] = []
     probability_mass = zero
-    smallest_probability = zero + jnp.inf
+    has_negative_probability = jnp.zeros(jnp.shape(zero), dtype=bool)
     for target_regime_name in scalar_targets:
         scalar_V = next_regime_to_V_arr[target_regime_name]
         # The mass sum and the liveness test read the weight as the arithmetic
@@ -2085,25 +2143,26 @@ def _scalar_target_contribution(
         # route, so the linear fast path divides by the mass of *every* target
         # it summed, not just the ones carrying state.
         probability_mass = probability_mass + prob
-        smallest_probability = jnp.minimum(smallest_probability, prob)
-        # A stateless target has no stochastic node to multiply against, so its
-        # regime probability is already the whole weight. There is no product to
-        # underflow, which is what `joint_weight` guards on the stateful route,
-        # so the probability is collected as it stands.
-        #
-        # Both the weight and the value are handed over unmodified, because
-        # whether a weight too small for the dtype matters is decided by the
-        # value it meets. That decision belongs to `zero_safe_weighted_term`,
-        # downstream in `_aggregate_joint_lottery`, where the concatenated
-        # weights are final: against a finite value the weight stands and the
-        # node may drop, while against `-inf` -- the ordinary value of a state
-        # where every action is infeasible -- it is raised so the infinity
-        # reaches the answer. Pre-adjusting the weight here would take that
-        # decision away before the value is known.
+        # Read off the bits while the probability still has them: a negative
+        # weight the dtype cannot hold as a normal number arrives at an
+        # arithmetic sign test as `-0` and passes it.
+        has_negative_probability = has_negative_probability | is_negative(prob)
         if as_lottery:
+            # A stateless target has no stochastic node to multiply against, so
+            # its regime probability is already the whole weight, and it goes on
+            # a scale for the same reason a joint product does: an arm of the
+            # lottery that is subnormal cannot be classified once it is read
+            # inside a fused region. Broadcasting rather than multiplying by
+            # ones keeps that from happening on the way in.
             node = jnp.ravel(scalar_V)
             values.append(node)
-            weights.append(prob * jnp.ones_like(node))
+            weighted_nodes, shift = reconcile_scales(
+                *scaled_joint_weight(
+                    jnp.stack([jnp.broadcast_to(prob, jnp.shape(node))])
+                )
+            )
+            weights.append(weighted_nodes)
+            shifts.append(shift)
         else:
             # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
             # `p_r * V_r` once inside a single zero-safe contraction, masking the
@@ -2113,7 +2172,14 @@ def _scalar_target_contribution(
             # multiplying here would reintroduce `0 * -inf = nan` for a zero-mass
             # stateless target and put this term outside the value-ordered reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
-    return mixture_terms, values, weights, probability_mass, smallest_probability
+    return (
+        mixture_terms,
+        values,
+        weights,
+        shifts,
+        probability_mass,
+        has_negative_probability,
+    )
 
 
 def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> FloatND:
@@ -2135,14 +2201,21 @@ def _expectation_over_stochastic_nodes(*, values: FloatND, weights: FloatND) -> 
       operation feeding the sum and can be contracted into a fused
       multiply-add. Selecting on the product instead forces it to round before
       the sum rounds again, which every well-specified node pays for;
-    - the test is `== 0`, not `> 0`. A negative weight is a malformed
-      specification and a `NaN` weight is not a probability at all; `> 0` is
-      false for both and would launder either into a zero contribution, turning
-      a broken transition into a plausible number.
+    - the test is for a represented zero, not for positivity. A negative weight
+      is a malformed specification and a `NaN` weight is not a probability at
+      all; `> 0` is false for both and would launder either into a zero
+      contribution, turning a broken transition into a plausible number.
+
+    The nodes arrive on one common base-two scale, chosen where the joint
+    product was formed, so every weight here is a number the dtype can
+    multiply and every ratio between them is the one the model supplied.
     """
     weight_sum = jnp.sum(weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-    return jnp.sum(zero_safe_weighted_term(weights, values)) / safe_weight_sum
+    weighted = zero_safe_weighted_term(
+        weight=weights, value=values, subnormal_is_accounted_for=True
+    )
+    return jnp.sum(weighted) / safe_weight_sum
 
 
 def _as_lottery(
@@ -2206,7 +2279,7 @@ def _get_joint_weights_function(
     *,
     regime_name: RegimeName,
     variables: tuple[TransitionFunctionName, ...],
-) -> Callable[..., FloatND]:
+) -> Callable[..., tuple[FloatND, IntND]]:
     """Get function that calculates the joint weights over one group of laws.
 
     This function takes the weights of the individual variables and multiplies
@@ -2223,22 +2296,35 @@ def _get_joint_weights_function(
             multiply, in the order their axes appear on the value surface.
 
     Returns:
-        A function that computes the outer product of the variables' weights.
+        A function that computes the outer product of the variables' weights,
+        with the one base-two scale those weights are held at.
 
     """
     arg_names = [f"weight_{regime_name}__{key}" for key in variables]
 
     @with_signature(args=arg_names)
-    def _outer(**kwargs: Float1D) -> FloatND:
+    def _outer(**kwargs: Float1D) -> tuple[FloatND, IntND]:
         # One factor per stochastic axis. Their product is the node's
-        # probability, and it is refused rather than rounded to impossible
-        # where every factor can occur but the product cannot be represented.
-        return joint_weight(jnp.array(list(kwargs.values())))
+        # probability, and it comes back with its own scale rather than as a
+        # plain float, because a product below the normal range is not
+        # something a float can carry through a fused region here.
+        return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
     variables = tuple(arg_names)
-    return productmap(
+    over_the_product_space = productmap(
         func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
     )
+
+    @with_signature(args=arg_names)
+    def _joint(**kwargs: Float1D) -> tuple[FloatND, IntND]:
+        # Each node picks the scale its own product needs, so the array comes
+        # back holding one number per node in a different currency. The nodes
+        # are a single lottery and only their ratios mean anything, so they go
+        # onto one scale before anyone reads them together.
+        node_weights, node_shifts = over_the_product_space(**kwargs)
+        return reconcile_scales(node_weights, node_shifts)
+
+    return _joint
 
 
 def _get_U_and_F(
@@ -2329,12 +2415,12 @@ _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 
 
 def _regime_mass_is_a_distribution(
-    probability_mass: FloatND, smallest_probability: FloatND
+    probability_mass: FloatND, has_negative_probability: BoolND
 ) -> BoolND:
     """Whether the retained targets carry a distribution rather than merely unit mass.
 
-    Two arithmetic conditions, both holding at every log level because they are
-    computed rather than validated:
+    Two conditions, both holding at every log level because they are computed
+    rather than validated:
 
     - the represented mass is one, within tolerance;
     - no target carries a negative weight.
@@ -2342,9 +2428,24 @@ def _regime_mass_is_a_distribution(
     Together they give the full range: non-negative weights summing to one each
     lie in `[0, 1]`. Unit mass alone does not, since 1.5 and -0.5 sum to one,
     and a NaN weight fails both tests rather than passing the first by accident.
+
+    Non-negativity arrives as a decision rather than as a weight to inspect.
+    Taken here it would have to be taken on a number the accumulation already
+    reduced, and reducing with `jnp.minimum` turns a negative probability the
+    dtype cannot hold as a normal number into `-0` — which is a zero, and would
+    pass. The caller reads each target's sign off its own bits instead.
+
+    Args:
+        probability_mass: The retained targets' probabilities, summed.
+        has_negative_probability: Whether any of them carried the sign bit on a
+            nonzero magnitude.
+
+    Returns:
+        Whether the retained targets carry a probability distribution.
+
     """
     is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
-    return is_unit & (smallest_probability >= 0.0)
+    return is_unit & ~has_negative_probability
 
 
 def _aggregate_joint_lottery(
@@ -2352,6 +2453,7 @@ def _aggregate_joint_lottery(
     certainty_equivalent: CertaintyEquivalent,
     lottery_values: Sequence[FloatND],
     lottery_weights: Sequence[FloatND],
+    lottery_shifts: Sequence[IntND],
     ce_flat_param_names: Mapping[str, str],
     states_actions_params: Mapping[str, Any],
 ) -> FloatND:
@@ -2362,6 +2464,8 @@ def _aggregate_joint_lottery(
         lottery_values: Sequence of per-target continuation values.
         lottery_weights: Sequence of per-target node weights, already scaled by
             the target's regime-transition probability.
+        lottery_shifts: Each target's own base-two scale, so the arms can be
+            read against one another.
         ce_flat_param_names: Mapping of certainty-equivalent argument names to
             their flat parameter names.
         states_actions_params: Mapping of states, actions, age, period, and flat
@@ -2372,10 +2476,25 @@ def _aggregate_joint_lottery(
 
     """
     values = jnp.concatenate(list(lottery_values))
-    weights = jnp.concatenate(list(lottery_weights))
-    return certainty_equivalent.aggregate(
-        values=_values_without_impossible_nodes(values=values, weights=weights),
-        weights=weights,
+    # Each arm carries its own base-two scale, so they are brought onto one
+    # before they are read as a single lottery — rescaling per target instead
+    # would multiply each segment by a different constant and rewrite the
+    # regime probabilities. `aggregate` is a public interface and may multiply
+    # by the weights it is handed, including an `aggregate` written by a user
+    # that this file cannot inspect, so what it receives is normal throughout.
+    per_node_shifts = jnp.concatenate(
+        [
+            jnp.broadcast_to(jnp.asarray(s), jnp.asarray(w).shape).astype(jnp.int32)
+            for w, s in zip(lottery_weights, lottery_shifts, strict=True)
+        ]
+    )
+    coefficients, shifts = reconcile_scales(
+        jnp.concatenate(list(lottery_weights)), per_node_shifts
+    )
+    return certainty_equivalent.aggregate_scaled(
+        values=_values_without_impossible_nodes(values=values, weights=coefficients),
+        coefficients=coefficients,
+        shifts=shifts,
         # The params template types every certainty-equivalent parameter as a
         # float, so its runtime values are float arrays.
         params=cast(
@@ -2404,8 +2523,13 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
     an arbitrary constant need not lie in the transform's domain -- `log` at
     zero is the ordinary case. A value already in the lottery always does.
 
-    Only an exactly-zero weight is replaced. A negative or NaN weight is not a
-    node that cannot occur, and both stay visible.
+    Only a weight that is zero *in its bits* is replaced. `weights == 0` also
+    catches every probability below the dtype's normal range, and replacing one
+    of those is not a neutralization but a loss: the node can occur, and a `-inf`
+    standing at a state where no action is feasible would be overwritten by a
+    neighbour's finite value, turning an infinite continuation into an ordinary
+    number. A negative or NaN weight is not a node that cannot occur either, and
+    both stay visible.
 
     Args:
         values: Continuation values of the joint lottery.
@@ -2416,18 +2540,18 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
 
     """
     stand_in = jnp.take(values, jnp.argmax(weights, axis=-1), axis=-1)
-    return jnp.where(weights == 0.0, stand_in, values)
+    return jnp.where(is_represented_zero(weights), stand_in, values)
 
 
 def _unit_regime_mass_or_nan(
-    probability_mass: FloatND, smallest_probability: FloatND
+    probability_mass: FloatND, has_negative_probability: BoolND
 ) -> FloatND:
     """Return the mass itself, or NaN where the weights are not a distribution.
 
     For the per-target route, which divides by the mass it accumulated.
     """
     return jnp.where(
-        _regime_mass_is_a_distribution(probability_mass, smallest_probability),
+        _regime_mass_is_a_distribution(probability_mass, has_negative_probability),
         probability_mass,
         jnp.nan,
     )

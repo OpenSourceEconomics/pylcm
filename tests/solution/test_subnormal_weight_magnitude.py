@@ -82,9 +82,13 @@ def _largest_finite() -> ScalarFloat:
 def _lottery_value(weight: ScalarFloat, rare_value: ScalarFloat) -> float:
     """A two-target continuation: unit mass on one, `weight` on `rare_value`."""
     common = zero_safe_weighted_term(
-        jnp.asarray(1.0, dtype=_active_dtype()), jnp.asarray(1.0, dtype=_active_dtype())
+        weight=jnp.asarray(1.0, dtype=_active_dtype()),
+        value=jnp.asarray(1.0, dtype=_active_dtype()),
+        subnormal_is_accounted_for=False,
     )
-    rare = zero_safe_weighted_term(weight, rare_value)
+    rare = zero_safe_weighted_term(
+        weight=weight, value=rare_value, subnormal_is_accounted_for=False
+    )
     return float((common + rare) / (1.0 + float(weight)))
 
 
@@ -151,6 +155,7 @@ def test_a_subnormal_weight_does_not_distort_a_nonlinear_aggregation() -> None:
             values=jnp.asarray([1.0, 0.5], dtype=dtype),
             weights=jnp.stack([jnp.asarray(1.0, dtype=dtype), underflowed]),
             exponent=jnp.asarray(-1.0, dtype=dtype),
+            shifts=jnp.zeros((), jnp.int32),
         )
     )
 
@@ -187,7 +192,13 @@ def test_an_underflowed_joint_product_contributes_nothing_to_a_finite_value() ->
     root = np.sqrt(float(_smallest_normal())) / 2.0
     weight = joint_weight(jnp.asarray([root, root], dtype=dtype))
 
-    term = float(zero_safe_weighted_term(weight, jnp.asarray(1.0, dtype=dtype)))
+    term = float(
+        zero_safe_weighted_term(
+            weight=weight,
+            value=jnp.asarray(1.0, dtype=dtype),
+            subnormal_is_accounted_for=False,
+        )
+    )
 
     assert abs(term) <= _tolerance()
 
@@ -198,7 +209,11 @@ def test_an_underflowed_joint_product_still_keeps_an_infinity() -> None:
     root = np.sqrt(float(_smallest_normal())) / 2.0
     weight = joint_weight(jnp.asarray([root, root], dtype=dtype))
 
-    term = zero_safe_weighted_term(weight, jnp.asarray(-jnp.inf, dtype=dtype))
+    term = zero_safe_weighted_term(
+        weight=weight,
+        value=jnp.asarray(-jnp.inf, dtype=dtype),
+        subnormal_is_accounted_for=False,
+    )
 
     assert bool(jnp.isneginf(term))
 
@@ -210,9 +225,15 @@ def test_the_largest_subnormal_weight_still_keeps_an_infinity(
     """The infinite case is unchanged: magnitude cannot matter against `-inf`."""
     dtype = _active_dtype()
     func: Callable[..., FloatND] = (
-        jax.jit(zero_safe_weighted_term) if compile_it else zero_safe_weighted_term
+        jax.jit(zero_safe_weighted_term, static_argnames="subnormal_is_accounted_for")
+        if compile_it
+        else zero_safe_weighted_term
     )
 
-    term = func(_largest_subnormal(), jnp.asarray(-jnp.inf, dtype=dtype))
+    term = func(
+        weight=_largest_subnormal(),
+        value=jnp.asarray(-jnp.inf, dtype=dtype),
+        subnormal_is_accounted_for=False,
+    )
 
     assert bool(jnp.isneginf(term))

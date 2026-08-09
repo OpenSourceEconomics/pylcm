@@ -335,7 +335,10 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
                     "segment_id": np.asarray(segment, dtype=dtype),
                 }
                 got_value, got_policy, _ = envelope_at_query(
-                    **{k: jnp.asarray(v) for k, v in host.items()},
+                    endog_grid=jnp.asarray(host["endog_grid"]),
+                    value=jnp.asarray(host["value"]),
+                    policy=jnp.asarray(host["policy"]),
+                    segment_id=jnp.asarray(host["segment_id"]),
                     marginal=jnp.zeros(4, dtype=dtype),
                     x_query=jnp.asarray([1.0], dtype=dtype),
                     segment_block_size=block_size,

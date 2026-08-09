@@ -80,7 +80,11 @@ def map_coordinates(
         # exponent field to read. An integer read has neither hazard, so it
         # multiplies as it always did.
         weighted_value = (
-            zero_safe_weighted_term(corner_weight, contribution)
+            zero_safe_weighted_term(
+                weight=corner_weight,
+                value=contribution,
+                subnormal_is_accounted_for=True,
+            )
             if jnp.issubdtype(corner_weight.dtype, jnp.floating)
             and jnp.issubdtype(contribution.dtype, jnp.floating)
             else corner_weight * contribution
