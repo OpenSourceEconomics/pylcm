@@ -1014,7 +1014,7 @@ def _savings_node_point_candidates(
         else savings_grid[None, :]
     )
     node_consumption = point_coh[:, None] - savings_at_grid
-    node_feasible = node_consumption > 0.0
+    node_feasible = affords_an_action(node_consumption)
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     node_utility = preferences.utility(node_consumption_safe)
     node_value = jnp.where(
@@ -1665,7 +1665,7 @@ def _boundary_targeting_coh(
     # liquid is `coh_slope * u'(c)`, matching the interior and corner
     # candidates.
     kink_marginal = coh_slope * preferences.marginal_utility(kink_consumption)
-    kink_valid = valid & (kink_consumption > 0.0) & (s_kink >= 0.0)
+    kink_valid = valid & affords_an_action(kink_consumption) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,
@@ -2285,7 +2285,7 @@ def _boundary_targeting_branch(
         preferences.utility(kink_consumption) + discount_factor * value_at_target
     )
     kink_marginal = preferences.marginal_utility(kink_consumption)
-    kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
+    kink_valid = affords_an_action(kink_consumption) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,

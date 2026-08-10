@@ -20,10 +20,10 @@ _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
 def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
-    """Solve the tax toy whose budget node is named `resources`."""
+    """Solve the tax toy whose budget node is named `cash_on_hand`."""
     model = toy.build_model(
         variant=variant,
-        budget_name="resources",
+        budget_name="cash_on_hand",
         n_liquid=120,
         liquid_max=30.0,
         n_savings=180,
@@ -31,7 +31,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         n_consumption=n_consumption,
     )
     return model.solve(
-        params=toy.build_params(budget_name="resources"), log_level="debug"
+        params=toy.build_params(budget_name="cash_on_hand"), log_level="debug"
     )
 
 
