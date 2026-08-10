@@ -26,13 +26,12 @@ from _lcm.regime_building.next_state import (
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 
-# `zero_safe_average` only. Its sibling `zero_safe_weighted_term` in that module
-# and the one in `_lcm.zero_safe` used to differ on the mask predicate, and this
-# file deliberately took the local one; upstream has since adopted the same
-# gradient-preserving mask AND added subnormal-weight handling on top, which the
-# comments at the call sites below now rely on. So the term comes from
-# `_lcm.zero_safe` and the local copy is left to `zero_safe_average` and
-# `collective.py` until those are moved over too.
+# `zero_safe_average` only, and only because it is the reduction that takes an
+# `axis`: the collective site keeps its trailing stakeholder axis, which
+# `_expectation_over_stochastic_nodes` reduces away. Every weighted TERM in this
+# file comes from `_lcm.zero_safe` below -- including the one inside
+# `zero_safe_average` itself -- so one implementation carries the scale and
+# subnormal rules for the whole engine.
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.transition_laws import (
     TransitionLaws,

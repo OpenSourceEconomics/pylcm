@@ -12,7 +12,16 @@ a continuation expectation, a fold reduction, an interpolated reference value,
 or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
-Both helpers below apply the same fix pattern: replace the VALUE with an
+This module is now down to ``zero_safe_average``, and it performs no multiply of
+its own: the weighted TERM lives in `_lcm.zero_safe` and serves the whole engine.
+The copy that used to live here is gone, along with the divergence it accumulated
+on every upstream wave — it read a represented zero from a comparison rather than
+from the bits, and had no subnormal handling at all. What the term does is
+documented there; the history below is kept because it is what established the
+rule, and because two of its claims were confidently wrong in ways worth not
+repeating.
+
+The fix pattern that term applies: replace the VALUE with an
 explicit `0.0` wherever the weight is exactly zero AND the value is NON-FINITE,
 via ``jnp.where``, BEFORE multiplying. `weight * where(mask, 0, value)`
 annihilates a zero-weight ``+-inf`` (the multiply sees ``w * 0 = 0``, never
@@ -254,89 +263,8 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.probability import scaled_down_by_power_of_two
-from _lcm.zero_safe import zero_safe_weighted_term as shared_zero_safe_weighted_term
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
-
-
-def zero_safe_weighted_term(
-    weight: FloatND | ScalarFloat | IntND | ScalarInt | float,
-    value: FloatND | ScalarFloat | IntND | ScalarInt | float,
-) -> FloatND | IntND:
-    """``weight * value``, exactly ``0.0`` wherever ``weight == 0`` — never ``nan``.
-
-    Standard floating-point multiplication computes ``0.0 * (+-inf) = nan``; on
-    the extended reals, a zero weight should annihilate ANY value at that
-    node, including an admissible on-path ``-inf``. `jnp.where` replaces the
-    VALUE with `0.0` at a zero-weight node BEFORE the multiply, so the product
-    is ``weight * 0 = 0`` there and never a `nan`. Because the `select` is on
-    the value (an operand of the multiply) rather than on the product, the
-    multiply stays FMA-contractible into a downstream reduction, so on many
-    toolchains the all-positive-weight path recovers the exact bits of plain
-    ``weight * value`` — but this is NOT guaranteed (it depends on XLA choosing
-    to contract the multiply into the reduction's FMA, which varies by
-    release/backend/CPU; the module ROUND-5 CAVEAT records a reproduced
-    dynamic-per-cell divergence on one 0.10.1 CPU). The load-bearing property is
-    zero-mass safety; treat the all-positive path as raw-up-to-a-few-ULP, per the
-    module's HONEST CONTRACT, not as bit-identity.
-
-    Args:
-        weight: The weight (Pareto weight, regime-transition probability,
-            interpolation corner weight, quadrature weight, ...).
-        value: The value being weighted (may be `+-inf` on an admissible
-            zero-weight node).
-
-    Returns:
-        The zero-safe elementwise product, broadcast like ``weight * value``.
-
-    """
-    weight_arr = jnp.asarray(weight)
-    value_arr = jnp.asarray(value)
-    # Mask the VALUE before the multiply, not the PRODUCT after it. Both
-    # neutralize a zero-weight `+-inf` (`where` replaces the `+-inf` with 0 at a
-    # zero-weight node, so the multiply sees `w * 0 = 0`, never `0 * -inf`), but
-    # only this ordering keeps the multiply FMA-contractible into a downstream
-    # reduction: a `select` sitting AFTER the multiply (the previous form,
-    # `where(w==0, 0, w*v)`) forces the product to round once on its own before
-    # the sum rounds again, so an all-positive-weight reduction drifts from the
-    # naive `jnp.average` / raw corner sum -- MEASURED up to 6 ULP, enough to
-    # REVERSE a non-tied action or an individual-rationality / dissolution flag
-    # (see the regression tests). Masking the value leaves `w * safe_value` as a
-    # bare multiply feeding the reduce, which XLA CAN fuse -- recovering the naive
-    # bits on many toolchains -- while the zero-weight path stays `+-inf`-safe. The
-    # fusion (hence the bit recovery) is observed and CPU/backend-dependent, NOT a
-    # property of this source expression: the module ROUND-5 CAVEAT reproduces a
-    # dynamic-per-cell divergence on one 0.10.1 CPU. Do not read this as guaranteed
-    # bit-identity.
-    #
-    # Mask ONLY where the value is NON-FINITE. `jnp.where` is a hard select, so a
-    # mask that fires on every zero-weight node also kills `d/dw` THERE: the branch
-    # taken is the constant `0`, whose derivative w.r.t. `weight` is `0` rather than
-    # `value`. That is invisible whenever `weight` is a constant of the
-    # differentiation -- a Pareto weight, a regime-transition probability, a
-    # quadrature weight, which is what this helper was written for -- but WRONG as
-    # soon as the weight is itself a function of the argument being differentiated.
-    # The live instance was `map_coordinates`: an interpolation corner weight is a
-    # function of the coordinate, an exactly-on-node coordinate makes one corner
-    # weight exactly `0`, and masking there dropped precisely the corner whose weight
-    # was changing -- so `jax.grad` returned `-grid[c]` instead of the segment slope
-    # at every on-node coordinate, while the VALUES stayed correct and hid it.
-    #
-    # Restricting the mask to non-finite values keeps the load-bearing property and
-    # costs nothing: for finite `value` the masked and unmasked products are
-    # `0 * v == 0` either way, so VALUES are NUMERICALLY EQUAL to the previous form
-    # everywhere, and `d/dw` is now `value` at every finite node. Only the genuine
-    # `0 * +-inf` case still selects, which is the case that has no finite derivative
-    # to preserve anyway. The select remains on an OPERAND of the multiply, so the
-    # FMA-contractibility argument above is unchanged.
-    #
-    # NOT bit-identical, though this comment claimed it was (round-3 audit H2): at
-    # `w = +0` with a NEGATIVE finite value the mask no longer fires, so the product
-    # carries the sign of `value` and is `-0.0` where the old form gave `+0.0`. Equal,
-    # same derivative, and byte-identical once summed -- but a different bit pattern
-    # in isolation. See the module docstring's SIGNED-ZERO EXCEPTION.
-    needs_mask = (weight_arr == 0) & ~jnp.isfinite(value_arr)
-    safe_value = jnp.where(needs_mask, jnp.zeros((), value_arr.dtype), value_arr)
-    return weight_arr * safe_value
+from _lcm.zero_safe import zero_safe_weighted_term
+from lcm.typing import FloatND, IntND
 
 
 def zero_safe_average(
@@ -471,7 +399,7 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64 (ROUND-7).
-    terms = shared_zero_safe_weighted_term(
+    terms = zero_safe_weighted_term(
         weight=weights_arr,
         value=a_arr,
         # With scales in hand the weights are `scaled_joint_weight` coefficients,

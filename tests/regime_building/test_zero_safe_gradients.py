@@ -16,6 +16,14 @@ coordinate -- with the VALUES still correct, so nothing that checks levels could
 
 The mask is therefore restricted to NON-FINITE values. These tests pin all three legs of
 that: zero-mass safety survives, the derivative is restored, and no value moves.
+
+They test the ENGINE-WIDE term in `_lcm.zero_safe`, which is the only one production
+uses; `regime_building` no longer keeps a copy of its own. Every property below is
+required of BOTH settings of `subnormal_is_accounted_for`, so each is parametrized over
+the two: `True` multiplies directly, `False` routes through `balanced_product` to move
+the exponent onto a below-normal weight, and the mask and its derivative must survive
+either. `False` is what the collective scalarization runs with, so it is not a
+hypothetical branch.
 """
 
 import jax
@@ -24,47 +32,78 @@ import numpy as np
 import pytest
 
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.regime_building.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import zero_safe_weighted_term
+
+# Both settings of the subnormal flag must satisfy every property in this module.
+ACCOUNTED = pytest.mark.parametrize(
+    "accounted", [True, False], ids=["accounted", "unaccounted"]
+)
 
 
+@ACCOUNTED
 @pytest.mark.parametrize("weight", [0.0, 0.25, 1.0])
-def test_derivative_in_the_weight_is_the_value_including_at_zero(weight):
+def test_derivative_in_the_weight_is_the_value_including_at_zero(weight, accounted):
     """``d/dw [w * v] == v`` for finite ``v``, at ``w == 0`` as much as anywhere."""
-    grad = jax.grad(lambda w: zero_safe_weighted_term(w, jnp.asarray(7.0)))
+    grad = jax.grad(
+        lambda w: zero_safe_weighted_term(
+            weight=w, value=jnp.asarray(7.0), subnormal_is_accounted_for=accounted
+        )
+    )
     assert float(grad(jnp.asarray(weight))) == pytest.approx(7.0)
 
 
+@ACCOUNTED
 @pytest.mark.parametrize("value", [-jnp.inf, jnp.inf, jnp.nan])
-def test_zero_weight_still_annihilates_a_nonfinite_value(value):
+def test_zero_weight_still_annihilates_a_nonfinite_value(value, accounted):
     """The load-bearing property: a zero weight kills any value, never yielding nan."""
-    got = zero_safe_weighted_term(jnp.asarray(0.0), jnp.asarray(value))
+    got = zero_safe_weighted_term(
+        weight=jnp.asarray(0.0),
+        value=jnp.asarray(value),
+        subnormal_is_accounted_for=accounted,
+    )
     assert float(got) == 0.0
 
 
-def test_a_nonzero_weight_still_propagates_an_infinite_value():
+@ACCOUNTED
+def test_a_nonzero_weight_still_propagates_an_infinite_value(accounted):
     """Only the ZERO-weight case is neutralized; -inf must survive a live weight."""
-    got = zero_safe_weighted_term(jnp.asarray(1.0), jnp.asarray(-jnp.inf))
+    got = zero_safe_weighted_term(
+        weight=jnp.asarray(1.0),
+        value=jnp.asarray(-jnp.inf),
+        subnormal_is_accounted_for=accounted,
+    )
     assert float(got) == -jnp.inf
 
 
-def test_values_are_numerically_equal_to_the_unrestricted_mask():
+@ACCOUNTED
+def test_values_are_numerically_equal_to_the_unrestricted_mask(accounted):
     """Restricting the mask to non-finite values moves no finite result.
 
     `0 * v == 0` exactly for finite `v`, so masking it or not cannot change the
     product -- which is why this fix is gradient-only and carries no numerical risk.
+
+    Every operand here is normal, so moving an exponent between them is exact and
+    the `unaccounted` case must land on the same numbers as the direct multiply.
     """
     weights = jax.random.normal(jax.random.PRNGKey(0), (10_000,)).at[::7].set(0.0)
     values = jax.random.normal(jax.random.PRNGKey(1), (10_000,)) * 1e3
 
     unrestricted = weights * jnp.where(weights == 0, 0.0, values)
-    assert jnp.array_equal(zero_safe_weighted_term(weights, values), unrestricted)
+    got = zero_safe_weighted_term(
+        weight=weights, value=values, subnormal_is_accounted_for=accounted
+    )
+    assert jnp.array_equal(got, unrestricted)
 
     # ...and a -inf parked on every zero-weight node still produces no nan.
     with_infs = values.at[::7].set(-jnp.inf)
-    assert not bool(jnp.isnan(zero_safe_weighted_term(weights, with_infs)).any())
+    with_infs_got = zero_safe_weighted_term(
+        weight=weights, value=with_infs, subnormal_is_accounted_for=accounted
+    )
+    assert not bool(jnp.isnan(with_infs_got).any())
 
 
-def test_the_equality_above_is_numerical_and_not_bitwise_at_signed_zero():
+@ACCOUNTED
+def test_the_equality_above_is_numerical_and_not_bitwise_at_signed_zero(accounted):
     """Pin the ONE case where the two forms differ in bits: `+0` weight, negative value.
 
     This test exists because the assertion above was originally named "bit_identical"
@@ -80,7 +119,11 @@ def test_the_equality_above_is_numerical_and_not_bitwise_at_signed_zero():
     """
     weight, value = jnp.asarray(0.0), jnp.asarray(-7.0)
 
-    restricted = np.asarray(zero_safe_weighted_term(weight, value))
+    restricted = np.asarray(
+        zero_safe_weighted_term(
+            weight=weight, value=value, subnormal_is_accounted_for=accounted
+        )
+    )
     unrestricted = np.asarray(weight * jnp.where(weight == 0, 0.0, value))
 
     assert restricted == unrestricted == 0.0  # numerically equal ...

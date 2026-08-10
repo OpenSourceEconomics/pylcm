@@ -41,7 +41,8 @@ from _lcm.regime_building.ndimage import (
     _sum_all,
 )
 from _lcm.regime_building.Q_and_F import _sum_regime_mixture
-from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
+from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
@@ -127,7 +128,9 @@ def _raw_corner_sum_interpolator(
 def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight():
     weight = jnp.array([0.0, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, 4.0])
-    result = zero_safe_weighted_term(weight, value)
+    result = zero_safe_weighted_term(
+        weight=weight, value=value, subnormal_is_accounted_for=False
+    )
     assert bool(jnp.all(jnp.isfinite(result)))
     np.testing.assert_allclose(np.asarray(result), [0.0, 3.0, 2.0])
 
@@ -136,7 +139,9 @@ def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
     # No weight is exactly zero -> byte-identical to the naive product.
     weight = jnp.array([0.2, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, jnp.inf])
-    result = zero_safe_weighted_term(weight, value)
+    result = zero_safe_weighted_term(
+        weight=weight, value=value, subnormal_is_accounted_for=False
+    )
     naive = weight * value
     np.testing.assert_array_equal(np.asarray(result), np.asarray(naive))
 
@@ -429,7 +434,12 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
         left_fold = float(
             jax.jit(
                 lambda w, v: _old_left_fold_mixture(
-                    [zero_safe_weighted_term(w[i], v[i]) for i in order]
+                    [
+                        zero_safe_weighted_term(
+                            weight=w[i], value=v[i], subnormal_is_accounted_for=False
+                        )
+                        for i in order
+                    ]
                 )
             )(w, v)
         )
@@ -578,7 +588,12 @@ def _old_name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatN
     order = sorted(range(len(names)), key=lambda i: names[i])
     probs = jnp.stack([w[i] for i in order], axis=0)
     values = jnp.stack([v[i] for i in order], axis=0)
-    return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
+    return jnp.sum(
+        zero_safe_weighted_term(
+            weight=probs, value=values, subnormal_is_accounted_for=False
+        ),
+        axis=0,
+    )
 
 
 def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
