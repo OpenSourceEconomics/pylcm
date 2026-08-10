@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import _no_save_corner
+from tests.solution._crra_preferences import crra_preferences
 
 CRRA = 2.0
 DISCOUNT_FACTOR = 0.95
@@ -26,7 +27,7 @@ def _corner_value(coh: jnp.ndarray) -> np.ndarray:
     _endog, value, _policy, _marginal = _no_save_corner(
         endog_grid=jnp.arange(coh.shape[0], dtype=jnp.result_type(1.0)),
         coh=coh,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         discount_factor=DISCOUNT_FACTOR,
         continuation=jnp.zeros_like(coh),
     )

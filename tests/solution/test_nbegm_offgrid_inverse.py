@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_multi_interval_step, nbegm_unified_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.solution._nbegm_step_helpers import crra_utility, dense_brute_value
 
 
@@ -55,7 +56,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=crra_preferences(crra),
         gross_return=gross_return,
         income=income,
         coh_slopes=coh_slopes,
@@ -119,7 +120,7 @@ def test_unified_step_drops_off_grid_inverse_at_the_upper_boundary():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=crra_preferences(crra),
         gross_return=gross_return,
         income=income,
         coh_slopes=coh_slopes,

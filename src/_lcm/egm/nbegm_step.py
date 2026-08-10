@@ -50,12 +50,12 @@ from _lcm.egm.ez_kernel import (
     ez_marginal_of_resource,
     ez_period_value,
 )
-from _lcm.egm.nbegm_crra import crra_utility
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
     segment_ids_from_folds,
 )
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import EnvelopeArithmetic, envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
@@ -91,7 +91,7 @@ def nbegm_multi_interval_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     coh_slopes: Float1D,
@@ -139,7 +139,8 @@ def nbegm_multi_interval_step(
             to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         gross_return: Gross liquid return `1 + r`.
         income: Deterministic income added to next-period liquid.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
@@ -168,7 +169,9 @@ def nbegm_multi_interval_step(
     value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
-    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * gross_return * marginal_next
+    )
     coh_endog = consumption + savings_grid
     # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
     # beyond the grid; the boundary segments' slopes continue the inversion there,
@@ -180,8 +183,8 @@ def nbegm_multi_interval_step(
     # interval's at the recovered liquid (envelope theorem through the budget).
     endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
     slope_endog = coh_slopes[endog_interval]
-    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
-    marginal_endog = slope_endog * consumption ** (-crra)
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = slope_endog * preferences.marginal_utility(consumption)
 
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
     lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
@@ -200,7 +203,7 @@ def nbegm_multi_interval_step(
             next_liquid_grid=next_liquid_grid,
             next_value=next_value,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             gross_return=gross_return,
             income=income,
         )
@@ -242,7 +245,7 @@ def nbegm_multi_interval_step(
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
         coh=coh_grid,
-        crra=crra,
+        preferences=preferences,
         discount_factor=discount_factor,
         continuation=value_at_income,
         coh_slope=coh_slopes[interval_of_grid],
@@ -1258,7 +1261,7 @@ def _floor_optimum(
     next_liquid_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     n_dense: int = 512,
@@ -1273,7 +1276,7 @@ def _floor_optimum(
     fractions = jnp.linspace(1e-4, 1.0, n_dense)
     consumption = fractions * floor_coh
     next_liquid = gross_return * (floor_coh - consumption) + income
-    value = crra_utility(consumption, crra) + discount_factor * jnp.interp(
+    value = preferences.utility(consumption) + discount_factor * jnp.interp(
         next_liquid, next_liquid_grid, next_value
     )
     best = jnp.argmax(value)
@@ -1288,7 +1291,7 @@ def nbegm_discrete_envelope_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     choices: tuple[Mapping[str, Float1D], ...],
@@ -1321,7 +1324,8 @@ def nbegm_discrete_envelope_step(
             to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         gross_return: Gross liquid return `1 + r`.
         income: Deterministic income added to next-period liquid.
         choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
@@ -1350,7 +1354,7 @@ def nbegm_discrete_envelope_step(
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             gross_return=gross_return,
             income=income,
             coh_slopes=choice["coh_slopes"],
@@ -1394,7 +1398,7 @@ def nbegm_unified_step(  # noqa: PLR0915
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     coh_slopes: Float1D,
@@ -1429,7 +1433,8 @@ def nbegm_unified_step(  # noqa: PLR0915
             to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         gross_return: Gross liquid return `1 + r`.
         income: Deterministic income added to next-period liquid.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
@@ -1468,10 +1473,12 @@ def nbegm_unified_step(  # noqa: PLR0915
     marginal_next = _jump_aware_interp(
         next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
-    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * gross_return * marginal_next
+    )
     degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
-    interp_value = crra_utility(consumption, crra) + discount_factor * value_next
+    interp_value = preferences.utility(consumption) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
         jnp.asarray(income),
         next_liquid_grid,
@@ -1500,7 +1507,9 @@ def nbegm_unified_step(  # noqa: PLR0915
         endog_interval = jnp.clip(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
-        marginal_endog = coh_slopes[endog_interval] * consumption ** (-crra)
+        marginal_endog = coh_slopes[endog_interval] * preferences.marginal_utility(
+            consumption
+        )
         lower = -jnp.inf if start == 0 else breakpoints[start - 1]
         upper = jnp.inf if end == last_interval else breakpoints[end]
         in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
@@ -1524,7 +1533,7 @@ def nbegm_unified_step(  # noqa: PLR0915
         s0 = _no_save_corner(
             endog_grid=liquid_grid,
             coh=coh_case_grid,
-            crra=crra,
+            preferences=preferences,
             discount_factor=discount_factor,
             continuation=value_at_income,
             coh_slope=coh_slopes[case_grid_interval],
@@ -1560,7 +1569,7 @@ def nbegm_unified_step(  # noqa: PLR0915
                     coh_case_grid=coh_case_grid,
                     next_value=next_value,
                     discount_factor=discount_factor,
-                    crra=crra,
+                    preferences=preferences,
                     gross_return=gross_return,
                     income=income,
                     asset_limit=cliff,
@@ -1606,7 +1615,7 @@ def _boundary_targeting_coh(
     coh_case_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
@@ -1666,13 +1675,13 @@ def _boundary_targeting_coh(
     s_kink = (target - income) / gross_return
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
-        crra_utility(kink_consumption, crra) + discount_factor * value_at_target
+        preferences.utility(kink_consumption) + discount_factor * value_at_target
     )
     # The targeted saving is fixed to the cliff, so consumption moves with the
     # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
-    # liquid is `coh_slope * c**(-crra)`, matching the interior and corner
+    # liquid is `coh_slope * u'(c)`, matching the interior and corner
     # candidates.
-    kink_marginal = coh_slope * kink_consumption ** (-crra)
+    kink_marginal = coh_slope * preferences.marginal_utility(kink_consumption)
     kink_valid = valid & (kink_consumption > 0.0) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
@@ -1691,7 +1700,7 @@ def nbegm_recurring_jump_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy_levels: Float1D,
@@ -1721,7 +1730,8 @@ def nbegm_recurring_jump_step(
             to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         gross_return: Gross liquid return `1 + r`.
         income: Deterministic income added to next-period liquid.
         subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
@@ -1762,7 +1772,7 @@ def nbegm_recurring_jump_step(
                 next_liquid_grid=next_liquid_grid,
                 savings_grid=savings_grid,
                 discount_factor=discount_factor,
-                crra=crra,
+                preferences=preferences,
                 gross_return=gross_return,
                 income=income,
                 subsidy=subsidy_levels[k],
@@ -1804,7 +1814,7 @@ def _recurring_jump_case(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
@@ -1826,14 +1836,16 @@ def _recurring_jump_case(
     marginal_next = _jump_aware_interp(
         next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
-    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * gross_return * marginal_next
+    )
     liquid_endog = jnp.where(
         _degenerate_inversion(marginal=marginal_next, consumption=consumption),
         jnp.nan,
         consumption + savings_grid - subsidy,
     )
-    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
-    marginal_endog = consumption ** (-crra)
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = preferences.marginal_utility(consumption)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
     next_segment = _next_segment_id(interior_segment)
 
@@ -1857,7 +1869,7 @@ def _recurring_jump_case(
                 next_liquid_grid=next_liquid_grid,
                 next_value=next_value,
                 discount_factor=discount_factor,
-                crra=crra,
+                preferences=preferences,
                 gross_return=gross_return,
                 income=income,
                 subsidy=subsidy,
@@ -1890,7 +1902,7 @@ def _recurring_jump_case(
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
         coh=liquid_grid + subsidy,
-        crra=crra,
+        preferences=preferences,
         discount_factor=discount_factor,
         continuation=value_at_income,
     )
@@ -1971,7 +1983,7 @@ def nbegm_one_asset_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     return_liquid: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy_when: ScalarFloat | float,
@@ -1993,7 +2005,8 @@ def nbegm_one_asset_step(
             to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         return_liquid: Liquid net return.
         income: Deterministic income added to next-period liquid.
         subsidy_when: Subsidy into cash-on-hand where the predicate holds.
@@ -2019,7 +2032,7 @@ def nbegm_one_asset_step(
         next_liquid_grid=next_liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         return_liquid=return_liquid,
         income=income,
         subsidy=subsidy_when,
@@ -2034,7 +2047,7 @@ def nbegm_one_asset_step(
         next_liquid_grid=next_liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         return_liquid=return_liquid,
         income=income,
         subsidy=subsidy_otherwise,
@@ -2098,7 +2111,7 @@ def _case_step(
     next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     return_liquid: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
@@ -2132,14 +2145,16 @@ def _case_step(
         next_liquid, next_liquid_grid, next_marginal, asset_limit, equality_owner
     )
 
-    consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * gross_return * marginal_next
+    )
     liquid_endog = jnp.where(
         _degenerate_inversion(marginal=marginal_next, consumption=consumption),
         jnp.nan,
         consumption + savings_grid - subsidy,
     )
-    value_endog = crra_utility(consumption, crra) + discount_factor * value_next
-    marginal_endog = consumption ** (-crra)
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = preferences.marginal_utility(consumption)
     # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
     # so the interior path may carry several monotone segments.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
@@ -2152,7 +2167,7 @@ def _case_step(
             next_liquid_grid=next_liquid_grid,
             next_value=next_value,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             gross_return=gross_return,
             income=income,
             subsidy=subsidy,
@@ -2189,7 +2204,7 @@ def _case_step(
     s0_grid, s0_value, s0_consumption, s0_marginal = _no_save_corner(
         endog_grid=liquid_grid,
         coh=liquid_grid + subsidy,
-        crra=crra,
+        preferences=preferences,
         discount_factor=discount_factor,
         continuation=value_at_income,
     )
@@ -2221,7 +2236,7 @@ def _boundary_targeting_branch(
     next_liquid_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     gross_return: ScalarFloat | float,
     income: ScalarFloat | float,
     subsidy: ScalarFloat | float,
@@ -2284,9 +2299,9 @@ def _boundary_targeting_branch(
     s_kink = (target - income) / gross_return
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
-        crra_utility(kink_consumption, crra) + discount_factor * value_at_target
+        preferences.utility(kink_consumption) + discount_factor * value_at_target
     )
-    kink_marginal = kink_consumption ** (-crra)
+    kink_marginal = preferences.marginal_utility(kink_consumption)
     kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
@@ -2437,7 +2452,7 @@ def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
     A flat continuation has no marginal value of liquid, so the inversion sends
     consumption to infinity and the recovered point is spurious. The test is on
     what the inversion produced, not on the marginal's magnitude: marginal
-    utility carries the units of `c**(-crra)`, so a dollar-denominated model at
+    utility carries the units of `u'(c)`, so a dollar-denominated model at
     a moderate risk aversion has genuinely tiny marginals everywhere while each
     inversion stays perfectly well conditioned. A fixed absolute floor would
     discard that model's whole Euler branch and leave a corner-only policy the
@@ -2485,7 +2500,7 @@ def _no_save_corner(
     *,
     endog_grid: Float1D,
     coh: Float1D,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     discount_factor: ScalarFloat | float,
     continuation: FloatND,
     coh_slope: Float1D | ScalarFloat | float = 1.0,
@@ -2494,11 +2509,12 @@ def _no_save_corner(
     """Build the no-save (`s = 0`) corner, dead where the budget is non-positive.
 
     Consuming the whole cash-on-hand is an action only where cash-on-hand is
-    positive, and CRRA utility does not report the difference on its own:
+    positive, and a felicity does not report the difference on its own:
 
-    - `coh < 0` with an even-integer `crra` returns a *positive* number, larger
-      than `u(c)` at every feasible `c`, so the corner wins the envelope
-      wherever it brackets and publishes a negative consumption policy;
+    - a negative cash-on-hand can return a finite number — a CRRA felicity at an
+      even-integer coefficient returns a *positive* one, larger than `u(c)` at
+      every feasible `c` — so the corner wins the envelope wherever it brackets
+      and publishes a negative consumption policy;
     - `coh == 0` returns `-inf` with an `+inf` marginal, and the envelope's own
       interpolation turns the pair into NaN across the bracketed cell.
 
@@ -2509,7 +2525,8 @@ def _no_save_corner(
     Args:
         endog_grid: Liquid points the corner is defined on.
         coh: Cash-on-hand at each of those points.
-        crra: Coefficient of relative risk aversion.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
         discount_factor: Discount factor.
         continuation: Next period's value at the corner's post-decision node.
         coh_slope: `d coh / d liquid` at each point, for the marginal channel.
@@ -2524,8 +2541,8 @@ def _no_save_corner(
     safe = jnp.where(feasible, coh, 1.0)
     return mask_dead_candidates(
         endog_grid=endog_grid,
-        value=crra_utility(safe, crra) + discount_factor * continuation,
+        value=preferences.utility(safe) + discount_factor * continuation,
         policy=coh,
-        marginal=coh_slope * safe ** (-crra),
+        marginal=coh_slope * preferences.marginal_utility(safe),
         valid=feasible & valid,
     )

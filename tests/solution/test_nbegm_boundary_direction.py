@@ -15,6 +15,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 from _lcm.egm.nbegm_step import nbegm_one_asset_step, nbegm_unified_step
+from tests.solution._crra_preferences import crra_preferences
 
 ASSET_LIMIT = 1.0
 DISCOUNT_FACTOR = 0.95
@@ -59,7 +60,7 @@ def _solve_one_step() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=DISCOUNT_FACTOR,
-        crra=1.0,
+        preferences=crra_preferences(1.0),
         return_liquid=0.0,
         income=0.0,
         subsidy_when=0.0,
@@ -112,7 +113,7 @@ def _solve_one_piecewise_affine_step() -> tuple[np.ndarray, np.ndarray, np.ndarr
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=DISCOUNT_FACTOR,
-        crra=1.0,
+        preferences=crra_preferences(1.0),
         gross_return=1.0,
         income=0.0,
         coh_slopes=jnp.ones(2),

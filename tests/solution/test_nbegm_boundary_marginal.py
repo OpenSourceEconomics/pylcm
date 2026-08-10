@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import _boundary_targeting_coh
+from tests.solution._crra_preferences import crra_preferences
 
 
 def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
@@ -31,7 +32,7 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=0.95,
-        crra=crra,
+        preferences=crra_preferences(crra),
         gross_return=1.0,
         income=0.0,
         asset_limit=3.0,

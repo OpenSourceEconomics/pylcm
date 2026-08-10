@@ -21,6 +21,7 @@ from _lcm.egm.nbegm_step import (
     _recurring_jump_case,
     nbegm_multi_interval_step,
 )
+from tests.solution._crra_preferences import crra_preferences
 from tests.solution._nbegm_step_helpers import crra_utility, dense_brute_value
 
 CRRA = 2.0
@@ -75,7 +76,7 @@ def test_case_step_publishes_nan_where_cash_on_hand_is_non_positive():
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         return_liquid=RETURN_LIQUID,
         income=INCOME,
         subsidy=0.0,
@@ -94,7 +95,7 @@ def test_case_step_matches_the_dense_brute_on_the_feasible_nodes():
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         return_liquid=RETURN_LIQUID,
         income=INCOME,
         subsidy=0.0,
@@ -117,7 +118,7 @@ def test_multi_interval_step_publishes_nan_where_cash_on_hand_is_non_positive():
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         gross_return=GROSS_RETURN,
         income=INCOME,
         coh_slopes=jnp.asarray([1.0]),
@@ -136,7 +137,7 @@ def test_recurring_jump_case_marks_its_non_positive_corner_dead():
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         gross_return=GROSS_RETURN,
         income=INCOME,
         subsidy=0.0,

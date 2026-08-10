@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_multi_interval_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.solution._nbegm_step_helpers import dense_brute_value
 
 CRRA = 3.0
@@ -40,7 +41,7 @@ def _solve_at_scale(scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         gross_return=GROSS_RETURN,
         income=0.5 * scale,
         coh_slopes=jnp.asarray([1.0]),
