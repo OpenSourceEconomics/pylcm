@@ -99,7 +99,7 @@ class EGM(Solver):
         The regime must also keep the default Koopmans aggregator: the Euler
         inversion the step runs is the one that aggregator implies.
         """
-        from _lcm.egm.preferences import (  # noqa: PLC0415
+        from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_custom_koopmans_aggregator,
         )
 
