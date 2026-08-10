@@ -634,6 +634,103 @@ def _significand_in_unit_range(values: FloatND) -> FloatND:
     return jax.lax.bitcast_convert_type(normalized | unit_exponent, arr.dtype)
 
 
+def scaled_down_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
+    """Return `values * 2**shift` for a non-positive integer `shift`.
+
+    This is the downward-only counterpart of `scaled_by_power_of_two`.
+    `jnp.ldexp` is deliberately general: it decomposes every value with
+    `frexp` and rebuilds it through floating-point powers. In the target-node
+    expectation the shift is known to be non-positive, and that general graph
+    runs twice over the largest continuation surface.
+
+    Scaling down needs only integer work on the IEEE representation. A normal
+    result is obtained by subtracting from the exponent field. If the result
+    crosses into the subnormal range, the explicit significand is shifted right
+    with round-to-nearest, ties-to-even. Zeros, infinities and NaNs are returned
+    unchanged. The result therefore agrees bit-for-bit with an IEEE `ldexp`
+    for every non-positive shift, including the normal/subnormal boundary,
+    without materialising a subnormal scaling operand.
+
+    The map is linear in ``values`` away from the usual rounding boundaries, so
+    its custom derivative multiplies by the same exact power of two. The tangent
+    remains an ordinary multiplication and can be transposed by reverse mode.
+
+    Args:
+        values: Values to scale.
+        shift: Integer powers of two. Every entry must be non-positive.
+
+    Returns:
+        `values * 2**shift` with IEEE round-to-nearest-even semantics.
+
+    """
+    return _scaled_down_with_tangent(jnp.asarray(values), shift)
+
+
+def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
+    """Scale downward by editing the exponent/significand fields directly."""
+    arr = jnp.asarray(values)
+    int_dtype = _int_dtype(arr)
+    mantissa_bits = _mantissa_bits(arr)
+    shift_arr = jnp.asarray(shift, dtype=jnp.int32)
+
+    bits = jax.lax.bitcast_convert_type(arr, int_dtype)
+    magnitude = _magnitude_bits(arr)
+    sign = bits - magnitude
+    exponent = magnitude >> mantissa_bits
+    mantissa_mask = jnp.asarray((1 << mantissa_bits) - 1, dtype=int_dtype)
+    mantissa = magnitude & mantissa_mask
+
+    target_exponent = exponent.astype(jnp.int32) + shift_arr
+    stays_normal = target_exponent > 0
+    normal_magnitude = magnitude + (shift_arr.astype(int_dtype) << mantissa_bits)
+
+    # Below the normal range, restore a normal number's implicit leading bit and
+    # shift the full significand. A subnormal already carries every bit
+    # explicitly, so its shift starts from the stored mantissa.
+    implicit_bit = jnp.asarray(1 << mantissa_bits, dtype=int_dtype)
+    significand = jnp.where(exponent == 0, mantissa, mantissa | implicit_bit)
+    distance = jnp.where(exponent == 0, -shift_arr, 1 - target_exponent)
+
+    # Dynamic shifts larger than the significand width are clamped for the
+    # integer operations below and are set to zero afterwards. At exactly one
+    # half unit, ties-to-even depends on the retained least-significant bit.
+    safe_distance = jnp.clip(distance, 1, mantissa_bits + 1).astype(int_dtype)
+    quotient = significand >> safe_distance
+    one = jnp.ones_like(significand)
+    discarded_mask = (one << safe_distance) - one
+    discarded = significand & discarded_mask
+    halfway = one << (safe_distance - one)
+    round_up = (discarded > halfway) | (
+        (discarded == halfway) & ((quotient & one) != 0)
+    )
+    rounded = quotient + round_up.astype(int_dtype)
+    rounded = jnp.where(distance > mantissa_bits + 1, jnp.zeros_like(rounded), rounded)
+    subnormal_magnitude = jnp.where(distance == 0, magnitude, rounded)
+
+    output_magnitude = jnp.where(stays_normal, normal_magnitude, subnormal_magnitude)
+    exponent_all_ones = (1 << (8 * arr.dtype.itemsize - mantissa_bits - 1)) - 1
+    keep_unchanged = (magnitude == 0) | (exponent == exponent_all_ones)
+    output_bits = jnp.where(keep_unchanged, bits, sign | output_magnitude)
+    return jax.lax.bitcast_convert_type(output_bits, arr.dtype)
+
+
+def _scaled_down_jvp(
+    primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
+) -> tuple[FloatND, FloatND]:
+    """Differentiate downward scaling as multiplication by `2**shift`."""
+    values, shift = primals
+    values_dot, _ = tangents
+    slope = _scaled_down_bits(jnp.ones_like(values), shift)
+    return (
+        _scaled_down_with_tangent(values, shift),
+        values_dot * slope,
+    )
+
+
+_scaled_down_with_tangent = jax.custom_jvp(_scaled_down_bits)
+_scaled_down_with_tangent.defjvp(_scaled_down_jvp)
+
+
 def scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     """Return `values * 2**shift`, exactly, for an integer `shift`.
 
