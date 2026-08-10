@@ -23,6 +23,27 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
+def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
+    """Return the entry-support bullet, naming the processes this regime enters.
+
+    Args:
+        entered_process_names: Processes entered through a declared law.
+
+    Returns:
+        The bullet, or an empty string when the regime enters no process.
+
+    """
+    if not entered_process_names:
+        return ""
+    named = ", ".join(f"'{name}'" for name in sorted(entered_process_names))
+    return (
+        f"- An entry law named a value outside the support of {named}, which "
+        f"has no representation on that process's nodes. The weights are "
+        f"poisoned there so the value cannot pass silently; widen the support "
+        f"or enter inside it.\n"
+    )
+
+
 def validate_V(
     *,
     V_arr: FloatND,
@@ -34,6 +55,7 @@ def validate_V(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
     flat_params: FlatRegimeParams | None = None,
     period: int | None = None,
+    entered_process_names: tuple[str, ...] = (),
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -54,6 +76,9 @@ def validate_V(
         next_regime_to_V_arr: Next-period value function arrays.
         flat_params: Flat regime parameters.
         period: The current period index (forwarded to diagnostic closure).
+        entered_process_names: Processes this regime enters through a declared
+            law. Named in the message, because leaving such a process's support
+            is the one NaN cause the engine mints deliberately.
 
     The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
     partitions it across the V-array's devices instead of gathering V onto the
@@ -81,7 +106,8 @@ def validate_V(
         "- The utility function returned NaN (e.g. log of a non-positive "
         "argument).\n"
         "- The regime transition function returned NaN probabilities "
-        "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
+        "(e.g. from a NaN survival probability or a NaN fixed param).\n"
+        f"{_entry_support_cause(entered_process_names)}\n"
         "See the [NOTE] below for the per-intermediate / per-axis "
         "breakdown produced by `compute_intermediates`. When `log_path` "
         "is configured, an additional [NOTE] points to the on-disk "
