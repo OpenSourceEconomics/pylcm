@@ -10,20 +10,27 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import (
+    binades_above_smallest_normal,
+    binades_to_fit_product,
     is_live,
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
+    scaled_down_by_power_of_two,
 )
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import (
+    RegimeInitializationError,
+    ScaledLotteryDifferentiationError,
+)
 from lcm.typing import FloatND, IntND
 
 # Reserved argument name through which transform callables receive values.
@@ -225,7 +232,9 @@ class LinearExpectation(CertaintyEquivalent):
         value_terms, weight_terms = _scaled_lottery_terms(
             values=values, coefficients=coefficients, shifts=shifts
         )
-        return jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1)
+        return _states_no_derivative(
+            jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1)
+        )
 
 
 @beartype(conf=REGIME_CONF)
@@ -403,9 +412,11 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         value_terms, weight_terms = _scaled_lottery_terms(
             values=transformed, coefficients=coefficients, shifts=shifts
         )
-        return self.inverse(
-            value=jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1),
-            **_args_for(self.inverse, params),
+        return _states_no_derivative(
+            self.inverse(
+                value=jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1),
+                **_args_for(self.inverse, params),
+            )
         )
 
 
@@ -543,12 +554,54 @@ class PowerMean(QuasiArithmeticMean):
         lottery is therefore priced at whatever spread it arrives with, and
         nothing is understated.
         """
-        return weighted_power_mean(
-            values=values,
-            weights=coefficients,
-            exponent=1.0 - params["risk_aversion"],
-            shifts=shifts,
+        return _states_no_derivative(
+            weighted_power_mean(
+                values=values,
+                weights=coefficients,
+                exponent=1.0 - params["risk_aversion"],
+                shifts=shifts,
+            )
         )
+
+
+def _identity(value: FloatND) -> FloatND:
+    """Return `value` unchanged, and refuse to be differentiated.
+
+    A scaled reduction's whole reason to exist is that the format cannot state
+    its weights as ordinary numbers. A derivative with respect to such a weight
+    is in the same position, and the derivative machinery has no scale to work
+    on: it would materialize the rare quantity as an ordinary float, get zero,
+    and hand back a gradient indistinguishable from a genuinely flat objective.
+
+    Refusing at trace time is what makes that visible. It costs the primal
+    nothing — under `jit` or plain evaluation this is the identity — and it
+    leaves the ordinary `aggregate` route, where every weight is a number the
+    format holds, differentiable as before.
+    """
+    return value
+
+
+def _scaled_reduction_jvp(
+    primals: tuple[FloatND, ...],
+    tangents: tuple[FloatND, ...],
+) -> tuple[FloatND, FloatND]:
+    """Raise rather than report a derivative the scale was needed to state."""
+    del primals, tangents
+    msg = (
+        "`aggregate_scaled` states no derivative: its lottery carries weights "
+        "as `(coefficient, shift)` pairs precisely because no ordinary float "
+        "states the probability, and the same holds of a derivative with "
+        "respect to one. Differentiate the model through a route whose weights "
+        "are ordinary numbers, or reduce the lottery with `aggregate`."
+    )
+    raise ScaledLotteryDifferentiationError(msg)
+
+
+# Built by call rather than by decorator: `@jax.custom_jvp` produces a callable
+# instance, which the package claw rebinds to a bound method of its `__call__`,
+# losing `defjvp` along with everything else the object knows.
+_states_no_derivative = jax.custom_jvp(_identity)
+_states_no_derivative.defjvp(_scaled_reduction_jvp)
 
 
 def _args_for(
@@ -564,20 +617,44 @@ def _scaled_lottery_terms(
     """Return a lottery's value terms and weight terms on one shared scale.
 
     A node's contribution to a mean is `c * 2**-s * v`, and the order those
-    three are combined in decides whether the node survives. Forming the weight
-    `c * 2**-s` first is what loses it: the weight of a node many orders below
-    the likeliest one is not representable, so it becomes zero and takes its
-    value with it — although the *product* it was heading for may be an ordinary
-    number, which is precisely the case where the node changes the answer.
-    Applying the scale to `c * v` instead keeps it, because a rare node earns a
-    place in a mean by having a value large enough to offset its probability.
+    three are combined in decides whether the node survives. Two orders each
+    lose it at one end of the range:
 
-    Both terms take the same shift, so the scale cancels in their ratio and the
-    caller divides them directly. The shift is the smallest the row carries, per
-    lottery rather than per batch, so the likeliest node's weight lands at its
-    own magnitude and no unrelated lottery beside it can move it. A dead node
-    takes no part in that choice: an unreachable node carrying a large shift
-    would otherwise push every live weight down with it.
+    - forming the weight `c * 2**-s` first loses a rare node, because the
+      weight of a node many binades below the likeliest one is not
+      representable and becomes zero, taking its value with it — although the
+      *product* it was heading for may be an ordinary number, which is
+      precisely the case where the node changes the answer;
+    - forming `c * v` first loses a node whose coefficient has been normalized
+      above one and whose value sits near the top of the range, because that
+      intermediate overflows to infinity before any scale is applied to bring
+      it back.
+
+    Splitting the scale covers both. The coefficient absorbs as much of the
+    downward shift as it can while staying normal, the product absorbs the
+    remainder. Neither an unrepresentable weight nor an overflowing product is
+    ever materialized, and a rare node earns its place in the mean exactly when
+    its value is large enough to offset its probability.
+
+    Both returned terms carry the same shift, so the scale cancels in their
+    ratio and the caller divides them directly. The shift is the smallest the
+    row carries, per lottery rather than per batch, so the likeliest node's
+    weight lands at its own magnitude and no unrelated lottery beside it can
+    move it. A dead node takes no part in that choice: an unreachable node
+    carrying a large shift would otherwise push every live weight down with it.
+
+    The row's own weight total joins that shift, scaled against the largest
+    value the row carries, so that the weighted sum cannot reach infinity while
+    the mean it states is an ordinary number. Two equally likely nodes near the
+    top of the range are the case: their mean is comfortably representable, but
+    the numerator alone is not. That correction is the smallest one that fits,
+    because every binade spent at the top is one the rarest term of the same
+    sum loses at the bottom.
+
+    A coefficient that is not a probability at all — negative, infinite, or
+    NaN — is not a dead node and is not silently dropped. It poisons its whole
+    row, so a malformed lottery is visible in the result rather than reduced to
+    a plausible number.
 
     Args:
         values: Continuation values of the lottery along the last axis.
@@ -593,20 +670,43 @@ def _scaled_lottery_terms(
     values = jnp.asarray(values)
     shifts = jnp.broadcast_to(jnp.asarray(shifts), jnp.shape(coefficients))
 
-    live = is_live(coefficients)
+    live = is_live(coefficients) & jnp.isfinite(coefficients)
+    invalid = is_negative(coefficients) | (
+        ~jnp.isfinite(coefficients) & ~is_represented_zero(coefficients)
+    )
     unusable = jnp.max(shifts, axis=-1, keepdims=True)
     common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
-    relative = (shifts - common).astype(jnp.int32)
+    scale = (common - shifts).astype(jnp.int32)
 
-    weight_terms = jnp.where(live, jnp.ldexp(coefficients, -relative), 0.0)
-    value_terms = jnp.where(
+    on_common_scale = jnp.where(
         live,
-        jnp.ldexp(
-            zero_safe_weighted_term(
-                weight=coefficients, value=values, subnormal_is_accounted_for=True
-            ),
-            -relative,
-        ),
-        0.0,
+        scaled_down_by_power_of_two(coefficients, scale),
+        jnp.zeros_like(coefficients),
     )
-    return value_terms, weight_terms
+    total = jnp.sum(on_common_scale, axis=-1, keepdims=True)
+    largest = jnp.max(
+        jnp.where(live, jnp.abs(values), jnp.zeros_like(values)),
+        axis=-1,
+        keepdims=True,
+    )
+    full = scale - binades_to_fit_product(left=total, right=largest)
+
+    room = binades_above_smallest_normal(coefficients)
+    on_weight = jnp.maximum(full, -room)
+    scaled_coefficients = scaled_down_by_power_of_two(coefficients, on_weight)
+    products = zero_safe_weighted_term(
+        weight=scaled_coefficients,
+        value=values,
+        subnormal_is_accounted_for=False,
+    )
+    value_terms = scaled_down_by_power_of_two(products, full - on_weight)
+    weight_terms = scaled_down_by_power_of_two(coefficients, full)
+
+    value_terms = jnp.where(live, value_terms, jnp.zeros_like(value_terms))
+    weight_terms = jnp.where(live, weight_terms, jnp.zeros_like(weight_terms))
+    invalid_row = jnp.any(invalid, axis=-1, keepdims=True)
+    nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
+    return (
+        jnp.where(invalid_row, nan, value_terms),
+        jnp.where(invalid_row, nan, weight_terms),
+    )

@@ -38,7 +38,7 @@ state and merged by the branch-aware upper envelope; the boundary's
 strict/non-strict comparison split.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any, Literal
 
 import jax
@@ -311,7 +311,7 @@ def _invert_euler_over_savings(
     *,
     cont_marginal: Float1D,
     discount_factor: ScalarFloat,
-    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
 ) -> Float1D:
     """Recover the consumption action at every savings node via the Euler equation.
 
@@ -325,7 +325,7 @@ def _invert_euler_over_savings(
         return invert_euler(
             expected_marginal_continuation=node_marginal,
             discount_factor=discount_factor,
-            inverse_marginal_utility=inverse_marginal_utility,
+            inverse_marginal_utility=preferences.inverse_marginal_utility,
         )
 
     return jax.vmap(invert_one)(cont_marginal)
@@ -333,7 +333,7 @@ def _invert_euler_over_savings(
 
 def _ez_flow_power_structure(
     *,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     inverse_eis: ScalarFloat,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Log-domain Euler-inversion coefficients for a single-power period flow.
@@ -356,8 +356,8 @@ def _ez_flow_power_structure(
     numeric inverse instead.
     """
     one = jnp.asarray(1.0)
-    flow_scale = utility_of_action(one)
-    flow_power = jax.grad(utility_of_action)(one) / flow_scale
+    flow_scale = preferences.utility(one)
+    flow_power = preferences.marginal_utility(one) / flow_scale
     one_minus_rho = 1.0 - inverse_eis
     log_flow_coefficient = one_minus_rho * jnp.log(flow_scale) + jnp.log(flow_power)
     raw_exponent = flow_power * one_minus_rho - 1.0
@@ -382,8 +382,7 @@ def nbegm_multi_interval_step_savings(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -405,7 +404,7 @@ def nbegm_multi_interval_step_savings(
     read the regime's own utility: the consumption action solving the savings-node
     Euler equation comes from `inverse_marginal_utility` (the regime's analytic
     inverse, or a numeric inversion of `u'` built from the utility), the value adds
-    `utility_of_action(consumption)`, and the marginal value of liquid is the
+    `preferences.utility(consumption)`, and the marginal value of liquid is the
     cash-on-hand slope times `u'(consumption)` by the envelope theorem.
 
     The hard-borrowing corner (save nothing) lands on the lowest savings node, so
@@ -421,11 +420,10 @@ def nbegm_multi_interval_step_savings(
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
         discount_factor: Discount factor.
-        utility_of_action: The regime's period utility as a function of consumption,
-            with the ride-along cell's states and the utility params already bound.
-        inverse_marginal_utility: The regime's inverse marginal utility as a function
-            of the discounted expected marginal continuation, with the cell already
-            bound — `invert_euler` calls it to recover the consumption action.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -451,10 +449,9 @@ def nbegm_multi_interval_step_savings(
     # Under Epstein-Zin the continuation pair is `(nu, dnu/ds)` and the inversion,
     # period value, and envelope marginal read the recursive aggregator instead of
     # the additive `u + beta E[V']` form.
-    marginal_utility = jax.grad(utility_of_action)
     if inverse_eis is not None:
         log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
-            utility_of_action=utility_of_action, inverse_eis=inverse_eis
+            preferences=preferences, inverse_eis=inverse_eis
         )
         consumption = ez_consumption_from_euler(
             nu=cont_value,
@@ -468,7 +465,7 @@ def nbegm_multi_interval_step_savings(
         consumption = _invert_euler_over_savings(
             cont_marginal=cont_marginal,
             discount_factor=discount_factor,
-            inverse_marginal_utility=inverse_marginal_utility,
+            preferences=preferences,
         )
     coh_endog = consumption + savings_grid
     liquid_endog = _invert_coh_with_linear_extension(
@@ -478,7 +475,7 @@ def nbegm_multi_interval_step_savings(
     slope_endog = coh_slopes[endog_interval]
     if inverse_eis is not None:
         value_endog = ez_period_value(
-            flow=jax.vmap(utility_of_action)(consumption),
+            flow=preferences.utility(consumption),
             nu=cont_value,
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
@@ -491,10 +488,8 @@ def nbegm_multi_interval_step_savings(
             inverse_eis=inverse_eis,
         )
     else:
-        value_endog = (
-            jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
-        )
-        marginal_endog = slope_endog * jax.vmap(marginal_utility)(consumption)
+        value_endog = preferences.utility(consumption) + discount_factor * cont_value
+        marginal_endog = slope_endog * preferences.marginal_utility(consumption)
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
     # inversion diverges; drop those interior candidates.
@@ -516,7 +511,7 @@ def nbegm_multi_interval_step_savings(
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     if inverse_eis is not None:
         node_value_safe = ez_period_value(
-            flow=jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe),
+            flow=preferences.utility(node_consumption_safe),
             nu=cont_value[:, None],
             discount_factor=discount_factor,
             inverse_eis=inverse_eis,
@@ -530,10 +525,10 @@ def nbegm_multi_interval_step_savings(
         )
     else:
         node_value_safe = (
-            jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
+            preferences.utility(node_consumption_safe)
             + discount_factor * cont_value[:, None]
         )
-        node_marginal_safe = jax.vmap(jax.vmap(marginal_utility))(node_consumption_safe)
+        node_marginal_safe = preferences.marginal_utility(node_consumption_safe)
     node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
     node_endog = jnp.where(
         node_feasible,
@@ -579,8 +574,7 @@ def _interval_corner_candidates(
     coh_slope: ScalarFloat,
     coh_intercept: ScalarFloat,
     discount_factor: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     base: ScalarFloat,
     next_segment: ScalarFloat,
 ) -> tuple[Float1D, ...]:
@@ -611,7 +605,7 @@ def _interval_corner_candidates(
     floor_feasible = affords_an_action(floor_consumption)
     floor_node_value = jnp.where(
         floor_feasible,
-        jax.vmap(utility_of_action)(jnp.where(floor_feasible, floor_consumption, 1.0))
+        preferences.utility(jnp.where(floor_feasible, floor_consumption, 1.0))
         + discount_factor * interval_value,
         -jnp.inf,
     )
@@ -633,11 +627,11 @@ def _interval_corner_candidates(
         value=jnp.where(
             flat,
             floor_node_value[best_floor],
-            jax.vmap(utility_of_action)(s0_consumption_safe)
+            preferences.utility(s0_consumption_safe)
             + discount_factor * value_at_no_save,
         ),
         policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
-        marginal=coh_slope * jax.vmap(marginal_utility)(s0_consumption_safe),
+        marginal=coh_slope * preferences.marginal_utility(s0_consumption_safe),
         valid=in_interval & jnp.where(flat, floor_affordable, s0_feasible),
     )
 
@@ -651,10 +645,10 @@ def _interval_corner_candidates(
     smax_consumption_safe = jnp.where(smax_feasible, smax_consumption, 1.0)
     smax = mask_dead_candidates(
         endog_grid=liquid_grid,
-        value=jax.vmap(utility_of_action)(smax_consumption_safe)
+        value=preferences.utility(smax_consumption_safe)
         + discount_factor * interval_value[-1],
         policy=smax_consumption,
-        marginal=coh_slope * jax.vmap(marginal_utility)(smax_consumption_safe),
+        marginal=coh_slope * preferences.marginal_utility(smax_consumption_safe),
         valid=smax_feasible,
     )
 
@@ -672,8 +666,7 @@ def nbegm_per_interval_continuation_step_savings(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -707,9 +700,10 @@ def nbegm_per_interval_continuation_step_savings(
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
         discount_factor: Discount factor.
-        utility_of_action: The regime's period utility as a function of consumption,
-            with the ride-along cell's states and the utility params already bound.
-        inverse_marginal_utility: The regime's inverse marginal utility, cell-bound.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -738,7 +732,6 @@ def nbegm_per_interval_continuation_step_savings(
 
     """
     n_intervals = coh_slopes.shape[0]
-    marginal_utility = jax.grad(utility_of_action)
     interval_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
     # Each interval's lower/upper liquid bound, with the open ends at the extremes.
@@ -766,11 +759,11 @@ def nbegm_per_interval_continuation_step_savings(
         consumption = _invert_euler_over_savings(
             cont_marginal=interval_marginal,
             discount_factor=discount_factor,
-            inverse_marginal_utility=inverse_marginal_utility,
+            preferences=preferences,
         )
         coh_endog = consumption + savings_grid
         interp_value = (
-            jax.vmap(utility_of_action)(consumption) + discount_factor * interval_value
+            preferences.utility(consumption) + discount_factor * interval_value
         )
         value_at_no_save = interval_value[0]
         degenerate = _degenerate_inversion(
@@ -795,7 +788,7 @@ def nbegm_per_interval_continuation_step_savings(
                 liquid_grid=liquid_grid,
             ),
         )
-        marginal_endog = coh_slope * jax.vmap(marginal_utility)(consumption)
+        marginal_endog = coh_slope * preferences.marginal_utility(consumption)
         in_case = (
             (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate) & (~flat)
         )
@@ -825,8 +818,7 @@ def nbegm_per_interval_continuation_step_savings(
             coh_slope=coh_slope,
             coh_intercept=coh_intercept,
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            marginal_utility=marginal_utility,
+            preferences=preferences,
             base=base,
             next_segment=next_segment,
         )
@@ -905,8 +897,7 @@ def nbegm_per_interval_continuation_step_savings(
             savings_grid=savings_grid,
             cont_value=cont_value,
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            marginal_utility=marginal_utility,
+            preferences=preferences,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -924,8 +915,7 @@ def nbegm_per_interval_continuation_step_savings(
             savings_grid=extra_savings,
             cont_value=extra_cont_value,
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            marginal_utility=marginal_utility,
+            preferences=preferences,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -985,8 +975,7 @@ def _savings_node_point_candidates(
     savings_grid: FloatND,
     cont_value: FloatND,
     discount_factor: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -1027,7 +1016,7 @@ def _savings_node_point_candidates(
     node_consumption = point_coh[:, None] - savings_at_grid
     node_feasible = node_consumption > 0.0
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
-    node_utility = jax.vmap(jax.vmap(utility_of_action))(node_consumption_safe)
+    node_utility = preferences.utility(node_consumption_safe)
     node_value = jnp.where(
         node_feasible,
         node_utility + discount_factor * cont_value[interval_of_grid],
@@ -1038,9 +1027,9 @@ def _savings_node_point_candidates(
         jnp.broadcast_to(liquid_grid[:, None], node_consumption.shape),
         jnp.nan,
     )
-    node_marginal = coh_slopes[interval_of_grid][:, None] * jax.vmap(
-        jax.vmap(marginal_utility)
-    )(node_consumption_safe)
+    node_marginal = coh_slopes[interval_of_grid][
+        :, None
+    ] * preferences.marginal_utility(node_consumption_safe)
     node_segment = segment_base + jnp.arange(
         node_consumption.size, dtype=jnp.result_type(float)
     ).reshape(node_consumption.shape)
@@ -1064,8 +1053,7 @@ def nbegm_unified_step_savings(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat,
-    utility_of_action: Callable[[ScalarFloat], ScalarFloat],
-    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -1098,11 +1086,10 @@ def nbegm_unified_step_savings(
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
         discount_factor: Discount factor.
-        utility_of_action: The regime's period utility as a function of consumption,
-            with the ride-along cell's states and the utility params already bound.
-        inverse_marginal_utility: The regime's inverse marginal utility as a function
-            of the discounted expected marginal continuation, with the cell already
-            bound — `invert_euler` calls it to recover the consumption action.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -1130,16 +1117,13 @@ def nbegm_unified_step_savings(
     # The expected marginal already carries `dR/ds`, so the Euler inversion reads
     # it directly. The continuation does not depend on the current-period jump, so
     # the same consumption schedule serves every subsidy case.
-    marginal_utility = jax.grad(utility_of_action)
     consumption = _invert_euler_over_savings(
         cont_marginal=cont_marginal,
         discount_factor=discount_factor,
-        inverse_marginal_utility=inverse_marginal_utility,
+        preferences=preferences,
     )
     coh_endog = consumption + savings_grid
-    interp_value = (
-        jax.vmap(utility_of_action)(consumption) + discount_factor * cont_value
-    )
+    interp_value = preferences.utility(consumption) + discount_factor * cont_value
     value_at_no_save = cont_value[0]
     degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
@@ -1163,7 +1147,7 @@ def nbegm_unified_step_savings(
         endog_interval = jnp.clip(
             jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
         )
-        marginal_endog = coh_slopes[endog_interval] * jax.vmap(marginal_utility)(
+        marginal_endog = coh_slopes[endog_interval] * preferences.marginal_utility(
             consumption
         )
         # The first case opens at the lower grid edge and the last closes at the
@@ -1192,11 +1176,11 @@ def nbegm_unified_step_savings(
         s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
         s0 = mask_dead_candidates(
             endog_grid=liquid_grid,
-            value=jax.vmap(utility_of_action)(s0_consumption)
+            value=preferences.utility(s0_consumption)
             + discount_factor * value_at_no_save,
             policy=s0_consumption,
             marginal=coh_slopes[case_grid_interval]
-            * jax.vmap(marginal_utility)(s0_consumption),
+            * preferences.marginal_utility(s0_consumption),
             valid=s0_valid,
         )
         endog_parts.append(s0[0])
@@ -1220,8 +1204,7 @@ def nbegm_unified_step_savings(
                 (coh_slopes.shape[0], extra_cont_value.shape[0]),
             ),
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            marginal_utility=marginal_utility,
+            preferences=preferences,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
