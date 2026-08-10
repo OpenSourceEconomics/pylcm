@@ -37,6 +37,7 @@ from lcm.exceptions import (
     InvalidParamsError,
     ModelInitializationError,
     RegimeInitializationError,
+    ScaledLotteryDifferentiationError,
 )
 from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -1975,6 +1976,35 @@ class _HalvedLinearExpectation(LinearExpectation):
         return 0.5 * jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _CompleteHalvedLinearExpectation(LinearExpectation):
+    """A consistent custom mean that changes both ordinary and scaled routes."""
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        return 0.5 * super().aggregate(values=values, weights=weights, params=params)
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        return 0.5 * super().aggregate_scaled(
+            values=values,
+            coefficients=coefficients,
+            shifts=shifts,
+            params=params,
+        )
+
+
 def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(x64_enabled: None):
     """Redefining `aggregate` alone leaves two means that disagree.
 
@@ -1989,6 +2019,27 @@ def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(x64_enabled: Non
             model_kwargs={"certainty_equivalent": _HalvedLinearExpectation()},
             working_kwargs={},
             retired_kwargs={},
+        )
+
+
+def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
+    x64_enabled: None,
+):
+    """A continuation solver must not silently substitute plain expectation."""
+    dcegm = DCEGM(
+        continuous_state="wealth",
+        continuous_action="consumption",
+        resources="resources",
+        post_decision_function="savings",
+        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+    )
+    with pytest.raises(RegimeInitializationError, match="GridSearch"):
+        _make_model(
+            alive_kwargs={
+                "certainty_equivalent": _CompleteHalvedLinearExpectation(),
+                "solver": dcegm,
+            },
+            dead_kwargs={},
         )
 
 
@@ -2134,6 +2185,22 @@ def test_a_node_too_rare_to_flatten_still_carries_its_value(mean) -> None:
     )
 
 
+def test_scaled_reduction_does_not_overflow_before_applying_the_shift() -> None:
+    """A coefficient above one is scaled before meeting a near-max value."""
+    dtype, exponent, tolerance = _scaled_case()
+    coefficients = jnp.asarray([1.0, 1.9], dtype=dtype)
+    shifts = jnp.asarray([0, -2 * exponent], dtype=jnp.int32)
+    values = jnp.asarray([0.0, 0.75 * jnp.finfo(dtype).max], dtype=dtype)
+
+    got = jax.jit(LinearExpectation().aggregate_scaled)(
+        values=values, coefficients=coefficients, shifts=shifts, params={}
+    )
+
+    expected = 1.425
+    assert jnp.isfinite(got)
+    np.testing.assert_allclose(np.asarray(got), expected, rtol=tolerance, atol=0)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _OrdinaryOnlyMean(CertaintyEquivalent):
     """A certainty equivalent that states only the ordinary reduction."""
@@ -2198,3 +2265,47 @@ def test_a_mean_that_states_both_reductions_is_accepted(x64_enabled: None) -> No
     )
     V_arr = model.solve(params={"discount_factor": 0.95}, log_level="debug")
     assert np.all(np.isfinite(np.asarray(V_arr[0]["working"])))
+
+
+@pytest.mark.parametrize(
+    "mean",
+    [
+        LinearExpectation(),
+        QuasiArithmeticMean(transform=lambda value: value, inverse=lambda value: value),
+    ],
+    ids=["linear", "identity_quasi"],
+)
+def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
+    """A scaled reduction refuses to be differentiated rather than reporting zero.
+
+    A weight that travels as `(coefficient, shift)` does so because no ordinary
+    number states it, and that is as true of a derivative with respect to it as
+    of the weight itself. The scaled reduction therefore states no derivative at
+    all: differentiating it raises at trace time, so a gradient-based caller
+    learns the quantity is unavailable instead of receiving a zero that looks
+    like a flat objective.
+    """
+    dtype, exponent, _ = _scaled_case()
+    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    values = jnp.zeros((4,), dtype=dtype).at[-1].set(1.0)
+
+    def reduce_lottery(values: FloatND) -> FloatND:
+        return mean.aggregate_scaled(
+            values=values, coefficients=coefficients, shifts=shifts, params={}
+        )
+
+    with pytest.raises(ScaledLotteryDifferentiationError, match="aggregate_scaled"):
+        jax.grad(reduce_lottery)(values)
+
+
+def test_a_scaled_lottery_still_reduces_under_jit() -> None:
+    """Refusing the derivative leaves the primal reduction untouched."""
+    dtype, exponent, tolerance = _scaled_case()
+    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    values = jnp.zeros((4,), dtype=dtype).at[-1].set(1.0)
+
+    got = jax.jit(LinearExpectation().aggregate_scaled)(
+        values=values, coefficients=coefficients, shifts=shifts, params={}
+    )
+
+    np.testing.assert_allclose(np.asarray(got), 0.0, rtol=0, atol=tolerance)
