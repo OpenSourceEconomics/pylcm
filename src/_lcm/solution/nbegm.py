@@ -3838,20 +3838,21 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     from _lcm.egm.nbegm_step import (  # noqa: PLC0415
         nbegm_per_interval_continuation_step_savings,
     )
-    from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
-        numeric_inverse_marginal_utility,
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_numeric_inverse_marginal_utility,
+        newton_action_ceiling,
     )
 
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
     discount_factor_dag = schedule_spec.discount_factor_dag
     # This route composes period utility from the DAG, so the Euler equation has no
-    # closed form to invert and its root is always bracketed numerically: a small
-    # floor up to a generous multiple of the savings grid's top node (the resources
-    # scale). The clamped near-zero-marginal corner whose root exceeds the bracket
-    # lands far to the right and is discarded by the upper envelope.
-    action_upper = savings_grid[-1] * 1000.0 + 1000.0
-    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+    # closed form to invert and its root is always bracketed numerically. The
+    # clamped near-zero-marginal corner whose root exceeds the bracket lands far to
+    # the right and is discarded by the upper envelope.
+    action_upper = newton_action_ceiling(savings_grid)
+    action_lower = jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
     import inspect  # noqa: PLC0415
 
     # The action binds into a branch's period utility only when the utility DAG reads
@@ -3861,7 +3862,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         inspect.signature(schedule_spec.utility_dag).parameters
     )
 
-    def envelope_core(  # noqa: C901, PLR0915
+    def envelope_core(  # noqa: C901
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -3969,17 +3970,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         **utility_action_binding,
                     )
 
-                marginal_utility = jax.grad(utility_of_consumption)
-
-                def inverse_marginal_utility(
-                    marginal_continuation: FloatND,
-                ) -> FloatND:
-                    return numeric_inverse_marginal_utility(
-                        marginal_continuation=marginal_continuation,
-                        marginal_utility=marginal_utility,
-                        c_lower=action_lower,
-                        c_upper=action_upper,
-                    )
+                inverse_marginal_utility = get_numeric_inverse_marginal_utility(
+                    marginal_utility=jax.grad(utility_of_consumption),
+                    action_lower=action_lower,
+                    action_upper=action_upper,
+                )
 
                 # Recompute the breakpoint partition with the action bound: when the
                 # action enters the schedule variable, its asset preimage — and so the
