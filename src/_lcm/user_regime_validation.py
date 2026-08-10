@@ -517,10 +517,12 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     taste-shock regime implements, so only a nonlinear certainty equivalent is
     subject to the composition rules.
     """
-    if regime.certainty_equivalent is None or isinstance(
-        regime.certainty_equivalent, LinearExpectation
-    ):
+    if regime.certainty_equivalent is None:
         return []
+    # Which class owns which reduction is a separate question from linearity, so
+    # it is asked before the linear default is waved through: a subclass of
+    # `LinearExpectation` that restates `aggregate` is an instance of it, and
+    # would otherwise skip the very gate written to catch it.
     error_messages: list[str] = []
     error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
     if regime.terminal:
@@ -528,6 +530,8 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
+    if isinstance(regime.certainty_equivalent, LinearExpectation):
+        return error_messages
     if (
         regime.solver.requires_continuation
         and not regime.solver.supports_nonlinear_certainty_equivalent
