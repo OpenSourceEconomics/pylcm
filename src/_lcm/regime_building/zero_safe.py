@@ -254,6 +254,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.probability import scaled_down_by_power_of_two
+from _lcm.zero_safe import zero_safe_weighted_term as shared_zero_safe_weighted_term
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
 
 
@@ -470,7 +471,14 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64 (ROUND-7).
-    terms = zero_safe_weighted_term(weights_arr, a_arr)
+    terms = shared_zero_safe_weighted_term(
+        weight=weights_arr,
+        value=a_arr,
+        # With scales in hand the weights are `scaled_joint_weight` coefficients,
+        # every one of them normal by construction, so the term needs no exponent
+        # move. Without them they are whatever the model supplied.
+        subnormal_is_accounted_for=shifts_arr is not None,
+    )
     if relative_scale is not None:
         # The product, not the weight: see the docstring. `zero_safe_weighted_term`
         # has already made a zero-weight `+-inf` an exact zero, and scaling down
