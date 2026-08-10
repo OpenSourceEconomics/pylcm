@@ -16,6 +16,7 @@ from _lcm.egm.nbegm_step import (
     _bounded_limit_below,
     _jump_aware_interp,
 )
+from tests.solution._crra_preferences import crra_preferences
 
 
 def test_jump_aware_interp_does_not_bridge_a_neighboring_jump():
@@ -89,10 +90,11 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
 
     kink = _boundary_targeting_coh(
         liquid_grid=grid,
+        next_liquid_grid=grid,
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=crra_preferences(crra),
         gross_return=gross_return,
         income=income,
         asset_limit=asset_limit,

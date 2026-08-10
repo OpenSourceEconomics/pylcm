@@ -236,10 +236,39 @@ def dd_quotient_bounded(
 
 
 def _split(a: FloatND) -> tuple[FloatND, FloatND]:
-    """Split `a` into two half-precision halves with `a == hi + lo` exactly."""
-    n_mantissa = jnp.finfo(a.dtype).nmant
-    factor = jnp.asarray(2.0 ** ((n_mantissa + 2) // 2) + 1.0, dtype=a.dtype)
-    c = factor * a
-    a_big = c - a
+    """Split `a` into two half-precision halves with `a == hi + lo` exactly.
+
+    Dekker's split reaches its halves by multiplying the operand by roughly the
+    square root of the format's precision. That intermediate overflows near the
+    top of the range even where the product the split serves is an ordinary
+    finite number, and an overflowed intermediate does not degrade gracefully:
+    `inf - inf` is `nan`, so the operand comes back as a pair of `nan` and every
+    certificate downstream inherits it.
+
+    An operand that large is split from a scaled copy instead. Scaling by a power
+    of two is exact in both directions wherever the result stays normal, and one
+    that starts near the top of the range has room to spare below it, so the
+    halves scaled back are the halves of the original — the range is borrowed,
+    not the precision.
+    """
+    half = (jnp.finfo(a.dtype).nmant + 2) // 2
+    factor = jnp.asarray(2.0**half + 1.0, dtype=a.dtype)
+    # `factor` is just above `2**half`, so the intermediate stays finite while
+    # the operand stays below `2**(maxexp - half)`; back off two further binades
+    # rather than sit against that edge.
+    threshold = jnp.asarray(
+        2.0 ** (jnp.finfo(a.dtype).maxexp - 2 - half), dtype=a.dtype
+    )
+    down = jnp.asarray(2.0 ** -(half + 1), dtype=a.dtype)
+    up = jnp.asarray(2.0 ** (half + 1), dtype=a.dtype)
+
+    oversized = jnp.abs(a) >= threshold
+    scaled = jnp.where(oversized, a * down, a)
+    c = factor * scaled
+    a_big = c - scaled
     a_hi = c - a_big
-    return a_hi, a - a_hi
+    a_lo = scaled - a_hi
+    return (
+        jnp.where(oversized, a_hi * up, a_hi),
+        jnp.where(oversized, a_lo * up, a_lo),
+    )

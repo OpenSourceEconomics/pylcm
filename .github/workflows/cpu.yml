@@ -179,7 +179,22 @@ jobs:
             jax-fp32-${{ runner.os }}-3.14-
       - name: Run pytest at fp32
         shell: bash {0}
-        run: pixi run -e tests-cpu tests-32bit
+        # Same memory budget as the fp64 leg above, for the same reason: a
+        # worker's resident memory grows with every program it compiles, and the
+        # `slow` battery compiles enough to exhaust the 16 GB runner. So this leg
+        # runs the same phases with `--release-compiled-programs` rather than the
+        # single `tests-32bit` invocation, which is the configuration that dies.
+        # Precision does not change the compile load, so it does not change the
+        # remedy.
+        env:
+          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+        run: |
+          pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
+            --release-compiled-programs -n 4 \
+          && pixi run -e tests-cpu pytest tests/solution --precision=32 -m slow \
+            --release-compiled-programs -n 2 \
+          && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
+            --precision=32 -m slow --release-compiled-programs -n 2
       - name: Prune superseded JAX caches for this ref
         if: always()
         continue-on-error: true
