@@ -24,7 +24,7 @@ fixed envelope value), which peaks at `(n_query, block)` instead of
 `(n_query, n_segment)` and returns the identical result.
 """
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -73,7 +73,7 @@ class _ComparableLines(NamedTuple):
     v1: FloatND
 
 
-def _as_comparable_lines(links: "_SegmentLinks") -> _ComparableLines:
+def _as_comparable_lines(links: _SegmentLinks) -> _ComparableLines:
     """Return each link as a line the certified predicate can read."""
     lower = jnp.minimum(links.left_grid, links.right_grid)
     upper = jnp.maximum(links.left_grid, links.right_grid)
@@ -81,8 +81,12 @@ def _as_comparable_lines(links: "_SegmentLinks") -> _ComparableLines:
     # Any positive width represents the same constant line, so the scale is chosen
     # only to stay representable beside the abscissae it sits among.
     synthetic = jnp.maximum(jnp.abs(lower), 1.0)
-    low_value = jnp.where(links.left_grid <= links.right_grid, links.left_value, links.right_value)
-    high_value = jnp.where(links.left_grid <= links.right_grid, links.right_value, links.left_value)
+    low_value = jnp.where(
+        links.left_grid <= links.right_grid, links.left_value, links.right_value
+    )
+    high_value = jnp.where(
+        links.left_grid <= links.right_grid, links.right_value, links.left_value
+    )
     return _ComparableLines(
         x0=lower,
         x1=jnp.where(degenerate, lower + synthetic, upper),
@@ -190,6 +194,7 @@ def envelope_at_query(
     segment_id: Float1D,
     x_query: FloatND,
     segment_block_size: int = 0,
+    arithmetic: Literal["certified", "ordinary"] = "certified",
 ) -> tuple[FloatND, FloatND, FloatND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
@@ -206,12 +211,31 @@ def envelope_at_query(
             dense `(n_query, n_segment)` reduction. A positive value below the
             segment count instead runs the two-pass blocked scan, peaking at
             `(n_query, segment_block_size)`; the result is identical.
+        arithmetic: How ownership is decided between bracketing segments.
+            - `"certified"` settles it on the exact sign of the difference, so a
+              strictly lower branch can never supply a channel and a comparison
+              that cannot be certified yields NaN rather than a guess.
+            - `"ordinary"` settles it on the plain-float maximum with a
+              magnitude-scaled tie band. Cheaper, and wrong exactly where the
+              band is wider than a real difference, which is what the certified
+              route exists to prevent. Only available for the dense reduction.
+            Chosen at trace time, so `"ordinary"` emits none of the error-free
+            transforms rather than computing both and selecting.
 
     Returns:
         Tuple of the envelope value, the winning segment's policy, and the
         winning segment's marginal at each query, each shaped like `x_query`. A
-        query no live segment brackets yields NaN in all three.
+        query no live segment brackets yields NaN in all three, as does one whose
+        ownership `"certified"` could not settle.
+
+    Raises:
+        ValueError: If `arithmetic="ordinary"` is combined with the blocked scan,
+            which carries the certified comparison only. Serving the certified
+            cost under the ordinary label would misreport what was paid for.
     """
+    if arithmetic not in {"certified", "ordinary"}:
+        msg = f"arithmetic must be 'certified' or 'ordinary', not {arithmetic!r}"
+        raise ValueError(msg)
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
@@ -254,6 +278,12 @@ def envelope_at_query(
     query = jnp.asarray(x_query)
     n_segment = links.left_grid.shape[0]
     if 0 < segment_block_size < n_segment:
+        if arithmetic == "ordinary":
+            msg = (
+                "the blocked scan carries the certified comparison only; "
+                "request arithmetic='certified' or drop segment_block_size"
+            )
+            raise ValueError(msg)
         return _envelope_at_query_blocked(
             links=links, query=query, block_size=segment_block_size
         )
@@ -288,13 +318,22 @@ def envelope_at_query(
     provisional = jnp.argmax(masked_value, axis=1).astype(jnp.int32)
     slope = (right_value - left_value)[None, :] / safe_width
     rank = _right_continuous_rank(right_available=flat < upper, slope=slope)
-    best, unresolved = _certified_owner(
-        lines=_as_comparable_lines(links),
-        brackets=brackets,
-        flat=flat.reshape(-1),
-        provisional=provisional,
-        rank=rank,
-    )
+    if arithmetic == "certified":
+        best, unresolved = _certified_owner(
+            lines=_as_comparable_lines(links),
+            brackets=brackets,
+            flat=flat.reshape(-1),
+            provisional=provisional,
+            rank=rank,
+        )
+    else:
+        # The plain-float route: the maximum decides, and a magnitude-scaled band
+        # around it decides the rest. Nothing here can be unresolved, because
+        # nothing here is certified.
+        max_value = jnp.max(masked_value, axis=1, keepdims=True)
+        near_max = brackets & (masked_value >= max_value - _value_tie_band(max_value))
+        best = jnp.argmax(jnp.where(near_max, rank, -jnp.inf), axis=1).astype(jnp.int32)
+        unresolved = jnp.zeros(best.shape, dtype=bool)
 
     published = any_bracket & ~unresolved
     env_value = jnp.where(
@@ -371,125 +410,219 @@ def _block_query_terms(
     return brackets, value_interp, policy_interp, marginal_interp, slope, upper
 
 
-def _envelope_at_query_blocked(
-    *, links: _SegmentLinks, query: FloatND, block_size: int
-) -> tuple[FloatND, FloatND, FloatND]:
-    """Evaluate the dense `(n_query, n_segment)` reduction in two blocked passes.
+def _blocked_columns(
+    *, links: _SegmentLinks, block_size: int
+) -> tuple[_ComparableLines, FloatND, BoolND, IntND]:
+    """Return the link table reshaped into segment blocks, with its line view.
 
-    Both passes are exact associative folds against a fixed target, so the result
-    matches the dense path (up to floating-point reassociation between the two
-    XLA lowerings):
-
-    - Pass 1 accumulates the running per-query max over segment blocks — the
-      envelope value, with a running `any_bracket` flag.
-    - Pass 2 re-scans the blocks and, among segments whose value is within
-      `_VALUE_TIE_ATOL` of that (now fixed) envelope value, keeps the winner of the
-      right-continuous rank (`_right_continuous_rank`: a right-extending near-max
-      segment over one ending at the query, then larger value-slope) — the dense
-      path's tie-break. The strict cross-block `>` keeps the earliest such winner,
-      matching the dense `argmax`.
-
-    The links are padded to a multiple of `block_size` with dead segments (which
-    never bracket) and reshaped to `(n_block, block_size)`; the scan peaks at
-    `(n_query, block_size)` working memory.
+    The eight link columns and the four comparable-line columns travel together
+    so that one scan carry reaches both the interpolation and the certified
+    comparison. Padding to a multiple of `block_size` fills with dead segments,
+    which never bracket and so never win, tie, or poison; `offsets` recovers each
+    block's global segment index.
     """
-    flat = query.reshape(-1)
-    n_query = flat.shape[0]
-    n_segment = links.live.shape[0]
-    pad = (-n_segment) % block_size
+    lines = _as_comparable_lines(links)
+    pad = (-links.live.shape[0]) % block_size
 
-    def _padded(column: FloatND, fill: float) -> FloatND:
+    def _padded(column: FloatND) -> FloatND:
         if pad == 0:
             return column
-        return jnp.concatenate([column, jnp.full((pad,), fill, dtype=column.dtype)])
+        return jnp.concatenate([column, jnp.zeros((pad,), dtype=column.dtype)])
 
+    padded_lines = _ComparableLines(*(_padded(column) for column in lines))
     columns = jnp.stack(
         [
-            _padded(links.left_grid, 0.0),
-            _padded(links.right_grid, 0.0),
-            _padded(links.left_value, 0.0),
-            _padded(links.right_value, 0.0),
-            _padded(links.left_policy, 0.0),
-            _padded(links.right_policy, 0.0),
-            _padded(links.left_marginal, 0.0),
-            _padded(links.right_marginal, 0.0),
+            _padded(links.left_grid),
+            _padded(links.right_grid),
+            _padded(links.left_value),
+            _padded(links.right_value),
+            _padded(links.left_policy),
+            _padded(links.right_policy),
+            _padded(links.left_marginal),
+            _padded(links.right_marginal),
+            *padded_lines,
         ],
         axis=1,
     )
-
     live = (
         links.live
         if pad == 0
         else jnp.concatenate([links.live, jnp.zeros((pad,), dtype=bool)])
     )
     blocks = columns.reshape(-1, block_size, columns.shape[1])
-    live_blocks = live.reshape(-1, block_size)
+    offsets = jnp.arange(blocks.shape[0], dtype=jnp.int32) * block_size
+    return padded_lines, blocks, live.reshape(-1, block_size), offsets
+
+
+def _envelope_at_query_blocked(
+    *, links: _SegmentLinks, query: FloatND, block_size: int
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Evaluate the dense reduction in blocked passes, selecting the same owner.
+
+    The dense path holds `(n_query, n_segment)` at once; here each pass folds over
+    segment blocks and peaks at `(n_query, block_size)` instead. What is folded is
+    the *same* certified decision, not a cheaper stand-in — the owner's identity and
+    the certified status travel in the scan carry, so neither path reconstructs a
+    winner from rounded levels:
+
+    - Pass 1 takes the running plain-float maximum and, with it, the provisional
+      owner's global index.
+    - Each promotion round validates that owner against every block, adopting the
+      first contender certified above it.
+    - The final pass collects, against the settled owner, the certified-tie set (to
+      apply the right-continuous rule) and whether any comparison went uncertified.
+
+    The links are padded to a multiple of `block_size` with dead segments, which
+    never bracket and so never win, tie, or poison.
+    """
+    flat = query.reshape(-1)
+    n_query = flat.shape[0]
+    n_segment = links.live.shape[0]
+    padded_lines, blocks, live_blocks, offsets = _blocked_columns(
+        links=links, block_size=block_size
+    )
     dtype = links.left_grid.dtype
 
-    def max_step(
-        carry: tuple[FloatND, BoolND],
-        block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, BoolND], None]:
-        running_max, any_bracket = carry
-        block, block_live = block_and_live
+    def _block_sign(
+        *, block: FloatND, block_live: BoolND, owner: _ComparableLines
+    ) -> IntND:
+        """Return the certified sign of `owner - link` over one block."""
+        brackets, *_ = _block_query_terms(block=block, live=block_live, flat=flat)
+        contender = _ComparableLines(
+            x0=block[:, 8], x1=block[:, 9], v0=block[:, 10], v1=block[:, 11]
+        )
+        sign = certified_margin_sign(
+            a_x0=owner.x0[:, None],
+            a_x1=owner.x1[:, None],
+            a_v0=owner.v0[:, None],
+            a_v1=owner.v1[:, None],
+            b_x0=contender.x0[None, :],
+            b_x1=contender.x1[None, :],
+            b_v0=contender.v0[None, :],
+            b_v1=contender.v1[None, :],
+            x_query=flat[:, None],
+        )
+        return jnp.where(brackets, sign, jnp.ones_like(sign))
+
+    def provisional_step(
+        carry: tuple[FloatND, IntND, BoolND],
+        block_and_live: tuple[FloatND, BoolND, IntND],
+    ) -> tuple[tuple[FloatND, IntND, BoolND], None]:
+        best_value, best_index, any_bracket = carry
+        block, block_live, offset = block_and_live
         brackets, value_interp, *_ = _block_query_terms(
             block=block, live=block_live, flat=flat
         )
-        block_max = jnp.max(jnp.where(brackets, value_interp, -jnp.inf), axis=1)
+        masked = jnp.where(brackets, value_interp, -jnp.inf)
+        within = jnp.argmax(masked, axis=1)
+        block_value = jnp.take_along_axis(masked, within[:, None], axis=1)[:, 0]
+        take = block_value > best_value
         return (
-            jnp.maximum(running_max, block_max),
+            jnp.where(take, block_value, best_value),
+            jnp.where(take, within.astype(jnp.int32) + offset, best_index),
             any_bracket | jnp.any(brackets, axis=1),
         ), None
 
-    (running_max, any_bracket), _ = jax.lax.scan(
-        max_step,
+    (_, owner_index, any_bracket), _ = jax.lax.scan(
+        provisional_step,
         (
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            jnp.zeros((n_query,), dtype=jnp.int32),
             jnp.zeros((n_query,), dtype=bool),
         ),
-        (blocks, live_blocks),
+        (blocks, live_blocks, offsets),
     )
-    env_value = jnp.where(any_bracket, running_max, jnp.nan)
 
-    def policy_step(
-        carry: tuple[FloatND, FloatND, FloatND],
-        block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND], None]:
-        best_rank, best_policy, best_marginal = carry
-        block, block_live = block_and_live
-        brackets, value_interp, policy_interp, marginal_interp, slope, upper = (
-            _block_query_terms(block=block, live=block_live, flat=flat)
+    for _ in range(_CERTIFIED_PROMOTION_ROUNDS):
+        owner = _take_lines(padded_lines, owner_index)
+
+        def beaten_step(
+            carry: IntND,
+            block_and_live: tuple[FloatND, BoolND, IntND],
+            owner: _ComparableLines = owner,
+        ) -> tuple[IntND, None]:
+            best_challenger = carry
+            block, block_live, offset = block_and_live
+            sign = _block_sign(block=block, block_live=block_live, owner=owner)
+            beaten = sign == -1
+            within = jnp.argmax(beaten, axis=1).astype(jnp.int32) + offset
+            challenger = jnp.where(jnp.any(beaten, axis=1), within, n_segment)
+            return jnp.minimum(best_challenger, challenger), None
+
+        challenger, _ = jax.lax.scan(
+            beaten_step,
+            jnp.full((n_query,), n_segment, dtype=jnp.int32),
+            (blocks, live_blocks, offsets),
         )
-        near_max = brackets & (
-            value_interp >= env_value[:, None] - _value_tie_band(env_value[:, None])
+        owner_index = jnp.where(challenger < n_segment, challenger, owner_index)
+
+    owner = _take_lines(padded_lines, owner_index)
+
+    def settle_step(
+        carry: tuple[FloatND, IntND, BoolND],
+        block_and_live: tuple[FloatND, BoolND, IntND],
+    ) -> tuple[tuple[FloatND, IntND, BoolND], None]:
+        best_rank, best_index, uncertain = carry
+        block, block_live, offset = block_and_live
+        sign = _block_sign(block=block, block_live=block_live, owner=owner)
+        *_, slope, upper = _block_query_terms(block=block, live=block_live, flat=flat)
+        within_index = offset + jnp.arange(block_size, dtype=jnp.int32)[None, :]
+        tied = (sign == 0) | (within_index == owner_index[:, None])
+        rank = jnp.where(
+            tied,
+            _right_continuous_rank(right_available=flat[:, None] < upper, slope=slope),
+            -jnp.inf,
         )
-        rank = _right_continuous_rank(
-            near_max=near_max, right_available=flat[:, None] < upper, slope=slope
-        )
-        winner = jnp.argmax(rank, axis=1)[:, None]
-        block_rank = jnp.take_along_axis(rank, winner, axis=1)[:, 0]
-        block_policy = jnp.take_along_axis(policy_interp, winner, axis=1)[:, 0]
-        block_marginal = jnp.take_along_axis(marginal_interp, winner, axis=1)[:, 0]
+        best_within = jnp.argmax(rank, axis=1)
+        block_rank = jnp.take_along_axis(rank, best_within[:, None], axis=1)[:, 0]
         take = block_rank > best_rank
+        block_uncertain = jnp.any(
+            (sign == -1) | (sign == UNRESOLVED_SIGN) | (sign == BELOW_RESOLUTION_SIGN),
+            axis=1,
+        )
         return (
             jnp.where(take, block_rank, best_rank),
-            jnp.where(take, block_policy, best_policy),
-            jnp.where(take, block_marginal, best_marginal),
+            jnp.where(take, best_within.astype(jnp.int32) + offset, best_index),
+            uncertain | block_uncertain,
         ), None
 
-    (_, env_policy_flat, env_marginal_flat), _ = jax.lax.scan(
-        policy_step,
+    (_, best_index, unresolved), _ = jax.lax.scan(
+        settle_step,
         (
             jnp.full((n_query,), -jnp.inf, dtype=dtype),
-            jnp.full((n_query,), jnp.nan, dtype=dtype),
-            jnp.full((n_query,), jnp.nan, dtype=dtype),
+            jnp.zeros((n_query,), dtype=jnp.int32),
+            jnp.zeros((n_query,), dtype=bool),
         ),
-        (blocks, live_blocks),
+        (blocks, live_blocks, offsets),
     )
-    env_policy = jnp.where(any_bracket, env_policy_flat, jnp.nan)
-    env_marginal = jnp.where(any_bracket, env_marginal_flat, jnp.nan)
+
+    published = any_bracket & ~unresolved
+    value, policy, marginal = _interpolate_one(
+        links=links, index=jnp.minimum(best_index, n_segment - 1), flat=flat
+    )
     return (
-        env_value.reshape(query.shape),
-        env_policy.reshape(query.shape),
-        env_marginal.reshape(query.shape),
+        jnp.where(published, value, jnp.nan).reshape(query.shape),
+        jnp.where(published, policy, jnp.nan).reshape(query.shape),
+        jnp.where(published, marginal, jnp.nan).reshape(query.shape),
+    )
+
+
+def _interpolate_one(
+    *, links: _SegmentLinks, index: IntND, flat: Float1D
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Return value, policy and marginal of one chosen segment per query."""
+    left_grid = jnp.take(links.left_grid, index)
+    right_grid = jnp.take(links.right_grid, index)
+    width = right_grid - left_grid
+    safe_width = jnp.where(width == 0.0, 1.0, width)
+    relative = jnp.where(width == 0.0, 0.0, (flat - left_grid) / safe_width)
+
+    def at(left: Float1D, right: Float1D) -> FloatND:
+        low = jnp.take(left, index)
+        return low + relative * (jnp.take(right, index) - low)
+
+    return (
+        at(links.left_value, links.right_value),
+        at(links.left_policy, links.right_policy),
+        at(links.left_marginal, links.right_marginal),
     )
