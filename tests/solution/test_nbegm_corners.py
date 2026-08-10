@@ -74,6 +74,7 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
+        next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=beta,
         crra=crra,

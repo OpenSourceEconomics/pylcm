@@ -27,6 +27,7 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
 
     _endog, _value, policy, marginal = _boundary_targeting_coh(
         liquid_grid=liquid_grid,
+        next_liquid_grid=liquid_grid,
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=0.95,

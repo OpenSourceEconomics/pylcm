@@ -88,6 +88,7 @@ def nbegm_multi_interval_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -128,9 +129,14 @@ def nbegm_multi_interval_step(
     optimum in exactly those two regions.
 
     Args:
-        next_value: Next period's value on `liquid_grid`.
-        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
@@ -159,8 +165,8 @@ def nbegm_multi_interval_step(
     )
 
     next_liquid = gross_return * savings_grid + income
-    value_next = jnp.interp(next_liquid, liquid_grid, next_value)
-    marginal_next = jnp.interp(next_liquid, liquid_grid, next_marginal)
+    value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
+    marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     coh_endog = consumption + savings_grid
@@ -191,7 +197,7 @@ def nbegm_multi_interval_step(
     for i in flat_indices:
         floor_value, floor_policy = _floor_optimum(
             floor_coh=coh_intercepts[i],
-            liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
             next_value=next_value,
             discount_factor=discount_factor,
             crra=crra,
@@ -232,7 +238,7 @@ def nbegm_multi_interval_step(
     # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
     # land next-period liquid at `income`. A candidate over the whole grid, since the
     # constraint binds wherever the no-save corner beats the Euler path.
-    value_at_income = jnp.interp(jnp.asarray(income), liquid_grid, next_value)
+    value_at_income = jnp.interp(jnp.asarray(income), next_liquid_grid, next_value)
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
         coh=coh_grid,
@@ -1249,7 +1255,7 @@ def _flat_interval_indices(
 def _floor_optimum(
     *,
     floor_coh: ScalarFloat,
-    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1268,7 +1274,7 @@ def _floor_optimum(
     consumption = fractions * floor_coh
     next_liquid = gross_return * (floor_coh - consumption) + income
     value = crra_utility(consumption, crra) + discount_factor * jnp.interp(
-        next_liquid, liquid_grid, next_value
+        next_liquid, next_liquid_grid, next_value
     )
     best = jnp.argmax(value)
     return value[best], consumption[best]
@@ -1279,6 +1285,7 @@ def nbegm_discrete_envelope_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1304,9 +1311,14 @@ def nbegm_discrete_envelope_step(
       reported policy and choice are the modal branch's.
 
     Args:
-        next_value: Next period's value on `liquid_grid`.
-        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
@@ -1335,6 +1347,7 @@ def nbegm_discrete_envelope_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
             crra=crra,
@@ -1378,6 +1391,7 @@ def nbegm_unified_step(  # noqa: PLR0915
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1405,9 +1419,14 @@ def nbegm_unified_step(  # noqa: PLR0915
     The pure-kink (no jump) and pure-jump (slope-1) budgets are special cases.
 
     Args:
-        next_value: Next period's value on `liquid_grid`.
-        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
@@ -1444,17 +1463,21 @@ def nbegm_unified_step(  # noqa: PLR0915
 
     next_liquid = gross_return * savings_grid + income
     value_next = _jump_aware_interp(
-        next_liquid, liquid_grid, next_value, jump_breakpoints, equality_owner
+        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
     )
     marginal_next = _jump_aware_interp(
-        next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
+        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
     interp_value = crra_utility(consumption, crra) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
-        jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
+        jnp.asarray(income),
+        next_liquid_grid,
+        next_value,
+        jump_breakpoints,
+        equality_owner,
     )
     grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
 
@@ -1533,6 +1556,7 @@ def nbegm_unified_step(  # noqa: PLR0915
             for side in ("below", "above"):
                 kink = _boundary_targeting_coh(
                     liquid_grid=liquid_grid,
+                    next_liquid_grid=next_liquid_grid,
                     coh_case_grid=coh_case_grid,
                     next_value=next_value,
                     discount_factor=discount_factor,
@@ -1578,6 +1602,7 @@ def nbegm_unified_step(  # noqa: PLR0915
 def _boundary_targeting_coh(
     *,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     coh_case_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
@@ -1617,11 +1642,11 @@ def _boundary_targeting_coh(
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_below(
-            liquid_grid,
+            next_liquid_grid,
             next_value,
             limit=asset_limit,
             prev_limit=prev_limit,
-            n=liquid_grid.shape[0],
+            n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
     else:
@@ -1631,11 +1656,11 @@ def _boundary_targeting_coh(
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_above(
-            liquid_grid,
+            next_liquid_grid,
             next_value,
             limit=asset_limit,
             next_limit=next_limit,
-            n=liquid_grid.shape[0],
+            n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
     s_kink = (target - income) / gross_return
@@ -1663,6 +1688,7 @@ def nbegm_recurring_jump_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1685,9 +1711,14 @@ def nbegm_recurring_jump_step(
     not only at a terminal-adjacent period.
 
     Args:
-        next_value: Next period's value on `liquid_grid`.
-        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
@@ -1728,6 +1759,7 @@ def nbegm_recurring_jump_step(
                 next_value=next_value,
                 next_marginal=next_marginal,
                 liquid_grid=liquid_grid,
+                next_liquid_grid=next_liquid_grid,
                 savings_grid=savings_grid,
                 discount_factor=discount_factor,
                 crra=crra,
@@ -1769,6 +1801,7 @@ def _recurring_jump_case(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1788,10 +1821,10 @@ def _recurring_jump_case(
     """
     next_liquid = gross_return * savings_grid + income
     value_next = _jump_aware_interp(
-        next_liquid, liquid_grid, next_value, jump_breakpoints, equality_owner
+        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
     )
     marginal_next = _jump_aware_interp(
-        next_liquid, liquid_grid, next_marginal, jump_breakpoints, equality_owner
+        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
     liquid_endog = jnp.where(
@@ -1821,6 +1854,7 @@ def _recurring_jump_case(
         for side in ("below", "above"):
             kink = _boundary_targeting_branch(
                 liquid_grid=liquid_grid,
+                next_liquid_grid=next_liquid_grid,
                 next_value=next_value,
                 discount_factor=discount_factor,
                 crra=crra,
@@ -1847,7 +1881,11 @@ def _recurring_jump_case(
             n_boundary_branches += 1
 
     value_at_income = _jump_aware_interp(
-        jnp.asarray(income), liquid_grid, next_value, jump_breakpoints, equality_owner
+        jnp.asarray(income),
+        next_liquid_grid,
+        next_value,
+        jump_breakpoints,
+        equality_owner,
     )
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
@@ -1930,6 +1968,7 @@ def nbegm_one_asset_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -1944,9 +1983,14 @@ def nbegm_one_asset_step(
     """Solve one period of the Medicaid one-asset toy by case-piece EGM.
 
     Args:
-        next_value: Next period's value on `liquid_grid`.
-        next_marginal: Next period's marginal value of liquid on `liquid_grid`.
-        liquid_grid: Regular liquid-state grid (ascending).
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
         discount_factor: Discount factor.
         crra: Coefficient of relative risk aversion.
@@ -1972,6 +2016,7 @@ def nbegm_one_asset_step(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
         crra=crra,
@@ -1986,6 +2031,7 @@ def nbegm_one_asset_step(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
         crra=crra,
@@ -2049,6 +2095,7 @@ def _case_step(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -2079,10 +2126,10 @@ def _case_step(
     gross_return = 1.0 + return_liquid
     next_liquid = gross_return * savings_grid + income
     value_next = _kink_aware_interp(
-        next_liquid, liquid_grid, next_value, asset_limit, equality_owner
+        next_liquid, next_liquid_grid, next_value, asset_limit, equality_owner
     )
     marginal_next = _kink_aware_interp(
-        next_liquid, liquid_grid, next_marginal, asset_limit, equality_owner
+        next_liquid, next_liquid_grid, next_marginal, asset_limit, equality_owner
     )
 
     consumption = (discount_factor * gross_return * marginal_next) ** (-1.0 / crra)
@@ -2102,6 +2149,7 @@ def _case_step(
     boundary_branches = {
         side: _boundary_targeting_branch(
             liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
             next_value=next_value,
             discount_factor=discount_factor,
             crra=crra,
@@ -2109,8 +2157,8 @@ def _case_step(
             income=income,
             subsidy=subsidy,
             asset_limit=asset_limit,
-            prev_limit=liquid_grid[0] - 1.0,
-            next_limit=liquid_grid[-1] + 1.0,
+            prev_limit=next_liquid_grid[0] - 1.0,
+            next_limit=next_liquid_grid[-1] + 1.0,
             equality_owner=equality_owner,
             side=side,
         )
@@ -2136,7 +2184,7 @@ def _case_step(
     # the query, so it is an envelope candidate over the whole grid — not only the
     # below-grid constrained tail a concave EGM shortcut would assume.
     value_at_income = _kink_aware_interp(
-        jnp.asarray(income), liquid_grid, next_value, asset_limit, equality_owner
+        jnp.asarray(income), next_liquid_grid, next_value, asset_limit, equality_owner
     )
     s0_grid, s0_value, s0_consumption, s0_marginal = _no_save_corner(
         endog_grid=liquid_grid,
@@ -2170,6 +2218,7 @@ def _case_step(
 def _boundary_targeting_branch(
     *,
     liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
     crra: ScalarFloat | float,
@@ -2211,11 +2260,11 @@ def _boundary_targeting_branch(
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_below(
-            liquid_grid,
+            next_liquid_grid,
             next_value,
             limit=asset_limit,
             prev_limit=prev_limit,
-            n=liquid_grid.shape[0],
+            n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
     else:
@@ -2225,11 +2274,11 @@ def _boundary_targeting_branch(
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_above(
-            liquid_grid,
+            next_liquid_grid,
             next_value,
             limit=asset_limit,
             next_limit=next_limit,
-            n=liquid_grid.shape[0],
+            n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
     s_kink = (target - income) / gross_return

@@ -89,6 +89,7 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
 
     kink = _boundary_targeting_coh(
         liquid_grid=grid,
+        next_liquid_grid=grid,
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=discount_factor,

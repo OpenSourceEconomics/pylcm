@@ -37,6 +37,7 @@ def _solve_at_scale(scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
+        next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=DISCOUNT_FACTOR,
         crra=CRRA,
