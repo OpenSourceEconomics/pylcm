@@ -54,10 +54,66 @@ def scaled_next_liquid(
     return (1.0 + return_liquid) * (resources - consumption) + income_scale * income
 
 
+def doubled_income_next_liquid(
+    resources: FloatND,
+    consumption: ContinuousAction,
+    return_liquid: float,
+    income: float,
+) -> ContinuousState:
+    """Affine liquid law crediting twice the income the parameter names."""
+    return (1.0 + return_liquid) * (resources - consumption) + 2.0 * income
+
+
+def taxed_return_next_liquid(
+    resources: FloatND,
+    consumption: ContinuousAction,
+    return_liquid: float,
+    income: float,
+) -> ContinuousState:
+    """Affine liquid law crediting the liquid return net of a flat tax."""
+    return (1.0 + 0.75 * return_liquid) * (resources - consumption) + income
+
+
+def endowed_next_liquid(
+    resources: FloatND,
+    consumption: ContinuousAction,
+    return_liquid: float,
+    income: float,
+) -> ContinuousState:
+    """Affine liquid law adding a literal endowment on top of income."""
+    return (1.0 + return_liquid) * (resources - consumption) + income + 3.0
+
+
+def compounded_next_liquid(
+    resources: FloatND,
+    consumption: ContinuousAction,
+    return_liquid: float,
+    income: float,
+) -> ContinuousState:
+    """Liquid law compounding the return over two sub-periods."""
+    return (1.0 + return_liquid) ** 2 * (resources - consumption) + income
+
+
+def doubled_subsidy_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Cash-on-hand crediting the subsidy twice over."""
+    return liquid + 2.0 * subsidy
+
+
+def fee_charging_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Cash-on-hand net of a literal participation fee."""
+    return liquid + subsidy - 0.5
+
+
+def interest_bearing_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """Cash-on-hand crediting within-period interest on liquid wealth."""
+    return 1.05 * liquid + subsidy
+
+
 def _build(
     *,
     utility_func=None,
     liquid_law=None,
+    budget_func=None,
 ):
     """Assemble the Medicaid case-piece toy over a substituted economic node."""
     return make_alive_dead_model(
@@ -71,7 +127,7 @@ def _build(
             "subsidy_medicaid": toy.subsidy_medicaid,
             "subsidy_private": toy.subsidy_private,
             "subsidy": toy.subsidy,
-            "resources": toy.resources,
+            "resources": budget_func if budget_func is not None else toy.resources,
         },
         liquid_law=liquid_law if liquid_law is not None else next_liquid,
         alive_solver=resolve_solver(
@@ -116,6 +172,48 @@ def test_a_rescaled_liquid_law_is_refused_by_the_single_liquid_kernels():
     """
     with pytest.raises(RegimeInitializationError, match="income_scale"):
         _build(liquid_law=scaled_next_liquid)
+
+
+@pytest.mark.parametrize(
+    "liquid_law",
+    [
+        doubled_income_next_liquid,
+        taxed_return_next_liquid,
+        endowed_next_liquid,
+        compounded_next_liquid,
+    ],
+)
+def test_a_same_signature_liquid_law_is_refused_by_the_single_liquid_kernels(
+    liquid_law,
+):
+    """A law is judged by what it computes, not by which parameters it names.
+
+    Each of these declares exactly the parameters the kernels read and would pass
+    any name-level check, yet none of them equals
+    `(1 + return_liquid) * savings + income`. Accepting one would solve a budget
+    the regime never declared and report it as the regime's own.
+    """
+    with pytest.raises(RegimeInitializationError, match="next_liquid"):
+        _build(liquid_law=liquid_law)
+
+
+@pytest.mark.parametrize(
+    "budget_func",
+    [
+        doubled_subsidy_resources,
+        fee_charging_resources,
+        interest_bearing_resources,
+    ],
+)
+def test_a_same_signature_budget_node_is_refused_by_the_case_piece_kernels(budget_func):
+    """The case-piece kernels solve `liquid + subsidy`, and say so at build.
+
+    They form cash-on-hand from the liquid state and the case's own subsidy
+    rather than calling the declared budget node, so a node reading exactly those
+    two and combining them differently states a problem the kernels never solve.
+    """
+    with pytest.raises(RegimeInitializationError, match="resources"):
+        _build(budget_func=budget_func)
 
 
 def test_the_supported_fixed_form_still_builds():
