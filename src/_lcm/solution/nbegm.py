@@ -401,7 +401,13 @@ class NBEGM(Solver):
             )
         )
         fail_if_kernel_fixed_form_contract_unmet(
-            context=context, liquid_state_name=liquid_state_name
+            context=context,
+            liquid_state_name=liquid_state_name,
+            budget_target=self.budget_target,
+            savings_name=self.post_decision_function,
+            consumption_action=next(
+                iter(context.state_action_space.continuous_actions)
+            ),
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
@@ -1259,10 +1265,16 @@ def _validate_nbegm_boundary_scope(
 # liquid law's budget parameters.
 _KERNEL_LIQUID_STATE = "liquid"
 _KERNEL_LIQUID_LAW_PARAMS = ("return_liquid", "income")
+_KERNEL_DEFAULT_SAVINGS_NAME = "savings"
 
 
 def fail_if_kernel_fixed_form_contract_unmet(
-    *, context: SolverBuildContext, liquid_state_name: StateName
+    *,
+    context: SolverBuildContext,
+    liquid_state_name: StateName,
+    budget_target: str,
+    savings_name: FunctionName | None,
+    consumption_action: ActionName,
 ) -> None:
     """Check the fixed economic form the single-liquid NB-EGM kernels solve.
 
@@ -1289,11 +1301,17 @@ def fail_if_kernel_fixed_form_contract_unmet(
     Args:
         context: The regime's solver build context.
         liquid_state_name: The resolved Euler axis.
+        budget_target: Name of the DAG node carrying cash-on-hand, which is how
+            the law names it when it states savings as budget minus consumption.
+        savings_name: Name of the post-decision savings function, which is how
+            the law names savings when it reads them directly. `None` where the
+            regime declares none.
+        consumption_action: Name of the continuous consumption action.
 
     Raises:
         RegimeInitializationError: If the liquid state or the liquid law's budget
-            parameters are named differently, or if the law carries a flat
-            parameter beyond them.
+            parameters are named differently, if the law carries a flat parameter
+            beyond them, or if what it computes differs from the kernel budget.
 
     """
     regime_name = context.regime_name
@@ -1352,14 +1370,15 @@ def fail_if_kernel_fixed_form_contract_unmet(
                 income_param=(
                     f"{target}__{liquid_law_name}__{_KERNEL_LIQUID_LAW_PARAMS[1]}"
                 ),
+                savings_name=savings_name or _KERNEL_DEFAULT_SAVINGS_NAME,
+                budget_target=budget_target,
+                consumption_action=consumption_action,
                 regime_name=regime_name,
                 target=target,
                 liquid_law_name=liquid_law_name,
             )
 
 
-_KERNEL_LIQUID_LAW_SAVINGS_ARG = "savings"
-_KERNEL_LIQUID_LAW_RESOURCES_ARGS = ("resources", "consumption")
 _KERNEL_LIQUID_LAW_PROBE_SAVINGS = (0.0, 0.25, 1.0, 7.5, 100.0)
 _KERNEL_LIQUID_LAW_PROBE_CONSUMPTION = (0.0, 2.0)
 _KERNEL_LIQUID_LAW_PROBE_RETURN_LIQUID = (0.0, 0.03, 0.5)
@@ -1374,6 +1393,9 @@ def _fail_if_liquid_law_differs_from_kernel_budget(
     liquid_law: Callable[..., FloatND],
     return_liquid_param: str,
     income_param: str,
+    savings_name: FunctionName,
+    budget_target: str,
+    consumption_action: ActionName,
     regime_name: RegimeName,
     target: RegimeName,
     liquid_law_name: TransitionFunctionName,
@@ -1397,6 +1419,9 @@ def _fail_if_liquid_law_differs_from_kernel_budget(
         liquid_law: The regime's processed liquid law of motion.
         return_liquid_param: Qualified name of the law's liquid-return parameter.
         income_param: Qualified name of the law's income parameter.
+        savings_name: Name savings carry where the law reads them directly.
+        budget_target: Name of the DAG node carrying cash-on-hand.
+        consumption_action: Name of the continuous consumption action.
         regime_name: Name of the regime whose law is checked.
         target: Name of the target regime the law transitions into.
         liquid_law_name: Name of the liquid law of motion.
@@ -1412,14 +1437,16 @@ def _fail_if_liquid_law_differs_from_kernel_budget(
         arg_names=arg_names,
         return_liquid_param=return_liquid_param,
         income_param=income_param,
+        savings_name=savings_name,
+        budget_target=budget_target,
+        consumption_action=consumption_action,
     )
     if probes is None:
         msg = (
             f"NBEGM's single-liquid kernels form post-decision savings "
             f"themselves, so they can only check a liquid law that states them: "
-            f"{liquid_law_name!r} must read either "
-            f"{_KERNEL_LIQUID_LAW_SAVINGS_ARG!r} or both "
-            f"{list(_KERNEL_LIQUID_LAW_RESOURCES_ARGS)}; regime "
+            f"{liquid_law_name!r} must read either {savings_name!r} or both "
+            f"{[budget_target, consumption_action]}; regime "
             f"{regime_name!r}'s transition to {target!r} reads "
             f"{sorted(arg_names)}. Declare a `lcm.piecewise_affine` schedule "
             "with a `post_decision_function` so the budget is composed from the "
@@ -1467,7 +1494,13 @@ def _fail_if_liquid_law_differs_from_kernel_budget(
 
 
 def _kernel_budget_probes(
-    *, arg_names: frozenset[str], return_liquid_param: str, income_param: str
+    *,
+    arg_names: frozenset[str],
+    return_liquid_param: str,
+    income_param: str,
+    savings_name: FunctionName,
+    budget_target: str,
+    consumption_action: ActionName,
 ) -> tuple[dict[str, FloatND], FloatND] | None:
     """Return arguments spanning the kernel budget, and the savings they imply.
 
@@ -1482,8 +1515,8 @@ def _kernel_budget_probes(
         `None` when the law states no savings the kernels can identify.
 
     """
-    reads_savings = _KERNEL_LIQUID_LAW_SAVINGS_ARG in arg_names
-    reads_resources = set(_KERNEL_LIQUID_LAW_RESOURCES_ARGS) <= arg_names
+    reads_savings = savings_name in arg_names
+    reads_resources = {budget_target, consumption_action} <= arg_names
     if not reads_savings and not reads_resources:
         return None
     rows = [
@@ -1500,11 +1533,10 @@ def _kernel_budget_probes(
         income_param: jnp.asarray([row[3] for row in rows]),
     }
     if reads_savings:
-        arguments[_KERNEL_LIQUID_LAW_SAVINGS_ARG] = savings
+        arguments[savings_name] = savings
     if reads_resources:
-        resources_arg, consumption_arg = _KERNEL_LIQUID_LAW_RESOURCES_ARGS
-        arguments[resources_arg] = savings + consumption
-        arguments[consumption_arg] = consumption
+        arguments[budget_target] = savings + consumption
+        arguments[consumption_action] = consumption
     _add_cycled_probes(arguments=arguments, arg_names=arg_names, n_rows=len(rows))
     return arguments, savings
 

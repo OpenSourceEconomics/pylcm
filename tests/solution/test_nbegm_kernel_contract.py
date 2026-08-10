@@ -19,6 +19,7 @@ import pytest
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from tests.test_models import nbegm_tax_toy as tax_toy
 from tests.test_models.nbegm_common import (
     crra_utility,
     make_alive_dead_model,
@@ -106,6 +107,37 @@ def test_a_utility_naming_its_coefficient_gamma_solves_the_same_problem() -> Non
 
     np.testing.assert_allclose(
         np.asarray(named_gamma[0]["alive"]), np.asarray(named_crra[0]["alive"])
+    )
+
+
+def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -> None:
+    """Renaming cash-on-hand renames it in the liquid law too, and that is fine.
+
+    The law states savings as the budget node minus consumption, so a model
+    naming that node `cash_on_hand` writes a law reading `cash_on_hand`. The
+    contract is about the budget the law computes, not the words it computes it
+    from, so the renamed model solves to the same value function as the default.
+    """
+
+    def solve(budget_name: str):
+        model = tax_toy.build_model(
+            variant="nbegm",
+            budget_name=budget_name,
+            n_liquid=20,
+            liquid_max=30.0,
+            n_savings=30,
+            savings_max=28.0,
+            n_consumption=20,
+        )
+        return model.solve(
+            params=tax_toy.build_params(budget_name=budget_name), log_level="debug"
+        )
+
+    renamed = solve("cash_on_hand")
+    default = solve("resources")
+
+    np.testing.assert_allclose(
+        np.asarray(renamed[0]["alive"]), np.asarray(default[0]["alive"])
     )
 
 
