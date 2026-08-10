@@ -151,7 +151,20 @@ def weighted_power_mean(
     # With no anchorable node the reductions sit at their sentinels; any
     # finite anchor will do, and zero keeps `centered` well defined.
     anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
-    anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+    # The anchor's own payoff, kept as the number it already is rather than
+    # recovered from its logarithm. The mean is `payoff * exp(deviation)`, and a
+    # lottery paying one amount at every node has a deviation of exactly zero,
+    # so it returns that amount bit for bit. Reconstructing the anchor as
+    # `exp(log v)` instead costs roughly `|log v| / 4` units in the last place —
+    # nothing at a payoff of one, and an overflow to infinity at the top of the
+    # range, where the rounded logarithm exponentiates past the largest number
+    # the format holds.
+    anchor_payoff_high = jnp.max(jnp.where(anchorable, values, -jnp.inf), axis=-1)
+    anchor_payoff_low = jnp.min(jnp.where(anchorable, values, jnp.inf), axis=-1)
+    anchor_payoff = jnp.where(exponent >= 0.0, anchor_payoff_high, anchor_payoff_low)
+    # With no anchorable node the anchor fell back to a log value of zero, whose
+    # payoff is one, so the multiplication leaves the deviation alone.
+    anchor_payoff = jnp.where(jnp.isfinite(anchor_payoff), anchor_payoff, 1.0)
     # A dead node's value was replaced by `1.0` above, so its `log v` is `0` —
     # a point the anchor knows nothing about, since only live nodes may anchor.
     # Left alone it can sit arbitrarily far above the anchored range, overflow
@@ -225,9 +238,15 @@ def weighted_power_mean(
             discarded=near_geometric,
         ),
     )
-    log_mean_power = anchor + log_moment / safe_exponent
-    log_mean_geometric = jnp.sum(normalized * log_v, axis=-1)
-    return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
+    # Both branches carry the deviation from the anchor only; the anchor itself
+    # re-enters as a payoff, multiplicatively. The geometric branch sums the
+    # anchored log values for the same reason: `Σ w̃ log v` on a constant lottery
+    # is `log c` times a normalized mass that is only approximately one, so it
+    # loses the payoff twice over — once to the mass and once to the round trip.
+    deviation_power = log_moment / safe_exponent
+    deviation_geometric = jnp.sum(normalized * centered, axis=-1)
+    deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
+    return anchor_payoff * jnp.exp(deviation)
 
 
 def _log_sum(log_terms: FloatND) -> FloatND:
@@ -361,7 +380,19 @@ def weighted_power_mean_of_pair(
     )
     anchor = jnp.where(exponent >= 0.0, anchor_high, anchor_low)
     anchor = jnp.where(jnp.isfinite(anchor), anchor, 0.0)
-    anchor = jnp.where(exponent == 0.0, 0.0, anchor)
+    # The anchor's own payoff, kept rather than recovered from its logarithm —
+    # see `weighted_power_mean`. A pair paying one amount on both sides has a
+    # deviation of exactly zero and so returns that amount bit for bit.
+    anchor_payoff_high = jnp.maximum(
+        jnp.where(first_anchorable, first, -jnp.inf),
+        jnp.where(second_anchorable, second, -jnp.inf),
+    )
+    anchor_payoff_low = jnp.minimum(
+        jnp.where(first_anchorable, first, jnp.inf),
+        jnp.where(second_anchorable, second, jnp.inf),
+    )
+    anchor_payoff = jnp.where(exponent >= 0.0, anchor_payoff_high, anchor_payoff_low)
+    anchor_payoff = jnp.where(jnp.isfinite(anchor_payoff), anchor_payoff, 1.0)
 
     masked_first_weight = jnp.where(
         first_live | jnp.isnan(first_weight), first_weight, 0.0
@@ -417,8 +448,13 @@ def weighted_power_mean_of_pair(
         jnp.log1p(jnp.where(near_geometric, deviation_ratio, 0.0)),
         log_moment_power,
     )
-    log_mean_power = anchor + log_moment / safe_exponent
-    log_mean_geometric = (
-        masked_first_weight * log_first + masked_second_weight * log_second
+    # Deviation from the anchor only; the anchor re-enters as a payoff — see
+    # `weighted_power_mean`. The geometric branch weights anchored log values
+    # for the same reason.
+    deviation_power = log_moment / safe_exponent
+    deviation_geometric = (
+        masked_first_weight * jnp.where(first_live, log_first - anchor, 0.0)
+        + masked_second_weight * jnp.where(second_live, log_second - anchor, 0.0)
     ) / safe_weight
-    return jnp.exp(jnp.where(exponent == 0.0, log_mean_geometric, log_mean_power))
+    deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
+    return anchor_payoff * jnp.exp(deviation)
