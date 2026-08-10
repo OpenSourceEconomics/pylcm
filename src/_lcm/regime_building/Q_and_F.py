@@ -16,6 +16,7 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
+    scaled_down_by_power_of_two,
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
@@ -2235,7 +2236,7 @@ def _expectation_over_stochastic_nodes(
 
     # The mass only needs the weights on one scale. A live node too far below
     # that scale to register contributes no share to a total of order one.
-    lowered_weights = jnp.ldexp(weights, relative_scale)
+    lowered_weights = scaled_down_by_power_of_two(weights, relative_scale)
     weight_sum = jnp.sum(lowered_weights)
     safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
 
@@ -2248,7 +2249,7 @@ def _expectation_over_stochastic_nodes(
         jnp.zeros((), dtype=values.dtype),
         values,
     )
-    terms = jnp.ldexp(weights * safe_values, relative_scale)
+    terms = scaled_down_by_power_of_two(weights * safe_values, relative_scale)
     return jnp.sum(terms) / safe_weight_sum
 
 

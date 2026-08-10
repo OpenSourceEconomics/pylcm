@@ -253,6 +253,7 @@ summation, which is not implemented.
 import jax
 import jax.numpy as jnp
 
+from _lcm.probability import scaled_down_by_power_of_two
 from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
 
 
@@ -369,11 +370,14 @@ def zero_safe_average(
     through `scaled_joint_weight` at all.
 
     `None` is a distinct path rather than a shift array of zeros because the
-    two are not numerically equivalent here: an `ldexp` by a zero shift still
+    two are not numerically equivalent here: scaling by a zero shift still
     costs the FMA contraction, and MEASURED on this fixture it moves the result
     off `jnp.average`'s bits, which
     `test_zero_safe_average_matches_jnp_average_on_the_finite_path` pins. Zeros
     would therefore change the unscaled callers' arithmetic to buy nothing.
+    Measured for `jnp.ldexp` and again for `scaled_down_by_power_of_two` when
+    the latter replaced it; the two agree, as their bit-for-bit equality on
+    non-positive shifts implies.
 
     The two reductions treat the scale differently, following
     `_expectation_over_stochastic_nodes` in `Q_and_F.py`, against which this is
@@ -442,8 +446,13 @@ def zero_safe_average(
             if axis is None
             else jnp.min(shifts_arr, axis=axis, keepdims=True)
         )
+        # `common_shift` is the SMALLEST shift, so every relative scale is
+        # non-positive — which is exactly `scaled_down_by_power_of_two`'s
+        # precondition. It agrees with `jnp.ldexp` bit-for-bit on that domain and
+        # skips the general `frexp` graph, which here would run twice over the
+        # whole value surface.
         relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
-        lowered_weights = jnp.ldexp(weights_arr, relative_scale)
+        lowered_weights = scaled_down_by_power_of_two(weights_arr, relative_scale)
 
     total_weight = jnp.sum(lowered_weights, axis=axis)
     _raise_if_concretely_zero(total_weight, context="zero_safe_average")
@@ -464,9 +473,9 @@ def zero_safe_average(
     terms = zero_safe_weighted_term(weights_arr, a_arr)
     if relative_scale is not None:
         # The product, not the weight: see the docstring. `zero_safe_weighted_term`
-        # has already made a zero-weight `+-inf` an exact zero, and `ldexp` leaves
-        # that zero alone.
-        terms = jnp.ldexp(terms, relative_scale)
+        # has already made a zero-weight `+-inf` an exact zero, and scaling down
+        # returns a zero unchanged.
+        terms = scaled_down_by_power_of_two(terms, relative_scale)
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
 
