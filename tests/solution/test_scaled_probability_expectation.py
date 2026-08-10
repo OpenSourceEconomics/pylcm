@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.probability import scaled_down_by_power_of_two
 from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
 from lcm.typing import FloatND
 
@@ -18,16 +19,131 @@ def _maybe_jit(
 
 
 def test_production_reduction_avoids_general_exponent_balancing() -> None:
-    """Keep general exponent balancing off the target-node expectation hot path."""
+    """Keep `ldexp`/`frexp` off the target-node expectation hot path."""
     dtype = jnp.zeros(()).dtype
     traced = jax.make_jaxpr(_expectation_over_stochastic_nodes)(
         values=jnp.ones(5, dtype=dtype),
         weights=jnp.full(5, 0.2, dtype=dtype),
         shifts=jnp.zeros(5, dtype=jnp.int32),
     )
-    primitives = {str(equation.primitive) for equation in traced.jaxpr.eqns}
+    graph = str(traced)
 
-    assert primitives.isdisjoint({"clz", "custom_jvp_call"})
+    assert "name=ldexp" not in graph
+    assert "name=frexp" not in graph
+    assert "clz" not in graph
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_downward_scaling_matches_ieee_ldexp_at_boundaries(*, compiled: bool) -> None:
+    """The fast scaler is exact across normal, subnormal and zero results."""
+    dtype = jnp.zeros(()).dtype
+    finfo = np.finfo(np.dtype(dtype))
+    values = np.asarray(
+        [
+            1.0,
+            -1.0,
+            finfo.max,
+            finfo.tiny,
+            np.nextafter(finfo.tiny, 0, dtype=np.dtype(dtype)),
+            finfo.smallest_subnormal,
+            0.0,
+            -0.0,
+            np.inf,
+            -np.inf,
+            np.nan,
+        ],
+        dtype=np.dtype(dtype),
+    )
+    min_normal_exponent = int(finfo.minexp)
+    min_subnormal_exponent = min_normal_exponent - int(finfo.nmant)
+    shifts = np.asarray(
+        [
+            0,
+            -1,
+            -2,
+            min_normal_exponent,
+            min_normal_exponent - 1,
+            min_subnormal_exponent,
+            min_subnormal_exponent - 1,
+            -1,
+            -7,
+            -7,
+            -7,
+        ],
+        dtype=np.int32,
+    )
+    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+
+    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        expected = np.ldexp(values, shifts).astype(values.dtype)
+
+    integer_dtype = np.uint32 if values.dtype == np.float32 else np.uint64
+    got_bits = got.view(integer_dtype)
+    expected_bits = expected.view(integer_dtype)
+    both_nan = np.isnan(got) & np.isnan(expected)
+    np.testing.assert_array_equal(got_bits[~both_nan], expected_bits[~both_nan])
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_downward_scaling_rounds_subnormal_ties_to_even(*, compiled: bool) -> None:
+    """Halfway subnormal results round according to the retained low bit."""
+    dtype = jnp.zeros(()).dtype
+    np_dtype = np.dtype(dtype)
+    integer_dtype = np.uint32 if np_dtype == np.dtype(np.float32) else np.uint64
+    smallest_normal_bits = np.asarray(np.finfo(np_dtype).tiny).view(integer_dtype)
+    bits = np.asarray(
+        [smallest_normal_bits + 1, smallest_normal_bits + 3],
+        dtype=integer_dtype,
+    )
+    values = bits.view(np_dtype)
+    shifts = np.asarray([-1, -1], dtype=np.int32)
+    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+
+    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    expected = np.ldexp(values, shifts).astype(np_dtype)
+
+    np.testing.assert_array_equal(got.view(integer_dtype), expected.view(integer_dtype))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_downward_scaling_matches_ieee_ldexp_on_random_finite_values(
+    *, compiled: bool
+) -> None:
+    """The bit implementation matches IEEE rounding over the finite bit space."""
+    dtype = jnp.zeros(()).dtype
+    np_dtype = np.dtype(dtype)
+    integer_dtype = np.uint32 if np_dtype == np.dtype(np.float32) else np.uint64
+    rng = np.random.default_rng(20260809 + np_dtype.itemsize)
+    raw = rng.integers(0, np.iinfo(integer_dtype).max, size=4096, dtype=integer_dtype)
+    values = raw.view(np_dtype)
+    values = values[np.isfinite(values)]
+    minimum_shift = -350 if np_dtype == np.dtype(np.float32) else -3000
+    shifts = rng.integers(minimum_shift, 1, size=values.size, dtype=np.int32)
+    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+
+    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        expected = np.ldexp(values, shifts).astype(np_dtype)
+
+    np.testing.assert_array_equal(got.view(integer_dtype), expected.view(integer_dtype))
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_downward_scaling_has_the_expected_value_gradient(*, compiled: bool) -> None:
+    """The bit-level primal retains the ordinary power-of-two derivative."""
+    dtype = jnp.zeros(()).dtype
+    shifts = jnp.asarray([0, -1, -7], dtype=jnp.int32)
+
+    def total(values: FloatND) -> FloatND:
+        return jnp.sum(scaled_down_by_power_of_two(values, shifts))
+
+    gradient = jax.grad(_maybe_jit(total, compiled=compiled))(
+        jnp.asarray([1.0, 1.0, 1.0], dtype=dtype)
+    )
+    expected = jnp.asarray([1.0, 0.5, 2.0**-7], dtype=dtype)
+
+    np.testing.assert_array_equal(np.asarray(gradient), np.asarray(expected))
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
