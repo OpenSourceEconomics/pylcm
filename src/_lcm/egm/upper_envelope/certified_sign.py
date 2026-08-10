@@ -62,6 +62,7 @@ few hundred flops. The evaluation is branch-free and elementwise, so it stays
 
 import operator
 from functools import reduce
+from typing import NamedTuple
 
 import jax.numpy as jnp
 
@@ -72,6 +73,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_mul,
     dd_mul_float,
     dd_negate,
+    dd_quotient,
     normalizing_exponent,
     scale_by_power_of_two,
 )
@@ -154,15 +156,15 @@ def certified_margin_sign(
     )
 
     # That homogeneity argument holds only while the scaling is exact. The shared
-    # exponent is chosen to keep every operand normal, so an operand far below
-    # the largest one ordinarily survives — but a backend that reads subnormals
-    # as zero can still flatten one, and a group spanning more than the whole
-    # exponent range leaves no exponent that suits every term. What follows from
-    # a flattened operand is a true statement about geometry the caller never
-    # supplied — a narrow link whose endpoints have rounded onto the same number,
-    # most emphatically a certified tie licensing either link. Scaling back is
-    # exact whenever the scaling was, so the round trip tests that premise itself
-    # rather than any one way of breaking it.
+    # exponent is chosen to keep every operand normal, so an operand far below the
+    # largest one ordinarily survives — but a backend that reads subnormals as zero
+    # can still flatten one, and a group spanning more than the whole exponent range
+    # leaves no exponent that suits every term. What follows from a flattened
+    # operand is a true statement about geometry the caller never supplied — a
+    # narrow link whose endpoints have rounded onto the same number, most
+    # emphatically a certified tie licensing either link. Scaling back is exact
+    # whenever the scaling was, so the round trip tests that premise itself rather
+    # than any one way of breaking it.
     scaling_exact = _round_trips(
         scaled_abscissae, source_abscissae, abscissa_exponent
     ) & _round_trips(scaled_values, source_values, value_exponent)
@@ -179,14 +181,112 @@ def certified_margin_sign(
     product_b = _bounded_product(numerator_b, width_a)
     determinant = dd_add(product_a, dd_negate(product_b))
 
-    # A product that leaves the top of the range says nothing about the
-    # determinant it was meant to contribute to, so it stays unresolved. The
-    # bottom of the range is not symmetric with it and is handled inside
-    # `_bounded_product`.
+    # A product that leaves the top of the range says nothing about the determinant
+    # it was meant to contribute to, so it stays unresolved. The bottom of the range
+    # is not symmetric with it and is handled inside `_bounded_product`.
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
     return _certified_sign_of(
         determinant, finite=finite & products_finite & scaling_exact
+    )
+
+
+class QuotientMargin(NamedTuple):
+    """How far one quotient lies above another, and whether that is knowable."""
+
+    value: FloatND
+    """`left_numerator/left_divisor - right_numerator/right_divisor`."""
+    bound: FloatND
+    """The true margin lies within `bound` of `value`."""
+    trustworthy: BoolND
+    """Whether the evaluation stayed where the transforms — and so `bound` — hold."""
+
+
+def certified_quotient_margin(
+    *,
+    left_numerator: DoubleDouble,
+    left_divisor: DoubleDouble,
+    right_numerator: DoubleDouble,
+    right_divisor: DoubleDouble,
+) -> QuotientMargin:
+    """Return how far the left quotient lies above the right one, with a bound.
+
+    Reading each quotient and subtracting the two results bounds their difference
+    at the *values'* magnitude, which is the wrong scale to decide between them: on
+    a large common value level two such bounds swamp a gap that is orders of
+    magnitude above zero, and an ordering the format holds exactly is reported as
+    a tie. That is not a defect of either read — each is as good as its own
+    magnitude allows — but of asking a question about a difference by way of two
+    separate answers.
+
+    Cross-multiplying first asks it directly. `N_l w_r - N_r w_l` is formed in the
+    double-double arithmetic of `double_double`, whose transforms are exact, so the
+    common level cancels in arithmetic that loses nothing. What reaches the bound is
+    only the tail the two multiplications discard — second order in the format's
+    precision, against a first-order rounding of the level — so the margin stays
+    decidable on a level many orders of magnitude above the gap, and a common
+    additive shift of both value lines does not change the outcome until it exhausts
+    that second-order headroom.
+
+    Args:
+        left_numerator: Numerator of the left quotient.
+        left_divisor: Divisor of the left quotient; must be non-zero.
+        right_numerator: Numerator of the right quotient.
+        right_divisor: Divisor of the right quotient; must be non-zero.
+
+    Returns:
+        The margin, a bound on it, and whether the bound may be relied on. Where it
+        may not, nothing follows about the geometry — the true margin may be large —
+        so a caller must fail loud rather than treat it as a tie.
+
+    """
+    determinant = dd_add(
+        _bounded_product(left_numerator, right_divisor),
+        dd_negate(_bounded_product(right_numerator, left_divisor)),
+    )
+    divisor_product = dd_mul(left_divisor, right_divisor)
+    high, low = dd_quotient(determinant, divisor_product)
+    value = high + low
+
+    # The bound is a residual, taken against the single float that is published
+    # rather than against the pair it came from. How well a quotient *pair*
+    # reproduces its numerator says nothing about the float the caller acts on,
+    # and the two differ by more than the pair's own accuracy suggests; the
+    # residual of the published value has no such gap by construction. It is also
+    # exactly zero for a quotient that divides out exactly, which is what lets an
+    # exact tie be certified rather than inferred.
+    residual = dd_add(determinant, dd_negate(dd_mul_float(divisor_product, value)))
+    unreproduced = jnp.abs(residual[0] + residual[1]) + residual[2]
+    # Referring the residual back through the divisor must not understate it, so
+    # it is divided by a *lower* bound on the divisor rather than its leading word.
+    divisor_floor = (
+        jnp.abs(divisor_product[0])
+        - jnp.abs(divisor_product[1])
+        - jnp.abs(divisor_product[2])
+    )
+    epsilon = jnp.finfo(value.dtype).eps
+    # The residual's own sum, the division, and this widening each round once; the
+    # widening is multiplicative, so a residual of exactly zero stays exactly zero.
+    bound = (unreproduced / divisor_floor) * (1.0 + 8.0 * epsilon)
+
+    # Dekker's transform is exact only while its products stay normal. Above that
+    # range the determinant is not evidence of anything, least of all of a tie.
+    # Below it the numerator products are bounded rather than unknown, which
+    # `_bounded_product` has already carried into the error bound; the divisor
+    # product is not, since a quotient cannot be referred back through a divisor
+    # whose own magnitude is in doubt.
+    in_domain = (
+        jnp.isfinite(left_numerator[0] * right_divisor[0])
+        & jnp.isfinite(right_numerator[0] * left_divisor[0])
+        & _product_in_transform_domain(left_divisor[0], right_divisor[0])
+    )
+    return QuotientMargin(
+        value=value,
+        bound=bound,
+        trustworthy=in_domain
+        & jnp.isfinite(value)
+        & jnp.isfinite(bound)
+        & (divisor_floor > 0.0),
     )
 
 
@@ -277,6 +377,20 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
         jnp.where(negligible, zero, low),
         jnp.where(negligible, tiny, dropped),
     )
+
+
+def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
+    """Report whether `two_prod(a, b)` stays inside its exact domain.
+
+    Dekker's transform is exact only while the product and the splitting
+    intermediates stay normal. A product that underflows to zero, or lands among
+    the subnormals, silently loses the tail the certificate reads — so such a
+    product must never be mistaken for an exact zero.
+    """
+    product = jnp.abs(a * b)
+    tiny = jnp.finfo(product.dtype).tiny
+    both_nonzero = (a != 0.0) & (b != 0.0)
+    return jnp.isfinite(product) & (~both_nonzero | (product >= tiny))
 
 
 def _certified_sign_of(value: DoubleDouble, *, finite: BoolND) -> IntND:
