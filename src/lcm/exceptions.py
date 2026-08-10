@@ -80,3 +80,14 @@ class CategoricalDefinitionError(PyLCMError):
 
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
+
+
+class ScaledLotteryDifferentiationError(PyLCMError):
+    """Raised when a scaled certainty-equivalent reduction is differentiated.
+
+    A lottery reaches `aggregate_scaled` with its weights split into a
+    coefficient and a base-two shift precisely because no ordinary float states
+    the probability. The same holds of a derivative with respect to such a
+    weight, so the scaled reduction states no derivative rather than reporting
+    a zero that a gradient-based caller would read as a flat objective.
+    """
