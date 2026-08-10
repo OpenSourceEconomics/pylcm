@@ -20,7 +20,7 @@ import warnings
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -36,6 +36,7 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import EnvelopeArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -68,10 +69,6 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
-
-if TYPE_CHECKING:
-    from _lcm.egm.preferences import Preferences
-
 from lcm.typing import (
     ActionName,
     BoolND,
