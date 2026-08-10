@@ -19,7 +19,7 @@ def invert_euler(
     *,
     expected_marginal_continuation: ScalarFloat,
     discount_factor: ScalarFloat,
-    inverse_marginal_utility: Callable[..., ScalarFloat],
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
 ) -> ScalarFloat:
     """Invert the Euler equation at one savings node.
 
@@ -51,8 +51,9 @@ def invert_euler(
             at the savings node.
         discount_factor: Discount factor $\\beta$ of the Bellman aggregator.
         inverse_marginal_utility: The regime's inverse-marginal-utility
-            function with every parameter except `marginal_continuation`
-            already bound.
+            function, reduced to a unary map of the marginal continuation with
+            every other parameter already bound. It is called positionally, so
+            its parameter name is its own business.
 
     Returns:
         The optimal continuous action at the savings node.
@@ -60,4 +61,4 @@ def invert_euler(
     """
     discounted = discount_factor * expected_marginal_continuation
     eps = jnp.finfo(discounted.dtype).eps
-    return inverse_marginal_utility(marginal_continuation=jnp.maximum(discounted, eps))
+    return inverse_marginal_utility(jnp.maximum(discounted, eps))

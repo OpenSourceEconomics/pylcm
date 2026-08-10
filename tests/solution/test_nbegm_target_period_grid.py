@@ -88,6 +88,8 @@ def _expected_consumption(next_nodes: tuple[float, ...]) -> np.ndarray:
         (1.0, 3.0, 5.0),
         (0.5, 2.5, 4.5),
         (1.0, 2.5, 6.0),
+        (1.0, 6.0),  # coarser than this period's grid
+        (0.5, 1.2, 2.0, 3.1, 4.4, 6.0),  # finer than this period's grid
     ],
 )
 def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):

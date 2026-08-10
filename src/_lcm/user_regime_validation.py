@@ -530,7 +530,7 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if isinstance(regime.certainty_equivalent, LinearExpectation):
+    if _is_plain_linear_expectation(regime.certainty_equivalent):
         return error_messages
     if (
         regime.solver.requires_continuation
@@ -913,6 +913,25 @@ def _validate_per_target_dict(
             f"MarkovTransition or none are.",
         )
     return error_messages
+
+
+def _is_plain_linear_expectation(
+    certainty_equivalent: CertaintyEquivalent,
+) -> bool:
+    """Whether continuation solvers may use their plain expected-value route.
+
+    A subclass is plain only when it inherits both ordinary and scaled
+    semantics unchanged from `LinearExpectation`. A subclass that overrides
+    both methods is internally consistent but states a different mean, which a
+    continuation solver would otherwise accept and silently replace by expected
+    utility.
+    """
+    mean_type = type(certainty_equivalent)
+    return (
+        isinstance(certainty_equivalent, LinearExpectation)
+        and _method_owner(mean_type, "aggregate") is LinearExpectation
+        and _method_owner(mean_type, "aggregate_scaled") is LinearExpectation
+    )
 
 
 def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list[str]:
