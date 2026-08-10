@@ -69,6 +69,7 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
+from lcm.phased import Phased
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -80,6 +81,7 @@ from lcm.typing import (
     ScalarInt,
     StateName,
     StateOrActionName,
+    TransitionFunctionName,
 )
 
 # Key under which ride-along periods share one compiled core: the continuation
@@ -418,6 +420,17 @@ class NBEGM(Solver):
             )
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
+        )
+        _fail_if_budget_node_differs_from_kernel_cash_on_hand(
+            context=context,
+            routes_to_case_piece_core=(
+                case_spec is not None
+                and schedule_discrete_spec is None
+                and schedule_spec is None
+                and discrete_spec is None
+            ),
+            budget_target=self.budget_target,
+            liquid_state_name=liquid_state_name,
         )
 
         period_to_target = _period_to_continuation_target(context=context)
@@ -1255,16 +1268,19 @@ def fail_if_kernel_fixed_form_contract_unmet(
 
     Those kernels compose the regime's felicity from its own `utility` target,
     but they bind the Euler grid to a keyword named `liquid` and solve one fixed
-    budget — an affine liquid law — reading its coefficients under fixed qualified
-    parameter names. The declared liquid-law body is never called.
+    budget — `(1 + return_liquid) * savings + income` — reading its coefficients
+    under fixed qualified parameter names rather than calling the declared law.
 
-    So the contract is exact in both directions:
+    So the contract is checked in three directions:
 
     - a *missing* coefficient would otherwise fail deep inside a traced kernel
       with a missing-argument error that says nothing about the contract broken;
     - an *extra* flat parameter is structure the kernel cannot honour, and
       accepting it would silently solve a different problem from the declared
-      one — a wrong value and policy rather than an error.
+      one — a wrong value and policy rather than an error;
+    - a law naming exactly the two coefficients still says nothing about what it
+      computes with them, so it is evaluated and required to equal the budget the
+      kernels apply.
 
     The ride-along schedule route composes its budget and utility from the DAG
     and is exempt; a regime needing a richer objective declares a
@@ -1327,6 +1343,289 @@ def fail_if_kernel_fixed_form_contract_unmet(
                 "DAG, or use `GridSearch` for this regime."
             )
             raise RegimeInitializationError(msg)
+        if callable(liquid_law):
+            _fail_if_liquid_law_differs_from_kernel_budget(
+                liquid_law=liquid_law,
+                return_liquid_param=(
+                    f"{target}__{liquid_law_name}__{_KERNEL_LIQUID_LAW_PARAMS[0]}"
+                ),
+                income_param=(
+                    f"{target}__{liquid_law_name}__{_KERNEL_LIQUID_LAW_PARAMS[1]}"
+                ),
+                regime_name=regime_name,
+                target=target,
+                liquid_law_name=liquid_law_name,
+            )
+
+
+_KERNEL_LIQUID_LAW_SAVINGS_ARG = "savings"
+_KERNEL_LIQUID_LAW_RESOURCES_ARGS = ("resources", "consumption")
+_KERNEL_LIQUID_LAW_PROBE_SAVINGS = (0.0, 0.25, 1.0, 7.5, 100.0)
+_KERNEL_LIQUID_LAW_PROBE_CONSUMPTION = (0.0, 2.0)
+_KERNEL_LIQUID_LAW_PROBE_RETURN_LIQUID = (0.0, 0.03, 0.5)
+_KERNEL_LIQUID_LAW_PROBE_INCOME = (0.0, 1.0, 12.5)
+_KERNEL_BUDGET_PROBE_LIQUID = (0.1, 1.0, 7.5, 100.0)
+_KERNEL_BUDGET_PROBE_SPLIT_OUTPUT = (0.0, 0.5, 3.0)
+_KERNEL_PROBE_OTHER = (0.0, 1.0, 2.5)
+
+
+def _fail_if_liquid_law_differs_from_kernel_budget(
+    *,
+    liquid_law: Callable[..., FloatND],
+    return_liquid_param: str,
+    income_param: str,
+    regime_name: RegimeName,
+    target: RegimeName,
+    liquid_law_name: TransitionFunctionName,
+) -> None:
+    """Check the declared liquid law computes the budget the kernels apply.
+
+    The single-liquid kernels never call the law: they evaluate
+    `(1 + return_liquid) * savings + income` directly, reading the coefficients
+    off the regime's parameters. Which parameters a law *names* therefore says
+    nothing about what it *computes*, and a law that names exactly those two and
+    then scales, taxes, compounds, or offsets them declares a different Bellman
+    problem from the one that would be solved.
+
+    So the law is judged by evaluation. It is called over a grid of savings,
+    returns, incomes, and — varied independently — every further argument it
+    reads, and must reproduce the kernel budget everywhere on it. A law that
+    passes agrees with the kernel on a set wide enough to pin an affine form,
+    including its indifference to arguments the kernel does not supply.
+
+    Args:
+        liquid_law: The regime's processed liquid law of motion.
+        return_liquid_param: Qualified name of the law's liquid-return parameter.
+        income_param: Qualified name of the law's income parameter.
+        regime_name: Name of the regime whose law is checked.
+        target: Name of the target regime the law transitions into.
+        liquid_law_name: Name of the liquid law of motion.
+
+    Raises:
+        RegimeInitializationError: If the law cannot be evaluated, if its
+            post-decision savings cannot be located among its arguments, or if
+            what it computes differs from the kernel budget.
+
+    """
+    arg_names = _parameter_names(liquid_law)
+    probes = _kernel_budget_probes(
+        arg_names=arg_names,
+        return_liquid_param=return_liquid_param,
+        income_param=income_param,
+    )
+    if probes is None:
+        msg = (
+            f"NBEGM's single-liquid kernels form post-decision savings "
+            f"themselves, so they can only check a liquid law that states them: "
+            f"{liquid_law_name!r} must read either "
+            f"{_KERNEL_LIQUID_LAW_SAVINGS_ARG!r} or both "
+            f"{list(_KERNEL_LIQUID_LAW_RESOURCES_ARGS)}; regime "
+            f"{regime_name!r}'s transition to {target!r} reads "
+            f"{sorted(arg_names)}. Declare a `lcm.piecewise_affine` schedule "
+            "with a `post_decision_function` so the budget is composed from the "
+            "DAG, or use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
+    arguments, savings = probes
+    try:
+        declared = jnp.asarray(liquid_law(**arguments))
+    except Exception as error:
+        msg = (
+            f"NBEGM's single-liquid kernels solve one fixed budget, "
+            f"`(1 + return_liquid) * savings + income`, and prove a declared law "
+            f"equal to it by evaluating it. Regime {regime_name!r}'s "
+            f"{liquid_law_name!r} toward {target!r} raised "
+            f"{type(error).__name__} instead: {error}. Declare a "
+            "`lcm.piecewise_affine` schedule with a `post_decision_function` so "
+            "the budget is composed from the DAG, or use `GridSearch` for this "
+            "regime."
+        )
+        raise RegimeInitializationError(msg) from error
+    kernel_budget = (1.0 + arguments[return_liquid_param]) * savings + arguments[
+        income_param
+    ]
+    if declared.shape != kernel_budget.shape or not bool(
+        jnp.all(jnp.isclose(declared, kernel_budget, rtol=1e-5, atol=1e-8))
+    ):
+        worst = int(jnp.argmax(jnp.abs(declared.reshape(-1) - kernel_budget)))
+        msg = (
+            f"NBEGM's single-liquid kernels evaluate the liquid law as "
+            f"`(1 + return_liquid) * savings + income`; regime {regime_name!r}'s "
+            f"{liquid_law_name!r} toward {target!r} computes something else. At "
+            f"savings {float(savings[worst])}, "
+            f"{_KERNEL_LIQUID_LAW_PARAMS[0]} "
+            f"{float(arguments[return_liquid_param][worst])}, and "
+            f"{_KERNEL_LIQUID_LAW_PARAMS[1]} "
+            f"{float(arguments[income_param][worst])} the kernels would apply "
+            f"{float(kernel_budget[worst])} where the law states "
+            f"{float(declared.reshape(-1)[worst])}. Declare a "
+            "`lcm.piecewise_affine` schedule with a `post_decision_function` so "
+            "the budget is composed from the DAG, or use `GridSearch` for this "
+            "regime."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _kernel_budget_probes(
+    *, arg_names: frozenset[str], return_liquid_param: str, income_param: str
+) -> tuple[dict[str, FloatND], FloatND] | None:
+    """Return arguments spanning the kernel budget, and the savings they imply.
+
+    Every argument varies: savings, the two budget coefficients, and the
+    consumption that separates a law reading resources and consumption
+    individually from one reading only their difference. Arguments the kernels
+    know nothing about cycle through their own values at their own offset, so a
+    law reading one cannot agree with the kernel budget by holding it fixed.
+
+    Returns:
+        The keyword arguments and the post-decision savings each row implies, or
+        `None` when the law states no savings the kernels can identify.
+
+    """
+    reads_savings = _KERNEL_LIQUID_LAW_SAVINGS_ARG in arg_names
+    reads_resources = set(_KERNEL_LIQUID_LAW_RESOURCES_ARGS) <= arg_names
+    if not reads_savings and not reads_resources:
+        return None
+    rows = [
+        (savings, consumption, return_liquid, income)
+        for savings in _KERNEL_LIQUID_LAW_PROBE_SAVINGS
+        for consumption in _KERNEL_LIQUID_LAW_PROBE_CONSUMPTION
+        for return_liquid in _KERNEL_LIQUID_LAW_PROBE_RETURN_LIQUID
+        for income in _KERNEL_LIQUID_LAW_PROBE_INCOME
+    ]
+    savings = jnp.asarray([row[0] for row in rows])
+    consumption = jnp.asarray([row[1] for row in rows])
+    arguments: dict[str, FloatND] = {
+        return_liquid_param: jnp.asarray([row[2] for row in rows]),
+        income_param: jnp.asarray([row[3] for row in rows]),
+    }
+    if reads_savings:
+        arguments[_KERNEL_LIQUID_LAW_SAVINGS_ARG] = savings
+    if reads_resources:
+        resources_arg, consumption_arg = _KERNEL_LIQUID_LAW_RESOURCES_ARGS
+        arguments[resources_arg] = savings + consumption
+        arguments[consumption_arg] = consumption
+    _add_cycled_probes(arguments=arguments, arg_names=arg_names, n_rows=len(rows))
+    return arguments, savings
+
+
+def _add_cycled_probes(
+    *, arguments: dict[str, FloatND], arg_names: frozenset[str], n_rows: int
+) -> None:
+    """Give every argument not already probed its own varying values.
+
+    A kernel supplies none of these, so what matters is that the checked function
+    is indifferent to them. Each cycles at its own offset, so a function reading
+    one cannot match the kernel formula by holding it fixed, and two of them
+    cannot cancel each other out.
+    """
+    period = len(_KERNEL_PROBE_OTHER)
+    for offset, name in enumerate(sorted(arg_names - set(arguments))):
+        arguments[name] = jnp.asarray(
+            [_KERNEL_PROBE_OTHER[(index + offset) % period] for index in range(n_rows)]
+        )
+
+
+def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
+    *,
+    context: SolverBuildContext,
+    routes_to_case_piece_core: bool,
+    budget_target: str,
+    liquid_state_name: StateName,
+) -> None:
+    """Check the declared budget node computes the cash-on-hand the kernels form.
+
+    The case-piece core evaluates each piece to a scalar and adds it to the liquid
+    state itself, so the declared budget node is never called. A node reading
+    exactly the liquid state and the split output can still combine them any way
+    at all, and accepting one would put resources into the Euler equation that
+    the regime never declared. Every other route composes the budget node from the
+    DAG and may read whatever it declares, so only that core's regimes are checked.
+
+    The node is evaluated over liquid wealth, the split output, and — varied
+    independently — every further argument it reads, and must reproduce their sum
+    everywhere on that set.
+
+    Args:
+        context: The regime's solver build context.
+        routes_to_case_piece_core: Whether the regime's kernels come from the
+            case-piece core, the one route that forms cash-on-hand itself.
+        budget_target: Name of the budget node in the regime's function pool.
+        liquid_state_name: Name of the liquid (Euler) state.
+
+    Raises:
+        RegimeInitializationError: If the node splits by phase, cannot be
+            evaluated, does not read both the liquid state and the split output,
+            or computes something other than the kernel's cash-on-hand.
+
+    """
+    regime_name = context.regime_name
+    split_output = _NBEGM_SPLIT_OUTPUT
+    budget_node = context.user_regimes[regime_name].functions.get(budget_target)
+    if not routes_to_case_piece_core or budget_node is None:
+        return
+    if isinstance(budget_node, Phased):
+        msg = (
+            f"NBEGM's case-piece kernels form cash-on-hand as "
+            f"`{liquid_state_name} + {split_output}` in both phases, so regime "
+            f"{regime_name!r} cannot give {budget_target!r} a phase-dependent "
+            "form. Declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the budget is composed from the DAG, or "
+            "use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
+    arg_names = _parameter_names(budget_node)
+    if not {liquid_state_name, split_output} <= arg_names:
+        msg = (
+            f"NBEGM's case-piece kernels form cash-on-hand as "
+            f"`{liquid_state_name} + {split_output}`, so regime {regime_name!r}'s "
+            f"{budget_target!r} has to read both; it reads {sorted(arg_names)}. "
+            "Declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the budget is composed from the DAG, or "
+            "use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
+    rows = [
+        (liquid, subsidy)
+        for liquid in _KERNEL_BUDGET_PROBE_LIQUID
+        for subsidy in _KERNEL_BUDGET_PROBE_SPLIT_OUTPUT
+    ]
+    arguments: dict[str, FloatND] = {
+        liquid_state_name: jnp.asarray([row[0] for row in rows]),
+        split_output: jnp.asarray([row[1] for row in rows]),
+    }
+    _add_cycled_probes(arguments=arguments, arg_names=arg_names, n_rows=len(rows))
+    try:
+        declared = jnp.asarray(budget_node(**arguments))
+    except Exception as error:
+        msg = (
+            f"NBEGM's case-piece kernels form one fixed cash-on-hand, "
+            f"`{liquid_state_name} + {split_output}`, and prove a declared budget "
+            f"node equal to it by evaluating it. Regime {regime_name!r}'s "
+            f"{budget_target!r} raised {type(error).__name__} instead: {error}. "
+            "Declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the budget is composed from the DAG, or "
+            "use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg) from error
+    kernel_cash_on_hand = arguments[liquid_state_name] + arguments[split_output]
+    if declared.shape != kernel_cash_on_hand.shape or not bool(
+        jnp.all(jnp.isclose(declared, kernel_cash_on_hand, rtol=1e-5, atol=1e-8))
+    ):
+        worst = int(jnp.argmax(jnp.abs(declared.reshape(-1) - kernel_cash_on_hand)))
+        msg = (
+            f"NBEGM's case-piece kernels evaluate cash-on-hand as "
+            f"`{liquid_state_name} + {split_output}`; regime {regime_name!r}'s "
+            f"{budget_target!r} computes something else. At {liquid_state_name} "
+            f"{float(arguments[liquid_state_name][worst])} and {split_output} "
+            f"{float(arguments[split_output][worst])} the kernels would apply "
+            f"{float(kernel_cash_on_hand[worst])} where the node states "
+            f"{float(declared.reshape(-1)[worst])}. Declare a "
+            "`lcm.piecewise_affine` schedule with a `post_decision_function` so "
+            "the budget is composed from the DAG, or use `GridSearch` for this "
+            "regime."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _flat_params(func: Callable[..., object]) -> frozenset[str]:
@@ -1464,12 +1763,13 @@ def _collect_nbegm_case_spec(
         )
         raise RegimeInitializationError(msg)
     space = context.state_action_space
+    liquid_state_name = _single_liquid_state_name(
+        context=context, declared=continuous_state, path="case-piece path"
+    )
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
-        liquid_state_name=_single_liquid_state_name(
-            context=context, declared=continuous_state, path="case-piece path"
-        ),
+        liquid_state_name=liquid_state_name,
         reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
     )
     when_callable = functions[piece_set.when_func]
