@@ -31,12 +31,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FunctionName,
-    RegimeName,
 )
-from lcm.exceptions import ModelInitializationError
-from lcm.koopmans_aggregation import LinearAggregator
-from lcm.phased import Phased
-from lcm.regime import Regime as UserRegime
 from lcm.typing import ActionName, Float1D, FloatND, ScalarFloat, UserFunction
 
 # Name of the regime function supplying the analytic inverse marginal utility.
@@ -180,47 +175,6 @@ def get_discount_factor_reader(
         return discount_factor
 
     return read
-
-
-def fail_if_custom_koopmans_aggregator(
-    *, regime_name: RegimeName, user_regime: UserRegime, solver_name: str
-) -> None:
-    """Require the default Koopmans aggregator `W` at solve time.
-
-    An Euler inversion hard-codes `W = utility + discount_factor * CE`, so a
-    custom *solve-phase* aggregator would silently change the meaning of the
-    solution. A `Phased` aggregator whose solve variant is the default is
-    accepted — an Euler solver never reads the simulate variant, so a naive
-    present-bias regime (`koopmans_aggregator=Phased(solve=LinearAggregator(),
-    simulate=beta_delta_W)`) is admissible: the present bias enters only the
-    simulate-phase re-optimization, outside the Euler inversion.
-
-    A regime that declares nothing takes the model-level default, which this
-    check sees as `None` because it runs on the user regime before the model
-    fills the slot.
-
-    Args:
-        regime_name: Name of the regime being validated.
-        user_regime: The user-facing regime, before the model fills its slots.
-        solver_name: Name of the solver the message names as the constraint.
-
-    Raises:
-        ModelInitializationError: If the regime declares a custom solve-phase
-            Koopmans aggregator.
-
-    """
-    declared = user_regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
-    if solve_W is not None and not isinstance(solve_W, LinearAggregator):
-        msg = (
-            f"Regime '{regime_name}' declares a custom solve-phase Koopmans "
-            f"aggregator. The {solver_name} solver hard-codes the default "
-            "aggregator `W = utility + discount_factor * CE` at solve time; "
-            "remove the custom `koopmans_aggregator` (a `Phased` one whose "
-            "solve variant is `LinearAggregator()` is accepted) or use the "
-            "brute-force solver."
-        )
-        raise ModelInitializationError(msg)
 
 
 def concatenate_regime_function(
