@@ -231,6 +231,21 @@ def test_terminal_regime_rejects_certainty_equivalent():
         )
 
 
+def test_terminal_regime_rejects_the_linear_certainty_equivalent():
+    """A terminal regime is rejected even for the expected-utility default.
+
+    The linear default is waved past the composition rules, but having no
+    continuation to aggregate is a property of the regime rather than of the
+    certainty equivalent, so declaring one on a terminal regime is refused
+    whichever mean it is.
+    """
+    with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
+        _make_model(
+            alive_kwargs={},
+            dead_kwargs={"certainty_equivalent": LinearExpectation()},
+        )
+
+
 def test_dcegm_rejects_certainty_equivalent():
     """DC-EGM's Euler inversion assumes expected utility; the guard names GridSearch."""
     dcegm = DCEGM(
