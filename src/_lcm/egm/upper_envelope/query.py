@@ -29,22 +29,138 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND
+from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
+    UNRESOLVED_SIGN,
+    certified_margin_sign,
+)
+from lcm.typing import BoolND, Float1D, FloatND, IntND
 
-# Right-continuous tie tolerance (relative): among bracketing segments whose
-# interpolated value is within this fraction of the envelope maximum, the larger
-# value-slope wins (it is higher just to the right). Both the dense and blocked
-# paths use it, so they select the same policy/marginal at a tie. Applied
-# relative to the value scale (`* max(1, |envelope value|)`) so the tie band does
-# not collapse below cancellation noise at large lifetime-value magnitudes, which
-# would make the near-max set — and the published policy/marginal — depend on the
-# backend's `jnp.max` reduction order.
+# Right-continuous tie tolerance (relative). This settles *only* the case the
+# certified predicate has already declared an exact tie: among segments certified
+# equal to the owner at the query, the larger value-slope wins, because it is the
+# one that is higher just to the right. It never decides which segment is higher —
+# that is `certified_margin_sign`'s job, and a magnitude-scaled band cannot do it,
+# being not invariant to a common additive value level.
 _VALUE_TIE_ATOL = 1e-12
+
+# How many times a provisional owner may be replaced before the query is declared
+# unresolved. Each round validates the standing owner against every bracketing
+# contender, so one round suffices whenever the plain-float maximum is already the
+# certified owner — the ordinary case. The bound exists so a cyclic or
+# non-transitive comparison surfaces as a loud NaN rather than spinning.
+_CERTIFIED_PROMOTION_ROUNDS = 3
 
 
 def _value_tie_band(reference: FloatND) -> FloatND:
     """Return the scale-aware absolute tie band around a reference envelope value."""
     return _VALUE_TIE_ATOL * jnp.maximum(1.0, jnp.abs(reference))
+
+
+class _ComparableLines(NamedTuple):
+    """Per-segment affine lines in the form `certified_margin_sign` accepts.
+
+    The predicate compares two lines through their endpoints and requires a
+    strictly positive width from each. A zero-width self-bracket is a point, so it
+    is presented as the constant line through its own value: equal endpoint values
+    over a positive synthetic width, which takes that value at every abscissa and
+    so agrees with the point exactly where the point is defined.
+    """
+
+    x0: FloatND
+    x1: FloatND
+    v0: FloatND
+    v1: FloatND
+
+
+def _as_comparable_lines(links: "_SegmentLinks") -> _ComparableLines:
+    """Return each link as a line the certified predicate can read."""
+    lower = jnp.minimum(links.left_grid, links.right_grid)
+    upper = jnp.maximum(links.left_grid, links.right_grid)
+    degenerate = upper <= lower
+    # Any positive width represents the same constant line, so the scale is chosen
+    # only to stay representable beside the abscissae it sits among.
+    synthetic = jnp.maximum(jnp.abs(lower), 1.0)
+    low_value = jnp.where(links.left_grid <= links.right_grid, links.left_value, links.right_value)
+    high_value = jnp.where(links.left_grid <= links.right_grid, links.right_value, links.left_value)
+    return _ComparableLines(
+        x0=lower,
+        x1=jnp.where(degenerate, lower + synthetic, upper),
+        v0=low_value,
+        v1=jnp.where(degenerate, low_value, high_value),
+    )
+
+
+def _owner_against_contenders(
+    *, lines: _ComparableLines, owner: _ComparableLines, brackets: BoolND, flat: Float1D
+) -> IntND:
+    """Return the certified sign of `owner - contender` for every bracketing pair.
+
+    Shaped `(n_query, n_segment)`. Non-bracketing entries are reported `+1`: they
+    are not contenders, so they can neither unseat the owner nor make it unresolved.
+    """
+    sign = certified_margin_sign(
+        a_x0=owner.x0[:, None],
+        a_x1=owner.x1[:, None],
+        a_v0=owner.v0[:, None],
+        a_v1=owner.v1[:, None],
+        b_x0=lines.x0[None, :],
+        b_x1=lines.x1[None, :],
+        b_v0=lines.v0[None, :],
+        b_v1=lines.v1[None, :],
+        x_query=flat[:, None],
+    )
+    return jnp.where(brackets, sign, jnp.ones_like(sign))
+
+
+def _certified_owner(
+    *,
+    lines: _ComparableLines,
+    brackets: BoolND,
+    flat: Float1D,
+    provisional: IntND,
+    rank: FloatND,
+) -> tuple[IntND, BoolND]:
+    """Return the certified owning segment per query, and where none is certain.
+
+    The plain-float maximum supplies a provisional owner, which is then validated
+    against *every* bracketing contender: if one is certified above it, that
+    contender takes over and the validation repeats. Ordinarily the provisional
+    owner is already the certified one and the first round confirms it.
+
+    A query is unresolved where the standing owner is still beaten after the last
+    round — a comparison set that is cyclic or non-transitive — or where any
+    bracketing contender's comparison could not be certified. Its channels are
+    poisoned rather than guessed.
+
+    Among contenders certified *exactly equal* to the owner, and only among those,
+    the documented right-continuous rule picks: a segment extending strictly right
+    of the query over one ending at it, then the larger value-slope.
+    """
+    owner = provisional
+    for _ in range(_CERTIFIED_PROMOTION_ROUNDS):
+        sign = _owner_against_contenders(
+            lines=lines, owner=_take_lines(lines, owner), brackets=brackets, flat=flat
+        )
+        beaten = sign == -1
+        challenger = jnp.argmax(beaten, axis=1).astype(jnp.int32)
+        owner = jnp.where(jnp.any(beaten, axis=1), challenger, owner)
+
+    sign = _owner_against_contenders(
+        lines=lines, owner=_take_lines(lines, owner), brackets=brackets, flat=flat
+    )
+    uncertain = (sign == UNRESOLVED_SIGN) | (sign == BELOW_RESOLUTION_SIGN)
+    unresolved = jnp.any(sign == -1, axis=1) | jnp.any(uncertain, axis=1)
+
+    index = jnp.arange(lines.x0.shape[0])[None, :]
+    tied = (sign == 0) | (index == owner[:, None])
+    best = jnp.argmax(jnp.where(tied, rank, -jnp.inf), axis=1).astype(jnp.int32)
+    return best, unresolved
+
+
+def _take_lines(lines: _ComparableLines, index: IntND) -> _ComparableLines:
+    """Return the line each query's index selects."""
+    return _ComparableLines(*(jnp.take(column, index) for column in lines))
 
 
 class _SegmentLinks(NamedTuple):
@@ -165,31 +281,34 @@ def envelope_at_query(
 
     masked_value = jnp.where(brackets, value_interp, -jnp.inf)
     any_bracket = jnp.any(brackets, axis=1)
-    max_value = jnp.max(masked_value, axis=1, keepdims=True)
-    # Break a value tie right-continuously, matching the kernel's `side="right"`
-    # read: among the bracketing segments attaining the maximum, prefer one that
-    # extends strictly to the right of the query (so "larger value-slope is higher
-    # just to the right" is meaningful), and among those the larger slope. Only at the
-    # global upper endpoint, where nothing continues right, fall back to the largest
-    # near-max slope. `_right_continuous_rank` folds both keys into one comparable
-    # scalar so this dense reduction and the blocked scan select the same winner.
+    # The plain-float maximum is only a provisional owner. It is the right starting
+    # point — it is the certified owner almost always — but it cannot settle a pair
+    # whose difference is smaller than the level they sit on, which is exactly where
+    # a strictly lower branch would otherwise be published.
+    provisional = jnp.argmax(masked_value, axis=1).astype(jnp.int32)
     slope = (right_value - left_value)[None, :] / safe_width
-    near_max = brackets & (masked_value >= max_value - _value_tie_band(max_value))
-    right_available = flat < upper
-    best = jnp.argmax(
-        _right_continuous_rank(
-            near_max=near_max, right_available=right_available, slope=slope
-        ),
-        axis=1,
+    rank = _right_continuous_rank(right_available=flat < upper, slope=slope)
+    best, unresolved = _certified_owner(
+        lines=_as_comparable_lines(links),
+        brackets=brackets,
+        flat=flat.reshape(-1),
+        provisional=provisional,
+        rank=rank,
     )
-    env_value = jnp.where(any_bracket, max_value[:, 0], jnp.nan)
+
+    published = any_bracket & ~unresolved
+    env_value = jnp.where(
+        published,
+        jnp.take_along_axis(value_interp, best[:, None], axis=1)[:, 0],
+        jnp.nan,
+    )
     env_policy = jnp.where(
-        any_bracket,
+        published,
         jnp.take_along_axis(policy_interp, best[:, None], axis=1)[:, 0],
         jnp.nan,
     )
     env_marginal = jnp.where(
-        any_bracket,
+        published,
         jnp.take_along_axis(marginal_interp, best[:, None], axis=1)[:, 0],
         jnp.nan,
     )
@@ -200,22 +319,19 @@ def envelope_at_query(
     )
 
 
-def _right_continuous_rank(
-    *, near_max: BoolND, right_available: BoolND, slope: FloatND
-) -> FloatND:
-    """Return one comparable scalar per segment for the right-continuous tie-break.
+def _right_continuous_rank(*, right_available: BoolND, slope: FloatND) -> FloatND:
+    """Return one comparable scalar per segment for the right-continuous tie rule.
 
-    Ranks a right-extending near-max segment above one that ends at the query, and
-    among equally-eligible segments the larger value-slope. `arctan` bounds the slope
-    into `(-pi/2, pi/2)`, so the integer right-extends bit dominates it; non-near-max
-    segments get `-inf`. `argmax` over this key reproduces "prefer a right-extending
-    near-max segment, else the largest near-max slope" with no global reduction, so
-    the dense path and the blocked scan (which compares this scalar across blocks)
-    select the same winner.
+    Ranks a right-extending segment above one that ends at the query, and among
+    equally-eligible segments the larger value-slope. `arctan` bounds the slope into
+    `(-pi/2, pi/2)`, so the integer right-extends bit dominates it. The caller masks
+    this key to the set the certified predicate has declared tied, so `argmax` over
+    it reproduces "prefer a right-extending tied segment, else the largest tied
+    slope" — and the dense path and the blocked scan, sharing the key, select the
+    same winner.
     """
     bounded_slope = jnp.arctan(slope) / jnp.pi + 0.5
-    rank = right_available.astype(bounded_slope.dtype) + bounded_slope
-    return jnp.where(near_max, rank, -jnp.inf)
+    return right_available.astype(bounded_slope.dtype) + bounded_slope
 
 
 def _block_query_terms(
