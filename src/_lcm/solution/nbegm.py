@@ -2907,8 +2907,7 @@ def _solve_ride_along_cell_step(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: FloatND,
-    utility_of_action: Callable[[FloatND], FloatND],
-    inverse_marginal_utility: Callable[[FloatND], FloatND],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -2923,7 +2922,7 @@ def _solve_ride_along_cell_step(
     jump breakpoint uses the unified jump-and-kink step, both reading the expected
     value and marginal already evaluated on the savings grid. The Euler inversion,
     the period value, and the marginal value of liquid all read the regime's own
-    utility through `utility_of_action` and `inverse_marginal_utility` (bound to this
+    utility through the `preferences` bundle (bound to this
     cell). The jump positions locate the jump breakpoints in the sorted partition —
     static for a single variable, a per-cell traced tuple when several variables
     reorder per cell.
@@ -2947,8 +2946,7 @@ def _solve_ride_along_cell_step(
             liquid_grid=liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            inverse_marginal_utility=inverse_marginal_utility,
+            preferences=preferences,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -2963,8 +2961,7 @@ def _solve_ride_along_cell_step(
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        utility_of_action=utility_of_action,
-        inverse_marginal_utility=inverse_marginal_utility,
+        preferences=preferences,
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
@@ -3837,8 +3834,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     )
     from _lcm.egm.preferences import (  # noqa: PLC0415
         NEWTON_ACTION_FLOOR,
-        get_numeric_inverse_marginal_utility,
         newton_action_ceiling,
+        preferences_from_utility,
     )
 
     liquid_name = statics.liquid_name
@@ -3967,8 +3964,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         **utility_action_binding,
                     )
 
-                inverse_marginal_utility = get_numeric_inverse_marginal_utility(
-                    marginal_utility=jax.grad(utility_of_consumption),
+                preferences = preferences_from_utility(
+                    utility_of_action=utility_of_consumption,
                     action_lower=action_lower,
                     action_upper=action_upper,
                 )
@@ -4003,8 +4000,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         liquid_grid=query_grid,
                         savings_grid=savings_grid,
                         discount_factor=cell_discount_factor,
-                        utility_of_action=utility_of_consumption,
-                        inverse_marginal_utility=inverse_marginal_utility,
+                        preferences=preferences,
                         coh_slopes=coh_slopes,
                         coh_intercepts=coh_intercepts,
                         breakpoints=branch_breakpoints,
@@ -4024,8 +4020,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     liquid_grid=query_grid,
                     savings_grid=savings_grid,
                     discount_factor=cell_discount_factor,
-                    utility_of_action=utility_of_consumption,
-                    inverse_marginal_utility=inverse_marginal_utility,
+                    preferences=preferences,
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,
                     breakpoints=branch_breakpoints,
