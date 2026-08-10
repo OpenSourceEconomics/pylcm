@@ -16,12 +16,10 @@ from beartype import beartype
 from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
 from _lcm.power_mean import weighted_power_mean
 from _lcm.probability import (
-    flattened_to_one_scale,
     is_live,
     is_negative,
     is_represented_zero,
     rescaled_lottery_weights,
-    restored_against_a_nonfinite_value,
 )
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import zero_safe_weighted_term
@@ -95,12 +93,20 @@ class CertaintyEquivalent(ABC):
         only form in which the lottery is exact — on any single scale the
         rarest node has to be rounded.
 
-        This default flattens onto one scale and defers to `aggregate`, which
-        understates a node it cannot represent there. That is the declared
-        approximation and it is safe in the direction that matters, a node
-        never being made likelier than it is. A certainty equivalent that can
-        take the scales exactly overrides this; `PowerMean` does, reducing in
-        the log domain where the spread costs nothing.
+        This base is a capability boundary rather than an implementation. There
+        is no reduction it could perform on an arbitrary subclass's behalf: the
+        only thing it knows about that subclass is `aggregate`, which takes
+        ordinary numbers, and no ordinary number states a probability below the
+        smallest positive float. Flattening the pairs first and deferring would
+        understate exactly the node the pair exists to carry, and a node whose
+        value is large enough to matter is precisely the one that survives
+        being rare — so the understatement is not small in the answer.
+
+        Every shipped certainty equivalent overrides this. A model whose
+        certainty equivalent reaches this method is rejected when it is built,
+        so the failure is a construction error naming the remedy rather than
+        this exception; the raise is the backstop for a lottery that reaches it
+        another way.
 
         Args:
             values: Continuation values of the lottery along the last axis.
@@ -109,21 +115,18 @@ class CertaintyEquivalent(ABC):
             params: Mapping of the runtime parameter names in `param_names`
                 to their values.
 
-        Returns:
-            The certainty equivalent, reduced over the last axis.
+        Raises:
+            NotImplementedError: Always.
 
         """
-        return self.aggregate(
-            values=values,
-            weights=restored_against_a_nonfinite_value(
-                coefficients=coefficients,
-                lowered=flattened_to_one_scale(
-                    coefficients=coefficients, shifts=shifts
-                ),
-                values=values,
-            ),
-            params=params,
+        msg = (
+            f"`{type(self).__name__}` has no `aggregate_scaled`, so it cannot "
+            "reduce a continuation lottery whose weights carry their own "
+            "scales. Implement `aggregate_scaled`, or use one of the shipped "
+            "certainty equivalents (`LinearExpectation`, `QuasiArithmeticMean`, "
+            "`PowerMean`)."
         )
+        raise NotImplementedError(msg)
 
     @property
     def flat_param_names(self) -> MappingProxyType[str, str]:
@@ -190,6 +193,39 @@ class LinearExpectation(CertaintyEquivalent):
             ),
             axis=-1,
         ) / jnp.sum(weights, axis=-1)
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        """Return the expectation of a lottery whose weights carry their scales.
+
+        The scale is applied to each node's `weight * value` rather than to its
+        weight, so a node too rare to state on any one scale still contributes
+        what it is worth. That is the whole of the difference: a node whose
+        probability sits `2**-1024` below the likeliest one and whose value is
+        the largest the format holds contributes a term of order one-half, and
+        naming its weight first would report the mean as zero.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            coefficients: The weights' significands, over the same axis.
+            shifts: Each weight's own base-two scale, broadcast against them.
+            params: Unused — the plain expectation has no parameters.
+
+        Returns:
+            The expectation, reduced over the last axis.
+
+        """
+        value_terms, weight_terms = _scaled_lottery_terms(
+            values=values, coefficients=coefficients, shifts=shifts
+        )
+        return jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1)
 
 
 @beartype(conf=REGIME_CONF)
@@ -318,21 +354,19 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         shifts: IntND,
         params: Mapping[str, FloatND],
     ) -> FloatND:
-        """Reduce the scaled lottery, deciding liveness on `g(v)` rather than `v`.
+        """Reduce the scaled lottery, transforming before the scales are spent.
 
-        The base implementation lowers the pairs and hands the result to
-        `aggregate`, which is where `transform` is applied — so a weight the
-        lowering could not state is classified before the mean has seen the
-        quantity it actually averages. `transform` is arbitrary user code and
-        may be unbounded inside its domain: `1/v` at a value of zero, `log v`
-        likewise. A node whose value is ordinary and whose *transformed* value
-        is an infinity carries the whole certainty equivalent, and a node whose
-        transformed value is `NaN` is a specification outside the transform's
-        domain that must fail loudly. Neither may be read as an event that
-        cannot occur because its probability is too small to write down.
+        `transform` is arbitrary user code and may be unbounded inside its
+        domain: `1/v` at a value of zero, `log v` likewise. So the quantity being
+        averaged is `g(v)`, not `v`, and a node whose value is ordinary while its
+        transformed value is enormous carries the whole certainty equivalent. Its
+        probability is exactly the kind a single scale cannot state, which is why
+        the transform happens first and the scales are still present when the
+        reduction takes them: `weight * g(value)` is an ordinary number where
+        `weight` alone is not.
 
         The order is therefore: replace the values that genuinely cannot occur,
-        transform, then decide what a vanished weight was standing against.
+        transform, reduce with the scales in hand, invert once.
 
         Args:
             values: Continuation values of the lottery along the last axis.
@@ -346,47 +380,31 @@ class QuasiArithmeticMean(CertaintyEquivalent):
 
         """
         coefficients = jnp.asarray(coefficients)
-        # Lowering onto one scale is what makes a weight nameable at all;
-        # rescaling is what makes it usable. A weight that survives the lowering
-        # as a subnormal is live, so nothing restores it, and the arithmetic
-        # still cannot multiply it — which against an unbounded `transform` loses
-        # a term of order one just as surely as flushing it to zero would.
-        lowered = rescaled_lottery_weights(
-            flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
-        )
+        # A negative coefficient is not a probability. It reaches the result
+        # through the mass rather than the numerator, exactly as in `aggregate`:
+        # the liveness test would read a NaN weight as a node that cannot occur.
+        coefficients = jnp.where(is_negative(coefficients), jnp.nan, coefficients)
         # The null events are the represented zeros of the coefficient, which no
-        # scale can change. Reading them off `lowered` instead would take with
-        # them every node the shared scale cannot state — the ones this method
-        # exists to keep. The stand-in comes from the heaviest node that can
-        # occur, because an arbitrary constant need not lie in `transform`'s
-        # domain while a value already in the lottery always does.
+        # scale can change. The stand-in comes from the likeliest node that can
+        # occur — the one carrying the smallest shift — because an arbitrary
+        # constant need not lie in `transform`'s domain while a value already in
+        # the lottery always does.
+        live = is_live(coefficients)
+        unusable = jnp.max(shifts, axis=-1, keepdims=True)
         stand_in = jnp.take_along_axis(
             values,
-            jnp.argmax(
-                jnp.where(is_live(coefficients), lowered, -jnp.inf),
-                axis=-1,
-                keepdims=True,
-            ),
+            jnp.argmin(jnp.where(live, shifts, unusable), axis=-1, keepdims=True),
             axis=-1,
         )
         safe_values = jnp.where(is_represented_zero(coefficients), stand_in, values)
         transformed = self.transform(
             value=safe_values, **_args_for(self.transform, params)
         )
-        # A negative coefficient is not a probability. It reaches the result
-        # through the mass rather than the numerator, exactly as in `aggregate`:
-        # the liveness test would read a NaN weight as a node that cannot occur.
-        weights = jnp.where(
-            is_negative(coefficients),
-            jnp.nan,
-            restored_against_a_nonfinite_value(
-                coefficients=coefficients, lowered=lowered, values=transformed
-            ),
+        value_terms, weight_terms = _scaled_lottery_terms(
+            values=transformed, coefficients=coefficients, shifts=shifts
         )
-        live = is_live(weights)
         return self.inverse(
-            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
-            / jnp.sum(weights, axis=-1),
+            value=jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1),
             **_args_for(self.inverse, params),
         )
 
@@ -538,3 +556,57 @@ def _args_for(
 ) -> dict[str, FloatND]:
     """Pick the entries of `params` that `func`'s signature declares."""
     return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}
+
+
+def _scaled_lottery_terms(
+    *, values: FloatND, coefficients: FloatND, shifts: IntND
+) -> tuple[FloatND, FloatND]:
+    """Return a lottery's value terms and weight terms on one shared scale.
+
+    A node's contribution to a mean is `c * 2**-s * v`, and the order those
+    three are combined in decides whether the node survives. Forming the weight
+    `c * 2**-s` first is what loses it: the weight of a node many orders below
+    the likeliest one is not representable, so it becomes zero and takes its
+    value with it — although the *product* it was heading for may be an ordinary
+    number, which is precisely the case where the node changes the answer.
+    Applying the scale to `c * v` instead keeps it, because a rare node earns a
+    place in a mean by having a value large enough to offset its probability.
+
+    Both terms take the same shift, so the scale cancels in their ratio and the
+    caller divides them directly. The shift is the smallest the row carries, per
+    lottery rather than per batch, so the likeliest node's weight lands at its
+    own magnitude and no unrelated lottery beside it can move it. A dead node
+    takes no part in that choice: an unreachable node carrying a large shift
+    would otherwise push every live weight down with it.
+
+    Args:
+        values: Continuation values of the lottery along the last axis.
+        coefficients: The weights' significands, over the same axis.
+        shifts: Each weight's own base-two scale, broadcast against them.
+
+    Returns:
+        Tuple of the value terms and the weight terms, both over the last axis
+        and both carrying the row's shared scale.
+
+    """
+    coefficients = jnp.asarray(coefficients)
+    values = jnp.asarray(values)
+    shifts = jnp.broadcast_to(jnp.asarray(shifts), jnp.shape(coefficients))
+
+    live = is_live(coefficients)
+    unusable = jnp.max(shifts, axis=-1, keepdims=True)
+    common = jnp.min(jnp.where(live, shifts, unusable), axis=-1, keepdims=True)
+    relative = (shifts - common).astype(jnp.int32)
+
+    weight_terms = jnp.where(live, jnp.ldexp(coefficients, -relative), 0.0)
+    value_terms = jnp.where(
+        live,
+        jnp.ldexp(
+            zero_safe_weighted_term(
+                weight=coefficients, value=values, subnormal_is_accounted_for=True
+            ),
+            -relative,
+        ),
+        0.0,
+    )
+    return value_terms, weight_terms

@@ -14,6 +14,7 @@ import pytest
 from _lcm.egm.upper_envelope.double_double import (
     dd_quotient_bounded,
     normalizing_exponent,
+    two_prod,
 )
 from tests.conftest import X64_ENABLED
 
@@ -106,3 +107,26 @@ def test_a_group_with_no_usable_magnitude_scales_by_one(unusable: float) -> None
     term = jnp.asarray(unusable, dtype=_dtype())
 
     assert int(normalizing_exponent(term, term)) == 0
+
+
+def test_a_product_is_exact_up_to_the_top_of_the_range() -> None:
+    """`two_prod` reproduces its product exactly for every finite operand.
+
+    Dekker's split multiplies its operand by roughly the square root of the
+    format's precision, which overflows near the top of the range even where the
+    product it serves is an ordinary finite number. The tail it returns is then
+    not merely inaccurate but `nan`, and the poison spreads through every
+    certificate built on it — so the split has to hold wherever the product does,
+    not merely wherever the split's own intermediates happen to fit.
+    """
+    dtype = _dtype()
+    huge = np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1)
+    left, right = 0.25, huge
+
+    high, low = two_prod(
+        jnp.asarray(left, dtype=dtype), jnp.asarray(right, dtype=dtype)
+    )
+    exact = Fraction(left) * Fraction(float(jnp.asarray(right, dtype=dtype)))
+
+    assert np.isfinite(float(low)), "the split overflowed and poisoned the tail"
+    assert Fraction(float(high)) + Fraction(float(low)) == exact
