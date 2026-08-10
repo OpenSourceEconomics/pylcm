@@ -1,18 +1,20 @@
-"""NB-EGM's single-liquid kernels refuse a regime whose economics they cannot run.
+"""NB-EGM's single-liquid kernels solve the felicity a regime declares.
 
-Those kernels are not composed from the regime's DAG: they solve a fixed
-consumption-saving form — CRRA flow utility and an affine liquid law — reading the
-coefficients under fixed qualified parameter names. A regime whose `utility` or
-liquid law carries any structure beyond that form declares a different Bellman
-problem from the one the kernel solves, so it is rejected at build rather than
-solved as if the extra structure were not there.
+The felicity comes from the regime's own `utility` target, so a scale, a
+subsistence level, or any other structure the modeller writes enters the solved
+objective. The budget does not: the kernels apply a fixed affine liquid law,
+`(1 + return_liquid) * savings + income`, reading its coefficients under fixed
+qualified parameter names. A law carrying structure beyond that declares a
+different Bellman problem from the one the kernel solves, so it is rejected at
+build rather than solved as if the extra structure were not there.
 
-Regimes needing a richer objective declare a `lcm.piecewise_affine` schedule with a
-`post_decision_function`, which composes its budget and utility from the DAG.
+Regimes needing a richer budget declare a `lcm.piecewise_affine` schedule with a
+`post_decision_function`, which composes it from the DAG.
 """
 
 import copy
 
+import numpy as np
 import pytest
 
 from lcm import LinSpacedGrid
@@ -91,14 +93,19 @@ def _params(**extra: float) -> dict:
     return params
 
 
-def test_a_scaled_utility_is_refused_by_the_single_liquid_kernels():
-    """A flat scale on `utility` is rejected, not silently dropped from the objective.
+def test_a_scaled_utility_enters_the_solved_objective():
+    """A flat scale on `utility` changes the value function it produces.
 
-    The kernel evaluates unscaled CRRA, so accepting the scale would solve a
-    different problem than the regime declares.
+    The kernel evaluates the declared felicity, so a scale the regime writes is
+    part of the problem solved rather than structure quietly dropped from it.
     """
-    with pytest.raises(RegimeInitializationError, match="util_scale"):
-        _build(utility_func=scaled_utility)
+    scaled = _build(utility_func=scaled_utility).solve(
+        params=_params(util_scale=2.0), log_level="debug"
+    )
+    plain = _build().solve(params=_params(), log_level="debug")
+    assert not np.allclose(
+        np.asarray(scaled[0]["alive"]), np.asarray(plain[0]["alive"])
+    )
 
 
 def test_a_rescaled_liquid_law_is_refused_by_the_single_liquid_kernels():

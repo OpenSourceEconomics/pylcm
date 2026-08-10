@@ -31,12 +31,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FunctionName,
-    RegimeName,
 )
-from lcm.exceptions import ModelInitializationError
-from lcm.koopmans_aggregation import LinearAggregator
-from lcm.phased import Phased
-from lcm.regime import Regime as UserRegime
 from lcm.typing import ActionName, Float1D, FloatND, ScalarFloat, UserFunction
 
 # Name of the regime function supplying the analytic inverse marginal utility.
@@ -58,6 +53,43 @@ def newton_action_ceiling(scale_grid: Float1D) -> ScalarFloat:
     analytic `inverse_marginal_utility` in that case.
     """
     return scale_grid[-1] * 1000.0 + 1000.0
+
+
+def get_numeric_inverse_marginal_utility(
+    *,
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    action_lower: ScalarFloat | float,
+    action_upper: ScalarFloat | float,
+) -> Callable[[ScalarFloat], ScalarFloat]:
+    """Return the bracketed Newton inverse of a marginal felicity — the iEGM path.
+
+    A felicity composed from a regime's DAG has no closed-form Euler inversion, so
+    the root is found numerically inside a bracket that dominates every feasible
+    action. The returned map is scalar-in, scalar-out: callers that carry whole
+    meshes either `jax.vmap` it or lift it elementwise.
+
+    Args:
+        marginal_utility: Marginal felicity `u'(c)` of a scalar action, bound to
+            one parameter set.
+        action_lower: Lower bracket on the action — a small positive floor.
+        action_upper: Upper bracket on the action; must dominate every feasible
+            action.
+
+    Returns:
+        Callable mapping a marginal continuation to the action that equates
+        `u'(c)` with it.
+
+    """
+
+    def scalar_inverse(marginal_continuation: ScalarFloat) -> ScalarFloat:
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=marginal_continuation,
+            marginal_utility=marginal_utility,
+            c_lower=jnp.asarray(action_lower),
+            c_upper=jnp.asarray(action_upper),
+        )
+
+    return scalar_inverse
 
 
 @dataclass(frozen=True)
@@ -130,16 +162,13 @@ def get_preferences_builder(
                     marginal_continuation=marginal_continuation, **params
                 )
         else:
-
-            def scalar_inverse(marginal_continuation: ScalarFloat) -> ScalarFloat:
-                return numeric_inverse_marginal_utility(
-                    marginal_continuation=marginal_continuation,
+            inverse_marginal_utility = _elementwise(
+                get_numeric_inverse_marginal_utility(
                     marginal_utility=jax.grad(utility_of_action),
-                    c_lower=jnp.asarray(action_lower),
-                    c_upper=jnp.asarray(action_upper),
+                    action_lower=action_lower,
+                    action_upper=action_upper,
                 )
-
-            inverse_marginal_utility = _elementwise(scalar_inverse)
+            )
 
         return Preferences(
             utility=utility_of_action,
@@ -180,47 +209,6 @@ def get_discount_factor_reader(
         return discount_factor
 
     return read
-
-
-def fail_if_custom_koopmans_aggregator(
-    *, regime_name: RegimeName, user_regime: UserRegime, solver_name: str
-) -> None:
-    """Require the default Koopmans aggregator `W` at solve time.
-
-    An Euler inversion hard-codes `W = utility + discount_factor * CE`, so a
-    custom *solve-phase* aggregator would silently change the meaning of the
-    solution. A `Phased` aggregator whose solve variant is the default is
-    accepted — an Euler solver never reads the simulate variant, so a naive
-    present-bias regime (`koopmans_aggregator=Phased(solve=LinearAggregator(),
-    simulate=beta_delta_W)`) is admissible: the present bias enters only the
-    simulate-phase re-optimization, outside the Euler inversion.
-
-    A regime that declares nothing takes the model-level default, which this
-    check sees as `None` because it runs on the user regime before the model
-    fills the slot.
-
-    Args:
-        regime_name: Name of the regime being validated.
-        user_regime: The user-facing regime, before the model fills its slots.
-        solver_name: Name of the solver the message names as the constraint.
-
-    Raises:
-        ModelInitializationError: If the regime declares a custom solve-phase
-            Koopmans aggregator.
-
-    """
-    declared = user_regime.koopmans_aggregator
-    solve_W = declared.solve if isinstance(declared, Phased) else declared
-    if solve_W is not None and not isinstance(solve_W, LinearAggregator):
-        msg = (
-            f"Regime '{regime_name}' declares a custom solve-phase Koopmans "
-            f"aggregator. The {solver_name} solver hard-codes the default "
-            "aggregator `W = utility + discount_factor * CE` at solve time; "
-            "remove the custom `koopmans_aggregator` (a `Phased` one whose "
-            "solve variant is `LinearAggregator()` is accepted) or use the "
-            "brute-force solver."
-        )
-        raise ModelInitializationError(msg)
 
 
 def concatenate_regime_function(

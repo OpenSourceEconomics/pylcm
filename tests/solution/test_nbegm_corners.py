@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import _case_step, _kink_aware_interp
+from tests.solution._crra_preferences import crra_preferences
 
 
 def test_kink_aware_interp_returns_the_otherwise_side_at_the_exact_limit():
@@ -74,9 +75,10 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid_grid,
+        next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=beta,
-        crra=crra,
+        preferences=crra_preferences(crra),
         return_liquid=return_liquid,
         income=income,
         subsidy=subsidy,

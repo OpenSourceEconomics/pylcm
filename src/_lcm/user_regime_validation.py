@@ -24,7 +24,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
-from lcm.certainty_equivalent import LinearExpectation
+from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
@@ -838,16 +838,21 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     taste-shock regime implements, so only a nonlinear certainty equivalent is
     subject to the composition rules.
     """
-    if regime.certainty_equivalent is None or isinstance(
-        regime.certainty_equivalent, LinearExpectation
-    ):
+    if regime.certainty_equivalent is None:
         return []
+    # Which class owns which reduction is a separate question from linearity, so
+    # it is asked before the linear default is waved through: a subclass of
+    # `LinearExpectation` that restates `aggregate` is an instance of it, and
+    # would otherwise skip the very gate written to catch it.
     error_messages: list[str] = []
+    error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
     if regime.terminal:
         error_messages.append(
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
+    if isinstance(regime.certainty_equivalent, LinearExpectation):
+        return error_messages
     if (
         regime.solver.requires_continuation
         and not regime.solver.supports_nonlinear_certainty_equivalent
@@ -1626,3 +1631,63 @@ def _validate_per_target_dict(
             f"MarkovTransition or none are.",
         )
     return error_messages
+
+
+def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list[str]:
+    """Collect errors for a certainty equivalent that cannot take scaled weights.
+
+    A continuation lottery's weights reach the certainty equivalent as
+    `(coefficient, shift)` pairs, because a joint probability built from several
+    rare factors sits further below the likeliest node than the exponent field
+    spans and no ordinary weight vector states it. `aggregate_scaled` is the
+    method that reads the pair.
+
+    Which implementation runs is decided by ownership rather than presence, and
+    two cases are wrong:
+
+    - the most-derived owner of `aggregate_scaled` is the base class, which
+      cannot reduce a scaled lottery for an algebra it has never seen and says
+      so rather than approximating one;
+    - `aggregate` is owned further down the class hierarchy than
+      `aggregate_scaled`, so a subclass has changed what the mean *means* while
+      inheriting a scaled reduction written for its parent's meaning. The two
+      would then disagree, and which one ran would depend on whether a lottery
+      happened to carry scales.
+
+    Inherited semantics with an inherited scaled method agree by construction,
+    and an explicit override of both is the author's own business.
+    """
+    mean_type = type(certainty_equivalent)
+    ordinary_owner = _method_owner(mean_type, "aggregate")
+    scaled_owner = _method_owner(mean_type, "aggregate_scaled")
+    remedy = (
+        f"Implement `aggregate_scaled` on `{mean_type.__name__}` so it reduces "
+        "the lottery with its scales still present, or use one of the shipped "
+        "certainty equivalents (`LinearExpectation`, `QuasiArithmeticMean`, "
+        "`PowerMean`), which do."
+    )
+    if scaled_owner is CertaintyEquivalent:
+        boundary = (
+            f"`{mean_type.__name__}` defines `aggregate` but inherits "
+            "`aggregate_scaled` from `CertaintyEquivalent`, which is a "
+            "capability boundary rather than an implementation: a weight below "
+            "the smallest positive float cannot be handed to an arbitrary "
+            f"`aggregate` as an ordinary number. {remedy}"
+        )
+        return [boundary]
+    order = mean_type.__mro__
+    if order.index(ordinary_owner) < order.index(scaled_owner):
+        mismatch = (
+            f"`{mean_type.__name__}` overrides `aggregate` but inherits "
+            f"`aggregate_scaled` from `{scaled_owner.__name__}`, whose scaled "
+            "reduction states the parent's mean rather than this one. The two "
+            "would disagree, and which of them ran would depend on whether the "
+            f"lottery carried scales. {remedy}"
+        )
+        return [mismatch]
+    return []
+
+
+def _method_owner(mean_type: type, name: str) -> type:
+    """Return the most-derived class in `mean_type`'s MRO that defines `name`."""
+    return next(klass for klass in mean_type.__mro__ if name in vars(klass))
