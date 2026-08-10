@@ -191,8 +191,14 @@ def normalized_scaled_weights(
     own_exponent = _unbiased_exponent(arr)
     exponent = own_exponent - shifts
     live = is_live(arr) & jnp.isfinite(arr)
-    peak = jnp.max(jnp.where(live, exponent, jnp.min(exponent)))
-    mass = jnp.sum(jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)))
+    # Both reductions run along the lottery's own axis: a batch holds unrelated
+    # lotteries, and one row's likeliest node says nothing about what another
+    # row's mass should be measured against.
+    floor = jnp.min(exponent, axis=-1, keepdims=True)
+    peak = jnp.max(jnp.where(live, exponent, floor), axis=-1, keepdims=True)
+    mass = jnp.sum(
+        jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)), axis=-1, keepdims=True
+    )
     safe_mass = jnp.where(mass > 0.0, mass, jnp.ones_like(mass))
     carries_a_scale = ~is_represented_zero(arr) & jnp.isfinite(arr)
     return (
@@ -231,7 +237,12 @@ def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND
     """
     arr = jnp.asarray(coefficients)
     shifts = jnp.asarray(shifts)
-    common = jnp.min(shifts)
+    # The lottery is the last axis, and the lotteries beside it in a batch are
+    # unrelated. A scale taken across the whole array would let the likeliest
+    # node anywhere decide what is representable everywhere, so a batch row whose
+    # nodes are all rare would come down to nothing although on its own terms its
+    # weights are ordinary.
+    common = jnp.min(shifts, axis=-1, keepdims=True)
     return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
 
 

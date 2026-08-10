@@ -1,8 +1,10 @@
 """Tests for nonlinear certainty equivalents over the continuation value."""
 
+import itertools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -11,6 +13,7 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import power_inverse, power_transform
+from _lcm.probability import normalized_scaled_weights, scaled_exact_product
 from lcm import (
     AgeGrid,
     CertaintyEquivalent,
@@ -39,6 +42,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
     Period,
     ScalarInt,
 )
@@ -1298,30 +1302,21 @@ class _HalvedLinearExpectation(LinearExpectation):
         return 0.5 * jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
 
 
-def test_linear_expectation_subclass_aggregate_is_honoured(x64_enabled: None):
-    """A subclass that overrides `aggregate` is used, not bypassed.
+def test_a_subclass_changing_only_the_ordinary_mean_is_rejected(x64_enabled: None):
+    """Redefining `aggregate` alone leaves two means that disagree.
 
-    The engine reduces each target regime on its own for the shipped
-    `LinearExpectation`, whose `aggregate` states the same quantity. That
-    shortcut must not extend to a subclass whose `aggregate` states something
-    else.
+    A subclass that states a different mean but inherits its parent's scaled
+    reduction has two answers, and which one the engine reaches depends on
+    whether the lottery happened to carry per-node scales — a property of the
+    model's transitions rather than of the preference being expressed. The
+    model does not build, and the message names both ways out.
     """
-    plain = _make_stacked_model(
-        model_kwargs={"certainty_equivalent": LinearExpectation()},
-        working_kwargs={},
-        retired_kwargs={},
-    )
-    halved = _make_stacked_model(
-        model_kwargs={"certainty_equivalent": _HalvedLinearExpectation()},
-        working_kwargs={},
-        retired_kwargs={},
-    )
-    params = {"discount_factor": 0.95}
-    V_plain = plain.solve(params=params, log_level="debug")
-    V_halved = halved.solve(params=params, log_level="debug")
-    assert not np.allclose(
-        np.asarray(V_plain[0]["working"]), np.asarray(V_halved[0]["working"])
-    )
+    with pytest.raises(RegimeInitializationError, match="aggregate_scaled"):
+        _make_stacked_model(
+            model_kwargs={"certainty_equivalent": _HalvedLinearExpectation()},
+            working_kwargs={},
+            retired_kwargs={},
+        )
 
 
 def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight():
@@ -1375,3 +1370,158 @@ def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node():
     )
 
     np.testing.assert_allclose(got, 1.5, rtol=1e-6)
+
+
+def test_unrelated_batch_rows_do_not_share_a_reduction_scale() -> None:
+    """Each lottery in a batch reconciles its scales against its own rows.
+
+    A batch holds lotteries that have nothing to do with one another, so a
+    scale taken across the whole array lets the likeliest node anywhere decide
+    what counts as representable everywhere. A row whose own nodes are all rare
+    then reduces to nothing, though on its own terms its weights are ordinary
+    and its certainty equivalent is one of its own values.
+    """
+    dtype = jnp.zeros(()).dtype
+    spread = 200 if dtype.itemsize == 4 else 2000
+    values = jnp.asarray([[1.0, 1.0], [2.0, 2.0]], dtype=dtype)
+
+    got = LinearExpectation().aggregate_scaled(
+        values=values,
+        coefficients=jnp.ones_like(values),
+        shifts=jnp.asarray([[0, 0], [spread, spread]], dtype=jnp.int32),
+        params={},
+    )
+
+    np.testing.assert_array_equal(np.asarray(got), np.asarray([1.0, 2.0]))
+
+
+def _scaled_case() -> tuple[Any, int, float]:
+    """The working dtype, a rare node's exponent, and a tolerance it can meet."""
+    dtype = jnp.zeros(()).dtype
+    exponent = -64 if dtype.itemsize == 4 else -512
+    tolerance = 2e-6 if dtype.itemsize == 4 else 1e-12
+    return dtype, exponent, tolerance
+
+
+def _scaled_lottery(dtype: Any, exponent: int) -> tuple[Any, Any]:
+    """A joint lottery over two independent axes, one node rare in both."""
+    axes = [jnp.asarray([1.0, 2.0**exponent], dtype=dtype)] * 2
+    coefficients = []
+    shifts = []
+    for index in itertools.product((0, 1), repeat=2):
+        coefficient, shift = scaled_exact_product(
+            jnp.stack([axes[axis][position] for axis, position in enumerate(index)])
+        )
+        coefficients.append(coefficient)
+        shifts.append(shift)
+    return normalized_scaled_weights(
+        coefficients=jnp.stack(coefficients), shifts=jnp.stack(shifts)
+    )
+
+
+def _exact_linear_mean(dtype: Any, exponent: int) -> float:
+    """The lottery's exact expectation, in rational arithmetic."""
+    probability = Fraction(1, 1 << (-exponent))
+    rare = probability * probability
+    mass = (1 + probability) ** 2
+    numerator, denominator = float(np.finfo(dtype).max).as_integer_ratio()
+    return float(rare * Fraction(numerator, denominator) / mass)
+
+
+@pytest.mark.parametrize(
+    "mean",
+    [
+        LinearExpectation(),
+        QuasiArithmeticMean(transform=lambda value: value, inverse=lambda value: value),
+    ],
+    ids=["linear", "identity_quasi"],
+)
+def test_a_node_too_rare_to_flatten_still_carries_its_value(mean) -> None:
+    """A node whose probability no single scale can state still reaches the mean.
+
+    Its probability is the product of two rare factors, so it sits further below
+    the likeliest node than the exponent field spans and only the (coefficient,
+    scale) pair states it. Its value is the largest the format holds, so the
+    product is an ordinary number and the expectation is of order one: a
+    reduction that drops the node reports zero for a quantity that is not small.
+    """
+    dtype, exponent, tolerance = _scaled_case()
+    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    values = jnp.zeros((4,), dtype=dtype).at[-1].set(jnp.finfo(dtype).max)
+
+    got = jax.jit(mean.aggregate_scaled)(
+        values=values, coefficients=coefficients, shifts=shifts, params={}
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(got),
+        _exact_linear_mean(np.dtype(dtype), exponent),
+        rtol=tolerance,
+        atol=0,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _OrdinaryOnlyMean(CertaintyEquivalent):
+    """A certainty equivalent that states only the ordinary reduction."""
+
+    @property
+    def param_names(self) -> frozenset[str]:
+        return frozenset()
+
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ScaledAwareMean(_OrdinaryOnlyMean):
+    """A certainty equivalent that states both reductions itself."""
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        return LinearExpectation().aggregate_scaled(
+            values=values, coefficients=coefficients, shifts=shifts, params=params
+        )
+
+
+def test_a_mean_that_cannot_read_scaled_weights_is_rejected(x64_enabled: None) -> None:
+    """Stating only the ordinary reduction is not enough to build a model.
+
+    The base class has nothing to reduce a scaled lottery with on an arbitrary
+    mean's behalf — it knows only `aggregate`, which takes ordinary numbers, and
+    no ordinary number states a probability below the smallest positive float.
+    Approximating one there would drop the node the pair exists to carry.
+    """
+    with pytest.raises(RegimeInitializationError, match="aggregate_scaled"):
+        _make_stacked_model(
+            model_kwargs={"certainty_equivalent": _OrdinaryOnlyMean()},
+            working_kwargs={},
+            retired_kwargs={},
+        )
+
+
+def test_a_mean_that_states_both_reductions_is_accepted(x64_enabled: None) -> None:
+    """Declaring the scaled reduction alongside the ordinary one is sufficient.
+
+    The two agree by the author's construction, which is the one thing the
+    library cannot check for an arbitrary algebra and does not pretend to.
+    """
+    model = _make_stacked_model(
+        model_kwargs={"certainty_equivalent": _ScaledAwareMean()},
+        working_kwargs={},
+        retired_kwargs={},
+    )
+    V_arr = model.solve(params={"discount_factor": 0.95}, log_level="debug")
+    assert np.all(np.isfinite(np.asarray(V_arr[0]["working"])))
