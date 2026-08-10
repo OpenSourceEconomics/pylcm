@@ -14,6 +14,7 @@ import numpy as np
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
 from _lcm.egm.two_asset_g2egm_step import g2egm_retiring_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
@@ -49,7 +50,7 @@ def _solve_to_boundary():
         next_liquid_grid=_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         return_liquid=_RETURN_LIQUID,
         income=_RET_INCOME,
     )
@@ -63,7 +64,7 @@ def _solve_to_boundary():
         b_grid=_B_GRID,
         consumption_grid=_CONSUMPTION_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
         return_liquid=_RETURN_LIQUID,
         pension_payout_return=_PAYOUT,

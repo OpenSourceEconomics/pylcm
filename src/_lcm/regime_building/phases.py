@@ -100,15 +100,30 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         user_regime=user_regime
     )
     aggregator = user_regime.koopmans_aggregator
+    aggregator_errors: list[str] = []
     if isinstance(aggregator, Phased):
         solve_aggregator, simulate_aggregator = aggregator.solve, aggregator.simulate
+        # A non-terminal regime needs an aggregator in both phases; `None` in a
+        # `Phased` slot means "terminal", which a single phase cannot be.
+        aggregator_errors = [
+            f"`koopmans_aggregator` is `Phased(...)` with `{phase}=None`. Both "
+            f"phases need an aggregator; pass a callable for each, or a bare "
+            f"callable to use one in both."
+            for phase, variant in (
+                ("solve", solve_aggregator),
+                ("simulate", simulate_aggregator),
+            )
+            if variant is None
+        ]
     else:
         solve_aggregator = simulate_aggregator = aggregator
     terminal = user_regime.transition is None
     terminal_errors = (
         [
-            f"Terminal regimes cannot declare carried states (no next period "
-            f"to carry {sorted(carried_only)} into)."
+            (
+                f"Terminal regimes cannot declare carried states (no next period "
+                f"to carry {sorted(carried_only)} into)."
+            )
         ]
         if terminal and carried_only
         else []
@@ -121,6 +136,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         + carried_errors
         + transition_errors
         + terminal_errors
+        + ([] if terminal else aggregator_errors)
     )
     if errors:
         raise RegimeInitializationError(format_messages(errors))
@@ -374,8 +390,10 @@ def _normalize_phased_state(
             None,
             None,
             [
-                f"states['{name}']: stochastic-process grids have intrinsic "
-                f"transitions and cannot be phase-variant."
+                (
+                    f"states['{name}']: stochastic-process grids have intrinsic "
+                    f"transitions and cannot be phase-variant."
+                )
             ],
         )
     solve_is_grid = isinstance(solve_side, Grid)
@@ -448,14 +466,18 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     """
     if isinstance(law, MarkovTransition):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"stochastic (`MarkovTransition`) law of motion for it is not "
-            f"yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"stochastic (`MarkovTransition`) law of motion for it is not "
+                f"yet supported."
+            )
         ]
     if isinstance(law, Mapping):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"per-target dict law of motion for it is not yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"per-target dict law of motion for it is not yet supported."
+            )
         ]
     return []
 

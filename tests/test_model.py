@@ -5,15 +5,19 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    W_linear,
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -140,7 +144,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
         finalize_regimes(
             user_regimes={"regime": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -436,11 +440,13 @@ def test_unused_action_raises_error():
         )
 
 
-def test_constraint_depending_on_transition_output():
-    """Regression guard for GitHub issue #230.
+def test_constraint_naming_a_transition_output_is_rejected():
+    """A constraint is evaluated ahead of the transitions, so it cannot read one.
 
-    Constraint depending on a transition output (next_assets) used to raise
-    `ValueError: list.index(x): x not in list`.
+    `next_assets` is computed after the state-action grid has been scored, so a
+    constraint naming it has no value to read. The model says so and points at the
+    equivalent statement in this period's variables — `assets - consumption >= 0`
+    — rather than binding the name to a parameter.
     """
 
     @categorical(ordered=False)
@@ -510,11 +516,12 @@ def test_constraint_depending_on_transition_output():
         functions={"utility": dead_utility},
     )
 
-    Model(
-        regimes={"alive": alive_regime, "dead": dead_regime},
-        ages=AgeGrid(start=59, stop=61, step="Y"),
-        regime_id_class=RegimeId,
-    )
+    with pytest.raises(InvalidNameError, match="next_assets"):
+        Model(
+            regimes={"alive": alive_regime, "dead": dead_regime},
+            ages=AgeGrid(start=59, stop=61, step="Y"),
+            regime_id_class=RegimeId,
+        )
 
 
 def test_state_only_used_in_transitions():

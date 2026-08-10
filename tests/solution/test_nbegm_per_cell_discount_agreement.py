@@ -30,7 +30,9 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(per_kind_discount=True), log_level="off")
+    return model.solve(
+        params=toy.build_params(per_kind_discount=True), log_level="debug"
+    )
 
 
 def test_nbegm_matches_brute_with_per_kind_discount_every_age():

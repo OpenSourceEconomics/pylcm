@@ -32,7 +32,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -166,7 +166,7 @@ def _solve_consent(*, enable_jit: bool = False):
             user_regimes=finalize_regimes(
                 user_regimes=_make_consent_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -174,7 +174,7 @@ def _solve_consent(*, enable_jit: bool = False):
         user_regimes=finalize_regimes(
             user_regimes=_make_consent_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -377,7 +377,7 @@ def _solve_dissolution(*, enable_jit: bool = False):
             user_regimes=finalize_regimes(
                 user_regimes=_make_dissolution_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -385,7 +385,7 @@ def _solve_dissolution(*, enable_jit: bool = False):
         user_regimes=finalize_regimes(
             user_regimes=_make_dissolution_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -483,7 +483,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes=regimes,
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
@@ -491,7 +491,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -561,7 +561,7 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes=regimes,
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
@@ -569,7 +569,7 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -612,7 +612,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes=regimes,
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
@@ -620,7 +620,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,

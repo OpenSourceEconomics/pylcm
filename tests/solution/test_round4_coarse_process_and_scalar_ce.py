@@ -83,9 +83,13 @@ def _next_regime(age: FloatND) -> ScalarInt:
     return jnp.where(age >= _LAST_AGE - 1, RegimeId.gone, RegimeId.alive)
 
 
-def _enter_shock() -> ScalarInt:
-    """Enter the target's process at its middle node."""
-    return jnp.int32(1)
+def _enter_shock() -> FloatND:
+    """Enter the target's process at its middle node.
+
+    An entry law names a value on the target's support, not a position in it.
+    The support here is `(-2, 0, 2)`, so its middle node is `0.0`.
+    """
+    return jnp.asarray(0.0)
 
 
 def _solve_coarse_into_process_only_target(
@@ -153,9 +157,15 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
     """An AR(1) target the source cannot seed is rejected, not priced at zero.
 
     Its next draw depends on a previous value that the source neither carries
-    nor supplies, so no next-period value exists. The message names the state and
-    every way to resolve it, so the rejection is actionable rather than merely
-    safe.
+    nor supplies, so no next-period value exists. The message names the state,
+    the parameters that block it, and every way to resolve it, so the rejection
+    is actionable rather than merely safe.
+
+    Supplying an entry law is not among those ways: the support the law would
+    place a value on is itself built from parameters this process only supplies
+    at runtime, so the law is rejected for the same reason. The routes out are
+    to fix those parameters, to carry the state on the source, or to stop the
+    transition from reaching this target at all.
     """
     with pytest.raises(ModelInitializationError) as excinfo:
         _solve_coarse_into_process_only_target(
@@ -164,7 +174,10 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
         )
     message = str(excinfo.value)
     assert "shock" in message
-    assert "entry law" in message
+    assert "'mu', 'n_std', 'rho', 'sigma'" in message
+    assert "at construction" in message
+    assert "declare it on 'alive'" in message
+    assert "narrow the transition's static target support" in message
 
 
 def _solve_with_entry_law(level: float):
@@ -179,7 +192,14 @@ def _solve_with_entry_law(level: float):
     )
     gone = Regime(
         transition=None,
-        states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
+        # Fixed at construction, not passed at runtime: the entry law places a
+        # value on this process's own support, and that support has to exist
+        # before the source's laws are built.
+        states={
+            "shock": NormalIIDProcess(
+                n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2
+            )
+        },
         functions={"utility": lambda shock: shock + level},
     )
     model = Model(
@@ -195,10 +215,7 @@ def _solve_with_entry_law(level: float):
             "next_shock": {},
             "next_regime": {},
         },
-        "gone": {
-            "utility": {},
-            "shock": {"mu": 0.0, "sigma": 1.0, "n_std": 2},
-        },
+        "gone": {"utility": {}},
     }
     return model.solve(params=params, log_level="debug")
 

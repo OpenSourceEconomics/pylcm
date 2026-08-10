@@ -14,34 +14,46 @@ this module checks only the *outer*/nesting contract:
   consumption-savings problem and must use `NBEGM`,
 - the two margins are distinct: the inner NB-EGM claims the regime's first
   continuous action as its consumption margin, so the outer action must not be
-  that one. The post-decision half is guarded at `NNBEGM` construction.
+  that one. The post-decision half is guarded at `NNBEGM` construction,
+- the outer state's law of motion does not read the inner margin: the solver
+  evaluates that law to find what the next period carries, so a law reading the
+  inner consumption action or post-decision would make the carried stock vary
+  along the inner savings axis. Chained laws are followed, since the coupling
+  can sit one sibling away.
 
-**Why there is no coupling rule here.** NEGM rejects a model whose outer margin
-enters the inner Euler-state transition or multiplies consumption in utility,
-because its outer max runs over a *frozen* inner inversion lifted onto a common
+**Which couplings are in scope.** NEGM rejects a model whose outer margin enters
+the inner Euler-state transition or multiplies consumption in utility, because
+its outer max runs over a *frozen* inner inversion lifted onto a common
 cash-on-hand axis by a credited-cost translation. NNBEGM does not lift: the
 outer sweep binds `outer_post_decision` as a flat param and re-runs the entire
 inner NB-EGM solve once per outer-grid node, so every inner function — the
 budget, the Euler-state law, utility — sees the node as a constant and the inner
 inversion is exact conditional on it. A Cobb-Douglas composite flow
 `q = c^phi * s'^(1-phi)` and an Euler law that reads the durable stock are both
-in scope. The approximation NNBEGM does make is the finite outer candidate set
-(the grid plus the keeper), which is a property of the declared `outer_grid`
-rather than of the model's function structure. For the same reason NEGM's
-outer-cost contract and its durable-last carry layout do not carry over: there
-is no credited-cost lift, and the outer envelope is a pointwise fold of carry
-rows that already share the liquid grid.
+in scope.
+
+The re-solve absorbs the inner-reads-outer direction only. The reverse — the
+outer state's law reading a value the inner solve *produces* — is not absorbed
+by anything, which is why it is checked above. The other approximation NNBEGM
+makes is the finite outer candidate set (the grid plus the keeper), a property
+of the declared `outer_grid` rather than of the model's function structure. For
+the same reason NEGM's outer-cost contract and its durable-last carry layout do
+not carry over: there is no credited-cost lift, and the outer envelope is a
+pointwise fold of carry rows that already share the liquid grid.
 """
 
 from collections.abc import Mapping
 from typing import cast
 
+from _lcm.egm.negm_validation import _ancestors_through_sibling_laws
 from _lcm.egm.validation import (
     _continuous_non_process_names,
     _resolve_solve_functions,
     _solve_grids,
+    _transition_variants,
+    _without,
 )
-from _lcm.solution.nnbegm import NNBEGM
+from _lcm.solution.nnbegm import NNBEGM, get_nnbegm_inner_spec
 from _lcm.typing import FunctionName, RegimeName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
@@ -91,6 +103,86 @@ def _validate_nnbegm_regime(
         user_regime=user_regime,
         solver=solver,
     )
+    _fail_if_outer_law_reads_the_inner_margin(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
+
+
+def _fail_if_outer_law_reads_the_inner_margin(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NNBEGM,
+) -> None:
+    """Reject an outer-state law of motion that reaches into the inner margin.
+
+    The solver evaluates the durable's declared law as written, so what that law
+    reads decides whether the outer margin stays a plain search. Reading the
+    outer post-decision, the durable state, other states, or params is the
+    ordinary case — a depreciating `next_z = (1 - delta) s'` is exactly that.
+    Reading the inner consumption action or the inner post-decision is not: the
+    stock carried forward would then vary along the inner savings axis, so
+    conditioning on an outer node would no longer leave a one-dimensional
+    problem and the outer max would not range over independent solves.
+
+    This is the one coupling direction the re-solve-per-node design does not
+    absorb. An inner function reading the outer margin is in scope, because the
+    node is a bound constant when the inner solve runs; the outer law reading an
+    inner value is not, because that value is what the inner solve produces.
+
+    The outer post-decision is made opaque first, so a law reading the chosen
+    stock is not charged with reading the outer action it is computed from.
+
+    Args:
+        regime_name: Name of the regime being validated.
+        user_regime: The regime whose outer-state law is inspected.
+        functions: Mapping of function names to the regime's solve functions.
+        solver: The regime's `NNBEGM` solver config.
+
+    Raises:
+        ModelInitializationError: If the law reads the inner consumption action
+            or the inner post-decision.
+
+    """
+    law = user_regime.state_transitions.get(solver.outer_state)
+    if law is None:
+        return
+    inner_spec = get_nnbegm_inner_spec(inner=solver.inner)
+    inner_margin_names = {
+        _continuous_action_names(user_regime=user_regime)[0],
+        inner_spec.post_decision_function,
+    }
+    opaque_functions = _without(functions=functions, names={solver.outer_post_decision})
+    sibling_laws = {
+        f"next_{state_name}": value
+        for state_name, value in user_regime.state_transitions.items()
+        if state_name != solver.outer_state
+    }
+    for label, transition_func in _transition_variants(value=law):
+        ancestors = _ancestors_through_sibling_laws(
+            functions=opaque_functions,
+            target_func=transition_func,
+            sibling_laws=sibling_laws,
+        )
+        coupled = ancestors & inner_margin_names
+        if coupled:
+            msg = (
+                f"In regime '{regime_name}', the transition of the outer state "
+                f"'{solver.outer_state}'{label} reads {sorted(coupled)!r}, which "
+                "belongs to the inner margin. NNBEGM evaluates that law to find "
+                "what the next period carries, so the stock carried forward "
+                "would vary along the inner savings axis and conditioning on an "
+                "outer node would no longer leave a one-dimensional problem. "
+                f"Let the law read the outer post-decision "
+                f"'{solver.outer_post_decision}', states, or params; if the two "
+                "margins genuinely interact, the model needs a 2-D EGM "
+                "foundation (G2EGM / multidim-RFC), not a nested outer search."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_outer_margin_absent(
@@ -118,19 +210,16 @@ def _fail_if_outer_margin_absent(
             "consumption-savings regime."
         )
         raise ModelInitializationError(msg)
-    transition_names = {f"next_{name}" for name in user_regime.states}
-    if (
-        solver.outer_post_decision not in functions
-        and solver.outer_post_decision not in transition_names
-    ):
+    if solver.outer_post_decision not in functions:
         msg = (
-            f"NNBEGM.outer_post_decision '{solver.outer_post_decision}' is "
-            f"neither a declared function of regime '{regime_name}' nor the "
-            "transition of one of its states. The outer post-decision (the "
-            "next-period durable stock) must be a regime function or the "
-            "durable state's `next_<state>` law that the inner budget and the "
-            "child-state index read; declare it, or use `NBEGM` for a pure 1-D "
-            "consumption-savings regime."
+            f"NNBEGM.outer_post_decision '{solver.outer_post_decision}' is not "
+            f"a declared function of regime '{regime_name}'. The outer "
+            "post-decision names this period's chosen level of the durable "
+            f"state '{solver.outer_state}' — an ordinary function of this "
+            "period's states and actions that the inner budget, the "
+            "child-state index, and the durable's own law of motion all read. "
+            "Declare it, or use `NBEGM` for a pure 1-D consumption-savings "
+            "regime."
         )
         raise ModelInitializationError(msg)
 

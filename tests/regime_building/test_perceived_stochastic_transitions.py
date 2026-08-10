@@ -103,12 +103,12 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "good": ["bad"] * 8})
 
 def _simulate(law: Any) -> pd.DataFrame:
     model = _model(law)
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     res = model.simulate(
         params=PARAMS,
         initial_conditions=IC,
         period_to_regime_to_V_arr=V,
-        log_level="off",
+        log_level="debug",
         seed=1,
     )
     return res.to_dataframe().reset_index()
@@ -235,13 +235,13 @@ def test_markov_and_process_states_coexist():
         "last": dict(shock_params),
     }
     initial_conditions = IC.assign(shock=0.0)
-    V = model.solve(params=params, log_level="off")
+    V = model.solve(params=params, log_level="debug")
     df = (
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=V,
-            log_level="off",
+            log_level="debug",
             seed=1,
         )
         .to_dataframe()
@@ -296,13 +296,13 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         regime_id_class=RegimeId,
         description="phase-varying helper under a bare stochastic law",
     )
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     df = (
         model.simulate(
             params=PARAMS,
             initial_conditions=IC,
             period_to_regime_to_V_arr=V,
-            log_level="off",
+            log_level="debug",
             seed=1,
         )
         .to_dataframe()

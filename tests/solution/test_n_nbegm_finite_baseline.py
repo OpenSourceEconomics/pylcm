@@ -67,7 +67,7 @@ def _solve_recording_kernel_results(
         variant="n_nbegm",
         outer_batch_size=outer_batch_size,
         n_periods=_N_PERIODS,
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     return solution, recorded
 
 
@@ -151,7 +151,7 @@ def test_candidate_bank_holds_one_entry_per_outer_node(
         recording_build,
     )
     toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
 
     assert banks, "the period kernel never built a candidate bank"

@@ -30,9 +30,9 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     DiscreteGrid,
     ExtremeValueTasteShocks,
+    LinearAggregator,
     LinearExpectation,
     Phased,
-    W_linear,
     categorical,
 )
 from lcm.certainty_equivalent import PowerMean
@@ -107,7 +107,7 @@ def test_margin_distinctness_recheck_rejects_outer_equal_to_inner_post_decision(
     """The model-build re-check rejects a coincident post-decision function."""
     solver = negm_kinked_toy.NEGM_SOLVER
     inner_post_clashes = dataclasses.replace(
-        solver.inner, post_decision_function="next_illiquid"
+        solver.inner, post_decision_function="new_durable"
     )
     with pytest.raises(ModelInitializationError, match="coincides with"):
         _fail_if_margins_not_distinct(
@@ -145,14 +145,14 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
 
 
 def _utility_coupling_consumption_and_durable_move(
-    consumption: ContinuousAction, next_illiquid: ContinuousState
+    consumption: ContinuousAction, new_durable: ContinuousState
 ) -> FloatND:
     """A utility that multiplies consumption by the outer post-decision.
 
     The cross-term makes the inner marginal utility depend on the outer choice,
     so the durable margin is not additively separable from consumption.
     """
-    flow = consumption * (1.0 + 0.01 * next_illiquid)
+    flow = consumption * (1.0 + 0.01 * new_durable)
     return flow ** (1.0 - 2.0) / (1.0 - 2.0)
 
 
@@ -160,7 +160,7 @@ def test_utility_coupling_the_two_margins_is_rejected_with_2d_pointer():
     """A non-additively-separable utility cross-term fails fast.
 
     NEGM treats the outer margin's utility term as a constant in the inner Euler
-    inversion; a cross-term in `(consumption, next_illiquid)` breaks that.
+    inversion; a cross-term in `(consumption, new_durable)` breaks that.
     """
     regime = _VALID.replace(
         functions={
@@ -271,10 +271,10 @@ def test_outer_cost_reading_the_euler_state_is_rejected():
 
 
 def _base_reading_the_outer_margin(
-    wealth: ContinuousState, next_illiquid: ContinuousState
+    wealth: ContinuousState, new_durable: ContinuousState
 ) -> FloatND:
     """A cost-free resources base that reads the outer margin directly."""
-    return wealth + 5.0 + 0.01 * next_illiquid
+    return wealth + 5.0 + 0.01 * new_durable
 
 
 def test_resources_base_reading_the_outer_margin_is_rejected():
@@ -325,7 +325,7 @@ def test_negm_regime_rejects_nonlinear_certainty_equivalent():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -348,7 +348,7 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -366,7 +366,7 @@ def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
 
@@ -392,7 +392,7 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
@@ -424,7 +424,7 @@ def test_finalize_composes_resources_with_a_phased_base():
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["alive"]
     composed = cast("UserFunction", finalized.functions["resources"])
@@ -489,3 +489,57 @@ def test_no_adjustment_candidate_with_extra_arguments_is_rejected():
     )
     with pytest.raises(ModelInitializationError, match="unary function of the durable"):
         _validate(regime)
+
+
+def _next_wealth_from_savings(liquid_savings):
+    """An inner Euler law: next period's wealth is what was saved."""
+    return liquid_savings
+
+
+def _outer_law_reading_a_sibling_law(new_durable, next_wealth):
+    """An outer law that reaches the inner margin through a sibling law."""
+    return new_durable + 0.1 * next_wealth
+
+
+def test_outer_law_coupled_through_another_transition_is_rejected():
+    """An outer law reaching the inner margin via a sibling law is rejected.
+
+    Chained state transitions are supported, so a law may read another law's
+    output. That makes the chain a path to the inner margin: an outer law
+    reading `next_wealth`, where `next_wealth` reads `liquid_savings`, carries
+    a stock that depends on the consumption the inner Euler inversion solves
+    for, exactly as a direct read would.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": _next_wealth_from_savings,
+            "illiquid": _outer_law_reading_a_sibling_law,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="inner margin"):
+        _validate(regime)
+
+
+def _next_wealth_from_the_state_alone(wealth):
+    """A sibling law that reads a state and nothing else."""
+    return wealth
+
+
+def _outer_law_reading_an_independent_sibling(new_durable, next_wealth):
+    """An outer law chained only through a law that never sees the inner margin."""
+    return new_durable + 0.1 * next_wealth
+
+
+def test_outer_law_chained_through_an_independent_law_is_accepted():
+    """A chain that never reaches the inner margin is legitimate and builds.
+
+    Rejecting every chained law would forbid the supported pattern rather than
+    the coupling, so the traversal must follow the chain and then find nothing.
+    """
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": _next_wealth_from_the_state_alone,
+            "illiquid": _outer_law_reading_an_independent_sibling,
+        },
+    )
+    _validate(regime)

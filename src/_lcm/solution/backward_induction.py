@@ -57,7 +57,7 @@ def solve(  # noqa: C901, PLR0915
     enable_jit: bool,
     max_compilation_workers: int | None = None,
 ) -> BackwardInductionResult:
-    """Solve a model using grid search.
+    """Solve a model by backward induction, whatever solver each regime declares.
 
     Args:
         flat_params: Immutable mapping of regime names to flat parameter mappings.
@@ -443,7 +443,13 @@ def _run_period_kernel(
     state_action_space = dataclasses.replace(
         state_action_space,
         states=MappingProxyType(
-            dict(_states_for_period(regime, state_action_space, period))
+            dict(
+                _states_for_period(
+                    regime=regime,
+                    state_action_space=state_action_space,
+                    period=period,
+                )
+            )
         ),
     )
 

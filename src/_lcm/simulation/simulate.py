@@ -912,19 +912,19 @@ def _replace_continuous_action_with_policy_read(
 
     n_subjects = next(iter(states.values())).shape[0]
 
-    def grid_position(name: StateOrActionName, values: FloatND | IntND) -> IntND:
+    def grid_position(*, name: StateOrActionName, values: FloatND | IntND) -> IntND:
         grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
         return jnp.clip(
             jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1
         )
 
     state_positions = tuple(
-        grid_position(name, jnp.asarray(states[name]))
+        grid_position(name=name, values=jnp.asarray(states[name]))
         for name in sim_policy.row_discrete_state_names
     )
 
     score_actions = functools.partial(
-        _canonical_q_at_actions,
+        _canonical_Q_at_actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -1463,25 +1463,25 @@ def _outer_transition_offset_and_slope(
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
 ) -> tuple[FloatND, BoolND, Callable[[FloatND], FloatND]] | None:
-    """Per-subject offset of the outer transition, with a unit-slope check.
+    """Per-subject offset of the outer post-decision, with a unit-slope check.
 
-    The winning outer post-decision `s'` is a *transition value*; the
-    recorded action must invert `s' = T(states, a)`. The nested v1 scope
-    supports the affine-unit-slope contract `T(states, a) = offset(states)
-    + a`, verified numerically per subject by probing `T` at `a = 0` and
-    `a = 1`. Returns `None` (whole-regime fallback) when the transition is
-    absent or its arguments cannot be resolved.
+    The winning outer post-decision `s'` is the value of the regime's
+    `outer_post_decision` function; the recorded action must invert
+    `s' = P(states, a)`. The nested v1 scope supports the affine-unit-slope
+    contract `P(states, a) = offset(states) + a`, verified numerically per
+    subject by probing `P` at `a = 0` and `a = 1`. Returns `None`
+    (whole-regime fallback) when it is absent or its arguments cannot be
+    resolved.
+
+    `P` is an ordinary regime FUNCTION of this period's states and actions --
+    the stock chosen NOW -- not a state transition. The durable's law reads it
+    and carries it forward, so the law itself does not mention the outer action
+    and inverting the law could not recover one.
     """
-    # Transitions are keyed by target regime; the outer post-decision must
-    # resolve to one shared callable across every target that declares it.
-    found = [
-        per_target[payload.outer_post_decision_name]
-        for per_target in regime.simulation.transitions.values()
-        if payload.outer_post_decision_name in per_target
-    ]
-    if not found or any(func is not found[0] for func in found[1:]):
+    functions = regime.simulation.functions
+    if payload.outer_post_decision_name not in functions:
         return None
-    transition = found[0]
+    transition = functions[payload.outer_post_decision_name]
 
     def probe(action_value: FloatND) -> FloatND | None:
         kwargs = _resolve_function_kwargs(
@@ -1602,7 +1602,7 @@ def _interp_rows_with_support(
     return values, in_support
 
 
-def _canonical_q_at_actions(
+def _canonical_Q_at_actions(
     *,
     candidate_actions: Mapping[ActionName, FloatND | IntND],
     regime: Regime,

@@ -69,10 +69,11 @@ from _lcm.egm.validation import (
     _resolve_solve_functions,
     _savings_stage_candidates,
     _solve_grids,
+    _transition_variants,
     _without,
 )
 from _lcm.grids import ContinuousGrid
-from _lcm.typing import FunctionName, RegimeName
+from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
@@ -241,22 +242,37 @@ def _fail_if_outer_margin_euler_coupled(
     The post-decision and resources functions are removed from the DAG (they
     become leaves), so an ancestor hit on the outer post-decision is a genuine
     decision-time coupling, not the legitimate resources read.
+
+    The durable state's own law is held out of this loop: reading the outer
+    choice is what that law is *for*, not a channel through which the outer
+    margin reaches the inner Euler equation. It is checked separately, against
+    the inner margin rather than the outer one, because the solver evaluates it
+    as written — see `_fail_if_outer_law_reads_the_inner_margin`.
     """
     inner = solver.inner
     opaque_functions = _without(
         functions=functions,
         names={inner.post_decision_function, inner.resources},
     )
+    # Two names carry the same value: the post-decision function, and the
+    # durable's own next-period value that its law of motion publishes. A
+    # savings-stage function reading either one reads the outer choice.
+    outer_margin_names = {
+        solver.outer_post_decision,
+        f"next_{solver.outer_state}",
+    }
     coupling_msg = (
         f"the outer margin '{solver.outer_post_decision}' is Euler-coupled to "
         f"the inner state '{inner.continuous_state}' of regime '{regime_name}' "
         "through the shared continuation"
     )
     for _role, label, func in _savings_stage_candidates(
-        user_regime=user_regime, continuous_state=inner.continuous_state
+        user_regime=user_regime,
+        solver=inner,
+        exclude_states=frozenset({solver.outer_state}),
     ):
         ancestors = _dag_ancestors(functions=opaque_functions, target_func=func)
-        if solver.outer_post_decision in ancestors:
+        if ancestors & outer_margin_names:
             msg = (
                 f"In regime '{regime_name}', the {label} reads the outer "
                 f"post-decision '{solver.outer_post_decision}', so {coupling_msg}: "
@@ -265,6 +281,13 @@ def _fail_if_outer_margin_euler_coupled(
                 "2-D EGM foundation (G2EGM / multidim-RFC), not NEGM."
             )
             raise ModelInitializationError(msg)
+
+    _fail_if_outer_law_reads_the_inner_margin(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=functions,
+        solver=solver,
+    )
 
     # Utility may carry the outer margin only additively-separably from the
     # inner action: a cross-term in (consumption, outer post-decision) makes the
@@ -275,6 +298,115 @@ def _fail_if_outer_margin_euler_coupled(
         functions=functions,
         solver=solver,
     )
+
+
+def _fail_if_outer_law_reads_the_inner_margin(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: NEGM,
+) -> None:
+    """Reject an outer-state law of motion that reaches into the inner margin.
+
+    The solver evaluates the durable's declared law as written, so what that law
+    reads decides whether the outer margin stays a plain search. Reading the
+    outer post-decision, the durable state, other states, or params is the
+    ordinary case — a depreciating `next_z = (1 - delta) s'` is exactly that.
+    Reading the inner continuous action or the inner post-decision is not: the
+    stock carried forward would then depend on the consumption the inner Euler
+    inversion is solving for, so the outer `max` no longer ranges over
+    independent problems.
+
+    The outer post-decision is made opaque first, so a law reading the chosen
+    stock is not charged with reading the outer action it is computed from.
+
+    Args:
+        regime_name: Name of the regime being validated.
+        user_regime: The regime whose outer-state law is inspected.
+        functions: Mapping of function names to the regime's solve functions.
+        solver: The regime's `NEGM` solver config.
+
+    Raises:
+        ModelInitializationError: If the law reads the inner action or the inner
+            post-decision.
+
+    """
+    law = user_regime.state_transitions.get(solver.outer_state)
+    if law is None:
+        return
+    inner = solver.inner
+    inner_margin_names = {inner.continuous_action, inner.post_decision_function}
+    opaque_functions = _without(functions=functions, names={solver.outer_post_decision})
+    sibling_laws = {
+        f"next_{state_name}": value
+        for state_name, value in user_regime.state_transitions.items()
+        if state_name != solver.outer_state
+    }
+    for label, transition_func in _transition_variants(value=law):
+        ancestors = _ancestors_through_sibling_laws(
+            functions=opaque_functions,
+            target_func=transition_func,
+            sibling_laws=sibling_laws,
+        )
+        coupled = ancestors & inner_margin_names
+        if coupled:
+            msg = (
+                f"In regime '{regime_name}', the transition of the outer state "
+                f"'{solver.outer_state}'{label} reads {sorted(coupled)!r}, which "
+                f"belongs to the inner margin. NEGM evaluates that law to find "
+                f"what the next period carries, so the stock carried forward "
+                f"would depend on the inner consumption-savings choice and the "
+                f"outer max would no longer range over independent problems. "
+                f"Let the law read the outer post-decision "
+                f"'{solver.outer_post_decision}', states, or params; if the two "
+                f"margins genuinely interact, use the 2-D EGM foundation "
+                f"(G2EGM / multidim-RFC), not NEGM."
+            )
+            raise ModelInitializationError(msg)
+
+
+def _ancestors_through_sibling_laws(
+    *,
+    functions: dict[FunctionName, UserFunction],
+    target_func: UserFunction,
+    sibling_laws: Mapping[TransitionFunctionName, object],
+) -> set[str]:
+    """Ancestors of a law of motion, following the other laws it reads.
+
+    A chained transition is supported — one law may consume another law's
+    output — so a `next_<state>` name reached from the target is a producer to
+    walk into, not a leaf. Treating it as a leaf stops the traversal one step
+    short of whatever that sibling reads, which is exactly where a path to the
+    inner margin hides: `next_illiquid(new_durable, next_wealth)` looks clean
+    until `next_wealth(liquid_savings)` is opened.
+
+    Every variant of a sibling is walked, because a per-target or phased law
+    reaches the inner margin if *any* of its cells does. Expansion runs to a
+    fixed point, so a chain of any length is covered.
+
+    Args:
+        functions: The regime's solve functions, with the outer post-decision
+            already removed so it stays opaque.
+        target_func: The law of motion whose ancestors are wanted.
+        sibling_laws: Mapping of `next_<state>` names to the other states'
+            `state_transitions` entries, excluding the target's own state.
+
+    Returns:
+        Set of function names and leaf inputs reachable from `target_func`,
+        including everything reachable through the sibling laws it reads.
+
+    """
+    reached = _dag_ancestors(functions=functions, target_func=target_func)
+    expanded: set[TransitionFunctionName] = set()
+    while True:
+        pending = {name for name in reached & set(sibling_laws) if name not in expanded}
+        if not pending:
+            return reached
+        for name in pending:
+            expanded.add(name)
+            for _label, variant in _transition_variants(value=sibling_laws[name]):
+                reached |= _dag_ancestors(functions=functions, target_func=variant)
 
 
 def _fail_if_utility_couples_action_and_outer_margin(
@@ -378,7 +510,7 @@ def _fail_if_outer_cost_contract_violated(
       keeper's axis; the shift is zero).
     """
     inner = solver.inner
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
 
     if solver.outer_cost is None:
         resources_func = functions.get(inner.resources)
@@ -410,7 +542,13 @@ def _fail_if_outer_cost_contract_violated(
         )
         raise ModelInitializationError(msg)
 
-    cost_ancestors = _dag_ancestors(functions=functions, target_func=cost_func)
+    # The outer post-decision is a leaf here: the lift holds it fixed per
+    # outer-grid node, so the states and actions it is *computed from* are not
+    # dependencies of the cost. Only what the cost reads beside it counts.
+    cost_ancestors = _dag_ancestors(
+        functions=_without(functions=functions, names={solver.outer_post_decision}),
+        target_func=cost_func,
+    )
     state_and_action_names = set(user_regime.states) | set(user_regime.actions)
     offenders = sorted((cost_ancestors & state_and_action_names) - {durable_state})
     if offenders:
@@ -462,7 +600,7 @@ def _fail_if_no_adjustment_candidate_not_unary(
     candidate_func = functions.get(solver.outer_no_adjustment_candidate)
     if candidate_func is None:
         return
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
     arg_names = set(inspect.signature(candidate_func).parameters)
     if arg_names != {durable_state}:
         msg = (
@@ -516,7 +654,7 @@ def _fail_if_carry_layout_unsupported(
             )
             raise ModelInitializationError(msg)
 
-    durable_state = solver.outer_post_decision.removeprefix("next_")
+    durable_state = solver.outer_state
     passive_state_names = [
         name
         for name in _continuous_non_process_names(

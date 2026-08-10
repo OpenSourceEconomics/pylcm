@@ -8,6 +8,8 @@ metric. It is reported as `log10` of the relative consumption error (e.g. `-3` i
 construction, so a correct retired solution has tiny interior Euler errors.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -18,6 +20,7 @@ from _lcm.egm.euler_errors import (
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
 from _lcm.egm.two_asset_g2egm_step import g2egm_retiring_step, g2egm_step
 from tests.conftest import X64_ENABLED
+from tests.solution._crra_preferences import crra_preferences
 
 # The "essentially zero" log10 Euler residual floor is set by float eps:
 # roughly -15 at 64-bit, -7 at 32-bit; -8/-6 leave margin for rounding.
@@ -50,7 +53,7 @@ def test_constrained_consume_all_solution_has_an_exact_euler_residual():
         consumption=c_star,
         next_consumption=next_liquid_if(c_star),
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         return_liquid=_RETURN,
         income=_INCOME,
     )
@@ -68,7 +71,7 @@ def _retired_median_euler_error(*, n_liquid):
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         return_liquid=_RETURN,
         income=_INCOME,
     )
@@ -80,7 +83,7 @@ def _retired_median_euler_error(*, n_liquid):
             consumption=step.consumption,
             next_consumption=liquid_grid,
             discount_factor=_DISCOUNT,
-            crra=_CRRA,
+            preferences=crra_preferences(_CRRA),
             return_liquid=_RETURN,
             income=_INCOME,
         )
@@ -103,9 +106,10 @@ def test_retired_euler_error_converges_under_grid_refinement():
     assert fine < coarse - 1.0  # at least an order of magnitude better
 
 
-_W = {
+_W_CRRA = 2.0
+_W: dict[str, Any] = {
     "discount_factor": 0.98,
-    "crra": 2.0,
+    "preferences": crra_preferences(_W_CRRA),
     "match_rate": 0.10,
     "return_liquid": 0.02,
     "return_pension": 0.04,
@@ -140,15 +144,15 @@ def _working_first_period_euler_error(*, n_liquid):
             **_W,
         )
 
-    v_dead = m_grid ** (1.0 - _W["crra"]) / (1.0 - _W["crra"])
+    v_dead = m_grid ** (1.0 - _W_CRRA) / (1.0 - _W_CRRA)
     retired = egm_one_asset_step(
         next_value=v_dead,
-        next_marginal=m_grid ** (-_W["crra"]),
+        next_marginal=m_grid ** (-_W_CRRA),
         liquid_grid=m_grid,
         next_liquid_grid=m_grid,
         savings_grid=jnp.linspace(0.0, 20.0, 60),
         discount_factor=_W["discount_factor"],
-        crra=_W["crra"],
+        preferences=crra_preferences(_W_CRRA),
         return_liquid=_W["return_liquid"],
         income=_RET_INCOME,
     )
@@ -162,7 +166,7 @@ def _working_first_period_euler_error(*, n_liquid):
         b_grid=b_grid,
         consumption_grid=consumption_grid,
         discount_factor=_W["discount_factor"],
-        crra=_W["crra"],
+        preferences=crra_preferences(_W_CRRA),
         match_rate=_W["match_rate"],
         return_liquid=_W["return_liquid"],
         pension_payout_return=_PAYOUT,

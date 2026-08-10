@@ -56,7 +56,7 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, Model, categorical, fixed_transition
 from lcm.ages import AgeGrid
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -263,7 +263,7 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
             user_regimes=finalize_regimes(
                 user_regimes=_make_offer_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -271,7 +271,7 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
         user_regimes=finalize_regimes(
             user_regimes=_make_offer_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -478,7 +478,7 @@ def test_endogenous_offer_distribution_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -486,7 +486,7 @@ def test_endogenous_offer_distribution_is_rejected():
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,

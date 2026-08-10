@@ -18,6 +18,7 @@ import pytest
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
 from tests.conftest import DECIMAL_PRECISION
+from tests.solution._crra_preferences import crra_preferences
 
 _CURRENT_GRID = (1.0, 2.0, 3.0)
 _SAVINGS_GRID = (0.0, 1.0, 2.0)
@@ -71,7 +72,7 @@ def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
         next_liquid_grid=next_grid,
         savings_grid=jnp.asarray(_SAVINGS_GRID),
         discount_factor=_DISCOUNT,
-        crra=1.0,
+        preferences=crra_preferences(1.0),
         return_liquid=_RETURN,
         income=_INCOME,
     )

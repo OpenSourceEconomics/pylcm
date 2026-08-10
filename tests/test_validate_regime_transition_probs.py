@@ -3,6 +3,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.transition_checks import (
     _format_sum_violation,
     _validate_regime_transition_probs,
@@ -31,12 +32,14 @@ def test_valid_probs_accept_boundary_inputs():
     """Inclusive [0, 1] bounds and a sum within tolerance pass validation.
 
     Subject 0 splits probability exactly `[1.0, 0.0]` — values at the
-    inclusive bounds. Subject 1 sums to `1 - 2.5e-6`, just inside the
-    `jnp.allclose` default tolerance. The validator must accept both.
+    inclusive bounds. Subject 1 falls short of unit mass by a few epsilons
+    of the working dtype, the rounding slack a genuine probability sum can
+    accumulate. The validator must accept both.
     """
+    eps = float(jnp.finfo(canonical_float_dtype()).eps)
     probs = MappingProxyType(
         {
-            "working_life": jnp.array([1.0, 0.4999975]),
+            "working_life": jnp.array([1.0, 0.5 - 4 * eps]),
             "retirement": jnp.array([0.0, 0.5]),
         }
     )
@@ -47,6 +50,31 @@ def test_valid_probs_accept_boundary_inputs():
         age=25.0,
         next_age=26.0,
     )
+
+
+def test_raises_for_mass_large_enough_to_reverse_an_argmax():
+    """A total mass of `1.000005` is rejected, not absorbed as rounding.
+
+    At float32 that much excess mass is enough to flip a Bellman `argmax`,
+    so it is a defect in the transition rather than accumulated rounding.
+    """
+    probs = MappingProxyType(
+        {
+            "working_life": jnp.array([0.500005]),
+            "retirement": jnp.array([0.5]),
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"1 of 1 probability vectors do not sum to 1\.0",
+    ):
+        _validate_regime_transition_probs(
+            regime_transition_probs=probs,
+            active_regimes_next_period=("working_life", "retirement"),
+            regime_name="working_life",
+            age=25.0,
+            next_age=26.0,
+        )
 
 
 def test_valid_probs_with_inactive_regime_at_zero():

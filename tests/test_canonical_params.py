@@ -68,12 +68,19 @@ def _work_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
+def _certain_death(age: float) -> FloatND:
+    """`dead` is `retired`'s only declared target, so it takes the whole mass."""
+    return jnp.ones_like(jnp.asarray(age, dtype=float))
+
+
 def _retired_regime() -> UserRegime:
     return UserRegime(
         transition={
-            "dead": MarkovTransition(lambda age: jnp.where(age >= 1, 1.0, 0.0)),
+            "dead": MarkovTransition(_certain_death),
         },
-        active=lambda age: age < 2,
+        # Outlives `work` by one age, so the mass `work` sends it in its final
+        # transition lands on an active regime.
+        active=lambda age: age < 3,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -88,7 +95,7 @@ def _build_model(work: UserRegime) -> Model:
             "retired": _retired_regime(),
             "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )
 
@@ -132,7 +139,7 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
         },
         "retired": {"discount_factor": 0.95},
     }
-    regime_to_v = model.solve(params=params, log_level="off")
+    regime_to_v = model.solve(params=params, log_level="debug")
     assert set(regime_to_v[0]) >= {"work", "retired"}
 
 
@@ -159,7 +166,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
     )
     model = Model(
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
     )
     params = {
@@ -180,7 +187,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     flat_work = result.flat_params["work"]
     assert "retired__next_wealth__growth" in flat_work
@@ -213,7 +220,7 @@ def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
         params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
     )
     flat_work = result.flat_params["work"]
     assert (
@@ -243,4 +250,4 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
         "retired": {"discount_factor": 0.95},
     }
     with pytest.raises(InvalidParamsError, match="retired__next_regime__hazard"):
-        model.solve(params=params, log_level="off")
+        model.solve(params=params, log_level="debug")

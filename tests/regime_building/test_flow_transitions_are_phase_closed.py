@@ -9,8 +9,11 @@ The agent acts on its beliefs about the FUTURE and lives in the TRUTH NOW, so th
 belief prices only the continuation. `test_perceived_stochastic_transitions.py` pins the
 continuation half; this module pins the flow half.
 
-The flow half is observable because pylcm lets a within-period utility read a chosen
-`next_<state>` (the NEGM service-flow pattern). Here the continuation is made FLAT in
+The flow half is observable because a within-period utility may read the stock chosen
+this period -- `new_stock`, an ordinary function of this period's states and actions,
+which the state law then carries forward (the NEGM service-flow pattern). Both the flow
+and the law read that one function, so which POOL resolves it is what the flow's phase
+closure decides. Here the continuation is made FLAT in
 the state, so E[V] is identical across actions and the argmax is decided purely by the
 law the FLOW resolves. That isolates the flow: a build that took the flow's outer
 `next_<state>` from the solve bundle chooses the opposite action.
@@ -41,14 +44,23 @@ class RegimeId:
     last: ScalarInt
 
 
-def service_flow(next_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
-    """Within-period utility reading the CHOSEN next state (NEGM service flow).
+def service_flow(new_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
+    """Within-period utility reading the CHOSEN stock (NEGM service flow).
+
+    `new_stock` is an ordinary function of this period's states and actions, not a
+    `next_<state>`: the stock chosen NOW is a within-period quantity, and the law
+    merely carries it forward. Utility and the law both read that one function.
 
     Flat in `move` and in the CURRENT `stock` (both enter with a zero weight, only so
     that every state and action is used), so the action is decided purely by
-    `next_stock` -- i.e. by whichever law the flow sub-DAG resolves.
+    `new_stock` -- i.e. by whichever variant the flow sub-DAG resolves.
     """
-    return 1.0 * next_stock + 0.0 * move + 0.0 * stock
+    return 1.0 * new_stock + 0.0 * move + 0.0 * stock
+
+
+def carry_new_stock(new_stock: FloatND) -> FloatND:
+    """The law: next period's stock is the one chosen this period."""
+    return new_stock
 
 
 def flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
@@ -56,12 +68,12 @@ def flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
     return 0.0 * stock + 0.0 * move
 
 
-def next_stock_belief(move: DiscreteAction) -> FloatND:
+def new_stock_belief(move: DiscreteAction) -> FloatND:
     """BELIEF: `stay` leads to good."""
     return jnp.where(move == Move.stay, Stock.good, Stock.bad)
 
 
-def next_stock_actual(move: DiscreteAction) -> FloatND:
+def new_stock_actual(move: DiscreteAction) -> FloatND:
     """TRUTH: exactly the opposite -- `switch` leads to good."""
     return jnp.where(move == Move.stay, Stock.bad, Stock.good)
 
@@ -95,13 +107,13 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
         regime_id_class=RegimeId,
         description="phase closure of the flow sub-DAG",
     )
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     return (
         model.simulate(
             params=PARAMS,
             initial_conditions=IC,
             period_to_regime_to_V_arr=V,
-            log_level="off",
+            log_level="debug",
             seed=1,
         )
         .to_dataframe()
@@ -109,19 +121,20 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     )
 
 
-def test_flow_reads_the_simulate_variant_of_a_phased_outer_law():
-    """A `Phased` `next_<state>` read by utility resolves to the SIMULATE law in flow.
+def test_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
+    """A `Phased` `new_stock` read by utility resolves to the SIMULATE variant in flow.
 
-    Before the fix the flow's outer `next_<state>` was taken from the SOLVE bundle
-    (while its helpers still came from the simulate pool -- a sub-DAG that was neither
-    phase), so the agent chose `stay`: it valued its current service flow under a law it
-    only believes, rather than the one it lives in.
+    Before the fix the flow resolved the chosen stock from the SOLVE pool (while its
+    helpers still came from the simulate pool -- a sub-DAG that was neither phase), so
+    the agent chose `stay`: it valued its current service flow under a rule it only
+    believes, rather than the one it lives in.
     """
     df = _simulate(
-        live_functions={"utility": service_flow},
-        state_transitions={
-            "stock": Phased(solve=next_stock_belief, simulate=next_stock_actual)
+        live_functions={
+            "utility": service_flow,
+            "new_stock": Phased(solve=new_stock_belief, simulate=new_stock_actual),
         },
+        state_transitions={"stock": carry_new_stock},
     )
     assert (df[df["period"] == 0]["move"] == "switch").all(), (
         "the FLOW must value the chosen next state under the SIMULATE law"
@@ -132,11 +145,11 @@ def test_flow_reads_the_simulate_variant_of_a_phased_outer_law():
 
 
 def test_flow_reads_the_simulate_variant_of_a_phased_helper():
-    """The flow sub-DAG is closed: a `Phased` HELPER under the law is simulate too.
+    """The flow sub-DAG is closed: a `Phased` HELPER under `new_stock` is simulate too.
 
-    Complements the outer-law case: here the law is a single bare function and the
-    belief/truth wedge lives entirely in the helper it reads. A flow that mixed the
-    solve outer law with simulate helpers -- or vice versa -- is not phase-closed.
+    Complements the chosen-stock case: here `new_stock` is a single bare function and
+    the belief/truth wedge lives entirely in the helper it reads. A flow that mixed the
+    solve chosen stock with simulate helpers -- or vice versa -- is not phase-closed.
     """
 
     def stay_target_belief() -> FloatND:
@@ -145,18 +158,19 @@ def test_flow_reads_the_simulate_variant_of_a_phased_helper():
     def stay_target_actual() -> FloatND:
         return jnp.array(Stock.bad)
 
-    def next_stock(move: DiscreteAction, stay_target: FloatND) -> FloatND:
-        # Stays integral: `next_stock` indexes a DiscreteGrid.
+    def new_stock(move: DiscreteAction, stay_target: FloatND) -> FloatND:
+        # Stays integral: the stock indexes a DiscreteGrid.
         return jnp.where(move == Move.stay, stay_target, 1 - stay_target)
 
     df = _simulate(
         live_functions={
             "utility": service_flow,
+            "new_stock": new_stock,
             "stay_target": Phased(
                 solve=stay_target_belief, simulate=stay_target_actual
             ),
         },
-        state_transitions={"stock": next_stock},
+        state_transitions={"stock": carry_new_stock},
     )
     assert (df[df["period"] == 0]["move"] == "switch").all(), (
         "the FLOW must read the SIMULATE variant of a Phased helper"

@@ -128,15 +128,15 @@ def test_keeping_the_house_is_free():
     """
     cost = ds_app2_housing.housing_cost(
         housing=jnp.asarray(4.0),
-        next_housing=jnp.asarray(4.0),
+        new_housing=jnp.asarray(4.0),
         return_housing=0.03,
         tau=0.07,
     )
     np.testing.assert_allclose(float(cost), 0.0, atol=_COST_ATOL)
 
 
-@pytest.mark.parametrize("next_housing", [6.0, 2.5])
-def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
+@pytest.mark.parametrize("new_housing", [6.0, 2.5])
+def test_adjusting_pays_the_eq12_round_trip_cost(new_housing: float):
     """Adjusting the house pays the DS eq. 12 round-trip cost.
 
     The adjuster sells the whole old house at `(1 + r_H)·H` and rebuys the whole
@@ -147,11 +147,11 @@ def test_adjusting_pays_the_eq12_round_trip_cost(next_housing: float):
     housing, tau, return_housing = 4.0, 0.07, 0.03
     cost = ds_app2_housing.housing_cost(
         housing=jnp.asarray(housing),
-        next_housing=jnp.asarray(next_housing),
+        new_housing=jnp.asarray(new_housing),
         return_housing=return_housing,
         tau=tau,
     )
-    expected = (1.0 + tau) * next_housing - (1.0 + return_housing) * housing
+    expected = (1.0 + tau) * new_housing - (1.0 + return_housing) * housing
     np.testing.assert_allclose(float(cost), expected, rtol=_COST_RTOL)
 
 
@@ -167,13 +167,13 @@ def test_round_trip_cost_creates_an_inaction_wedge():
     housing, tau = 4.0, 0.07
     keep = ds_app2_housing.housing_cost(
         housing=jnp.asarray(housing),
-        next_housing=jnp.asarray(housing),
+        new_housing=jnp.asarray(housing),
         return_housing=0.0,
         tau=tau,
     )
     nudge = ds_app2_housing.housing_cost(
         housing=jnp.asarray(housing),
-        next_housing=jnp.asarray(housing + 1e-6),
+        new_housing=jnp.asarray(housing + 1e-6),
         return_housing=0.0,
         tau=tau,
     )
@@ -192,7 +192,7 @@ def test_housing_model_solves_on_gpu():
     """
     model = ds_app2_housing.build_model(n_grid=250)
     params = ds_app2_housing.build_params(tau=0.05)
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="debug")
     assert solution[0]["working"] is not None
 
 

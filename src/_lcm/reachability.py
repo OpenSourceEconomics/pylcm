@@ -175,8 +175,11 @@ def candidate_targets_from_transition(
     if transition is None:
         return ()
     if isinstance(transition, Mapping):
-        transition_by_target = cast("Mapping[RegimeName, object]", transition)
-        return tuple(sorted(transition_by_target))
+        # `transition` is deliberately `object` — the slot holds any of the
+        # transition forms. A mapping is the per-target form, whose keys are
+        # regime names by construction.
+        per_target = cast("Mapping[RegimeName, object]", transition)
+        return tuple(sorted(per_target))
     return tuple(sorted(all_regime_names))
 
 

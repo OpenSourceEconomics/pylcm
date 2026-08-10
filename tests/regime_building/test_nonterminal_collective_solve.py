@@ -43,7 +43,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import MarkovTransition
@@ -125,7 +125,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
             user_regimes=finalize_regimes(
                 user_regimes=_make_couple_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -133,7 +133,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         user_regimes=finalize_regimes(
             user_regimes=_make_couple_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -262,7 +262,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "couple_terminal": couple_terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,
@@ -270,7 +270,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         user_regimes=finalize_regimes(
             user_regimes={"couple": couple, "couple_terminal": couple_terminal},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages,
@@ -384,7 +384,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes={"couple": couple, "single_terminal": single_terminal},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages,
@@ -392,7 +392,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes={"couple": couple, "single_terminal": single_terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages,

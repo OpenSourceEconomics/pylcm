@@ -22,6 +22,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.mesh_envelope import ObjectiveEvaluator, first_envelope, second_envelope
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.two_asset_inverse import (
     invert_acon_cloud,
     invert_con_cloud,
@@ -66,7 +67,7 @@ def g2egm_step(
     b_grid: Float1D,
     consumption_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     return_liquid: ScalarFloat | float,
     return_pension: ScalarFloat | float,
@@ -97,7 +98,8 @@ def g2egm_step(
         b_grid: Pension post-decision grid (shared by all segments).
         consumption_grid: Consumption sweep for `acon`/`con` at `a = 0`.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         match_rate: Pension employer-match coefficient `chi`.
         return_liquid: Liquid net return `r^a`.
         return_pension: Pension net return `r^b`.
@@ -129,7 +131,7 @@ def g2egm_step(
         b_grid=b_grid,
         consumption_grid=consumption_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
         threshold=threshold,
     )
@@ -146,7 +148,7 @@ def g2egm_retiring_step(
     b_grid: Float1D,
     consumption_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     return_liquid: ScalarFloat | float,
     pension_payout_return: ScalarFloat | float,
@@ -172,7 +174,8 @@ def g2egm_retiring_step(
         b_grid: Pension post-decision grid (shared by all segments).
         consumption_grid: Consumption sweep for `acon`/`con` at `a = 0`.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         match_rate: Pension employer-match coefficient `chi`.
         return_liquid: Liquid net return `r^a`.
         pension_payout_return: Factor the pension balance is paid out at on retirement.
@@ -204,7 +207,7 @@ def g2egm_retiring_step(
         b_grid=b_grid,
         consumption_grid=consumption_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
         threshold=threshold,
     )
@@ -219,7 +222,7 @@ def _g2egm_envelope_step(
     b_grid: Float1D,
     consumption_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     threshold: float,
 ) -> G2EGMResult:
@@ -240,7 +243,7 @@ def _g2egm_envelope_step(
         w_b=post.grad_b,
         post_decision_value=post.value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     dcon = invert_dcon_cloud(
@@ -250,7 +253,7 @@ def _g2egm_envelope_step(
         w_b=post.grad_b,
         post_decision_value=post.value,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
 
@@ -268,7 +271,7 @@ def _g2egm_envelope_step(
         w_b_at_zero_a=grad_b_at_zero,
         w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
     con = invert_con_cloud(
@@ -278,7 +281,7 @@ def _g2egm_envelope_step(
         w_b_at_zero_a=grad_b_at_zero,
         w_a_at_zero_a=grad_a_at_zero,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
     )
 
@@ -294,7 +297,7 @@ def _g2egm_envelope_step(
         a_grid=a_grid,
         b_grid=b_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         match_rate=match_rate,
         post_decision_valid=post.valid,
     )

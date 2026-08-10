@@ -59,10 +59,9 @@ from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
-    _no_adjustment_outer_transition,
-    _strip_outer_transition,
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
+    _without_outer_post_decision,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import FlatParams, RegimeName
@@ -187,11 +186,20 @@ class NNBEGM(Solver):
     outer_action: ActionName
     """The regime's outer continuous action (e.g. the durable investment)."""
 
+    outer_state: StateName
+    """The durable/illiquid state the outer margin moves.
+
+    `outer_post_decision` is this period's chosen level of it, so the two name
+    the same quantity at two points in time: the state is what the regime
+    carries in, the post-decision what the outer search picks. The keeper
+    candidate is a function of this state.
+    """
+
     outer_post_decision: FunctionName
     """The outer post-decision function fixed at each outer node.
 
-    The auto-generated transition name of the durable state
-    (`next_<durable>`); the inner budget reads it as a bound constant.
+    This period's chosen level of `outer_state`; the inner budget reads it as a
+    bound constant.
     """
 
     outer_search: OuterSearch | None = None
@@ -293,6 +301,11 @@ class NNBEGM(Solver):
         return True
 
     @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """The inner NB-EGM solve inverts the recursive Euler equation."""
+        return self.inner.supports_nonlinear_certainty_equivalent
+
+    @property
     def carry_retains_discrete_action_rows(self) -> bool:
         """The inner NB-EGM merges discrete branches inside its envelope."""
         return self.inner.carry_retains_discrete_action_rows
@@ -331,14 +344,24 @@ class NNBEGM(Solver):
 
         - the *adjuster* strips the outer post-decision transition and admits
           the outer value as a flat param bound per outer-grid node;
-        - the *keeper* injects `next_<durable> = keep(<durable>)` into the
-          transitions and the econ functions, so the durable becomes a genuine
-          passive ride-along state.
+        - the *keeper* injects `s' = keep(<durable>)` into the econ functions,
+          so the durable becomes a genuine passive ride-along state.
         """
+        # The adjuster's outer post-decision arrives per outer-grid node as a
+        # bound param, so the function declaring the chosen stock leaves the
+        # inner DAG — leaving it in would let the inner scope check walk through
+        # it to the outer action, which is exactly what binding the node
+        # removes.
+        #
+        # The durable's own law of motion stays exactly as the regime declares
+        # it. It reads the post-decision, which is that bound leaf here, so it
+        # is decision-independent without being replaced — and a declared
+        # `next_<durable> = (1 - delta) s'` is therefore the stock the
+        # continuation is read at, not the raw node the outer search picked.
         adjuster_context = replace(
             context,
-            transitions=_strip_outer_transition(
-                transitions=context.transitions,
+            functions=_without_outer_post_decision(
+                functions=context.functions,
                 outer_post_decision=self.outer_post_decision,
             ),
             flat_param_names=context.flat_param_names | {self.outer_post_decision},
@@ -349,15 +372,14 @@ class NNBEGM(Solver):
             if self.outer_no_adjustment_candidate is not None
             else None
         )
+        # The keeper computes the post-decision from the durable leaf instead of
+        # taking it as a bound param, so the declared law again stands and what
+        # the keeper carries is `next_<durable>(keep(<durable>))`.
         keeper_context = replace(
             context,
-            transitions=_no_adjustment_outer_transition(
-                transitions=context.transitions,
-                outer_post_decision=self.outer_post_decision,
-                no_adjustment_func=no_adjustment_func,
-            ),
             functions=_with_no_adjustment_outer_function(
                 functions=context.functions,
+                durable_state=self.outer_state,
                 outer_post_decision=self.outer_post_decision,
                 no_adjustment_func=no_adjustment_func,
             ),
@@ -955,6 +977,11 @@ class _NNBEGMPeriodKernel:
                     state_action_space=state_action_space,
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
+                    # The node binding is not dropped, it MOVED: this branch and
+                    # the adaptive-mesh one both go through
+                    # `_solve_adjuster_node`, which applies
+                    # `_with_outer_post_decision` itself. Re-applying it here
+                    # would bind the same value twice.
                     flat_params=flat_params,
                     period=period,
                     ages=ages,

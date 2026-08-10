@@ -15,6 +15,7 @@ there reflects the constraint, not solution error.
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
+from _lcm.egm.preferences import Preferences
 from lcm.typing import Float1D, Float2D
 
 
@@ -24,7 +25,7 @@ def consumption_euler_error_log10(
     consumption: Float1D,
     next_consumption: Float1D,
     discount_factor: float,
-    crra: float,
+    preferences: Preferences,
     return_liquid: float,
     income: float,
 ) -> Float1D:
@@ -32,7 +33,7 @@ def consumption_euler_error_log10(
 
     For chosen consumption `c` the next-period liquid state is
     `(1 + r)*(liquid - c) + income`, and the Euler equation implies
-    `c_euler = (beta*(1+r)*u'(c_next))**(-1/crra)`, with `c_next` the next-period
+    `c_euler = (u')^-1(beta*(1+r)*u'(c_next))`, with `c_next` the next-period
     consumption policy interpolated at the next-period liquid state. The error is
     `log10(|c_euler / c - 1|)`.
 
@@ -42,7 +43,8 @@ def consumption_euler_error_log10(
         next_consumption: Next period's consumption policy on `liquid_grid`. Pass the
             identity `liquid_grid` for a terminal bequest (all wealth consumed).
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         return_liquid: Liquid net return `r`.
         income: Deterministic income added to next-period liquid.
 
@@ -53,9 +55,9 @@ def consumption_euler_error_log10(
     """
     next_liquid = (1.0 + return_liquid) * (liquid_grid - consumption) + income
     consumption_next = jnp.interp(next_liquid, liquid_grid, next_consumption)
-    marginal_next = consumption_next ** (-crra)
-    consumption_euler = (discount_factor * (1.0 + return_liquid) * marginal_next) ** (
-        -1.0 / crra
+    marginal_next = preferences.marginal_utility(consumption_next)
+    consumption_euler = preferences.inverse_marginal_utility(
+        discount_factor * (1.0 + return_liquid) * marginal_next
     )
     relative_error = jnp.abs(consumption_euler / consumption - 1.0)
     return jnp.log10(relative_error)
@@ -69,7 +71,7 @@ def working_consumption_euler_error_log10(
     deposit: Float2D,
     next_consumption: Float2D,
     discount_factor: float,
-    crra: float,
+    preferences: Preferences,
     return_liquid: float,
     return_pension: float,
     match_rate: float,
@@ -90,7 +92,8 @@ def working_consumption_euler_error_log10(
         deposit: This period's deposit policy on the `(m, n)` grid.
         next_consumption: Next period's working consumption policy on the `(m, n)` grid.
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         return_liquid: Liquid net return `r^a`.
         return_pension: Pension net return `r^b`.
         match_rate: Pension employer-match coefficient `chi`.
@@ -110,9 +113,9 @@ def working_consumption_euler_error_log10(
     consumption_next = map_coordinates(
         next_consumption, [m_index, n_index], order=1, mode="nearest"
     )
-    marginal_next = consumption_next ** (-crra)
-    consumption_euler = (discount_factor * (1.0 + return_liquid) * marginal_next) ** (
-        -1.0 / crra
+    marginal_next = preferences.marginal_utility(consumption_next)
+    consumption_euler = preferences.inverse_marginal_utility(
+        discount_factor * (1.0 + return_liquid) * marginal_next
     )
     relative_error = jnp.abs(consumption_euler / consumption - 1.0)
     return jnp.log10(relative_error)

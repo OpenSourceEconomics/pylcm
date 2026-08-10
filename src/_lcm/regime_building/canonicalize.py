@@ -368,8 +368,10 @@ def _declared_target_errors(
     unknown = declared - all_regime_names
     errors = (
         [
-            f"{source_label}: the per-target regime transition names "
-            f"unknown regime(s) {sorted(unknown)}."
+            (
+                f"{source_label}: the per-target regime transition names "
+                f"unknown regime(s) {sorted(unknown)}."
+            )
         ]
         if unknown
         else []

@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.utils.logging import LogLevel
@@ -633,3 +634,24 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def test_a_subnormal_probability_is_a_valid_row() -> None:
+    """A probability too small for the dtype to carry is not a misspecification.
+
+    Such a row sums to one and lies in `[0, 1]`, and the outcome it names is
+    simply very unlikely. Its contribution to a finite continuation is below the
+    last bit, so the solve prices the row as though the outcome were absent
+    rather than rejecting a model whose answer is correct.
+    """
+    active = jnp.zeros(()).dtype
+    tiny = jnp.finfo(active).tiny
+    subnormal = np.nextafter(np.asarray(tiny), np.asarray(0.0, dtype=active))
+
+    def subnormal_probs(health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.asarray([subnormal, 1.0 - subnormal], dtype=active)
+
+    model = _model_with_state_probs(subnormal_probs)
+    V = model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+    assert not bool(jnp.any(jnp.isnan(jnp.asarray(V[0]["alive"]))))

@@ -25,7 +25,7 @@ def _solve_alive_p0(n_savings: int) -> np.ndarray:
         savings_max=28.0,
         n_consumption=8,
     )
-    solution = model.solve(params=toy.build_params(), log_level="off")
+    solution = model.solve(params=toy.build_params(), log_level="debug")
     return np.asarray(solution[0]["alive"])
 
 

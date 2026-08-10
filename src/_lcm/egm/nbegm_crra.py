@@ -1,4 +1,11 @@
-"""Shared CRRA felicity for the EGM steps."""
+"""The CRRA felicity the NBEGM steps assume.
+
+The NBEGM step family inverts the Euler equation in closed form, as
+`(beta * R * u'_next) ** (-1 / crra)`, so the felicity is CRRA by
+construction rather than read off the regime. The steps that solve a
+general regime's preferences numerically use `_lcm.egm.preferences`
+instead.
+"""
 
 import jax.numpy as jnp
 

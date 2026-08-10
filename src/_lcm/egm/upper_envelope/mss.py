@@ -28,10 +28,41 @@ All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarInt
+
+# Band within which the dense envelope evaluated at a crossing abscissa and the
+# crossing's own value count as the same number. They are one mathematical
+# quantity reached by two routes -- a maximum over segment lines, and a two-line
+# intersection solve whose division amplifies the inputs' rounding -- so the band
+# is set by how far those routes can drift, not by the format's resolution.
+_ON_ENVELOPE_RTOL = 1e-5
+_ON_ENVELOPE_ATOL = 1e-7
+# ...but it can never be *narrower* than the format can resolve. The relative
+# term vanishes near zero, leaving the absolute term to decide there, and a
+# fixed `1e-7` sits below float32's epsilon (`1.19e-7`): two readings agreeing
+# to the last bit the format has would still fall outside it, so whether a
+# crossing is emitted would stop being a property of the geometry.
+_ON_ENVELOPE_EPS_MULTIPLE = 8.0
+
+
+def _on_envelope_atol(reference: FloatND) -> FloatND:
+    """Return the absolute band for "this crossing lies on the envelope".
+
+    The declared tolerance, floored at a small multiple of the working dtype's
+    epsilon. At double precision the floor never binds and the band is the
+    declared constant; at single precision the floor is what makes the
+    comparison decidable at all.
+    """
+    return jnp.maximum(
+        _ON_ENVELOPE_ATOL, _ON_ENVELOPE_EPS_MULTIPLE * jnp.finfo(reference.dtype).eps
+    )
 
 
 def refine_envelope(
@@ -176,7 +207,10 @@ def refine_envelope(
         segment_live=segment_live,
     )
     on_envelope = jnp.isfinite(crossing_envelope) & jnp.isclose(
-        crossing_envelope, crossing.value, atol=1e-7, rtol=1e-5
+        crossing_envelope,
+        crossing.value,
+        atol=_on_envelope_atol(crossing_envelope),
+        rtol=_ON_ENVELOPE_RTOL,
     )
     crossing_valid = crossing.valid & on_envelope
 
@@ -217,6 +251,7 @@ def refine_envelope(
     return out_grid, out_policy, out_value, n_kept
 
 
+@dataclass(frozen=True, kw_only=True)
 class _CrossingBlocks:
     """Per-query crossing candidate: abscissa, value, both policy copies, flag.
 
@@ -226,20 +261,16 @@ class _CrossingBlocks:
     intersection abscissa falls strictly between the two queries.
     """
 
-    def __init__(
-        self,
-        *,
-        grid: Float1D,
-        value: Float1D,
-        policy_left: Float1D,
-        policy_right: Float1D,
-        valid: BoolND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_left = policy_left
-        self.policy_right = policy_right
-        self.valid = valid
+    grid: Float1D
+    """Crossing abscissa per query."""
+    value: Float1D
+    """Envelope value at the crossing."""
+    policy_left: Float1D
+    """Policy of the outgoing owner at the crossing."""
+    policy_right: Float1D
+    """Policy of the incoming owner at the crossing."""
+    valid: BoolND
+    """Whether this query contributes a crossing at all."""
 
 
 def _crossing_blocks(
@@ -322,56 +353,56 @@ def _crossing_blocks(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
 class _CrossingRow:
-    """One step's crossing emission (scan carry-compatible stacked leaves)."""
+    """One step's crossing emission, stacked by the scan into row arrays."""
 
-    def __init__(
-        self,
-        *,
-        grid: FloatND,
-        value: FloatND,
-        policy_left: FloatND,
-        policy_right: FloatND,
-        valid: BoolND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_left = policy_left
-        self.policy_right = policy_right
-        self.valid = valid
+    grid: FloatND
+    """Crossing abscissa emitted at this step."""
+    value: FloatND
+    """Envelope value at that abscissa."""
+    policy_left: FloatND
+    """Policy of the outgoing owner."""
+    policy_right: FloatND
+    """Policy of the incoming owner."""
+    valid: BoolND
+    """Whether this step emits a crossing."""
 
 
+_CROSSING_ROW_FIELDS = ("grid", "value", "policy_left", "policy_right", "valid")
+
+
+def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[Any, ...], None]:
+    return tuple(getattr(row, name) for name in _CROSSING_ROW_FIELDS), None
+
+
+def _unflatten_crossing_row(_aux: None, children: Sequence[Any]) -> _CrossingRow:
+    row = object.__new__(_CrossingRow)
+    for name, child in zip(_CROSSING_ROW_FIELDS, children, strict=True):
+        object.__setattr__(row, name, child)
+    return row
+
+
+# The scan stacks this row's leaves, so it must be a pytree. A frozen dataclass
+# is not one by construction; registering it is the same shape `EGMCarry` and
+# the params leaves use.
 jax.tree_util.register_pytree_node(
-    _CrossingRow,
-    lambda r: (
-        (r.grid, r.value, r.policy_left, r.policy_right, r.valid),
-        None,
-    ),
-    lambda _aux, children: _CrossingRow(
-        grid=children[0],
-        value=children[1],
-        policy_left=children[2],
-        policy_right=children[3],
-        valid=children[4],
-    ),
+    _CrossingRow, _flatten_crossing_row, _unflatten_crossing_row
 )
 
 
+@dataclass(frozen=True, kw_only=True)
 class _SegmentIntersection:
     """Intersection of two winning segments' value lines, with both policies."""
 
-    def __init__(
-        self,
-        *,
-        grid: FloatND,
-        value: FloatND,
-        policy_a: FloatND,
-        policy_b: FloatND,
-    ) -> None:
-        self.grid = grid
-        self.value = value
-        self.policy_a = policy_a
-        self.policy_b = policy_b
+    grid: FloatND
+    """Abscissa where the two value lines meet."""
+    value: FloatND
+    """Common value there."""
+    policy_a: FloatND
+    """Policy of the first segment at the intersection."""
+    policy_b: FloatND
+    """Policy of the second segment at the intersection."""
 
 
 def _intersect_winners(
@@ -513,7 +544,7 @@ def _evaluate_envelope(
 
 
 def _value_decrease_past_noise(*, left_value: Float1D, right_value: Float1D) -> BoolND:
-    """Whether the value genuinely falls from one candidate to the next.
+    """Report whether the value genuinely falls from one candidate to the next.
 
     Without an explicit `segment_id` the branch boundaries have to be inferred, and
     a value decrease is the signal. Along a near-linear tail, though, the sign of

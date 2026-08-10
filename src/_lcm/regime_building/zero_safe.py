@@ -12,7 +12,16 @@ a continuation expectation, a fold reduction, an interpolated reference value,
 or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
-Both helpers below apply the same fix pattern: replace the VALUE with an
+This module is now down to ``zero_safe_average``, and it performs no multiply of
+its own: the weighted TERM lives in `_lcm.zero_safe` and serves the whole engine.
+The copy that used to live here is gone, along with the divergence it accumulated
+on every upstream wave — it read a represented zero from a comparison rather than
+from the bits, and had no subnormal handling at all. What the term does is
+documented there; the history below is kept because it is what established the
+rule, and because two of its claims were confidently wrong in ways worth not
+repeating.
+
+The fix pattern that term applies: replace the VALUE with an
 explicit `0.0` wherever the weight is exactly zero AND the value is NON-FINITE,
 via ``jnp.where``, BEFORE multiplying. `weight * where(mask, 0, value)`
 annihilates a zero-weight ``+-inf`` (the multiply sees ``w * 0 = 0``, never
@@ -253,92 +262,17 @@ summation, which is not implemented.
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
-
-
-def zero_safe_weighted_term(
-    weight: FloatND | ScalarFloat | IntND | ScalarInt | float,
-    value: FloatND | ScalarFloat | IntND | ScalarInt | float,
-) -> FloatND | IntND:
-    """``weight * value``, exactly ``0.0`` wherever ``weight == 0`` — never ``nan``.
-
-    Standard floating-point multiplication computes ``0.0 * (+-inf) = nan``; on
-    the extended reals, a zero weight should annihilate ANY value at that
-    node, including an admissible on-path ``-inf``. `jnp.where` replaces the
-    VALUE with `0.0` at a zero-weight node BEFORE the multiply, so the product
-    is ``weight * 0 = 0`` there and never a `nan`. Because the `select` is on
-    the value (an operand of the multiply) rather than on the product, the
-    multiply stays FMA-contractible into a downstream reduction, so on many
-    toolchains the all-positive-weight path recovers the exact bits of plain
-    ``weight * value`` — but this is NOT guaranteed (it depends on XLA choosing
-    to contract the multiply into the reduction's FMA, which varies by
-    release/backend/CPU; the module ROUND-5 CAVEAT records a reproduced
-    dynamic-per-cell divergence on one 0.10.1 CPU). The load-bearing property is
-    zero-mass safety; treat the all-positive path as raw-up-to-a-few-ULP, per the
-    module's HONEST CONTRACT, not as bit-identity.
-
-    Args:
-        weight: The weight (Pareto weight, regime-transition probability,
-            interpolation corner weight, quadrature weight, ...).
-        value: The value being weighted (may be `+-inf` on an admissible
-            zero-weight node).
-
-    Returns:
-        The zero-safe elementwise product, broadcast like ``weight * value``.
-
-    """
-    weight_arr = jnp.asarray(weight)
-    value_arr = jnp.asarray(value)
-    # Mask the VALUE before the multiply, not the PRODUCT after it. Both
-    # neutralize a zero-weight `+-inf` (`where` replaces the `+-inf` with 0 at a
-    # zero-weight node, so the multiply sees `w * 0 = 0`, never `0 * -inf`), but
-    # only this ordering keeps the multiply FMA-contractible into a downstream
-    # reduction: a `select` sitting AFTER the multiply (the previous form,
-    # `where(w==0, 0, w*v)`) forces the product to round once on its own before
-    # the sum rounds again, so an all-positive-weight reduction drifts from the
-    # naive `jnp.average` / raw corner sum -- MEASURED up to 6 ULP, enough to
-    # REVERSE a non-tied action or an individual-rationality / dissolution flag
-    # (see the regression tests). Masking the value leaves `w * safe_value` as a
-    # bare multiply feeding the reduce, which XLA CAN fuse -- recovering the naive
-    # bits on many toolchains -- while the zero-weight path stays `+-inf`-safe. The
-    # fusion (hence the bit recovery) is observed and CPU/backend-dependent, NOT a
-    # property of this source expression: the module ROUND-5 CAVEAT reproduces a
-    # dynamic-per-cell divergence on one 0.10.1 CPU. Do not read this as guaranteed
-    # bit-identity.
-    #
-    # Mask ONLY where the value is NON-FINITE. `jnp.where` is a hard select, so a
-    # mask that fires on every zero-weight node also kills `d/dw` THERE: the branch
-    # taken is the constant `0`, whose derivative w.r.t. `weight` is `0` rather than
-    # `value`. That is invisible whenever `weight` is a constant of the
-    # differentiation -- a Pareto weight, a regime-transition probability, a
-    # quadrature weight, which is what this helper was written for -- but WRONG as
-    # soon as the weight is itself a function of the argument being differentiated.
-    # The live instance was `map_coordinates`: an interpolation corner weight is a
-    # function of the coordinate, an exactly-on-node coordinate makes one corner
-    # weight exactly `0`, and masking there dropped precisely the corner whose weight
-    # was changing -- so `jax.grad` returned `-grid[c]` instead of the segment slope
-    # at every on-node coordinate, while the VALUES stayed correct and hid it.
-    #
-    # Restricting the mask to non-finite values keeps the load-bearing property and
-    # costs nothing: for finite `value` the masked and unmasked products are
-    # `0 * v == 0` either way, so VALUES are NUMERICALLY EQUAL to the previous form
-    # everywhere, and `d/dw` is now `value` at every finite node. Only the genuine
-    # `0 * +-inf` case still selects, which is the case that has no finite derivative
-    # to preserve anyway. The select remains on an OPERAND of the multiply, so the
-    # FMA-contractibility argument above is unchanged.
-    #
-    # NOT bit-identical, though this comment claimed it was (round-3 audit H2): at
-    # `w = +0` with a NEGATIVE finite value the mask no longer fires, so the product
-    # carries the sign of `value` and is `-0.0` where the old form gave `+0.0`. Equal,
-    # same derivative, and byte-identical once summed -- but a different bit pattern
-    # in isolation. See the module docstring's SIGNED-ZERO EXCEPTION.
-    needs_mask = (weight_arr == 0) & ~jnp.isfinite(value_arr)
-    safe_value = jnp.where(needs_mask, jnp.zeros((), value_arr.dtype), value_arr)
-    return weight_arr * safe_value
+from _lcm.probability import scaled_down_by_power_of_two
+from _lcm.zero_safe import zero_safe_weighted_term
+from lcm.typing import FloatND, IntND
 
 
 def zero_safe_average(
-    a: FloatND, *, weights: FloatND, axis: int | None = None
+    a: FloatND,
+    *,
+    weights: FloatND,
+    shifts: IntND | None,
+    axis: int | None = None,
 ) -> FloatND:
     """Zero-weight-safe replacement for ``jnp.average(a, weights=weights, axis=axis)``.
 
@@ -349,6 +283,46 @@ def zero_safe_average(
     `+-inf` value cannot inject a `nan`. Used for the stochastic-node /
     regime-mixture / fold-state weighted averages in the collective solve
     core (`Q_and_F.py`, `max_Q_over_a.py`).
+
+    `shifts` carries the base-two scale each weight is held at — a node's
+    probability is ``weights * 2**-shift`` — as `scaled_joint_weight` now
+    returns one scale per node rather than one for the whole lottery. Weights
+    from different nodes are therefore not comparable as plain floats, and a
+    reduction that ignored the scales would weight the nodes by their
+    coefficients alone, valuing a near-impossible node as an even chance.
+
+    It has **no default**, following upstream's rule that a coefficient cannot
+    be supplied without its scale: a caller states either the scales or `None`,
+    and no call can leave the question unasked. `None` means every weight is
+    already on one scale, which makes their ratios exact without any of this —
+    the fold-state and Pareto-weight reductions, whose weights never passed
+    through `scaled_joint_weight` at all.
+
+    `None` is a distinct path rather than a shift array of zeros because the
+    two are not numerically equivalent here: scaling by a zero shift still
+    costs the FMA contraction, and MEASURED on this fixture it moves the result
+    off `jnp.average`'s bits, which
+    `test_zero_safe_average_matches_jnp_average_on_the_finite_path` pins. Zeros
+    would therefore change the unscaled callers' arithmetic to buy nothing.
+    Measured for `jnp.ldexp` and again for `scaled_down_by_power_of_two` when
+    the latter replaced it; the two agree, as their bit-for-bit equality on
+    non-positive shifts implies.
+
+    The two reductions treat the scale differently, following
+    `_expectation_over_stochastic_nodes` in `Q_and_F.py`, against which this is
+    tested:
+
+    - the **mass** lowers each weight onto the common scale before summing. A
+      live node too far below that scale to register contributes no share of a
+      total of order one, which is the right answer for a denominator;
+    - the **numerator** forms ``w * a`` first and applies the node's relative
+      scale to the product. A tiny probability meeting a large value makes an
+      ordinary contribution, and scaling the weight first would flush it before
+      the value supplied its binades.
+
+    The common scale is the smallest shift — the largest node — so every
+    relative scale is a power of two no greater than one and the lowering
+    cannot overflow.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -370,6 +344,7 @@ def zero_safe_average(
     """
     a_arr = jnp.asarray(a)
     weights_arr = jnp.asarray(weights)
+    shifts_arr = None if shifts is None else jnp.asarray(shifts)
 
     if a_arr.shape != weights_arr.shape:
         if axis is None:
@@ -386,8 +361,29 @@ def zero_safe_average(
             for i in range(a_arr.ndim)
         )
         weights_arr = jnp.reshape(weights_arr, new_shape)
+        # A scale belongs to its weight, so it is carried through exactly the
+        # same reshape rather than broadcast on its own.
+        if shifts_arr is not None:
+            shifts_arr = jnp.reshape(shifts_arr, new_shape)
 
-    total_weight = jnp.sum(weights_arr, axis=axis)
+    if shifts_arr is None:
+        relative_scale = None
+        lowered_weights = weights_arr
+    else:
+        common_shift = (
+            jnp.min(shifts_arr)
+            if axis is None
+            else jnp.min(shifts_arr, axis=axis, keepdims=True)
+        )
+        # `common_shift` is the SMALLEST shift, so every relative scale is
+        # non-positive — which is exactly `scaled_down_by_power_of_two`'s
+        # precondition. It agrees with `jnp.ldexp` bit-for-bit on that domain and
+        # skips the general `frexp` graph, which here would run twice over the
+        # whole value surface.
+        relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
+        lowered_weights = scaled_down_by_power_of_two(weights_arr, relative_scale)
+
+    total_weight = jnp.sum(lowered_weights, axis=axis)
     _raise_if_concretely_zero(total_weight, context="zero_safe_average")
     # The masked numerator is used unconditionally -- see the ROUND-6 note below and
     # the module CAVEAT. A whole-expression branch that keeps a RAW `sum(w*a)`
@@ -403,7 +399,20 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64 (ROUND-7).
-    numerator = jnp.sum(zero_safe_weighted_term(weights_arr, a_arr), axis=axis)
+    terms = zero_safe_weighted_term(
+        weight=weights_arr,
+        value=a_arr,
+        # With scales in hand the weights are `scaled_joint_weight` coefficients,
+        # every one of them normal by construction, so the term needs no exponent
+        # move. Without them they are whatever the model supplied.
+        subnormal_is_accounted_for=shifts_arr is not None,
+    )
+    if relative_scale is not None:
+        # The product, not the weight: see the docstring. `zero_safe_weighted_term`
+        # has already made a zero-weight `+-inf` an exact zero, and scaling down
+        # returns a zero unchanged.
+        terms = scaled_down_by_power_of_two(terms, relative_scale)
+    numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
 
 

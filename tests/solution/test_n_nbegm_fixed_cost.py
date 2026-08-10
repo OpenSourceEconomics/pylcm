@@ -58,7 +58,7 @@ def test_unknown_scale_function_fails_at_build() -> None:
             n_periods=2,
             outer_search=_MESH,
             branch_aggregator=aggregator,
-        ).solve(params=_PARAMS, log_level="off")
+        ).solve(params=_PARAMS, log_level="debug")
 
 
 def test_state_dependent_scale_fails_at_build() -> None:
@@ -75,7 +75,7 @@ def test_state_dependent_scale_fails_at_build() -> None:
             n_periods=2,
             outer_search=_MESH,
             branch_aggregator=aggregator,
-        ).solve(params=_PARAMS, log_level="off")
+        ).solve(params=_PARAMS, log_level="debug")
 
 
 def _solve_recorded(
@@ -97,7 +97,7 @@ def _solve_recorded(
         n_periods=2,
         outer_search=_MESH,
         branch_aggregator=aggregator,
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     return recorded
 
 

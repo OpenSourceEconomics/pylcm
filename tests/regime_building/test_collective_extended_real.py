@@ -19,6 +19,7 @@ asserts a value that is `nan` pre-fix.
 """
 
 import contextlib
+import inspect
 import itertools
 from collections.abc import Callable
 from fractions import Fraction
@@ -40,7 +41,8 @@ from _lcm.regime_building.ndimage import (
     _sum_all,
 )
 from _lcm.regime_building.Q_and_F import _sum_regime_mixture
-from _lcm.regime_building.zero_safe import zero_safe_average, zero_safe_weighted_term
+from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
@@ -126,7 +128,9 @@ def _raw_corner_sum_interpolator(
 def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight():
     weight = jnp.array([0.0, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, 4.0])
-    result = zero_safe_weighted_term(weight, value)
+    result = zero_safe_weighted_term(
+        weight=weight, value=value, subnormal_is_accounted_for=False
+    )
     assert bool(jnp.all(jnp.isfinite(result)))
     np.testing.assert_allclose(np.asarray(result), [0.0, 3.0, 2.0])
 
@@ -135,7 +139,9 @@ def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
     # No weight is exactly zero -> byte-identical to the naive product.
     weight = jnp.array([0.2, 1.0, 0.5])
     value = jnp.array([-jnp.inf, 3.0, jnp.inf])
-    result = zero_safe_weighted_term(weight, value)
+    result = zero_safe_weighted_term(
+        weight=weight, value=value, subnormal_is_accounted_for=False
+    )
     naive = weight * value
     np.testing.assert_array_equal(np.asarray(result), np.asarray(naive))
 
@@ -143,9 +149,44 @@ def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
 def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
     values = jnp.array([-jnp.inf, 3.0, 5.0])
     weights = jnp.array([0.0, 0.5, 0.5])
-    result = zero_safe_average(values, weights=weights)
+    result = zero_safe_average(values, weights=weights, shifts=None)
     assert bool(jnp.isfinite(result))
     np.testing.assert_allclose(float(result), 4.0)
+
+
+def test_a_coefficient_cannot_be_supplied_to_the_average_without_its_scale():
+    """`shifts` is required, so no call can leave the scale question unasked.
+
+    The collective analogue of upstream's pin on
+    `_expectation_over_stochastic_nodes` and `_as_lottery`. A weight that came
+    from `scaled_joint_weight` means nothing without the scale it is held at,
+    so the signature offers no way to omit it: a caller states the scales, or
+    states `None` to say its weights are already on one.
+    """
+    parameter = inspect.signature(zero_safe_average).parameters["shifts"]
+
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient():
+    """Nodes on different scales are weighed by `coefficient * 2**-shift`.
+
+    `scaled_joint_weight` returns one scale per NODE, so two coefficients say
+    nothing about their relative probability until both are on one scale. Here
+    the second node is held one binade down: equal coefficients, but half the
+    probability. Averaging the coefficients alone would return `4.0` — the
+    near-impossible node valued as an even chance — where the lottery the
+    weights actually describe averages to `10/3`.
+    """
+    values = jnp.array([2.0, 6.0])
+    weights = jnp.array([1.0, 1.0])
+    shifts = jnp.array([0, 1], dtype=jnp.int32)
+
+    result = zero_safe_average(values, weights=weights, shifts=shifts)
+
+    # p = [1.0, 0.5] -> (1.0*2 + 0.5*6) / 1.5
+    np.testing.assert_allclose(float(result), 10.0 / 3.0)
+    assert float(result) != 4.0
 
 
 def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
@@ -160,7 +201,9 @@ def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
     # recipe drifts lives in the counterexample tests below.
     values = jnp.array([1.0, 3.0, 5.0])
     weights = jnp.array([0.2, 0.3, 0.5])
-    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+        values, weights
+    )
     expected = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
     assert _bits(result) == _bits(expected)
 
@@ -193,7 +236,9 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
         assert bool(jnp.all(weights > 0))
 
         naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
-        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+            values, weights
+        )
         old = jax.jit(_old_weighted_average)(values, weights)
 
         naive_bits = _bits(naive)
@@ -230,7 +275,9 @@ def test_zero_safe_average_is_exact_where_ties_actually_arise():
     values = jnp.array([2.5, -jnp.inf], dtype=jnp.float32)
     weights = jnp.array([1.0, 0.0], dtype=jnp.float32)
 
-    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(values, weights)
+    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+        values, weights
+    )
 
     assert np.asarray(result).view(np.uint32) == np.float32(2.5).view(np.uint32)
 
@@ -253,9 +300,9 @@ def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path
     # Guard the guard: strictly-positive weights, so the FMA divergence is live.
     assert bool(jnp.all(weights > 0))
 
-    guarded = jax.jit(lambda a, w: zero_safe_average(a, axis=1, weights=w))(
-        values, weights
-    )
+    guarded = jax.jit(
+        lambda a, w: zero_safe_average(a, axis=1, weights=w, shifts=None)
+    )(values, weights)
     naive = jax.jit(lambda a, w: jnp.average(a, axis=1, weights=w))(values, weights)
     old = jax.jit(_old_weighted_average_axis)(values, weights)
 
@@ -269,7 +316,7 @@ def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
     values = jnp.array([1.0, 2.0])
     weights = jnp.array([0.0, 0.0])
     with pytest.raises(ValueError, match="total weight is exactly zero"):
-        zero_safe_average(values, weights=weights)
+        zero_safe_average(values, weights=weights, shifts=None)
 
 
 def test_zero_safe_average_does_not_reverse_a_nontied_action():
@@ -294,7 +341,7 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     assert float(jnp.sum(probabilities)) == 1.0
 
     naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(nodes, probabilities)
-    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w))(
+    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
         nodes, probabilities
     )
     old = jax.jit(_old_weighted_average)(nodes, probabilities)
@@ -387,7 +434,12 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
         left_fold = float(
             jax.jit(
                 lambda w, v: _old_left_fold_mixture(
-                    [zero_safe_weighted_term(w[i], v[i]) for i in order]
+                    [
+                        zero_safe_weighted_term(
+                            weight=w[i], value=v[i], subnormal_is_accounted_for=False
+                        )
+                        for i in order
+                    ]
                 )
             )(w, v)
         )
@@ -536,7 +588,12 @@ def _old_name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatN
     order = sorted(range(len(names)), key=lambda i: names[i])
     probs = jnp.stack([w[i] for i in order], axis=0)
     values = jnp.stack([v[i] for i in order], axis=0)
-    return jnp.sum(zero_safe_weighted_term(probs, values), axis=0)
+    return jnp.sum(
+        zero_safe_weighted_term(
+            weight=probs, value=values, subnormal_is_accounted_for=False
+        ),
+        axis=0,
+    )
 
 
 def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:

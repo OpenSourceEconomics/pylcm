@@ -47,7 +47,7 @@ def _solve(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def _terminal_adjacent_period(solved: Mapping[int, Mapping]) -> int:
@@ -104,7 +104,7 @@ def test_nbegm_jump_ride_along_recurring_is_resolution_limited():
             n_consumption=160,
         )
         nbegm_v = np.asarray(
-            model.solve(params=toy.build_params(), log_level="off")[period]["alive"]
+            model.solve(params=toy.build_params(), log_level="debug")[period]["alive"]
         )
         brute_v = np.asarray(brute[period]["alive"])
         worst = 0.0

@@ -102,7 +102,7 @@ def test_fixed_state_keeps_its_value_in_simulation() -> None:
             "regime_id": jnp.asarray([_RegimeId.work, _RegimeId.work]),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=42,
     )
     df = result.to_dataframe(use_labels=False).sort_values(["subject_id", "period"])

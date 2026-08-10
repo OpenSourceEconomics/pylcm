@@ -212,7 +212,13 @@ def _raise_at(
     state_action_space = dataclasses.replace(
         state_action_space,
         states=MappingProxyType(
-            dict(_states_for_period(regime, state_action_space, row.period))
+            dict(
+                _states_for_period(
+                    regime=regime,
+                    state_action_space=state_action_space,
+                    period=row.period,
+                )
+            )
         ),
     )
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
@@ -241,11 +247,17 @@ def _raise_at(
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=effective_regime_params,
         period=row.period,
+        entered_process_names=tuple(
+            law.next_state_name.removeprefix("next_")
+            for bundle in regime.solution.transition_laws.values()
+            for law in bundle.values()
+            if law.interpolation_basis
+        ),
     )
 
 
 def _states_for_period(
-    regime: Regime, state_action_space: StateActionSpace, period: int
+    *, regime: Regime, state_action_space: StateActionSpace, period: int
 ) -> Mapping[str, object]:
     """Current-period state axes, overriding age-varying states with period-t nodes.
 

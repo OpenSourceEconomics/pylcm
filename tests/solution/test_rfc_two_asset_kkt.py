@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.two_asset_inverse import invert_dcon_cloud
+from tests.solution._crra_preferences import crra_preferences
 
 
 def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
@@ -34,7 +35,7 @@ def test_dcon_cloud_flags_kkt_inconsistent_candidate_invalid():
         w_b=one,
         post_decision_value=one * 0.0,
         discount_factor=1.0,
-        crra=2.0,
+        preferences=crra_preferences(2.0),
         match_rate=1.0,
     )
 

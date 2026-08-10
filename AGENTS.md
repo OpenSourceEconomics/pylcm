@@ -106,16 +106,24 @@ automation. Python 3.14+ is required.
 
 **Koopmans Aggregation (`src/lcm/koopmans_aggregation.py`)**
 
-- `W_linear(utility, CE, discount_factor)`: the expected-utility aggregator
-  `U + β · CE`, and the model-level default.
-- `W_epstein_zin(utility, CE, discount_factor, intertemporal_elasticity_of_substitution)`:
-  the CES form; pair with `certainty_equivalent=PowerMean()` for the full Epstein-Zin
-  recursion. Both are weighted power means over the same kernel
-  (`_lcm.power_mean.weighted_power_mean`) — the aggregator averages `(utility, CE)` at
-  weights `(1-β, β)` and exponent `1 - 1/ψ`, the certainty equivalent the continuation
-  lottery at exponent `1 - risk_aversion` — so a range one survives the other survives
-  too. The naive `**` form of either loses the value entirely at small inputs and
-  reverses action rankings near its unit-exponent limit.
+- `LinearAggregator()`: the aggregator `U + β · CE`, and the model-level default. Called
+  with `(utility, CE, discount_factor)`.
+- `CESAggregator()`: the CES form, called with
+  `(utility, CE, discount_factor, intertemporal_elasticity_of_substitution)`; pair with
+  `certainty_equivalent=PowerMean()` for the full Epstein-Zin recursion. Neither name
+  states a preference class — the form alone is not Epstein-Zin, and
+  `LinearAggregator()` is time-additive only alongside `LinearExpectation()`. Both are
+  weighted power means over the same kernel (`_lcm.power_mean.weighted_power_mean`) —
+  the aggregator averages `(utility, CE)` at weights `(1-β, β)` and exponent `1 - 1/ψ`,
+  the certainty equivalent the continuation lottery at exponent `1 - risk_aversion` — so
+  a range one survives the other survives too. The naive `**` form of either loses the
+  value entirely at small inputs and reverses action rankings near its unit-exponent
+  limit.
+- Both subclass `KoopmansAggregator`, which is a marker and a place to state the
+  contract — it deliberately declares no parameter-name property, because an
+  aggregator's signature is the sole declaration of what it consumes. The slot takes any
+  callable with the same convention, so a form neither class covers stays a plain
+  function.
 - A regime's aggregator lives in the `koopmans_aggregator` slot, not in `functions`; its
   parameters beyond `utility` and `CE` surface in the params template under the
   pseudo-function key `koopmans_aggregator`. `Phased(solve=..., simulate=...)` gives the
@@ -224,7 +232,7 @@ Regime(
         "name": helper_func, ...
     },
     constraints={"name": constraint_func, ...},  # Optional: constraint functions
-    koopmans_aggregator=W_epstein_zin,           # Optional: overrides the model-level one
+    koopmans_aggregator=CESAggregator(),           # Optional: overrides the model-level one
     certainty_equivalent=PowerMean(),            # Optional: overrides the model-level one
 )
 
@@ -321,11 +329,11 @@ merged into terminal regimes.
 
 **Model-level continuation slots:**
 
-`Model(koopmans_aggregator=..., certainty_equivalent=...)` default to `W_linear` and
-`LinearExpectation()`. Unlike the mapping slots above these are single values, so the
-rule is all-or-nothing rather than per-name: declare each here, or in every regime that
-has a continuation, never some of each (a mixed declaration errors). Terminal regimes
-receive neither, and declaring either on one is an error.
+`Model(koopmans_aggregator=..., certainty_equivalent=...)` default to
+`LinearAggregator()` and `LinearExpectation()`. Unlike the mapping slots above these are
+single values, so the rule is all-or-nothing rather than per-name: declare each here, or
+in every regime that has a continuation, never some of each (a mixed declaration
+errors). Terminal regimes receive neither, and declaring either on one is an error.
 
 Broadcast states and actions are pruned per regime by DAG reachability: a broadcast
 variable survives only where a root computation (utility, the Koopmans aggregator,
@@ -780,6 +788,37 @@ far.
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
+
+### Keyword-Only Arguments
+
+**A function takes its arguments keyword-only as soon as there are two.** This binds
+everywhere — engine internals and model functions alike. Readability is not something
+only the public surface earns, and a call reading `f(a, b)` says nothing about which
+value is which.
+
+```python
+# Good
+def compute_regret(*, published: FloatND, reference: FloatND) -> FloatND: ...
+
+
+# Bad — the call site cannot say which is which
+def compute_regret(published: FloatND, reference: FloatND) -> FloatND: ...
+```
+
+There are exactly two exemptions:
+
+1. **A callback whose caller is a library that passes positionally** — `lax.scan` bodies
+   `(carry, x)`, `custom_jvp` rules `(primals, tangents)`, pytree
+   `unflatten(aux, children)`. Not a judgement call: Python raises otherwise. `dags` is
+   *not* in this class — it binds by parameter name and accepts keyword-only functions,
+   so a model function complies like anything else.
+1. **A module that implements an arithmetic and nothing else** — operator surrogates
+   keep the spelling their operation is known by (`two_sum(a, b)`,
+   `dd_mul(left, right)`). State it once in the module docstring; such a module may
+   contain *only* operators, so the exemption stays auditable rather than sprinkled per
+   function.
+
+Functions predating this rule are being converted separately; see issue #421.
 
 ### Module Layout
 

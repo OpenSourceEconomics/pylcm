@@ -24,7 +24,7 @@ from lcm import (
 )
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch
 from lcm.typing import (
@@ -369,12 +369,14 @@ def test_dcegm_phased_aggregator_with_default_solve_variant_constructs():
 
     DC-EGM reads only the solve-phase aggregator; the simulate variant is free.
     A naive present-bias regime declares
-    `koopmans_aggregator=Phased(solve=W_linear, simulate=...)`, so the solve runs
-    the exact Euler inversion and present bias enters only the simulate-phase
+    `koopmans_aggregator=Phased(solve=LinearAggregator(), simulate=...)`, so the
+    solve runs the exact Euler inversion and present bias enters only the simulate-phase
     re-optimization.
     """
     regime = VALID.replace(
-        koopmans_aggregator=Phased(solve=W_linear, simulate=_custom_aggregator)
+        koopmans_aggregator=Phased(
+            solve=LinearAggregator(), simulate=_custom_aggregator
+        )
     )
     model = _build_model(regime)
     assert model.n_periods == N_PERIODS
@@ -383,7 +385,9 @@ def test_dcegm_phased_aggregator_with_default_solve_variant_constructs():
 def test_dcegm_phased_aggregator_with_custom_solve_variant_raises():
     """A `Phased` aggregator whose *solve* variant is custom violates the contract."""
     regime = VALID.replace(
-        koopmans_aggregator=Phased(solve=_custom_aggregator, simulate=W_linear)
+        koopmans_aggregator=Phased(
+            solve=_custom_aggregator, simulate=LinearAggregator()
+        )
     )
     with pytest.raises(ModelInitializationError, match="solve-phase Koopmans"):
         _build_model(regime)

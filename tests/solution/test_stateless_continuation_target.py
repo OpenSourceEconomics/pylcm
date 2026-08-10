@@ -24,7 +24,7 @@ from lcm import (
     TauchenAR1Process,
     categorical,
 )
-from lcm.typing import ScalarInt
+from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
 _DISCOUNT = 0.95
@@ -55,8 +55,14 @@ def _next_regime(wealth, age):
     return jnp.where(leaves, RegimeId.gone, RegimeId.alive)
 
 
-def _enter_shock() -> ScalarInt:
-    return jnp.int32(1)
+def _enter_shock() -> FloatND:
+    """Enter the target's process at its middle node.
+
+    An entry law names a value on the target's support, not a position in it.
+    The Tauchen nodes are symmetric about the unconditional mean, which is zero
+    here, so the middle node is `0.0`.
+    """
+    return jnp.asarray(0.0)
 
 
 def _solve_with_bequest(bequest: float):
@@ -206,7 +212,14 @@ def _solve_with_process_only_target(level: float):
     )
     retired = Regime(
         transition=None,
-        states={"shock": TauchenAR1Process(n_points=3, gauss_hermite=False)},
+        # Fixed at construction, not passed at runtime: the entry law places a
+        # value on this process's own support, and that support has to exist
+        # before the source's laws are built.
+        states={
+            "shock": TauchenAR1Process(
+                n_points=3, gauss_hermite=False, rho=0.9, sigma=1.0, mu=0.0, n_std=2
+            )
+        },
         functions={"utility": lambda shock: shock + level},
     )
     model = Model(
@@ -222,10 +235,7 @@ def _solve_with_process_only_target(level: float):
             "next_shock": {},
             "next_regime": {},
         },
-        "gone": {
-            "utility": {},
-            "shock": {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2},
-        },
+        "gone": {"utility": {}},
     }
     return model.solve(params=params, log_level="debug")
 

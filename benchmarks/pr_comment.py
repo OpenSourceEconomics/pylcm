@@ -385,8 +385,10 @@ def _format_raw_comment(head_sha: str, raw_md: str) -> str:
             "",
             raw_md,
             "",
-            "*No merge-base results found locally. "
-            "Run benchmarks on main first for a comparison.*",
+            (
+                "*No merge-base results found locally. "
+                "Run benchmarks on main first for a comparison.*"
+            ),
         ]
     )
 

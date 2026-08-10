@@ -34,7 +34,7 @@ def _solve(variant: str, *, n_consumption: int) -> Mapping[int, Mapping]:
         costate_reads_liquid=True,
     )
     return model.solve(
-        params=toy.build_params(action_in_schedule_variable=True), log_level="off"
+        params=toy.build_params(action_in_schedule_variable=True), log_level="debug"
     )
 
 

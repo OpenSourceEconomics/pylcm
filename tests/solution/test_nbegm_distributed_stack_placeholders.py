@@ -44,7 +44,7 @@ _SCRIPT = textwrap.dedent(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32,
         distributed_kind=True,
     )
-    model.solve(params=toy.build_params(), log_level="off")
+    model.solve(params=toy.build_params(), log_level="debug")
 
     assert captured, "no envelope core was lowered"
     for lower_args in captured:

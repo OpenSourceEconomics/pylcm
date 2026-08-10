@@ -300,7 +300,7 @@ def test_model_broadcast_solves_and_simulates() -> None:
             "regime_id": jnp.full(4, _RegimeId.work),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=3,
     )
     df = result.to_dataframe(use_labels=False)

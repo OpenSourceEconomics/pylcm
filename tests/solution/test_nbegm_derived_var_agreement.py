@@ -31,7 +31,7 @@ def _solve(
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(tax_kink=tax_kink), log_level="off")
+    return model.solve(params=toy.build_params(tax_kink=tax_kink), log_level="debug")
 
 
 def test_nbegm_matches_brute_in_every_ride_along_slice_every_age():

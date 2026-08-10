@@ -22,7 +22,6 @@ import pytest
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
 from _lcm.solution.negm import (
-    _durable_keeper_transition,
     _with_no_adjustment_outer_function,
 )
 from _lcm.typing import EconFunction, EconFunctionsMapping
@@ -54,6 +53,7 @@ def _negm(
     *,
     inner: DCEGM = _INNER,
     outer_action: str = "illiquid_investment",
+    outer_state: str = "illiquid",
     outer_post_decision: str = "next_illiquid",
     outer_grid: ContinuousGrid = _OUTER_GRID,
     outer_no_adjustment_candidate: str | None = None,
@@ -61,6 +61,7 @@ def _negm(
     return NEGM(
         inner=inner,
         outer_action=outer_action,
+        outer_state=outer_state,
         outer_post_decision=outer_post_decision,
         outer_grid=outer_grid,
         outer_no_adjustment_candidate=outer_no_adjustment_candidate,
@@ -172,32 +173,6 @@ def test_negm_configuration_does_not_change_reachability() -> None:
     )
 
 
-def test_keeper_no_adjustment_map_threads_every_declared_argument() -> None:
-    """A keeper map threads every argument it declares, not only the durable stock.
-
-    A permanent-income deflator `keep(car, growth) = 0.9 * car / growth` reads the
-    durable stock and a growth node; the keeper transition carries both arguments
-    (copying the map's own annotations) and applies the map, so a stored-value
-    normalization can divide the kept stock by the current growth factor.
-    """
-
-    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
-        return car * 0.9 / growth
-
-    transition = _durable_keeper_transition(
-        no_adjustment_func=cast("EconFunction", keep),
-        durable_state="car",
-        outer_post_decision="next_car",
-    )
-
-    assert set(inspect.signature(transition).parameters) == {"car", "growth"}
-    result = transition(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
-    # The composed transition reruns the same arithmetic at the active float
-    # precision, so agreement holds to that dtype's roundoff.
-    rtol = 64.0 * float(np.finfo(np.asarray(result).dtype).eps)
-    np.testing.assert_allclose(np.asarray(result), 100.0 * 0.9 / 1.02, rtol=rtol)
-
-
 def test_keeper_outer_function_threads_every_declared_argument() -> None:
     """The injected outer post-decision reads every argument the keeper map declares.
 
@@ -222,10 +197,11 @@ def test_keeper_outer_function_threads_every_declared_argument() -> None:
     )
     updated = _with_no_adjustment_outer_function(
         functions=functions,
-        outer_post_decision="next_car",
+        durable_state="car",
+        outer_post_decision="new_car",
         no_adjustment_func=cast("EconFunction", keep),
     )
-    injected = updated["next_car"]
+    injected = updated["new_car"]
 
     assert set(inspect.signature(injected).parameters) == {"car", "growth"}
     result = injected(car=jnp.asarray(100.0), growth=jnp.asarray(1.02))
@@ -248,10 +224,11 @@ def test_keeper_outer_function_identity_holds_the_durable_stock() -> None:
     functions = cast("EconFunctionsMapping", MappingProxyType({"resources": resources}))
     updated = _with_no_adjustment_outer_function(
         functions=functions,
-        outer_post_decision="next_car",
+        durable_state="car",
+        outer_post_decision="new_car",
         no_adjustment_func=None,
     )
-    injected = updated["next_car"]
+    injected = updated["new_car"]
 
     assert set(inspect.signature(injected).parameters) == {"car"}
     result = injected(car=jnp.asarray(42.0))

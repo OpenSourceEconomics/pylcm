@@ -200,7 +200,7 @@ def test_brute_solve_at_tiny_grid_yields_a_finite_value_function():
         variant="brute", n_assets=20, n_wage_nodes=3, n_periods=4, n_consumption=20
     )
     params = ds_app3_discrete_housing.build_params(variant="brute", n_periods=4)
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="debug")
     working_V = np.asarray(solution[0]["working"])
     assert np.all(np.isfinite(working_V))
 
@@ -228,5 +228,5 @@ def test_discrete_housing_model_solves_under_dcegm():
     """
     model = ds_app3_discrete_housing.build_model(variant="dcegm", n_assets=1000)
     params = ds_app3_discrete_housing.build_params(variant="dcegm", theta=0.5)
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="debug")
     assert np.all(np.isfinite(np.asarray(solution[0]["working"])))

@@ -31,11 +31,11 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_all_regime_phases
 from lcm import (
     DiscreteGrid,
+    LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Phased,
-    W_linear,
     categorical,
     fixed_transition,
 )
@@ -89,7 +89,7 @@ def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         )
     )
@@ -245,7 +245,7 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
     finalized = finalize_regimes(
         user_regimes=regimes,
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     raw_specs = normalize_all_regime_phases(user_regimes=finalized)
@@ -313,7 +313,7 @@ def test_two_step_seam_matches_wrapper() -> None:
             "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
         },
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
 

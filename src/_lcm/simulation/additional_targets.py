@@ -11,7 +11,6 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
-from _lcm.regime_building.Q_and_F import _get_deterministic_transitions
 from _lcm.transition_laws import is_stochastic
 from _lcm.typing import (
     FlatRegimeParams,
@@ -242,29 +241,46 @@ def _compute_targets(
     if not subject_batch_size or subject_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
-        return {k: jnp.squeeze(v) for k, v in result.items()}
+        return {k: _one_value_per_row(v, n_rows=n_rows) for k, v in result.items()}
 
     # Slice the (host-resident) inputs and move only one chunk to the device at a
-    # time. Squeeze the *concatenated* result, never a chunk — an uneven final
-    # chunk of one row would otherwise lose its row axis.
+    # time, so the fused DAG's workspace is bounded by the chunk.
     chunk_outputs: list[dict[str, np.ndarray]] = []
     for start in range(0, n_rows, subject_batch_size):
         stop = min(start + subject_batch_size, n_rows)
         chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
-        chunk_outputs.append({k: np.asarray(v) for k, v in chunk_result.items()})
+        chunk_outputs.append(
+            {
+                k: np.asarray(_one_value_per_row(v, n_rows=stop - start))
+                for k, v in chunk_result.items()
+            }
+        )
 
-    result: dict[str, FloatND | IntND | BoolND | np.ndarray] = {}
-    for name in chunk_outputs[0]:
-        per_chunk = [out[name] for out in chunk_outputs]
-        # A target with no per-subject variable (a constant, e.g. a terminal-regime
-        # `utility`) yields the same scalar from every chunk; keep one as a 0-d
-        # jax.Array to match the single-pass dtype rather than concatenating scalars.
-        if per_chunk[0].ndim == 0:
-            result[name] = jnp.asarray(per_chunk[0])
-        else:
-            result[name] = np.squeeze(np.concatenate(per_chunk))
-    return result
+    return {
+        name: np.concatenate([out[name] for out in chunk_outputs])
+        for name in chunk_outputs[0]
+    }
+
+
+def _one_value_per_row(
+    values: FloatND | IntND | BoolND | np.ndarray | float,
+    *,
+    n_rows: int,
+) -> FloatND | IntND | BoolND:
+    """Return a target's values shaped as exactly one entry per row.
+
+    A target that reads no per-subject variable — a terminal regime's constant
+    `utility` is the ordinary case — comes back from the vectorized DAG without
+    a row axis, and a single row's chunk comes back with one of length one that
+    a squeeze would remove. Either shape put into a `DataFrame` gives a column
+    of array objects rather than numbers, which then compares by identity and
+    carries no dtype.
+    """
+    arr = jnp.asarray(values)
+    if arr.ndim == 0:
+        return jnp.full((n_rows,), arr)
+    return arr.reshape(n_rows)
 
 
 def _fail_if_targets_depend_on_age_specialized(
@@ -300,24 +316,9 @@ def _fail_if_targets_depend_on_age_specialized(
 
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
-    """Build pool of available functions for target computation.
-
-    The deterministic `next_<state>` producers join the pool so a target reading a
-    chosen next state — the NEGM budget constraint cutting on the next durable
-    stock — resolves it from the row's own state and action, exactly as the
-    within-period decision does. They stay out of `available_targets`: a next state
-    is published as the following period's row, not as a target of this one.
-    """
+    """Build pool of available functions for target computation."""
     sim = regime.simulation
-    deterministic_transitions, _conflicting = _get_deterministic_transitions(
-        transitions=sim.transitions,
-        transition_laws=sim.transition_laws,
-    )
-    pool: dict[str, UserFunction] = {
-        **dict(deterministic_transitions),
-        **sim.functions,
-        **sim.constraints,
-    }
+    pool: dict[str, UserFunction] = {**sim.functions, **sim.constraints}
     if sim.compute_regime_transition_probs is not None:
         pool["regime_transition_probs"] = sim.compute_regime_transition_probs
     return pool

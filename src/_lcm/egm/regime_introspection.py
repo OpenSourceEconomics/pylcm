@@ -18,7 +18,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import ActionName, EconFunctionsMapping, FunctionName, StateName
+from _lcm.typing import ActionName, FunctionName, StateName
 from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
@@ -135,20 +135,6 @@ def _get_child_discrete_actions(
     return names, tuple(grids[name].to_jax() for name in names)
 
 
-def _concatenate_regime_function(
-    *,
-    functions: EconFunctionsMapping,
-    target: FunctionName,
-) -> UserFunction:
-    """Concatenate one regime-function target from the regime DAG."""
-    return concatenate_functions(
-        functions=dict(functions),
-        targets=target,
-        enforce_signature=False,
-        set_annotations=True,
-    )
-
-
 def _get_child_resources_function(
     *, user_regime: UserRegime
 ) -> Callable[..., ScalarFloat]:
@@ -222,6 +208,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
         no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
         resolved[user_regime.solver.outer_post_decision] = (
             _keeper_no_adjustment_function(
+                durable_state=user_regime.solver.outer_state,
                 outer_post_decision=user_regime.solver.outer_post_decision,
                 no_adjustment_func=(
                     resolved[no_adjustment_name]
@@ -249,6 +236,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
 
 def _keeper_no_adjustment_function(
     *,
+    durable_state: StateName,
     outer_post_decision: FunctionName,
     no_adjustment_func: UserFunction | None,
     functions: dict[str, UserFunction],
@@ -262,7 +250,6 @@ def _keeper_no_adjustment_function(
     annotation-consistency check (which requires every consumer of a leaf to
     agree) stays satisfied.
     """
-    durable_state = outer_post_decision.removeprefix("next_")
     annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
 
     @with_signature(args={durable_state: annotation}, return_annotation=annotation)

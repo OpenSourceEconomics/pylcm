@@ -57,7 +57,7 @@ def _solve(
         n_consumption=n_consumption,
     )
     params = toy.build_params(breakpoint_kind=breakpoint_kind)
-    return model.solve(params=params, log_level="off")
+    return model.solve(params=params, log_level="debug")
 
 
 def _terminal_adjacent_period(solved: Mapping[int, Mapping]) -> int:

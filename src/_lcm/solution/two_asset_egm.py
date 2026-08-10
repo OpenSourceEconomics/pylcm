@@ -10,7 +10,7 @@ import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -34,12 +34,15 @@ from _lcm.solution.contract import (
     SolverBuildContext,
 )
 from _lcm.typing import (
+    EconFunction,
+    EconFunctionsMapping,
     FlatParams,
     RegimeName,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
+    ActionName,
     Float1D,
     FloatND,
     StateName,
@@ -86,6 +89,14 @@ class TwoAssetEGM(Solver):
 
     consumption_grid: ContinuousGrid
     """Consumption sweep for the `acon`/`con` segments at `a = 0`."""
+
+    consumption_action: ActionName = "consumption"
+    """Name of the regime's consumption action.
+
+    Two continuous actions cannot be told apart positionally, so the modeller
+    names which one the felicity is a function of; the other is the deposit
+    margin the segment inverses solve for.
+    """
 
     threshold: float = 0.25
     """Barycentric extrapolation tolerance for triangle admissibility."""
@@ -145,7 +156,19 @@ class TwoAssetEGM(Solver):
         Every message names the regime's own states and the role field that
         assigns them, so a mismatch is fixed without knowing the kernel's
         internal `(m, n)` vocabulary.
+
+        The regime must also keep the default Koopmans aggregator: the Euler
+        inversion each segment runs is the one that aggregator implies.
         """
+        from _lcm.egm.preferences import (  # noqa: PLC0415
+            fail_if_custom_koopmans_aggregator,
+        )
+
+        fail_if_custom_koopmans_aggregator(
+            regime_name=context.regime_name,
+            user_regime=context.user_regimes[context.regime_name],
+            solver_name="TwoAssetEGM",
+        )
         own_states = context.regime_to_v_interpolation_info[
             context.regime_name
         ].continuous_states
@@ -293,6 +316,11 @@ class TwoAssetEGM(Solver):
                     pension_state=self.pension_state,
                     boundary_liquid_state=boundary_liquid_state,
                     law_params=self._law_params(),
+                    functions=context.functions,
+                    koopmans_aggregator=cast(
+                        "EconFunction", context.koopmans_aggregator
+                    ),
+                    consumption_action=self.consumption_action,
                 )
                 cores[is_boundary] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _TwoAssetEGMPeriodKernel(
@@ -522,15 +550,18 @@ def _build_two_asset_core(
     pension_state: StateName,
     boundary_liquid_state: StateName,
     law_params: dict[str, str],
+    functions: EconFunctionsMapping,
+    koopmans_aggregator: EconFunction,
+    consumption_action: ActionName,
     envelope: Literal["g2egm", "rfc"] = "g2egm",
 ) -> Callable:
     """Build the jitted-able two-asset core for one branch (interior or boundary).
 
     The interior branch reads the regime's own next-period working value on the
     `(m, n)` grid; the boundary branch reads the 1-D retired value and marginal
-    through the lump-sum payout. Both subtract the additive work disutility the
-    generic envelope objective omits, so the returned value matches the engine's
-    working value (whose utility carries the disutility). Transition params are
+    through the lump-sum payout. Both evaluate the regime's own felicity, so a
+    working utility carrying an additive disutility of work reaches the
+    published value without the step knowing about it. Transition params are
     qualified by the regime's own name (interior) or the retirement target
     (boundary), since the boundary reads the retired liquid law.
 
@@ -545,10 +576,26 @@ def _build_two_asset_core(
     boundary_liquid_law = f"{boundary_prefix}__next_{boundary_liquid_state}"
     interior_liquid_law = f"{interior_prefix}__next_{liquid_state}"
     interior_pension_law = f"{interior_prefix}__next_{pension_state}"
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_discount_factor_reader,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
     from _lcm.egm.rfc_two_asset_step import rfc_two_asset_step  # noqa: PLC0415
     from _lcm.egm.two_asset_g2egm_step import (  # noqa: PLC0415
         g2egm_retiring_step,
         g2egm_step,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(consumption_grid),
+    )
+    read_discount_factor = get_discount_factor_reader(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
     )
 
     def boundary_core(
@@ -569,8 +616,8 @@ def _build_two_asset_core(
             a_grid=a_grid,
             b_grid=b_grid,
             consumption_grid=consumption_grid,
-            discount_factor=params["koopmans_aggregator__discount_factor"],
-            crra=params["utility__crra"],
+            discount_factor=read_discount_factor(params),
+            preferences=build_preferences(params),
             match_rate=params[f"{boundary_liquid_law}__{law_params['match_rate']}"],
             return_liquid=params[
                 f"{boundary_liquid_law}__{law_params['return_liquid']}"
@@ -583,7 +630,7 @@ def _build_two_asset_core(
             ],
             threshold=threshold,
         )
-        return result.value - params["utility__work_disutility"]
+        return result.value
 
     def interior_core(
         *,
@@ -594,8 +641,8 @@ def _build_two_asset_core(
         next_value_working: FloatND,
         **params: FloatND,
     ) -> FloatND:
-        discount_factor = params["koopmans_aggregator__discount_factor"]
-        crra = params["utility__crra"]
+        discount_factor = read_discount_factor(params)
+        preferences = build_preferences(params)
         match_rate = params[f"{interior_pension_law}__{law_params['match_rate']}"]
         return_liquid = params[f"{interior_liquid_law}__{law_params['return_liquid']}"]
         return_pension = params[
@@ -613,7 +660,7 @@ def _build_two_asset_core(
                 b_grid=b_grid,
                 consumption_grid=consumption_grid,
                 discount_factor=discount_factor,
-                crra=crra,
+                preferences=preferences,
                 match_rate=match_rate,
                 return_liquid=return_liquid,
                 return_pension=return_pension,
@@ -630,13 +677,13 @@ def _build_two_asset_core(
                 b_grid=b_grid,
                 consumption_grid=consumption_grid,
                 discount_factor=discount_factor,
-                crra=crra,
+                preferences=preferences,
                 match_rate=match_rate,
                 return_liquid=return_liquid,
                 return_pension=return_pension,
                 wage=wage,
                 threshold=threshold,
             )
-        return result.value - params["utility__work_disutility"]
+        return result.value
 
     return boundary_core if is_boundary else interior_core

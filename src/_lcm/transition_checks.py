@@ -45,7 +45,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     InvalidStateTransitionProbabilitiesError,
 )
-from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 
 
 def validate_transitions(
@@ -161,6 +161,12 @@ def validate_regime_transitions_all_periods(
             invalid probabilities and the logger implies raise mode.
 
     """
+    # Skipped entirely at `log_level="off"`. What that costs is the diagnosis
+    # rather than the answer: the continuation aggregator measures the mass its
+    # retained targets represent and returns NaN unless it is one and no weight
+    # is negative, so a misspecification survives as a NaN rather than as a
+    # plausible number. These checks name the regime, the period and the
+    # offending target instead, which a NaN cannot.
     if not validation_enabled(logger):
         return
 
@@ -338,7 +344,7 @@ def _validate_regime_transition_probs(
         )
 
     sum_all = jnp.sum(all_probs, axis=0)
-    if not jnp.allclose(sum_all, 1.0):
+    if jnp.any(_unit_mass_violations(sum_all)):
         detail = _format_sum_violation(
             sum_all=sum_all,
             state_action_values=state_action_values,
@@ -356,8 +362,11 @@ def _validate_regime_transition_probs(
             raise InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is inactive at age {next_age} but has positive "
                 f"transition probability from '{regime_name}' between ages {age} and "
-                f"{next_age}{period_detail}. Either make '{r}' active or ensure its "
-                "probability is 0."
+                f"{next_age}{period_detail}. Its mass is not represented in the "
+                f"continuation, so what the remaining targets carry is less than "
+                f"unit mass and the solve returns NaN rather than a value that "
+                f"does not depend on '{r}' at all. Either make '{r}' active at "
+                f"that age or give it probability 0 there."
             )
 
 
@@ -383,7 +392,7 @@ def _format_sum_violation(
         state_action_values = MappingProxyType(
             {name: jnp.atleast_1d(arr) for name, arr in state_action_values.items()}
         )
-    failing_mask = ~jnp.isclose(sum_all, 1.0)
+    failing_mask = _unit_mass_violations(sum_all)
     failing_indices = jnp.where(failing_mask)[0].astype(jnp.int32)
     failing_sums = sum_all[failing_mask]
     n_failing = int(failing_indices.shape[0])
@@ -621,3 +630,21 @@ def _check_state_probs(
             f"at age {age} returned rows that do not sum to 1 along the "
             f"outcome axis."
         )
+
+
+def _unit_mass_violations(sum_all: FloatND) -> BoolND:
+    """Return the mask of total regime masses that are not unit mass.
+
+    The single criterion for "does not sum to 1", shared by the check that
+    raises and the formatter that reports which entries failed — a formatter
+    with a looser criterion of its own reports an empty table alongside a
+    raised error.
+
+    Tight by design. A tolerance wide enough to admit a mass that changes the
+    Bellman `argmax` is not a guard: at float32 a total mass of `1.000005` is
+    enough to reverse a decision, and `jnp.allclose`'s default `rtol` of `1e-5`
+    admits it. Sixteen epsilons leaves room for the rounding of a handful of
+    summed probabilities and nothing else.
+    """
+    tolerance = 16.0 * float(jnp.finfo(sum_all.dtype).eps)
+    return jnp.abs(sum_all - 1.0) > tolerance

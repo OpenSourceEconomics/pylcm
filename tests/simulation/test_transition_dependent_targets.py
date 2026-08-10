@@ -1,17 +1,25 @@
-"""Whether a target reading a chosen `next_<state>` is realized or decision-only.
+"""Whether a target reading the chosen stock is realized or decision-only.
 
-Reading a chosen next state does not by itself make a function decision-only. A
-deterministic, phase-invariant transition is a function of the row's own state and
-action, so recomputing it from a realized row reproduces exactly the value that
-entered the argmax — such a target is realized and is published.
+The stock chosen this period is `new_stock`, an ordinary function of this period's
+states and actions; the state law merely carries it forward. Utility reads it because
+the service flow is enjoyed now.
 
-A `Phased` transition is different: the perceived (solve) law prices the decision
-while the true (simulate) law governs the realized draw. Recomputing under the
-objective law yields a well-defined number that is *not* the quantity the agent
-decided on, so such a target is decision-only and its rows are left unfilled.
+Reading it does not by itself make a function decision-only. A phase-invariant
+`new_stock` is a function of the row's own state and action, so recomputing it from a
+realized row reproduces exactly the value that entered the argmax — such a target is
+realized and is published.
 
-Neither case may raise the confusing "missing `next_<state>` argument" failure from
-deep in the target DAG.
+A `Phased` `new_stock` is still realized. The flow is *now*, so it is priced under the
+simulate variant while only the continuation is priced under the perceived one; the
+target recomputes from that same simulate pool and so reproduces the quantity that
+entered the argmax.
+
+`_decision_only_target_names` still excludes a target whose ancestry reaches a
+phase-split or stochastic TRANSITION, but a regime function may no longer read a
+`next_<state>` at all, and a transition is not itself an available target — so that
+exclusion has no trigger left to fire on and is not covered here.
+
+No case may raise a confusing missing-argument failure from deep in the target DAG.
 """
 
 import jax.numpy as jnp
@@ -41,22 +49,27 @@ class RegimeId:
     last: ScalarInt
 
 
-def _service_flow(next_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
-    """NEGM service-flow utility: reads the CHOSEN next state."""
-    return 1.0 * next_stock + 0.0 * move + 0.0 * stock
+def _service_flow(new_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
+    """NEGM service-flow utility: reads the stock CHOSEN this period."""
+    return 1.0 * new_stock + 0.0 * move + 0.0 * stock
 
 
 def _flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
     return 0.0 * stock + 0.0 * move
 
 
-def _next_stock(move: DiscreteAction) -> FloatND:
+def _new_stock(move: DiscreteAction) -> FloatND:
     return jnp.where(move == Move.stay, Stock.good, Stock.bad)
 
 
-def _next_stock_believed(move: DiscreteAction) -> FloatND:
-    """A perceived law that inverts the true one, so the two cannot coincide."""
+def _new_stock_believed(move: DiscreteAction) -> FloatND:
+    """A perceived rule that inverts the true one, so the two cannot coincide."""
     return jnp.where(move == Move.stay, Stock.bad, Stock.good)
+
+
+def _carry_new_stock(new_stock: FloatND) -> FloatND:
+    """The law: next period's stock is the one chosen this period."""
+    return new_stock
 
 
 def _next_regime(period: Period) -> ScalarInt:
@@ -67,13 +80,13 @@ PARAMS = {"discount_factor": 0.95, "live": {}, "last": {}}
 IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 
-def _simulated(stock_law=_next_stock):
+def _simulated(new_stock=_new_stock):
     live = Regime(
         transition=_next_regime,
-        state_transitions={"stock": stock_law},
+        state_transitions={"stock": _carry_new_stock},
         states={"stock": DiscreteGrid(Stock)},
         actions={"move": DiscreteGrid(Move)},
-        functions={"utility": _service_flow},
+        functions={"utility": _service_flow, "new_stock": new_stock},
     ).replace(active=lambda age: age < 2)
     last = Regime(
         transition=None,
@@ -88,20 +101,20 @@ def _simulated(stock_law=_next_stock):
         regime_id_class=RegimeId,
         description="transition-dependent target",
     )
-    V = model.solve(params=PARAMS, log_level="off")
+    V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(
         params=PARAMS,
         initial_conditions=IC,
         period_to_regime_to_V_arr=V,
-        log_level="off",
+        log_level="debug",
         seed=1,
     )
 
 
-def test_service_flow_utility_under_a_bare_law_is_a_realized_target():
-    """A phase-invariant `next_stock` makes the service flow realized, so it computes.
+def test_service_flow_utility_under_a_bare_rule_is_a_realized_target():
+    """A phase-invariant `new_stock` makes the service flow realized, so it computes.
 
-    `utility = 1.0 * next_stock` and `next_stock` is `good` (code 1) after `stay`
+    `utility = 1.0 * new_stock` and `new_stock` is `good` (code 1) after `stay`
     and `bad` (code 0) otherwise, so each published row must equal the service flow
     implied by that row's own action — which is what the argmax priced.
     """
@@ -114,18 +127,32 @@ def test_service_flow_utility_under_a_bare_law_is_a_realized_target():
 
 
 def test_ordinary_utility_still_computes():
-    """A regime whose utility reads no transition is unaffected."""
+    """A regime whose utility reads no chosen stock is unaffected."""
     df = _simulated().to_dataframe(additional_targets=["utility"]).reset_index()
     assert df[df["period"] == 2]["utility"].notna().all()
 
 
-def test_service_flow_utility_under_a_phased_law_is_decision_only():
-    """A `Phased` law makes the service flow decision-only, so its rows stay unfilled.
+def test_service_flow_under_a_phased_rule_is_realized_at_the_true_variant():
+    """A `Phased` `new_stock` stays realized, and reports the TRUE service flow.
 
-    The agent decides under the perceived law and the realized draw follows the true
-    one, so recomputing the service flow from a realized row would report a
-    well-defined number that is not the quantity that entered the argmax.
+    The flow is *now*, so it is priced under the simulate variant even though the
+    continuation is priced under the perceived one. Recomputing the target resolves
+    `new_stock` from the same simulate pool, so it reproduces exactly the quantity
+    that entered the simulate argmax — the target is realized, not decision-only.
+
+    Belief and truth are exact opposites here, so the two are distinguishable: under
+    the truth `stay` yields `good`, and that is what the agent takes and what is
+    published. A build that priced the flow under the belief would choose `switch`
+    and report `0.0`.
     """
-    result = _simulated(Phased(solve=_next_stock_believed, simulate=_next_stock))
+    result = _simulated(Phased(solve=_new_stock_believed, simulate=_new_stock))
     df = result.to_dataframe(additional_targets=["utility"]).reset_index()
-    assert df[df["period"] < 2]["utility"].isna().all()
+    live_rows = df[df["period"] < 2]
+    assert live_rows["utility"].notna().all()
+    assert (live_rows["move"] == "stay").all(), (
+        "the flow must be priced under the SIMULATE variant of `new_stock`"
+    )
+    expected = (live_rows["move"] == "stay").astype(float)
+    aaae(
+        live_rows["utility"].to_numpy(), expected.to_numpy(), decimal=DECIMAL_PRECISION
+    )

@@ -37,7 +37,7 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
         envelope="rfc",
     )
     solution = model.solve(
-        params=build_params(variant=variant, delta=0.0), log_level="off"
+        params=build_params(variant=variant, delta=0.0), log_level="debug"
     )
     assert sorted(solution) == [0, 1, 2]
     alive_periods = [p for p in solution if "alive" in solution[p]]
@@ -55,7 +55,9 @@ def _solve(variant: Literal["dcegm", "brute"], envelope: str) -> PeriodToRegimeT
         n_periods=N_PERIODS,
         envelope=envelope,  # ty: ignore[invalid-argument-type]
     )
-    return model.solve(params=build_params(variant=variant, delta=0.0), log_level="off")
+    return model.solve(
+        params=build_params(variant=variant, delta=0.0), log_level="debug"
+    )
 
 
 @pytest.mark.parametrize("envelope", ["rfc", "fues"])

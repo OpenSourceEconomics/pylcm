@@ -42,9 +42,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.crra import crra_utility
 from _lcm.egm.ez_kernel import ez_consumption_from_euler
-from lcm.koopmans_aggregation import W_epstein_zin, W_linear
+from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
+from tests.solution._crra_preferences import crra_preferences
 
 # Exact algebra: closed-form identities and a cross-partial that must vanish, so
 # this module runs with x64 regardless of the suite's `--precision` flag.
@@ -61,7 +61,7 @@ _SEPARABLE_ATOL = 1e-10
 
 
 def _linear(utility, continuation):
-    return W_linear(
+    return LinearAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
         discount_factor=jnp.asarray(_DISCOUNT_FACTOR),
@@ -69,7 +69,7 @@ def _linear(utility, continuation):
 
 
 def _epstein_zin(utility, continuation):
-    return W_epstein_zin(
+    return CESAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
         discount_factor=jnp.asarray(_DISCOUNT_FACTOR),
@@ -164,8 +164,8 @@ def _bisect_euler(aggregator, *, flow, flow_marginal, nu, dnu_ds):
 @pytest.mark.parametrize(
     "aggregator",
     [
-        pytest.param(_linear, id="W_linear"),
-        pytest.param(_epstein_zin, id="W_epstein_zin"),
+        pytest.param(_linear, id="linear_aggregator"),
+        pytest.param(_epstein_zin, id="ces_aggregator"),
     ],
 )
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
@@ -208,10 +208,10 @@ def test_coupling_the_two_arguments_does_not_by_itself_disqualify(
 
 @pytest.mark.parametrize("dnu_ds", [0.35, 1.2])
 def test_the_derived_condition_reproduces_the_time_separable_euler_equation(dnu_ds):
-    """With `W_linear` the contract yields `c = (beta * dnu/ds)^(-1/crra)`."""
+    """With `LinearAggregator` the contract yields `c = (beta * dnu/ds)^(-1/crra)`."""
     got = _bisect_euler(
         _linear,
-        flow=lambda c: crra_utility(c, _CRRA),
+        flow=crra_preferences(_CRRA).utility,
         flow_marginal=lambda c: c ** (-_CRRA),
         nu=1.0,
         dnu_ds=dnu_ds,
@@ -222,7 +222,7 @@ def test_the_derived_condition_reproduces_the_time_separable_euler_equation(dnu_
 
 @pytest.mark.parametrize(("nu", "dnu_ds"), [(1.4, 0.6), (0.8, 1.9)])
 def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(nu, dnu_ds):
-    """With `W_epstein_zin` the contract yields `ez_consumption_from_euler`.
+    """With `CESAggregator` the contract yields `ez_consumption_from_euler`.
 
     The kernel's closed form covers a period flow whose risk-adjusted marginal
     `q^(-rho) q_c` is a single power of the action; the basic single-good flow
@@ -260,7 +260,10 @@ def _convex_flow_side(utility, continuation):
 
 @pytest.mark.parametrize(
     "aggregator",
-    [pytest.param(_linear, id="W_linear"), pytest.param(_epstein_zin, id="H_ez")],
+    [
+        pytest.param(_linear, id="linear_aggregator"),
+        pytest.param(_epstein_zin, id="H_ez"),
+    ],
 )
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
 def test_shipped_aggregators_also_admit_numeric_inversion(
@@ -271,7 +274,7 @@ def test_shipped_aggregators_also_admit_numeric_inversion(
     With `g = A(q(c)) q_c(c)`, the derivative is
     `g' = A'(q) q_c^2 + A(q) q_cc`. A strictly increasing, strictly concave flow
     makes the second term negative, so `A' <= 0` is what makes `g` strictly
-    decreasing and its root unique on a bracket. `W_linear` has a constant `A`;
+    decreasing and its root unique on a bracket. `LinearAggregator` has a constant `A`;
     Epstein-Zin has `A(U) = (1-beta) U^(-rho)` with `rho > 0`.
     """
     assert _flow_curvature_of_mrs(aggregator, utility, continuation) <= 0.0

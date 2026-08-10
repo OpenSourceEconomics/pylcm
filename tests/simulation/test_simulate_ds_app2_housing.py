@@ -36,7 +36,7 @@ def test_next_housing_below_the_floor_is_infeasible():
     """
     constraint, housing_min, _ = _bounds_constraint()
     below_floor = jnp.asarray(housing_min - 1.0)
-    assert bool(constraint(next_housing=below_floor)) is False
+    assert bool(constraint(new_housing=below_floor)) is False
 
 
 def test_next_housing_above_the_cap_is_infeasible():
@@ -47,11 +47,11 @@ def test_next_housing_above_the_cap_is_infeasible():
     """
     constraint, _, housing_max = _bounds_constraint()
     above_cap = jnp.asarray(housing_max + 1.0)
-    assert bool(constraint(next_housing=above_cap)) is False
+    assert bool(constraint(new_housing=above_cap)) is False
 
 
 def test_next_housing_inside_the_grid_is_feasible():
     """A next house strictly inside `[housing_min, housing_max]` is feasible."""
     constraint, housing_min, housing_max = _bounds_constraint()
     interior = jnp.asarray(0.5 * (housing_min + housing_max))
-    assert bool(constraint(next_housing=interior)) is True
+    assert bool(constraint(new_housing=interior)) is True

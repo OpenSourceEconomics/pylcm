@@ -19,7 +19,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from jax.scipy.ndimage import map_coordinates
 
-from _lcm.egm.crra import crra_utility
+from _lcm.egm.preferences import Preferences
 from lcm.typing import BoolND, Float1D, Float2D, FloatND, ScalarFloat
 
 
@@ -29,7 +29,7 @@ def build_two_asset_objective(
     a_grid: Float1D,
     b_grid: Float1D,
     discount_factor: ScalarFloat | float,
-    crra: ScalarFloat | float,
+    preferences: Preferences,
     match_rate: ScalarFloat | float,
     post_decision_valid: BoolND | None = None,
 ) -> Callable[[Float1D, Float1D], tuple[FloatND, BoolND]]:
@@ -41,7 +41,8 @@ def build_two_asset_objective(
         a_grid: Regular liquid post-decision grid (ascending, evenly spaced).
         b_grid: Regular pension post-decision grid (ascending, evenly spaced).
         discount_factor: Discount factor `beta`.
-        crra: Coefficient of relative risk aversion `rho`.
+        preferences: The regime's felicity `u`, its marginal `u'`, and its
+            inverse marginal `(u')^-1`, bound to this solve's parameters.
         match_rate: Pension employer-match coefficient `chi`.
         post_decision_valid: Optional in-domain mask over the post-decision grid, shape
             `(len(a_grid), len(b_grid))`. A `W(a, b)` node built by clamping an
@@ -77,7 +78,7 @@ def build_two_asset_objective(
         # Clamp consumption before the utility so an infeasible candidate's value is
         # finite (it is masked out by `feasible`), never NaN.
         safe_consumption = jnp.where(consumption > 0.0, consumption, 1.0)
-        value = crra_utility(safe_consumption, crra) + discount_factor * post_value
+        value = preferences.utility(safe_consumption) + discount_factor * post_value
         # The continuation reader clamps post-states to the grid boundary, so a
         # candidate whose reconstructed `(a, b)` leaves the post-decision grid gets a
         # fabricated continuation. Require the post-state inside the grid (subsuming the

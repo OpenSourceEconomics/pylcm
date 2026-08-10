@@ -35,7 +35,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_nbegm_matches_brute_in_every_ride_along_slice_every_age():
@@ -68,10 +68,10 @@ def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
     """
     plain = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32
-    ).solve(params=toy.build_params(), log_level="off")
+    ).solve(params=toy.build_params(), log_level="debug")
     distributed = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
-    ).solve(params=toy.build_params(), log_level="off")
+    ).solve(params=toy.build_params(), log_level="debug")
     for period in plain:
         if "alive" not in plain[period]:
             continue
@@ -100,7 +100,7 @@ def test_value_is_invariant_to_envelope_cell_blocking():
             savings_max=28.0,
             nbegm_overrides={"cell_block_size": block_size},
         )
-        blocked = model.solve(params=toy.build_params(), log_level="off")
+        blocked = model.solve(params=toy.build_params(), log_level="debug")
         for period in reference:
             if "alive" not in reference[period]:
                 continue
@@ -136,8 +136,8 @@ def test_nbegm_matches_brute_with_per_kind_utility_curvature():
         n_consumption=1500,
     )
     params = toy.build_params(per_kind_crra=True)
-    nbegm = nbegm_model.solve(params=params, log_level="off")
-    brute = brute_model.solve(params=params, log_level="off")
+    nbegm = nbegm_model.solve(params=params, log_level="debug")
+    brute = brute_model.solve(params=params, log_level="debug")
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -177,7 +177,7 @@ def test_top_edge_query_matches_convention_oracle_on_a_coarse_liquid_grid():
         liquid_max=30.0,
         n_savings=180,
         savings_max=28.0,
-    ).solve(params=params, log_level="off")
+    ).solve(params=params, log_level="debug")
     last_alive = max(period for period in nbegm if "alive" in nbegm[period])
     nbegm_v = np.asarray(nbegm[last_alive]["alive"])
 

@@ -13,7 +13,7 @@ everything multi-target, passive-state, taste-shock, and stochastic-node lives
 behind that boundary.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
@@ -51,6 +51,7 @@ from _lcm.egm.regime_introspection import (
 )
 from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
+from _lcm.probability import scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
@@ -67,6 +68,7 @@ from _lcm.typing import (
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
+from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -586,11 +588,13 @@ def _fold_stochastic_dims(
         broadcast_weights = weights.reshape(
             (weights.shape[0],) + (1,) * (moved.ndim - 1)
         )
+        # One axis's own marginal weights, folded as they were declared, so
+        # nothing upstream has moved an exponent onto them.
         return jnp.sum(
-            jnp.where(
-                broadcast_weights > 0.0,
-                broadcast_weights * moved,
-                broadcast_weights * 0.0,
+            zero_safe_weighted_term(
+                weight=broadcast_weights,
+                value=moved,
+                subnormal_is_accounted_for=False,
             ),
             axis=0,
         )
@@ -1028,16 +1032,23 @@ def _expect_over_stochastic_nodes(
         indexing="ij",
     )
     flat_node_indices = tuple(mesh.ravel() for mesh in node_index_mesh)
-    joint_weights = weight_vecs[0][flat_node_indices[0]]
-    for vec, indices in zip(weight_vecs[1:], flat_node_indices[1:], strict=True):
-        joint_weights = joint_weights * vec[indices]
+    joint_weights, node_shift = _joint_node_weights(
+        weight_vecs=weight_vecs, node_indices=flat_node_indices
+    )
 
     def _weighted_node_sum(values: FloatND, weights: FloatND) -> ScalarFloat:
         # A zero-weight node contributes exactly 0.0 even when its smoothed
-        # value is -inf (never 0 * inf = NaN). The else branch is `weights *
-        # 0.0` (not a bare `0.0`) so a NaN weight poisons the sum instead of
-        # vanishing.
-        return jnp.sum(jnp.where(weights > 0.0, weights * values, weights * 0.0))
+        # value is -inf, while a NaN weight still poisons the sum and a
+        # negative one stays visible rather than collapsing to zero.
+        #
+        # The nodes arrive on one common base-two scale, so every weight here is
+        # one the dtype can multiply and no term has an exponent left to move.
+        # `_on_node_scale` takes the reduction back down.
+        return jnp.sum(
+            zero_safe_weighted_term(
+                weight=weights, value=values, subnormal_is_accounted_for=True
+            )
+        )
 
     # The expectation mesh (the product of the child's stochastic-node counts)
     # is the dominant `egm_step` working buffer's child-node axis. A positive
@@ -1070,11 +1081,14 @@ def _expect_over_stochastic_nodes(
         zero = jnp.zeros((), dtype=joint_weights.dtype)
 
         if risk_aversion is not None:
-            return _accumulate_ez_partials_over_blocks(
-                read_at_nodes=read_at_nodes,
-                blocked_indices=blocked_indices,
-                blocked_weights=blocked_weights,
-                risk_aversion=risk_aversion,
+            return _partials_on_node_scale(
+                partials=_accumulate_ez_partials_over_blocks(
+                    read_at_nodes=read_at_nodes,
+                    blocked_indices=blocked_indices,
+                    blocked_weights=blocked_weights,
+                    risk_aversion=risk_aversion,
+                ),
+                shift=node_shift,
             )
 
         def accumulate(
@@ -1092,7 +1106,10 @@ def _expect_over_stochastic_nodes(
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
             accumulate, (zero, zero), (blocked_indices, blocked_weights)
         )
-        return smoothed_value, smoothed_marginal
+        return (
+            _on_node_scale(values=smoothed_value, shift=node_shift),
+            _on_node_scale(values=smoothed_marginal, shift=node_shift),
+        )
 
     node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
     if risk_aversion is not None:
@@ -1103,15 +1120,119 @@ def _expect_over_stochastic_nodes(
         # (`ez_invert_partials`), so the joint certainty equivalent spans the full
         # (regime x shock) lottery. A single reachable target recovers M1's
         # per-regime power mean.
-        return ez_transform_partials(
-            child_values=node_values,
-            child_marginals=node_marginals,
-            weights=joint_weights,
-            risk_aversion=risk_aversion,
+        return _partials_on_node_scale(
+            partials=ez_transform_partials(
+                child_values=node_values,
+                child_marginals=node_marginals,
+                weights=joint_weights,
+                risk_aversion=risk_aversion,
+            ),
+            shift=node_shift,
         )
     smoothed_value = _weighted_node_sum(node_values, joint_weights)
     smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
-    return smoothed_value, smoothed_marginal
+    return (
+        _on_node_scale(values=smoothed_value, shift=node_shift),
+        _on_node_scale(values=smoothed_marginal, shift=node_shift),
+    )
+
+
+def _joint_node_weights(
+    *, weight_vecs: Sequence[Float1D], node_indices: Sequence[IntND]
+) -> tuple[FloatND, IntND]:
+    """Return the child's joint node weights, carried with their common scale.
+
+    A node's probability is the product of one factor per stochastic axis, and
+    that product routinely lands below the dtype's normal range while every
+    factor sits comfortably inside it — `sqrt(tiny)/2` squared is `tiny/4`.
+    Multiplied as plain floats it is flushed to exactly zero, which is how this
+    engine spells an event that cannot occur, so a node with strictly positive
+    probability would be dropped and a `-inf` standing at it would never reach
+    the expectation.
+
+    The node therefore leaves here as `weights * 2**-shift`, every returned
+    weight a number the dtype can multiply. One shift covers the whole mesh, so
+    the weights keep their sizes relative to each other and `_on_node_scale`
+    puts the reduction back on the model's own scale.
+
+    Args:
+        weight_vecs: One intrinsic weight vector per unfolded stochastic axis.
+        node_indices: That axis's node index at each point of the flattened
+            product mesh, in the same order.
+
+    Returns:
+        Tuple of the scaled joint weights and the base-two scale they carry.
+
+    """
+    return scaled_joint_weight(
+        jnp.stack(
+            [
+                vec[indices]
+                for vec, indices in zip(weight_vecs, node_indices, strict=True)
+            ]
+        )
+    )
+
+
+def _on_node_scale(*, values: FloatND, shift: IntND) -> FloatND:
+    """Return a quantity linear in the node weights on the model's own scale.
+
+    The nodes were lifted by `2**shift` so that every one the child can reach
+    stayed a number the dtype multiplies. A weighted sum over them is linear in
+    the weights, so the whole reduction comes back down by the same power of
+    two, exactly and in one step, rather than any weight being lowered back
+    into the range it could not survive.
+
+    A result the dtype cannot hold as a normal number once lowered is returned
+    as zero: it is smaller than `tiny` on the model's own scale, which is below
+    every tolerance a value function can also add utility to, and writing it
+    down would mean leaving the exponent field. That applies only where there
+    is a scale to undo — an unlifted mesh returns exactly what it was handed,
+    however small, because a quantity carrying no scale is already the answer.
+    Zeros, infinities and NaNs pass through untouched either way.
+    """
+    arr = jnp.asarray(values)
+    shift_arr = jnp.asarray(shift)
+    smallest_that_survives = scaled_by_power_of_two(
+        jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), shift_arr
+    )
+    return jnp.where(
+        (shift_arr > 0) & (jnp.abs(arr) < smallest_that_survives),
+        jnp.zeros_like(arr),
+        scaled_by_power_of_two(arr, -shift_arr),
+    )
+
+
+def _partials_on_node_scale(
+    *,
+    partials: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    shift: IntND,
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Undo the node weights' common scale in the Epstein-Zin partial sums.
+
+    The anchored partials are `(a, W, E, b, T~)`, and the scale reaches exactly
+    three of them:
+
+    - the weight sum `W` and the deviation sum `E` are sums of the weights
+      themselves, so both carry the factor and come back down by it;
+    - the marginal log scale `b` is the peak of `log w - gamma log V +
+      log |dV/ds|`, so it carries `shift * log 2` additively;
+    - the value log anchor `a` is a log value and the marginal mantissa `T~` is
+      a ratio against `b`; neither moves.
+
+    The partials of different targets are blended at the regime probabilities
+    before the single inversion, so each target's own scale has to be gone by
+    the time it leaves here.
+    """
+    anchor, weight_sum, deviation, marginal_log_scale, marginal_mantissa = partials
+    ln_two = jnp.log(jnp.asarray(2.0, dtype=jnp.asarray(marginal_log_scale).dtype))
+    return (
+        anchor,
+        _on_node_scale(values=weight_sum, shift=shift),
+        _on_node_scale(values=deviation, shift=shift),
+        marginal_log_scale - shift * ln_two,
+        marginal_mantissa,
+    )
 
 
 def _accumulate_ez_partials_over_blocks(

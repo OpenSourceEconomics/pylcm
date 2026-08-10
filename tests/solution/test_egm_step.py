@@ -7,17 +7,21 @@ post-decision savings grid and map back to the liquid grid. Run against the DS p
 brute solve, the step matches the dense grid-search retired value where the grid covers.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
+_CRRA = 2.0
 _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
 _SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
-_P = {
+_P: dict[str, Any] = {
     "discount_factor": 0.98,
-    "crra": 2.0,
+    "preferences": crra_preferences(_CRRA),
     "return_liquid": 0.02,
     "income": 0.50,
 }
@@ -42,7 +46,7 @@ def _brute_retired(*, n_consumption=200):
 
 def _bequest_marginal():
     """Marginal value of liquid for the terminal CRRA bequest `u(liquid)`."""
-    return _LIQUID_GRID ** (-_P["crra"])
+    return _LIQUID_GRID ** (-_CRRA)
 
 
 def test_retired_egm_matches_brute_on_the_liquid_interior():

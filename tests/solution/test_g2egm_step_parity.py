@@ -19,16 +19,19 @@ candidate nor the hole-fill has an in-domain continuation — a grid-coverage li
 an algorithm gap. The test asserts on the covered region and pins the edge as known.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.two_asset_g2egm_step import g2egm_step
 from _lcm.egm.two_asset_step import egm_step
+from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.two_asset import get_model, get_params
 
-_P = {
+_P: dict[str, Any] = {
     "discount_factor": 0.95,
-    "crra": 2.0,
+    "preferences": crra_preferences(2.0),
     "match_rate": 1.0,
     "return_liquid": 0.02,
     "return_pension": 0.06,

@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jax import jit, lax
 
-from _lcm.regime_building.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
@@ -37,6 +37,18 @@ def map_coordinates(
     Given an input array and a set of coordinates, this function returns the
     interpolated values of the input array at those coordinates. For coordinates outside
     the input array, linear extrapolation is used.
+
+    A corner whose weight is exactly zero contributes nothing, whatever value
+    stands at it. That matters because backward induction writes `-inf` for a
+    state at which no action is feasible, and an unguarded `0 * -inf` is NaN that
+    then travels through the sum into every neighbouring read — one infeasible
+    state would take out the states around it.
+
+    The neutralization tests the weight for a *represented zero* rather than for
+    positivity. Extrapolation is what makes the distinction load-bearing: outside
+    the grid the corner weights are legitimately negative, so discarding
+    non-positive weights would truncate an extrapolated read rather than drop a
+    null event.
 
     Args:
       input: N-dimensional input array from which values are interpolated.
@@ -62,14 +74,21 @@ def map_coordinates(
     for indices_and_weights in itertools.product(*interpolation_data):
         indices, weights = zip(*indices_and_weights, strict=True)
         contribution = input[indices]
-        weight_product = _multiply_all(weights)
-        # Zero-safe: an exact-integer coordinate (or a coordinate that lands
-        # exactly on the last node) gives one corner weight 0 exactly; if the
-        # NEIGHBORING corner (weight != 0) or this one holds an admissible
-        # on-path -inf, `0.0 * -inf = nan` must not leak into the sum — the
-        # zero-weight corner contributes exactly nothing, regardless of its
-        # (possibly -inf) value.
-        weighted_value = zero_safe_weighted_term(weight_product, contribution)
+        corner_weight = _multiply_all(weights)
+        # Only a floating grid can hold the `+-inf` that makes a zero-weight
+        # corner undefined, and only a floating weight has a sign bit and an
+        # exponent field to read. An integer read has neither hazard, so it
+        # multiplies as it always did.
+        weighted_value = (
+            zero_safe_weighted_term(
+                weight=corner_weight,
+                value=contribution,
+                subnormal_is_accounted_for=True,
+            )
+            if jnp.issubdtype(corner_weight.dtype, jnp.floating)
+            and jnp.issubdtype(contribution.dtype, jnp.floating)
+            else corner_weight * contribution
+        )
         interpolation_values.append(weighted_value)
 
     result = _sum_all(interpolation_values)

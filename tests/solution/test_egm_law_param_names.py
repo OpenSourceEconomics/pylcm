@@ -98,14 +98,14 @@ def _renamed_solvers():
 
 def _solve_default():
     return get_model(n_periods=_N_PERIODS, solvers=_default_solvers()).solve(
-        params=get_params(), log_level="off"
+        params=get_params(), log_level="debug"
     )
 
 
 def _solve_renamed():
     return get_model(
         n_periods=_N_PERIODS, solvers=_renamed_solvers(), laws=_renamed_laws()
-    ).solve(params=_rename_params(get_params()), log_level="off")
+    ).solve(params=_rename_params(get_params()), log_level="debug")
 
 
 @pytest.mark.parametrize("regime", ["working", "retired"])

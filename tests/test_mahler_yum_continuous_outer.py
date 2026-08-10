@@ -44,6 +44,7 @@ from lcm_examples.mahler_yum_2024.paper import (
     dead_utility,
     effort_value,
     keep_effort,
+    new_lagged_effort,
     next_lagged_effort,
     raw_cash_on_hand,
     utility,
@@ -95,10 +96,15 @@ def test_floored_budget_matches_brute_consumption_off_the_floor() -> None:
 
 
 def test_effort_identities_hold() -> None:
-    """The outer wiring is the identity chain the NNBEGM contract expects."""
+    """The outer wiring is the identity chain the NNBEGM contract expects.
+
+    The habit chosen this period is `new_lagged_effort`, an ordinary function of
+    the effort action; the inner problems read it, and the law carries it forward.
+    """
     values = jnp.linspace(0.0, 1.0, 7)
-    np.testing.assert_array_equal(next_lagged_effort(effort=values), values)
-    np.testing.assert_array_equal(effort_value(next_lagged_effort=values), values)
+    np.testing.assert_array_equal(new_lagged_effort(effort=values), values)
+    np.testing.assert_array_equal(next_lagged_effort(new_lagged_effort=values), values)
+    np.testing.assert_array_equal(effort_value(new_lagged_effort=values), values)
     np.testing.assert_array_equal(keep_effort(lagged_effort=values), values)
 
 
@@ -135,7 +141,8 @@ def test_params_adapter_keeps_the_floor_and_renames_the_penalty() -> None:
 def test_paper_solver_wiring_matches_the_plan_interface() -> None:
     solver = build_paper_solver()
     assert solver.outer_action == "effort"
-    assert solver.outer_post_decision == "next_lagged_effort"
+    assert solver.outer_state == "lagged_effort"
+    assert solver.outer_post_decision == "new_lagged_effort"
     assert solver.outer_no_adjustment_candidate == "keep_effort"
     aggregator = solver.branch_aggregator
     assert isinstance(aggregator, UniformObservedFixedCost)
@@ -208,7 +215,7 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
     patcher.setattr(_solvers, "collapse_continuous_candidate_bank", capturing_collapse)
     try:
         with pytest.raises(_StopAfterCaptureError):
-            model.solve(params={"alive": params}, log_level="off")
+            model.solve(params={"alive": params}, log_level="debug")
     finally:
         patcher.undo()
     return captured

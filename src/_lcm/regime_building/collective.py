@@ -27,7 +27,7 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.regime_building.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -148,11 +148,25 @@ def _weighted_sum(
     stakeholder contributes exactly `0.0` regardless of its own `Q^s`.
     """
     names = list(stakeholder_Q)
-    objective = zero_safe_weighted_term(weights[names[0]], stakeholder_Q[names[0]])
-    for name in names[1:]:
-        objective = objective + zero_safe_weighted_term(
-            weights[name], stakeholder_Q[name]
+
+    # A Pareto weight may arrive as a plain Python float -- see this function's
+    # own signature -- while the shared term takes arrays, so it is converted
+    # here at the boundary rather than by a permissive union on the term.
+    #
+    # `subnormal_is_accounted_for=False`: the weight arrives at whatever size
+    # the model chose and nothing upstream has put it on a scale, so the term
+    # moves the exponent itself rather than let a below-normal weight flush and
+    # price a stakeholder out of the household objective entirely.
+    def _term(name: str) -> FloatND:
+        return zero_safe_weighted_term(
+            weight=jnp.asarray(weights[name]),
+            value=stakeholder_Q[name],
+            subnormal_is_accounted_for=False,
         )
+
+    objective = _term(names[0])
+    for name in names[1:]:
+        objective = objective + _term(name)
     return objective
 
 

@@ -64,7 +64,7 @@ def _solve(
         variant="n_nbegm",
         n_periods=_N_PERIODS,
         outer_search=outer_search,
-    ).solve(params=_PARAMS, log_level="off")
+    ).solve(params=_PARAMS, log_level="debug")
     return solution, recorded
 
 

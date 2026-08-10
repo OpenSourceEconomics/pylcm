@@ -15,6 +15,7 @@ from _lcm.egm.two_asset_inverse import (
     invert_ucon_cloud,
 )
 from tests.conftest import X64_ENABLED
+from tests.solution._crra_preferences import crra_preferences
 
 # Round-trip and FOC identities are float-eps-limited at the active precision.
 _ATOL = 1e-10 if X64_ENABLED else 1e-5
@@ -40,7 +41,7 @@ def _cloud():
             w_b=w_b,
             post_decision_value=jnp.zeros((6, 5)),
             discount_factor=_DISCOUNT,
-            crra=_CRRA,
+            preferences=crra_preferences(_CRRA),
             match_rate=_MATCH,
         ),
         a,
@@ -95,7 +96,7 @@ def _dcon_cloud():
             w_b=w_b,
             post_decision_value=jnp.zeros((6, 5)),
             discount_factor=_DISCOUNT,
-            crra=_CRRA,
+            preferences=crra_preferences(_CRRA),
             match_rate=_MATCH,
         ),
         a,
@@ -154,7 +155,7 @@ def _acon_cloud():
             w_b_at_zero_a=w_b,
             w_a_at_zero_a=marginal_utility / _DISCOUNT,
             discount_factor=_DISCOUNT,
-            crra=_CRRA,
+            preferences=crra_preferences(_CRRA),
             match_rate=_MATCH,
         ),
         consumption,
@@ -203,7 +204,7 @@ def _con_cloud():
             w_b_at_zero_a=jnp.ones((6, 5)),
             w_a_at_zero_a=jnp.ones((6, 5)),
             discount_factor=_DISCOUNT,
-            crra=_CRRA,
+            preferences=crra_preferences(_CRRA),
             match_rate=_MATCH,
         ),
         consumption,

@@ -1,11 +1,11 @@
-"""A constraint may read a `next_<state>` transition output in simulation.
+"""A constraint may read a post-decision function in simulation.
 
-The within-period decision resolves an auto-named `next_<state>` from the chosen
-action rather than demanding it as an external input — the NEGM/DC-EGM durable
-pattern, where the budget constraint cuts on the next durable stock. Everything
-the simulation phase rebuilds from the regime's constraints has to resolve that
-name the same way: the initial-conditions feasibility check, its per-constraint
-diagnostic, and the additional-target pool.
+A quantity determined within the period — the post-decision balance a budget
+constraint cuts on — is an ordinary regime function of this period's states and
+actions, and the law of motion reads it too. Everything the simulation phase
+rebuilds from the regime's constraints has to resolve that function the same way
+the within-period decision does: the initial-conditions feasibility check, its
+per-constraint diagnostic, and the additional-target pool.
 """
 
 import jax.numpy as jnp
@@ -37,15 +37,21 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.sqrt(consumption)
 
 
-def next_wealth(
+def new_wealth(
     wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
+    """The post-decision balance this period's choice leaves behind."""
     return 1.05 * (wealth - consumption)
 
 
-def savings_stay_above_the_floor(next_wealth: ContinuousState) -> BoolND:
-    """The constraint under test: it reads the chosen next state, not the action."""
-    return next_wealth >= 0.0
+def next_wealth(new_wealth: ContinuousState) -> ContinuousState:
+    """Wealth law of motion: the post-decision balance is next period's wealth."""
+    return new_wealth
+
+
+def savings_stay_above_the_floor(new_wealth: ContinuousState) -> BoolND:
+    """The constraint under test: it reads the post-decision balance."""
+    return new_wealth >= 0.0
 
 
 def next_regime(age: int) -> ScalarInt:
@@ -54,14 +60,14 @@ def next_regime(age: int) -> ScalarInt:
 
 @pytest.fixture
 def model() -> Model:
-    """Model whose only constraint reads the auto-named `next_wealth`."""
+    """Model whose only constraint reads the post-decision function."""
     alive = UserRegime(
         transition=next_regime,
         active=lambda age: age < _N_PERIODS - 1,
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
         state_transitions={"wealth": next_wealth},
-        functions={"utility": utility},
+        functions={"utility": utility, "new_wealth": new_wealth},
         constraints={"savings_stay_above_the_floor": savings_stay_above_the_floor},
     )
     dead = UserRegime(
@@ -84,7 +90,7 @@ def _initial_conditions(wealth: tuple[float, ...]) -> dict[str, object]:
     }
 
 
-def test_simulate_runs_when_a_constraint_reads_a_next_state(model):
+def test_simulate_runs_when_a_constraint_reads_a_post_decision(model):
     """Forward simulation completes and consumption stays inside the action grid."""
     result = model.simulate(
         params=_PARAMS,
@@ -110,7 +116,7 @@ def test_infeasible_subject_is_reported_by_constraint_name(model):
 
 
 def test_the_constraint_is_available_as_an_additional_target(model):
-    """`to_dataframe` can compute the next-state-reading constraint per row."""
+    """`to_dataframe` can compute the post-decision-reading constraint per row."""
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=_initial_conditions((5.0, 12.0)),

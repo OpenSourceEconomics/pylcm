@@ -27,7 +27,7 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
         savings_max=22.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="off")
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
 def test_jump_schedule_matches_brute_through_the_cliff_every_age():

@@ -5,7 +5,7 @@ These cover:
 - NaN-bearing solves raise `InvalidValueFunctionError` and the message
   identifies the offending `(regime, age)`;
 - `log_level="debug"` emits one stat line per `(regime, period)`;
-- `log_level="off"` emits nothing and skips even the NaN fail-fast.
+- `log_level="debug"` emits nothing and skips even the NaN fail-fast.
 """
 
 import logging

@@ -25,7 +25,6 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
-from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
     ContinuationPayload,
@@ -41,14 +40,11 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
-    TransitionFunction,
-    TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
 from lcm.typing import (
     ActionName,
-    ContinuousState,
     Float1D,
     FloatND,
     FunctionName,
@@ -104,6 +100,16 @@ class NEGM(Solver):
 
     Forbidden as the inner DC-EGM continuous action (the two margins must be
     distinct).
+    """
+
+    outer_state: StateName
+    """The durable/illiquid state the outer margin moves.
+
+    `outer_post_decision` is this period's chosen level of it, so the two name
+    the same quantity at two points in time: the state is what the regime
+    carries in, the post-decision what the outer search picks. The keeper
+    candidate is a function of this state, and its position among the passive
+    continuous states fixes the carry layout.
     """
 
     outer_post_decision: FunctionName
@@ -198,44 +204,50 @@ class NEGM(Solver):
         outer adapter that sweeps the outer grid plus the mandatory per-node
         candidates and collapses the outer axis by `max`.
         """
-        # The adjuster is the inner DC-EGM with the outer post-decision
-        # transition stripped: its value is supplied per outer-grid node
-        # (`_with_outer_post_decision`), not recomputed from the outer action, so
-        # the child-carry next-state function must not demand the outer action;
-        # `read_child` sources the bound value from the combo pool instead.
-        # `_with_outer_post_decision` binds `outer_post_decision` into the
-        # regime's flat params at runtime, so the inner kernel reads it as a
-        # bound param — admit it as a flat param at build time too, so the inner
-        # scope check accepts the inner resources / utility reading it (the
-        # service-flow `utility(serviced(next_<durable>))` pattern).
+        # The adjuster is the inner DC-EGM with the outer post-decision supplied
+        # per outer-grid node rather than recomputed from the outer action:
+        # `_with_outer_post_decision` binds it into the regime's flat params at
+        # runtime, so the inner kernel reads it as a bound param — admit it as a
+        # flat param at build time too, so the inner scope check accepts the
+        # inner resources / utility reading it (the service-flow
+        # `utility(serviced(<outer post-decision>))` pattern) and dropping it
+        # from the econ-function DAG leaves it a leaf rather than an expression
+        # in the outer action.
+        #
+        # The durable's own law of motion stays exactly as the regime declares
+        # it. It reads the post-decision, which is that bound leaf here, so it
+        # is decision-independent without being replaced — and a declared
+        # `next_<durable> = (1 - delta) s'` is therefore the stock the
+        # continuation is read at, not the raw node the outer search picked.
         adjuster_context = replace(
             context,
-            transitions=_strip_outer_transition(
-                transitions=context.transitions,
+            functions=_without_outer_post_decision(
+                functions=context.functions,
                 outer_post_decision=self.outer_post_decision,
             ),
             flat_param_names=context.flat_param_names | {self.outer_post_decision},
         )
         adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
-        # at its no-adjustment level (`next_<durable> = keep(<durable>)`), so the
-        # durable becomes a genuine decision-independent passive state and
-        # `credited(<durable>, keep(<durable>)) = 0` makes keeping free. The keeper
-        # map is injected in two places that both read the outer post-decision: the
-        # transitions (so the child read indexes the kept durable) and the econ
-        # functions (so the inner resources DAG computes it from the durable leaf
-        # rather than demanding it as a bound param, as the adjuster does). With no
-        # `outer_no_adjustment_candidate`, `keep` is the identity (hold the stock);
-        # a depreciating `keep(d) = d (1 - delta)` lands the kept stock off the
-        # durable grid and the inner passive read blends it over the grid.
-        # Function-local so the public `lcm.solvers` façade stays a thin re-export
-        # that pulls in no engine modules.
+        # at its no-adjustment level (`s' = keep(<durable>)`), so the durable
+        # becomes a genuine decision-independent passive state and
+        # `credited(<durable>, keep(<durable>)) = 0` makes keeping free. The
+        # keeper map is injected into the econ functions, so the inner resources
+        # DAG computes the post-decision from the durable leaf rather than
+        # demanding it as a bound param, as the adjuster does. The declared law
+        # of motion again stays as written and reads that value, so what the
+        # keeper carries is `next_<durable>(keep(<durable>))`. With no
+        # `outer_no_adjustment_candidate`, `keep` is the identity (hold the
+        # stock); a stock that lands off the durable grid — because `keep` or
+        # the law shrinks it — is blended over the grid by the inner passive
+        # read. Function-local so the public `lcm.solvers` façade stays a thin
+        # re-export that pulls in no engine modules.
         from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
             resolve_periodized_nodes,
         )
 
         outer_grid_values = self.outer_grid.to_jax()
-        durable_state = self.outer_post_decision.removeprefix("next_")
+        durable_state = self.outer_state
         # Both outer helpers are read here, one layer above the inner builder that
         # resolves periodized nodes — so they must be resolved first. An
         # `AgeSpecializedFunction` is a different function at each age, and the
@@ -273,13 +285,9 @@ class NEGM(Solver):
             )
             keeper_context = replace(
                 context,
-                transitions=_no_adjustment_outer_transition(
-                    transitions=context.transitions,
-                    outer_post_decision=self.outer_post_decision,
-                    no_adjustment_func=no_adjustment_func,
-                ),
                 functions=_with_no_adjustment_outer_function(
                     functions=group_functions,
+                    durable_state=durable_state,
                     outer_post_decision=self.outer_post_decision,
                     no_adjustment_func=no_adjustment_func,
                 ),
@@ -322,6 +330,7 @@ class NEGM(Solver):
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
+                    durable_state=durable_state,
                     outer_post_decision=self.outer_post_decision,
                     coh_shift_func=coh_shift_by_period[period],
                     durable_grid_values=_durable_values_at(period),
@@ -402,6 +411,13 @@ class _NEGMPeriodKernel:
 
     outer_grid_values: Float1D
     """Exogenous grid over the outer post-decision margin `s'`."""
+
+    durable_state: StateName
+    """Name of the durable state the outer margin moves.
+
+    The bound node is the durable's next-period value, so it is published under
+    `next_<durable>` as well for the generic child-carry read.
+    """
 
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
@@ -712,8 +728,15 @@ def _build_coh_shift_function(
 
         return zero_shifts
 
+    # The outer post-decision is a leaf: the lift binds it per outer-grid node,
+    # so the cost must ask for it directly rather than have it recomputed from
+    # the outer action.
     cost_func = concatenate_functions(
-        functions=dict(functions),
+        functions={
+            name: func
+            for name, func in functions.items()
+            if name != outer_post_decision
+        },
         targets=outer_cost_name,
         enforce_signature=False,
         set_annotations=True,
@@ -769,94 +792,44 @@ def _build_coh_shift_function(
     return coh_shifts
 
 
-def _strip_outer_transition(
+def _without_outer_post_decision(
     *,
-    transitions: TransitionFunctionsMapping,
+    functions: EconFunctionsMapping,
     outer_post_decision: FunctionName,
-) -> TransitionFunctionsMapping:
-    """Drop the outer post-decision transition from every target's transitions.
+) -> EconFunctionsMapping:
+    """Drop the outer post-decision from the adjuster's econ-function DAG.
 
-    The adjuster supplies the outer post-decision value per outer-grid node, so
-    its child-carry next-state function must not demand the outer action;
-    `read_child` sources the bound value from the combo pool instead.
+    The adjuster is solved with the post-decision bound to an outer-grid node,
+    so its value arrives as a param rather than being recomputed from the outer
+    action. Leaving the declaring function in the pool would let the inner DAG
+    walk through it and conclude that utility and resources depend on the outer
+    action, which is exactly what binding the node removes.
     """
     return MappingProxyType(
-        {
-            target: MappingProxyType(
-                {
-                    name: func
-                    for name, func in target_transitions.items()
-                    if name != outer_post_decision
-                }
-            )
-            for target, target_transitions in transitions.items()
-        }
-    )
-
-
-def _no_adjustment_outer_transition(
-    *,
-    transitions: TransitionFunctionsMapping,
-    outer_post_decision: FunctionName,
-    no_adjustment_func: EconFunction | None,
-) -> TransitionFunctionsMapping:
-    """Replace the outer post-decision transition with the keeper's durable map.
-
-    The keeper holds the durable at its no-adjustment level
-    (`next_<durable> = keep(<durable>)`), so each target's outer transition
-    becomes that law on the durable state. The durable state name is the
-    transition name with the `next_` prefix removed, mirroring the engine's
-    `next_<state>` auto-naming. The durable then reads as a genuine
-    decision-independent passive state in the inner DC-EGM.
-
-    With no `no_adjustment_func` the keeper holds the stock unchanged via the
-    auto-identity transition (`next_<durable> = <durable>`), and `read_child`
-    indexes the unchanged durable on its grid. A depreciating
-    `keep(d) = d (1 - delta)` lands the kept stock off the durable grid; the
-    inner passive read blends the child value over the grid's neighbouring nodes.
-    """
-    durable_state = outer_post_decision.removeprefix("next_")
-    if no_adjustment_func is None:
-        keeper_transition = cast(
-            "TransitionFunction",
-            _IdentityTransition(durable_state, annotation=ContinuousState),
-        )
-    else:
-        keeper_transition = _durable_keeper_transition(
-            no_adjustment_func=no_adjustment_func,
-            durable_state=durable_state,
-            outer_post_decision=outer_post_decision,
-        )
-    return MappingProxyType(
-        {
-            target: MappingProxyType(
-                {
-                    name: (keeper_transition if name == outer_post_decision else func)
-                    for name, func in target_transitions.items()
-                }
-            )
-            for target, target_transitions in transitions.items()
-        }
+        {name: func for name, func in functions.items() if name != outer_post_decision}
     )
 
 
 def _with_no_adjustment_outer_function(
     *,
     functions: EconFunctionsMapping,
+    durable_state: StateName,
     outer_post_decision: FunctionName,
     no_adjustment_func: EconFunction | None,
 ) -> EconFunctionsMapping:
     """Add the keeper's outer post-decision to the econ-function DAG.
 
-    The inner resources function reads the outer post-decision (`next_<durable>`)
-    by name. The adjuster binds it as a per-node param; the keeper instead holds
-    it at its no-adjustment level, so the resources DAG computes
-    `next_<durable> = keep(...)`. The injected function declares every argument the
-    map reads — the durable leaf state and any further states, params, or DAG nodes
-    (e.g. a permanent-income growth factor) — so concatenation wires each combo/DAG
-    value into resources. With no `no_adjustment_func`, `keep` is the identity.
+    The inner resources function reads the outer post-decision by name. The
+    adjuster binds it as a per-node param; the keeper instead holds it at its
+    no-adjustment level, so the resources DAG computes it as `keep(...)`. The
+    injected function declares every argument the map reads — the durable leaf
+    state and any further states, params, or DAG nodes (e.g. a permanent-income
+    growth factor) — so concatenation wires each combo/DAG value into resources.
+    With no `no_adjustment_func`, `keep` is the identity.
+
+    The injected function replaces whatever the regime declares under the
+    post-decision's name, so the keeper's level is what every consumer reads.
     """
-    durable_state = outer_post_decision.removeprefix("next_")
     # The outer post-decision keeps its consumer annotation off the existing
     # functions so the DAG's annotation-consistency check stays satisfied.
     outer_annotation = _annotation_of_arg(
@@ -892,40 +865,6 @@ def _with_no_adjustment_outer_function(
     )
 
 
-def _durable_keeper_transition(
-    *,
-    no_adjustment_func: EconFunction,
-    durable_state: StateName,
-    outer_post_decision: FunctionName,
-) -> TransitionFunction:
-    """Wrap the no-adjustment map as the keeper's durable transition.
-
-    The map returns the kept next stock and may depend on more than the durable
-    stock itself: the wrapper threads every argument the map declares (the
-    durable state and any further states, params, or DAG-computed function nodes
-    it reads), copying each argument's annotation from the map's own signature.
-    A permanent-income deflator `keep(car, growth) = (1 - vs*delta) car / growth`,
-    for instance, reads the durable and a growth node. It stays a
-    decision-independent passive law `next_<durable> = keep(...)`; the wrapper
-    carries the `next_<durable>` name and a `ContinuousState` return so the
-    engine's transition collector classifies it like any passive durable law and
-    resolves the declared arguments from the regime's DAG.
-    """
-    annotations = ensure_annotations_are_strings(get_annotations(no_adjustment_func))
-    arg_names = tuple(name for name in annotations if name != "return")
-    # The durable margin is a continuous state regardless of how the map annotates
-    # it; every other declared argument keeps the map's own annotation.
-    args_spec = {name: annotations[name] for name in arg_names}
-    args_spec[durable_state] = "ContinuousState"
-
-    @with_signature(args=args_spec, return_annotation="ContinuousState")
-    def keeper_transition(**kwargs: ContinuousState) -> ContinuousState:
-        return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
-
-    keeper_transition.__name__ = outer_post_decision
-    return cast("TransitionFunction", keeper_transition)
-
-
 def _annotation_of_arg(
     *, functions: EconFunctionsMapping, arg_name: StateOrActionName
 ) -> str:
@@ -954,10 +893,16 @@ def _with_outer_post_decision(
     """Bind the outer post-decision value into the regime's flat params.
 
     The inner DC-EGM core threads its per-combo pool from `flat_params`, so
-    binding `outer_post_decision` there makes the inner resources and the
-    child-state index read the fixed outer node as a constant.
+    binding the value there makes the inner resources and the child-state index
+    read the fixed outer node as a constant. Only the post-decision is bound:
+    the durable's declared law of motion reads it and produces the next-period
+    stock itself, so a law that is not the identity is honoured rather than
+    replaced by the node the outer search picked.
     """
-    regime_params = {**dict(flat_params[regime_name]), outer_post_decision: value}
+    regime_params = {
+        **dict(flat_params[regime_name]),
+        outer_post_decision: value,
+    }
     return MappingProxyType(
         {
             name: (

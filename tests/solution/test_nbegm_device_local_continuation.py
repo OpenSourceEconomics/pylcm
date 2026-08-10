@@ -34,7 +34,7 @@ _SCRIPT = textwrap.dedent(
     model = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
     )
-    model.solve(params=toy.build_params(), log_level="off")
+    model.solve(params=toy.build_params(), log_level="debug")
 
     dump_dir = os.environ["XLA_DUMP_DIR"]
     hits = glob.glob(

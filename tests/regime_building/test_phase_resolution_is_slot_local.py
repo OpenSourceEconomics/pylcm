@@ -1,12 +1,12 @@
 """Phase resolution is SLOT-LOCAL: it does not reach a nested plain-Python call.
 
-`test_flow_transitions_are_phase_closed.py` pins that a `Phased` outer law, and a
+`test_flow_transitions_are_phase_closed.py` pins that a `Phased` chosen stock, and a
 `Phased` DAG HELPER under it, both resolve to the simulate variant in the flow. This
 module pins the boundary of that guarantee, which is where the guarantee is easiest to
 over-read:
 
-    declaring `state_transitions["a"] = Phased(solve=f_solve, simulate=f_sim)`
-    phases the slot "a" -- and NOTHING else.
+    declaring a slot -- a function or a state transition -- `Phased(solve=f_solve,
+    simulate=f_sim)` phases THAT slot, and NOTHING else.
 
 If some other slot's law calls `f_solve` as an ordinary Python function, that call is
 invisible to phase resolution: it is not a DAG node, so there is no slot to rewrite. The
@@ -49,14 +49,19 @@ class RegimeId:
     last: ScalarInt
 
 
-def _next_stock_belief(move: DiscreteAction) -> FloatND:
+def _new_stock_belief(move: DiscreteAction) -> FloatND:
     """BELIEF (solve): `stay` leads to good."""
     return jnp.where(move == Move.stay, Stock.good, Stock.bad)
 
 
-def _next_stock_actual(move: DiscreteAction) -> FloatND:
+def _new_stock_actual(move: DiscreteAction) -> FloatND:
     """TRUTH (simulate): exactly the opposite -- `switch` leads to good."""
     return jnp.where(move == Move.stay, Stock.bad, Stock.good)
+
+
+def carry_new_stock(new_stock: FloatND) -> FloatND:
+    """The stock law: next period's stock is the one chosen this period."""
+    return new_stock
 
 
 def next_tag_calling_the_solve_helper(move: DiscreteAction) -> FloatND:
@@ -65,25 +70,25 @@ def next_tag_calling_the_solve_helper(move: DiscreteAction) -> FloatND:
     The nested call is plain Python, not a DAG edge, so nothing in the model can tell
     that this slot also consumes the phased quantity.
     """
-    return _next_stock_belief(move)
+    return _new_stock_belief(move)
 
 
 def next_tag_calling_the_simulate_helper(move: DiscreteAction) -> FloatND:
     """The simulate twin of `next_tag_calling_the_solve_helper` (the repair)."""
-    return _next_stock_actual(move)
+    return _new_stock_actual(move)
 
 
 def service_flow(
-    next_stock: FloatND, move: DiscreteAction, stock: FloatND, tag: FloatND
+    new_stock: FloatND, move: DiscreteAction, stock: FloatND, tag: FloatND
 ) -> FloatND:
-    """Within-period utility reading the CHOSEN next state (NEGM service flow).
+    """Within-period utility reading the CHOSEN stock (NEGM service flow).
 
-    Flat in everything except `next_stock`, so the argmax is decided purely by the law
-    the FLOW resolves -- which `test_flow_transitions_are_phase_closed.py` already pins
-    as the simulate one. That makes `move == switch` a fixed, known input here, and the
-    realized `stock` / `tag` the only things under test.
+    Flat in everything except `new_stock`, so the argmax is decided purely by the
+    variant the FLOW resolves -- which `test_flow_transitions_are_phase_closed.py`
+    already pins as the simulate one. That makes `move == switch` a fixed, known input
+    here, and the realized `stock` / `tag` the only things under test.
     """
-    return 1.0 * next_stock + 0.0 * move + 0.0 * stock + 0.0 * tag
+    return 1.0 * new_stock + 0.0 * move + 0.0 * stock + 0.0 * tag
 
 
 def flat_utility(stock: FloatND, move: DiscreteAction, tag: FloatND) -> FloatND:
@@ -105,13 +110,13 @@ _STATES = {"stock": DiscreteGrid(Stock), "tag": DiscreteGrid(Stock)}
 def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
     live = Regime(
         transition=_next_regime,
-        state_transitions={
-            "stock": Phased(solve=_next_stock_belief, simulate=_next_stock_actual),
-            "tag": tag_law,
-        },
+        state_transitions={"stock": carry_new_stock, "tag": tag_law},
         states=_STATES,
         actions={"move": DiscreteGrid(Move)},
-        functions={"utility": service_flow},
+        functions={
+            "utility": service_flow,
+            "new_stock": Phased(solve=_new_stock_belief, simulate=_new_stock_actual),
+        },
     ).replace(active=lambda age: age < 2)
     last = Regime(
         transition=None,
@@ -141,7 +146,7 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
 
 
 def test_an_unphased_slot_keeps_the_solve_behaviour_even_next_to_a_phased_one():
-    """Phasing `stock` does NOT phase `tag`, which calls the solve helper directly.
+    """Phasing `new_stock` does NOT phase `tag`, which calls the solve helper directly.
 
     This asserts the trap, not a wish: the two slots consume the SAME quantity and
     DIVERGE, because only one of them was declared `Phased`. A future engine change
@@ -152,11 +157,11 @@ def test_an_unphased_slot_keeps_the_solve_behaviour_even_next_to_a_phased_one():
     landed = df[df["period"] == 1]
 
     assert (df[df["period"] == 0]["move"] == "switch").all(), (
-        "precondition: the flow must resolve the SIMULATE law (see "
+        "precondition: the flow must resolve the SIMULATE variant (see "
         "test_flow_transitions_are_phase_closed.py)"
     )
     assert (landed["stock"] == "good").all(), (
-        "the phased slot must realize the SIMULATE law"
+        "the phased slot must realize the SIMULATE variant"
     )
     assert (landed["tag"] == "bad").all(), (
         "the UNPHASED slot must keep the SOLVE law -- phase resolution is slot-local "
@@ -167,9 +172,10 @@ def test_an_unphased_slot_keeps_the_solve_behaviour_even_next_to_a_phased_one():
 def test_phasing_every_consumer_closes_the_gap():
     """The repair: phase the second slot too, and both follow the simulate law.
 
-    Note what the fix is NOT -- nothing about the `stock` declaration changed. Closure
-    is achieved by enumerating consumers, which is why the EKL repair had to split its
-    job-offer transition into capped/raw twins rather than adjust the experience state.
+    Note what the fix is NOT -- nothing about the `new_stock` declaration changed.
+    Closure is achieved by enumerating consumers, which is why the EKL repair had to
+    split its job-offer transition into capped/raw twins rather than adjust the
+    experience state.
     """
     df = _simulate(
         Phased(

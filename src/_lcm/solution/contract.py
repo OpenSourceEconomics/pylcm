@@ -146,7 +146,7 @@ class SolverBuildContext:
 
     Processed like every other function, so its parameters carry their qualified
     names — a solver that reads them off the runtime pool must use this object,
-    not the user-facing `W_linear`.
+    not the user-facing `LinearAggregator`.
     """
 
     constraints: ConstraintFunctionsMapping
@@ -515,5 +515,21 @@ class Solver(ABC):
         the value array, so it needs none. The engine reads this off every
         regime's solver to decide whether terminal regimes produce their
         closed-form continuations, without forking on the solver type.
+        """
+        return False
+
+    @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """Whether this solver's continuation step implements the EZ recursion.
+
+        Reading a continuation and assuming expected utility are separate
+        properties. An Euler inversion written against `E[V']` is only valid
+        under `LinearExpectation`, so by default a solver that reads a
+        continuation refuses a nonlinear certainty equivalent rather than
+        solving a recursion the regime does not declare. A solver whose step
+        inverts the recursive Euler equation instead — carrying the certainty
+        equivalent's transform through the marginal — overrides this to `True`
+        and is admitted. Grid search never consults it: reading only the value
+        array, it aggregates any certainty equivalent in concrete values.
         """
         return False

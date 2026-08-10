@@ -30,6 +30,7 @@ multi-period node-count reduction until continuation support for a
 persistent fold lands.
 """
 
+import functools
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -48,7 +49,7 @@ from _lcm.utils.logging import get_logger
 from lcm import DiscreteGrid, LinSpacedGrid, NormalIIDProcess, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import W_linear
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
@@ -134,7 +135,7 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -142,7 +143,7 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -305,7 +306,7 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
                 user_regimes=finalize_regimes(
                     user_regimes=regimes,
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
@@ -313,7 +314,7 @@ def test_fold_collective_composition_matches_unfolded_then_averaged():
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -505,7 +506,7 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
@@ -513,7 +514,7 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -536,7 +537,7 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -544,7 +545,7 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -631,7 +632,7 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     # kernels, so the assertion below has something to catch. The module
     # defaults do NOT — without this, a future edit to the fixture could
     # silently defang the test into passing against the pre-fix code.
-    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights)
+    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights, shifts=None)
     assert _bits(oracle) != _bits(guarded)
 
     assert _bits(folded_V) == _bits(oracle)
@@ -710,10 +711,16 @@ def test_select_fold_reducer_takes_the_guard_only_when_a_weight_is_zero():
         _select_fold_reducer(weight=jnp.array([0.25, 0.5, 0.25]), name="s")
         is jnp.average
     )
-    assert (
-        _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
-        is zero_safe_average
+    # A fold axis's weights are a quadrature marginal and carry no base-two
+    # scale, so the selector binds `shifts=None` onto the zero-safe kernel
+    # rather than leaving that question to its callers. The identity is
+    # therefore on the function the partial wraps.
+    zero_weight_reducer = _select_fold_reducer(
+        weight=jnp.array([0.0, 1.0, 0.0]), name="s"
     )
+    assert isinstance(zero_weight_reducer, functools.partial)
+    assert zero_weight_reducer.func is zero_safe_average
+    assert zero_weight_reducer.keywords == {"shifts": None}
     # Per AXIS, not per model: each axis gets the kernel its own weights need.
     assert _select_fold_reducer(weight=jnp.array([1.0]), name="s") is jnp.average
 
@@ -748,7 +755,8 @@ def test_zero_weight_fold_axis_still_averages_infinities_safely():
         axis=0,
         weights=jnp.array([0.0, 1.0, 0.0]),
     )
-    assert reducer is zero_safe_average
+    assert isinstance(reducer, functools.partial)
+    assert reducer.func is zero_safe_average
     np.testing.assert_array_equal(np.asarray(out), np.float32(4.0))
 
 
@@ -790,7 +798,7 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
@@ -798,7 +806,7 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -871,7 +879,7 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes={"period0": period0, "terminal": terminal},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
@@ -879,7 +887,7 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes={"period0": period0, "terminal": terminal},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -939,7 +947,7 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=_make_target_local_fold_regimes(shared=False),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -947,7 +955,7 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
         user_regimes=finalize_regimes(
             user_regimes=_make_target_local_fold_regimes(shared=False),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -978,7 +986,7 @@ def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes=_make_target_local_fold_regimes(shared=True),
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=_AGES,
@@ -986,7 +994,7 @@ def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
             user_regimes=finalize_regimes(
                 user_regimes=_make_target_local_fold_regimes(shared=True),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -1015,8 +1023,15 @@ def test_coarse_self_transition_retains_the_self_continuation():
         }
     )
 
-    def _next_self() -> ScalarInt:
-        return jnp.int32(0)  # always return "stay"
+    def _next_self(age: int) -> ScalarInt:
+        # "stay" while `stay` is still active next period; "done" at its LAST
+        # active age. Returning "stay" there would send the whole mass to a
+        # target that is inactive in the next period -- a specification error
+        # that used to be silently dropped and the survivors renormalized, so
+        # the solve returned an all-NaN value function with nothing saying why.
+        # Period 0 -> 1 still exercises what this test is about: the coarse law
+        # returns the SOURCE regime and its self-continuation must survive.
+        return jnp.where(age < 1, jnp.int32(0), jnp.int32(1))
 
     stay = Regime(
         transition=_next_self,
@@ -1035,7 +1050,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
             user_regimes=finalize_regimes(
                 user_regimes={"stay": stay, "done": done},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
@@ -1043,7 +1058,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
         user_regimes=finalize_regimes(
             user_regimes={"stay": stay, "done": done},
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=ages3,
@@ -1058,7 +1073,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
         flat_params=params,
         ages=ages3,
         regimes=processed,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -1101,7 +1116,7 @@ def test_coarse_self_fold_is_rejected():
                 user_regimes=finalize_regimes(
                     user_regimes={"stay": stay, "done": done},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages3,
@@ -1109,7 +1124,7 @@ def test_coarse_self_fold_is_rejected():
             user_regimes=finalize_regimes(
                 user_regimes={"stay": stay, "done": done},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
@@ -1162,7 +1177,7 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
                 user_regimes=finalize_regimes(
                     user_regimes={"src": src, "stay": stay, "alt": alt},
                     derived_categoricals={},
-                    koopmans_aggregator=W_linear,
+                    koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
                 ),
                 ages=ages3,
@@ -1170,7 +1185,7 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
             user_regimes=finalize_regimes(
                 user_regimes={"src": src, "stay": stay, "alt": alt},
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=ages3,
@@ -1314,7 +1329,7 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -1322,7 +1337,7 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -1393,7 +1408,7 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
             user_regimes=finalize_regimes(
                 user_regimes=_make_route_to_folded_target_regimes(),
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -1401,7 +1416,7 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
         user_regimes=finalize_regimes(
             user_regimes=_make_route_to_folded_target_regimes(),
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,
@@ -1496,7 +1511,7 @@ def _simulate_route(
             user_regimes=finalize_regimes(
                 user_regimes=regimes,
                 derived_categoricals={},
-                koopmans_aggregator=W_linear,
+                koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
             ),
             ages=_AGES,
@@ -1504,7 +1519,7 @@ def _simulate_route(
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
-            koopmans_aggregator=W_linear,
+            koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
         ),
         ages=_AGES,

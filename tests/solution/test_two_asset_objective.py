@@ -12,6 +12,7 @@ import numpy as np
 
 from _lcm.egm.two_asset_objective import build_two_asset_objective
 from tests.conftest import X64_ENABLED
+from tests.solution._crra_preferences import crra_preferences
 
 # The analytic comparisons are float-eps-limited at the active precision.
 _RTOL = 1e-10 if X64_ENABLED else 1e-5
@@ -37,7 +38,7 @@ def test_objective_is_exact_for_an_affine_post_decision_value():
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
     )
     value, feasible = objective(jnp.array([5.0, 2.0]), jnp.array([1.0, 0.5]))
@@ -58,7 +59,7 @@ def test_objective_reads_the_audit_post_decision_value_at_a_grid_node():
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
     )
     value, feasible = objective(jnp.array([4.0, 2.0]), jnp.array([1.0, 0.0]))
@@ -75,7 +76,7 @@ def test_objective_flags_negative_liquid_post_decision_as_infeasible():
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
     )
     # m - c - d = 1 - 1 - 0.5 = -0.5 < 0.
@@ -102,7 +103,7 @@ def test_objective_flags_candidate_whose_post_decision_source_is_out_of_domain()
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
         post_decision_valid=post_decision_valid,
     )
@@ -123,7 +124,7 @@ def test_objective_flags_negative_consumption_as_infeasible():
         a_grid=_A_GRID,
         b_grid=_B_GRID,
         discount_factor=_DISCOUNT,
-        crra=_CRRA,
+        preferences=crra_preferences(_CRRA),
         match_rate=_MATCH,
     )
     value, feasible = objective(jnp.array([5.0, 2.0]), jnp.array([-0.5, 0.0]))

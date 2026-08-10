@@ -251,7 +251,7 @@ def test_dcegm_simulate_consumes_the_provided_solution():
     initial_wealth = 20.0
     model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
     params = dcegm_variants.get_retirement_only_params(n_periods)
-    solved = model.solve(params=params, log_level="off")
+    solved = model.solve(params=params, log_level="debug")
     zeroed = MappingProxyType(
         {
             period: MappingProxyType(

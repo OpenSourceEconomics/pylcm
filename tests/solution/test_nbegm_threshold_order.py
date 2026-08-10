@@ -31,7 +31,7 @@ def _solve(*, cliff: float, exemption: float, log_level: LogLevel):
 
 def test_thresholds_in_declared_ascending_order_solve():
     """The declared order `(cliff, exemption)` ascends, so the solve runs."""
-    solution = _solve(cliff=6.0, exemption=16.0, log_level="off")
+    solution = _solve(cliff=6.0, exemption=16.0, log_level="debug")
     assert not np.isnan(np.asarray(solution[0]["alive"])).any()
 
 

@@ -43,7 +43,6 @@ from _lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
@@ -67,7 +66,6 @@ def _build_compute_intermediates_per_period(
     enable_jit: bool,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
-    next_state_names: frozenset[TransitionFunctionName] = frozenset(),
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -103,8 +101,6 @@ def _build_compute_intermediates_per_period(
             renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
-        next_state_names: Declared `next_<state>` node names for this regime,
-            forwarded to the no-producer guard.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -167,7 +163,6 @@ def _build_compute_intermediates_per_period(
             regime_to_v_interpolation_info=continuation_info(representative_period),
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
-            next_state_names=next_state_names,
             # The diagnostics are handed the full value arrays and map over
             # every state, so none of the solve kernel's co-mapped axes have
             # been sliced off here.

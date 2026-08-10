@@ -18,11 +18,11 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
     Phased,
-    W_linear,
     categorical,
     fixed_transition,
 )
@@ -77,7 +77,7 @@ def _finalized_regime(**kwargs: object) -> UserRegime:
     return finalize_regimes(
         user_regimes={"regime": regime},
         derived_categoricals={},
-        koopmans_aggregator=W_linear,
+        koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
 

@@ -34,9 +34,14 @@ def get_linspace_coordinate(
     stop: FloatND,
     n_points: IntND,
 ) -> FloatND:
-    """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
-    step_length = (stop - start) / (n_points - 1)
-    return (value - start) / step_length
+    """Map a value into the input needed for jax.scipy.ndimage.map_coordinates.
+
+    A one-point grid has no spacing to divide by and holds a single value, so every
+    value maps to its only index.
+    """
+    n_steps = n_points - 1
+    step_length = (stop - start) / jnp.where(n_steps > 0, n_steps, 1)
+    return jnp.where(n_steps > 0, (value - start) / step_length, 0.0)
 
 
 def logspace(
@@ -137,6 +142,11 @@ def get_irreg_coordinate(
 
     """
     n_points = len(points)
+
+    # A single point holds the whole grid: there is no segment to interpolate
+    # along, and every value resolves to that one index.
+    if n_points == 1:
+        return jnp.zeros_like(value)
 
     # Find the index of the first point greater than value
     idx_upper = jnp.searchsorted(points, value, side="right")
