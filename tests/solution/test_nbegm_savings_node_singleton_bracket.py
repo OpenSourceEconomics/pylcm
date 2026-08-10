@@ -14,6 +14,7 @@ import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_multi_interval_step_savings
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 2.0
 _DISCOUNT = 0.95
@@ -49,8 +50,7 @@ def test_single_point_savings_node_action_stays_on_the_envelope():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        utility_of_action=_utility_of_action,
-        inverse_marginal_utility=_inverse_marginal_utility,
+        preferences=crra_preferences(_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,

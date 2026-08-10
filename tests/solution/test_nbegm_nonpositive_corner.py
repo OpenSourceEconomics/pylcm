@@ -22,7 +22,7 @@ from _lcm.egm.nbegm_step import (
     nbegm_multi_interval_step,
 )
 from tests.solution._crra_preferences import crra_preferences
-from tests.solution._nbegm_step_helpers import crra_utility, dense_brute_value
+from tests.solution._nbegm_step_helpers import dense_brute_value
 
 CRRA = 2.0
 DISCOUNT_FACTOR = 0.95
@@ -179,8 +179,7 @@ def _infeasible_interval_corner_value(*, flat: bool) -> np.ndarray:
         coh_slope=jnp.asarray(0.0 if flat else 1.0),
         coh_intercept=jnp.asarray(-0.5),
         discount_factor=jnp.asarray(DISCOUNT_FACTOR),
-        utility_of_action=lambda consumption: crra_utility(consumption, CRRA),
-        marginal_utility=lambda consumption: consumption ** (-CRRA),
+        preferences=crra_preferences(CRRA),
         base=jnp.asarray(0.0),
         next_segment=jnp.asarray(0.0),
     )

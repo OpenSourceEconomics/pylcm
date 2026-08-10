@@ -1142,7 +1142,7 @@ def _nested_inverse_marginal(
     action_upper = jnp.asarray(savings_top * 1000.0 + 1000.0)
     action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
 
-    def inverse_marginal(*, marginal_continuation: FloatND) -> FloatND:
+    def inverse_marginal(marginal_continuation: FloatND) -> FloatND:
         flat = jnp.ravel(jnp.asarray(marginal_continuation))
         roots = jax.vmap(
             lambda m: numeric_inverse_marginal_utility(
