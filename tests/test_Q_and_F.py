@@ -46,6 +46,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Int1D,
+    IntND,
     Period,
     ScalarInt,
 )
@@ -1108,6 +1109,23 @@ def test_a_joint_lottery_reads_its_arms_against_their_own_scales() -> None:
         ) -> FloatND:
             del params
             return jnp.sum(weights * values) / jnp.sum(weights)
+
+        def aggregate_scaled(
+            self,
+            *,
+            values: FloatND,
+            coefficients: FloatND,
+            shifts: IntND,
+            params: Any,
+        ) -> FloatND:
+            # A plain expectation, so the shipped one states the same quantity;
+            # declaring it is what says this mean can read per-node scales.
+            return LinearExpectation().aggregate_scaled(
+                values=values,
+                coefficients=coefficients,
+                shifts=shifts,
+                params=params,
+            )
 
     # The second arm's weight stands for `1.0 * 2**-40` — the same number the
     # first arm's second entry carries outright.

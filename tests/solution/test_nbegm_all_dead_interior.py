@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_multi_interval_step
+from tests.solution._crra_preferences import crra_preferences
 
 CRRA = 2.0
 DISCOUNT_FACTOR = 0.95
@@ -38,9 +39,10 @@ def test_flat_continuation_publishes_the_corner_envelope_not_an_all_nan_row():
         next_value=NEXT_VALUE,
         next_marginal=NEXT_MARGINAL,
         liquid_grid=LIQUID_GRID,
+        next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        crra=CRRA,
+        preferences=crra_preferences(CRRA),
         gross_return=GROSS_RETURN,
         income=INCOME,
         coh_slopes=jnp.asarray([0.0, 1.0]),

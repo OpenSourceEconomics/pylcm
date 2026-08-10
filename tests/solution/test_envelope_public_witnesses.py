@@ -8,12 +8,12 @@ published triple, not on how the triple is produced.
 The oracle is exact rational arithmetic (`fractions.Fraction`), so no case can
 pass vacuously against a tolerance.
 
-Three of the four families are `xfail(strict=True)` on this branch. That is a
-recorded defect, not a quarantine: `envelope` defaults to `"exact"`
-(`_lcm/solution/dcegm.py`), and the `"exact"` backend decides segment ownership
-on `_value_tie_band`, a magnitude-scaled tolerance. A magnitude-scaled band is
-not an error bound, so ownership and the published outputs are both wrong on
-inputs whose spans or gaps are not representable in the working dtype.
+Two of the four families are `xfail(strict=True)` on this branch. That is a
+recorded defect, not a quarantine. Both are range failures rather than precision
+failures: a quantity the kernel forms on the way to a decision leaves the working
+dtype even though the decision itself is an ordinary one. Extending precision
+cannot reach them — a double-double widens the significand, not the exponent —
+so each needs the quantity formed at a scale where it fits.
 
 `strict=True` is deliberate. When the exact kernel is mounted here these cases
 start passing, and strict xfail turns that into a failure until the marker is
@@ -124,9 +124,9 @@ def test_a_segment_whose_value_gap_overflows_still_publishes_its_owner(dtype, bl
 
 @pytest.mark.xfail(
     strict=True,
-    reason="ownership decided on the magnitude-scaled _value_tie_band; the "
-    "segment's abscissa span overflows the working dtype and the wrong "
-    "segment is published",
+    reason="a link's width is formed as a raw difference of its endpoints, so a "
+    "span wider than the working dtype overflows to inf and the link reaches "
+    "the certificate with no divisor it can be read through",
 )
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
@@ -177,12 +177,6 @@ def test_a_subnormal_interpolation_fraction_still_moves_the_outputs(dtype, block
     assert published == (1.0, expected, expected)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the endpoint difference is a raw subtraction in the working dtype, "
-    "so opposite-signed top-binade outputs overflow to -inf where the exact "
-    "midpoint is zero",
-)
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_opposite_signed_outputs_publish_their_finite_midpoint(dtype, block):
