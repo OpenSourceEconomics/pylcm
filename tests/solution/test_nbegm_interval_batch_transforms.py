@@ -22,14 +22,6 @@ _N_SAVINGS = 50
 _N_LIQUID = 40
 
 
-def _utility_of_action(consumption):
-    return consumption ** (1.0 - _CRRA) / (1.0 - _CRRA)
-
-
-def _inverse_marginal_utility(marginal_continuation):
-    return marginal_continuation ** (-1.0 / _CRRA)
-
-
 def _build_inputs(n_intervals: int) -> dict:
     base_value = -1.0 / jnp.linspace(0.5, 5.0, _N_SAVINGS)
     base_marginal = jnp.linspace(2.0, 0.05, _N_SAVINGS)
@@ -95,7 +87,9 @@ def test_jitted_solve_matches_the_eager_solve(
     arrays = {
         name: value
         for name, value in inputs.items()
-        if name not in ("utility_of_action", "inverse_marginal_utility")
+        # The preference bundle carries Python callables, so it is supplied
+        # inside the closure rather than traced as an argument.
+        if name != "preferences"
     }
 
     def solve(**kwargs):

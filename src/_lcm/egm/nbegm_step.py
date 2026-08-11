@@ -56,7 +56,7 @@ from _lcm.egm.nbegm_segments import (
     segment_ids_from_folds,
 )
 from _lcm.egm.preferences import Preferences
-from _lcm.egm.upper_envelope.query import EnvelopeArithmetic, envelope_at_query
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic, envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -98,7 +98,7 @@ def nbegm_multi_interval_step(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     flat_interval_mask: tuple[bool, ...] | None = None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
@@ -387,7 +387,7 @@ def nbegm_multi_interval_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     inverse_eis: ScalarFloat | None = None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
@@ -674,7 +674,7 @@ def nbegm_per_interval_continuation_step_savings(
     envelope_segment_block_size: int = 0,
     extra_savings: FloatND | None = None,
     extra_cont_value: FloatND | None = None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -1014,7 +1014,7 @@ def _savings_node_point_candidates(
         else savings_grid[None, :]
     )
     node_consumption = point_coh[:, None] - savings_at_grid
-    node_feasible = node_consumption > 0.0
+    node_feasible = affords_an_action(node_consumption)
     node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
     node_utility = preferences.utility(node_consumption_safe)
     node_value = jnp.where(
@@ -1060,7 +1060,7 @@ def nbegm_unified_step_savings(
     jump_positions: tuple[Any, ...],
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
 
@@ -1279,7 +1279,7 @@ def nbegm_discrete_envelope_step(
     income: ScalarFloat | float,
     choices: tuple[Mapping[str, Float1D], ...],
     taste_shock_scale: float = 0.0,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D, IntND]:
     """Compose per-discrete-choice NBEGM solves into a discrete upper envelope.
 
@@ -1389,7 +1389,7 @@ def nbegm_unified_step(  # noqa: PLR0915
     breakpoints: Float1D,
     jump_mask: tuple[bool, ...],
     equality_owner: EqualityOwner = "otherwise",
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a mixed jump-and-kink piecewise-affine budget by EGM.
 
@@ -1665,7 +1665,7 @@ def _boundary_targeting_coh(
     # liquid is `coh_slope * u'(c)`, matching the interior and corner
     # candidates.
     kink_marginal = coh_slope * preferences.marginal_utility(kink_consumption)
-    kink_valid = valid & (kink_consumption > 0.0) & (s_kink >= 0.0)
+    kink_valid = valid & affords_an_action(kink_consumption) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,
@@ -1689,7 +1689,7 @@ def nbegm_recurring_jump_step(
     subsidy_levels: Float1D,
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner = "otherwise",
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of an N-cliff budget with a recurring jumped continuation.
 
@@ -1973,7 +1973,7 @@ def nbegm_one_asset_step(
     subsidy_otherwise: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of the Medicaid one-asset toy by case-piece EGM.
 
@@ -2100,7 +2100,7 @@ def _case_step(
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one case's 1-D consumption--saving sub-problem as an upper envelope.
 
@@ -2285,7 +2285,7 @@ def _boundary_targeting_branch(
         preferences.utility(kink_consumption) + discount_factor * value_at_target
     )
     kink_marginal = preferences.marginal_utility(kink_consumption)
-    kink_valid = (kink_consumption > 0.0) & (s_kink >= 0.0)
+    kink_valid = affords_an_action(kink_consumption) & (s_kink >= 0.0)
     return mask_dead_candidates(
         endog_grid=liquid_grid,
         value=kink_value,

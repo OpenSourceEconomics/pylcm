@@ -31,6 +31,7 @@ from tests.test_models.nbegm_common import (
 from tests.test_models.nbegm_medicaid_toy import (
     build_params,
     medicaid_eligible,
+    resources,
     subsidy,
     subsidy_medicaid,
     subsidy_private,
@@ -42,11 +43,6 @@ SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 def utility_with_gamma(consumption: ContinuousAction, gamma: float) -> FloatND:
     """CRRA consumption utility whose coefficient is named `gamma`."""
     return crra_utility(consumption, gamma)
-
-
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
-    """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
-    return liquid + subsidy
 
 
 def next_liquid_with_interest(
@@ -139,6 +135,71 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
     np.testing.assert_allclose(
         np.asarray(renamed[0]["alive"]), np.asarray(default[0]["alive"])
     )
+
+
+def _hand_written_liquid_law(
+    savings: FloatND, return_liquid: float, income: float
+) -> ContinuousState:
+    """A user's own spelling of the fixed law, computing exactly the same value."""
+    return (1.0 + return_liquid) * savings + income
+
+
+def _rescaled_liquid_law(
+    savings: FloatND, return_liquid: float, income: float
+) -> ContinuousState:
+    """The fixed law scaled by `1 + 9e-6`, a difference no probe set separates."""
+    return (1.0 + 9e-6) * ((1.0 + return_liquid) * savings + income)
+
+
+@pytest.mark.parametrize("law", [_hand_written_liquid_law, _rescaled_liquid_law])
+def test_a_hand_written_liquid_law_is_refused_by_the_single_liquid_route(law) -> None:
+    """The single-liquid route takes pylcm's own law object, not a user callable.
+
+    The kernels apply a fixed budget rather than calling the declared law, and no
+    finite check establishes that an arbitrary callable computes it — a global
+    rescaling agrees at every sampled point and still moves every state's value.
+    So the route accepts the law pylcm supplies, whose identity settles the
+    question by construction, and refuses everything else with somewhere to go.
+    """
+    with pytest.raises(RegimeInitializationError, match="liquid_law_from_savings"):
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=law,
+        )
+
+
+def _hand_written_budget(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """A user's own spelling of the fixed cash-on-hand, computing the same value."""
+    return liquid + subsidy
+
+
+def _rescaled_budget(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+    """The fixed cash-on-hand scaled by `1 + 9e-6`, invisible to any probe set."""
+    return (1.0 + 9e-6) * (liquid + subsidy)
+
+
+@pytest.mark.parametrize("budget_node", [_hand_written_budget, _rescaled_budget])
+def test_a_hand_written_budget_node_is_refused_by_the_case_piece_route(
+    budget_node,
+) -> None:
+    """The case-piece route takes pylcm's own cash-on-hand, not a user callable.
+
+    The kernels add the split output to the liquid state themselves rather than
+    calling the declared node, and no finite check establishes that an arbitrary
+    callable computes the same thing — a global rescaling agrees at every sampled
+    point and still moves every state's value. So the route accepts the node
+    pylcm supplies, whose identity settles the question by construction, and
+    refuses everything else with somewhere to go.
+    """
+    with pytest.raises(RegimeInitializationError, match="cash_on_hand_with_subsidy"):
+        _build(
+            alive_functions={
+                "utility": utility,
+                **_PIECES,
+                "resources": budget_node,
+            },
+            liquid_law=next_liquid_from_savings,
+        )
 
 
 def test_a_liquid_law_without_a_return_liquid_parameter_is_named_at_build() -> None:
