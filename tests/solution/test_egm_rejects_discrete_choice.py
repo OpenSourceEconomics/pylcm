@@ -67,7 +67,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         },
         functions={"utility": utility},
         active=lambda age: age < _LAST_AGE,
-        solver=EGM(savings_grid=_SAVINGS_GRID),
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings"),
     )
     done = Regime(
         transition=None,

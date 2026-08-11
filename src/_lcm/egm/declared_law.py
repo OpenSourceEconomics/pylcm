@@ -16,6 +16,7 @@ would let the DAG compute savings internally from the state and action leaves,
 which runs and is silently wrong.
 """
 
+import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -69,13 +70,20 @@ def build_declared_liquid_law(
         transitions=MappingProxyType({law_name: transitions[target][law_name]}),
         functions=functions_without_post,
     )
+    # A caller holding the regime's whole flat param pool should not have to know
+    # which subset this particular law reads, so the law selects its own.
+    wanted = frozenset(inspect.signature(next_state_func).parameters) - {
+        post_decision_name
+    }
 
     def law(
         *, savings_grid: Float1D, **params: FloatND | float
     ) -> tuple[Float1D, Float1D]:
         # The DAG's own signature takes arrays, so a scalar param declared as a
         # plain Python float is lifted before it enters.
-        array_params = {name: jnp.asarray(value) for name, value in params.items()}
+        array_params = {
+            name: jnp.asarray(value) for name, value in params.items() if name in wanted
+        }
 
         def landing(savings: ScalarFloat) -> FloatND:
             # The builder is annotated with the simulation shape, which nests by
