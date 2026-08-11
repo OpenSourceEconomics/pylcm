@@ -392,7 +392,6 @@ def _build_egm_core(
             preferences=build_preferences(params),
             next_liquid=gross_return * savings_grid + income,
             marginal_return=jnp.broadcast_to(gross_return, savings_grid.shape),
-            next_liquid_at_zero_savings=income,
         )
         carry = EGMCarry(
             endog_grid=liquid,

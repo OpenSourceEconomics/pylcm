@@ -41,7 +41,6 @@ def _reader_cache_entries(next_m_grids):
             preferences=crra_preferences(2.0),
             next_liquid=gross_return * savings_grid + income,
             marginal_return=jnp.full_like(savings_grid, gross_return),
-            next_liquid_at_zero_savings=income,
         ).value
 
     for next_liquid_grid in next_m_grids:

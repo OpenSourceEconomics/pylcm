@@ -77,7 +77,6 @@ def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
         preferences=crra_preferences(1.0),
         next_liquid=gross_return * savings_grid + _INCOME,
         marginal_return=jnp.full_like(savings_grid, gross_return),
-        next_liquid_at_zero_savings=_INCOME,
     )
 
     np.testing.assert_array_almost_equal(
