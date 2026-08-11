@@ -98,7 +98,6 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
         preferences=crra_preferences(crra),
         savings_grid=savings_grid,
         next_liquid=gross_return * savings_grid + income,
-        marginal_return=jnp.full_like(savings_grid, gross_return),
         asset_limit=asset_limit,
         prev_limit=2.5,
         next_limit=grid[-1] + 1.0,

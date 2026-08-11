@@ -38,7 +38,6 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
         preferences=crra_preferences(crra),
         savings_grid=savings_grid,
         next_liquid=savings_grid,
-        marginal_return=jnp.ones_like(savings_grid),
         asset_limit=3.0,
         prev_limit=liquid_grid[0] - 1.0,
         next_limit=liquid_grid[-1] + 1.0,
