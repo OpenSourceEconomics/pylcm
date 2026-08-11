@@ -404,9 +404,23 @@ ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
   "--dist",
   "loadfile",
-  # Deselect the `manual` gates by default, everywhere — CI, the pixi tasks and
-  # a bare `pytest`. A command-line `-m` overrides this one (pytest keeps the
-  # last `-m` it sees), so `pytest ... -m manual` still runs them.
+  # Deselect the `manual` gates by default. A command-line `-m` overrides this
+  # one (pytest keeps the last `-m` it sees), so `pytest ... -m manual` still
+  # runs them.
+  #
+  # That override is why this line cannot be the whole mechanism, and the
+  # exposure runs the opposite way to the intuition. `manual` REPLACES `slow`
+  # on these gates rather than joining it, so a caller passing `-m "not slow"`
+  # does not exclude them — it selects them, and it discards the `not manual`
+  # here while doing so. Left alone, `cpu.yml`'s first phase would pull all
+  # seven never-finishing gates into the FAST `-n 4` phase, which is strictly
+  # worse than marking them `slow` and doing nothing. Every `-m "not slow"`
+  # caller therefore spells `-m "not slow and not manual"`.
+  #
+  # The `-m slow` phases need no conjunct: a `manual` gate carries no `slow`
+  # mark, so they exclude it already. Any NEW caller passing `-m` must decide
+  # this for itself — the rule is that `-m` on the command line replaces this
+  # line wholesale, never intersects with it.
   "-m",
   "not manual",
 ]
