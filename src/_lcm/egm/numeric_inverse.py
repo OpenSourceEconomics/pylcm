@@ -137,12 +137,20 @@ def numeric_inverse_marginal_utility(
 
     # The implicit-derivative corrector below is valid only at an *interior,
     # bracketed* root. `u'` is decreasing, so the target is bracketed iff
-    # `u'(c_upper) <= m <= u'(c_lower)`; outside that the iteration clamps to a
-    # bound and the interior `1/u''` Jacobian would silently extrapolate a wrong
-    # gradient. At a binding bound the active-set derivative is zero, so the
-    # unbracketed branch returns the clamped root detached (value at the bound,
-    # `dc/dm = 0`) rather than the bogus interior slope.
+    # `u'(c_upper) <= m <= u'(c_lower)`; outside that the root the iteration
+    # converges toward is a bound, and the interior `1/u''` Jacobian would
+    # silently extrapolate a wrong gradient. At a binding bound the active-set
+    # derivative is zero, so the unbracketed branch returns the bound detached
+    # (`dc/dm = 0`) rather than the bogus interior slope.
+    #
+    # The bound is taken from the bracket, not from the final iterate. Bisecting
+    # in `log c` and exponentiating back lands within rounding of the bound but
+    # on either side of it, and `c_upper` is the resources upper bound — an
+    # action above it is infeasible, not imprecise. Which side of the bracket a
+    # value falls on is a decision, so it is made by construction here rather
+    # than left to the width of the rounding error.
     bracketed = (mu_upper <= m) & (mu_lower >= m)
+    at_bound = jnp.where(m > mu_lower, c_lower, c_upper)
 
     # Implicit-derivative corrector: detached root + one Newton-style step whose
     # value is ~`c_star` (residual ≈ 0 at convergence) but whose gradient is the
@@ -150,7 +158,7 @@ def numeric_inverse_marginal_utility(
     # constant `1/u''` Jacobian, never differentiated itself.
     second_derivative = jax.lax.stop_gradient(marginal_curvature(c_star))
     interior = c_star - (marginal_utility(c_star) - m) / second_derivative
-    root = jnp.where(bracketed, interior, c_star)
+    root = jnp.where(bracketed, interior, at_bound)
     # Fail loud where the log-space preconditions do not hold: NaN surfaces in the
     # kernel's NaN diagnostics instead of a silently-wrong clamped bound.
     return jnp.where(log_well_defined, root, jnp.nan)
