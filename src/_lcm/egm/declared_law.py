@@ -42,7 +42,7 @@ def build_declared_liquid_law(
     post_decision_name: str,
     target: RegimeName,
     target_state: StateName,
-) -> Callable[..., tuple[Float1D, Float1D, ScalarFloat]]:
+) -> Callable[..., tuple[Float1D, Float1D]]:
     """Build the declared law of motion as a function of savings.
 
     Args:
@@ -55,8 +55,10 @@ def build_declared_liquid_law(
 
     Returns:
         A callable taking `savings_grid` and the regime's flat params, returning
-        the landing points on that grid, their derivative with respect to
-        savings, and the landing point at zero savings.
+        the landing points on that grid and their derivative with respect to
+        savings. The landing points are the full tabulation on the grid passed,
+        so a consumer needing the corner takes the first entry, and one needing
+        to invert the law can read the tabulation backwards.
 
     """
     law_name: TransitionFunctionName = f"next_{target_state}"
@@ -70,7 +72,7 @@ def build_declared_liquid_law(
 
     def law(
         *, savings_grid: Float1D, **params: FloatND | float
-    ) -> tuple[Float1D, Float1D, ScalarFloat]:
+    ) -> tuple[Float1D, Float1D]:
         # The DAG's own signature takes arrays, so a scalar param declared as a
         # plain Python float is lifted before it enters.
         array_params = {name: jnp.asarray(value) for name, value in params.items()}
@@ -83,11 +85,7 @@ def build_declared_liquid_law(
                 law_name
             ]
 
-        next_liquid, marginal_return = jax.vmap(jax.value_and_grad(landing))(
-            savings_grid
-        )
-        at_zero = landing(jnp.zeros((), dtype=savings_grid.dtype))
-        return next_liquid, marginal_return, at_zero
+        return jax.vmap(jax.value_and_grad(landing))(savings_grid)
 
     return law
 
@@ -101,19 +99,31 @@ def fail_if_declared_law_is_not_increasing(
     """Check the landing points ascend with savings.
 
     The endogenous grid is read back onto the regular grid by interpolation,
-    whose abscissae must be sorted. A law that does not increase in savings
-    leaves them unsorted, and the interpolation does not check — it returns
-    quietly wrong numbers rather than failing. The conventional law satisfies
-    this for any positive gross return; a declared law need not.
+    whose abscissae must be sorted and distinct. A law that falls leaves them
+    unsorted; a law that is flat over a band leaves them tied, so the savings
+    level reaching a given landing point is not unique. Neither is detected by
+    the interpolation — it returns quietly wrong numbers rather than failing.
+    The conventional law is strictly increasing for any positive gross return;
+    a declared law need not be, and a flat band is an ordinary model rather
+    than a pathology (a means test clawing a transfer back one-for-one over a
+    range of savings produces exactly one).
     """
-    if not bool(jnp.all(jnp.diff(next_liquid) > 0.0)):
-        msg = (
-            f"The law of motion regime '{regime_name}' declares toward "
-            f"'{target}' does not strictly increase in post-decision savings. "
-            f"The endogenous grid method reads its solution back by "
-            f"interpolation, which requires the landing points to ascend, so a "
-            f"law that can fall as savings rise is outside what the method "
-            f"solves. Declare a law increasing in savings, or use GridSearch, "
-            f"which maximizes over the action grid and needs no such ordering."
-        )
-        raise RegimeInitializationError(msg)
+    steps = jnp.diff(next_liquid)
+    if bool(jnp.all(steps > 0.0)):
+        return
+    flat_only = bool(jnp.all(steps >= 0.0))
+    diagnosis = (
+        "is flat over a range of savings, so several savings levels reach the "
+        "same landing point and the level behind a given one is not unique"
+        if flat_only
+        else "falls as savings rise over part of the grid"
+    )
+    msg = (
+        f"The law of motion regime '{regime_name}' declares toward '{target}' "
+        f"{diagnosis}. The endogenous grid method reads its solution back by "
+        f"interpolation, which needs the landing points to ascend strictly, so "
+        f"this law is outside what the method solves. Declare a law strictly "
+        f"increasing in savings, or use GridSearch, which maximizes over the "
+        f"action grid and needs no such ordering."
+    )
+    raise RegimeInitializationError(msg)
