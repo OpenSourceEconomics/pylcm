@@ -22,7 +22,7 @@ from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 type _PhaseStateTransition = (
     UserFunction
     | MarkovTransition
-    | None
     | Mapping[RegimeName, UserFunction | MarkovTransition]
+    | None
 )
 type _PhaseRegimeTransition = (
     UserFunction
@@ -99,11 +99,31 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
         user_regime=user_regime
     )
+    aggregator = user_regime.koopmans_aggregator
+    aggregator_errors: list[str] = []
+    if isinstance(aggregator, Phased):
+        solve_aggregator, simulate_aggregator = aggregator.solve, aggregator.simulate
+        # A non-terminal regime needs an aggregator in both phases; `None` in a
+        # `Phased` slot means "terminal", which a single phase cannot be.
+        aggregator_errors = [
+            f"`koopmans_aggregator` is `Phased(...)` with `{phase}=None`. Both "
+            f"phases need an aggregator; pass a callable for each, or a bare "
+            f"callable to use one in both."
+            for phase, variant in (
+                ("solve", solve_aggregator),
+                ("simulate", simulate_aggregator),
+            )
+            if variant is None
+        ]
+    else:
+        solve_aggregator = simulate_aggregator = aggregator
     terminal = user_regime.transition is None
     terminal_errors = (
         [
-            f"Terminal regimes cannot declare carried states (no next period "
-            f"to carry {sorted(carried_only)} into)."
+            (
+                f"Terminal regimes cannot declare carried states (no next period "
+                f"to carry {sorted(carried_only)} into)."
+            )
         ]
         if terminal and carried_only
         else []
@@ -116,6 +136,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         + carried_errors
         + transition_errors
         + terminal_errors
+        + ([] if terminal else aggregator_errors)
     )
     if errors:
         raise RegimeInitializationError(format_messages(errors))
@@ -123,9 +144,10 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     def _phase_spec(
         *,
         functions: dict[FunctionName, UserFunction],
-        grid_states: dict[StateName, Grid],
+        grid_states: dict[StateName, Grid | AgeSpecializedGrid],
         state_transitions: dict[StateName, _PhaseStateTransition],
         regime_transition: _PhaseRegimeTransition,
+        koopmans_aggregator: UserFunction | None,
     ) -> RegimePhaseSpec:
         return RegimePhaseSpec(
             functions=MappingProxyType(functions),
@@ -136,6 +158,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             ),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
+            koopmans_aggregator=koopmans_aggregator,
             regime_transition=regime_transition,
             # A per-target dict is stochastic by construction (each cell is a
             # MarkovTransition-wrapped probability function).
@@ -150,13 +173,45 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grid_states=solve_grid_states,
             state_transitions=solve_state_transitions,
             regime_transition=solve_transition,
+            koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
         ),
         simulation=_phase_spec(
             functions=simulate_functions,
             grid_states=simulate_grid_states,
             state_transitions=simulate_state_transitions,
             regime_transition=simulate_transition,
+            koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
         ),
+    )
+
+
+def normalize_all_regime_phases(
+    *,
+    user_regimes: Mapping[RegimeName, lcm.regime.Regime],
+) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
+    """Normalize every regime's `Phased` slots into per-phase specs.
+
+    Model-level convenience wrapper over `normalize_regime_phases`: it applies
+    the single phase resolver to each regime and returns the immutable mapping.
+    Exposing this as its own step lets model-level normalization (age
+    specialization) sit between phase resolution and canonicalization.
+
+    Args:
+        user_regimes: Mapping of regime names to finalized user regimes.
+
+    Returns:
+        Immutable mapping of regime names to per-phase specs.
+
+    Raises:
+        RegimeInitializationError: If any slot value violates the phase
+            grammar (propagated from `normalize_regime_phases`).
+
+    """
+    return MappingProxyType(
+        {
+            regime_name: normalize_regime_phases(user_regime)
+            for regime_name, user_regime in user_regimes.items()
+        }
     )
 
 
@@ -204,12 +259,15 @@ class RegimePhaseSpec:
     constraints: MappingProxyType[FunctionName, UserFunction]
     """Constraint functions (phase-invariant by the slot grammar)."""
 
-    grid_states: MappingProxyType[StateName, Grid]
+    grid_states: MappingProxyType[StateName, Grid | AgeSpecializedGrid]
     """States that are genuine grid states in this phase."""
 
     state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
     """Phase-resolved laws of motion, restricted to this phase's grid states
     plus target-only entries."""
+
+    koopmans_aggregator: UserFunction | None
+    """Phase-resolved Bellman aggregator; `None` for terminal regimes."""
 
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.
@@ -263,8 +321,8 @@ def _split_functions(
 def _split_states(
     *, user_regime: lcm.regime.Regime
 ) -> tuple[
-    dict[StateName, Grid],
-    dict[StateName, Grid],
+    dict[StateName, Grid | AgeSpecializedGrid],
+    dict[StateName, Grid | AgeSpecializedGrid],
     dict[StateName, UserFunction],
     list[str],
 ]:
@@ -275,8 +333,8 @@ def _split_states(
     regular `state_transitions` entry), and the grammar violations found
     along the way.
     """
-    solve_grid_states: dict[StateName, Grid] = {}
-    simulate_grid_states: dict[StateName, Grid] = {}
+    solve_grid_states: dict[StateName, Grid | AgeSpecializedGrid] = {}
+    simulate_grid_states: dict[StateName, Grid | AgeSpecializedGrid] = {}
     carried_imputations: dict[StateName, UserFunction] = {}
     errors: list[str] = []
     for name, spec in user_regime.states.items():
@@ -288,7 +346,11 @@ def _split_states(
             if imputation is not None and carried_grid is not None:
                 carried_imputations[name] = imputation
                 simulate_grid_states[name] = carried_grid
-        elif isinstance(spec, Grid):
+        elif isinstance(spec, Grid | AgeSpecializedGrid):
+            # A plain grid or an age-varying continuous-state grid: a genuine grid
+            # state in both phases. The marker is resolved to a concrete grid per
+            # period (representative age for the invariant machinery) during model
+            # processing; here it just occupies the state's axis slot.
             solve_grid_states[name] = spec
             simulate_grid_states[name] = spec
         elif spec is not None:
@@ -328,8 +390,10 @@ def _normalize_phased_state(
             None,
             None,
             [
-                f"states['{name}']: stochastic-process grids have intrinsic "
-                f"transitions and cannot be phase-variant."
+                (
+                    f"states['{name}']: stochastic-process grids have intrinsic "
+                    f"transitions and cannot be phase-variant."
+                )
             ],
         )
     solve_is_grid = isinstance(solve_side, Grid)
@@ -402,14 +466,18 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     """
     if isinstance(law, MarkovTransition):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"stochastic (`MarkovTransition`) law of motion for it is not "
-            f"yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"stochastic (`MarkovTransition`) law of motion for it is not "
+                f"yet supported."
+            )
         ]
     if isinstance(law, Mapping):
         return [
-            f"State '{name}' is carried only in the simulate phase; a "
-            f"per-target dict law of motion for it is not yet supported."
+            (
+                f"State '{name}' is carried only in the simulate phase; a "
+                f"per-target dict law of motion for it is not yet supported."
+            )
         ]
     return []
 

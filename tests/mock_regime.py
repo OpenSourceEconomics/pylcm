@@ -1,9 +1,10 @@
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.grids import Grid
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.temporal_aggregation import H_linear
 from lcm.typing import UserFunction
 
 
@@ -32,7 +33,10 @@ class MockRegime(UserRegime):
         state_transitions: dict[str, UserFunction | None] | None = None,
         constraints: dict[str, UserFunction] | None = None,
         transition: UserFunction | None = None,
-        functions: dict[str, UserFunction] | None = None,
+        # Loosely typed on purpose: tests pass markers (`AgeSpecializedFunction`,
+        # `Phased`) alongside plain callables.
+        functions: Mapping[str, object] | None = None,
+        koopmans_aggregator: object | None = None,
     ) -> None:
         object.__setattr__(self, "n_periods", n_periods)
         object.__setattr__(self, "actions", actions if actions is not None else {})
@@ -49,14 +53,19 @@ class MockRegime(UserRegime):
         object.__setattr__(
             self, "functions", functions if functions is not None else {}
         )
+        # `finalize_regimes` injects the model-level aggregator into
+        # non-terminal regimes; mirror that here.
+        object.__setattr__(
+            self,
+            "koopmans_aggregator",
+            koopmans_aggregator
+            if koopmans_aggregator is not None or self.transition is None
+            else LinearAggregator(),
+        )
         # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "description", "")
-        # `finalize_regimes` injects the default `H` for non-terminal
-        # regimes; mirror that here.
-        if not self.terminal and "H" not in self.functions:
-            object.__setattr__(self, "functions", {**self.functions, "H": H_linear})
 
     @property
     def terminal(self) -> bool:

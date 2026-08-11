@@ -1,9 +1,10 @@
 """Utilities for converting between pandas and LCM data structures."""
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,6 +29,7 @@ from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.transition import AgeSpecializedGrid
 from lcm.typing import Float1D, FloatND, Int1D
 
 
@@ -227,7 +229,22 @@ def convert_series_in_params(
     result: dict[RegimeName, dict[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
         user_regime = user_regimes[regime_name]
-        all_funcs = user_regime.get_all_functions()
+        all_funcs = dict(user_regime.get_all_functions())
+        # The Koopmans aggregator is not a regime function; its params live
+        # under a pseudo-function key of the same name. Under `Phased` the two
+        # variants declare different parameters and the template carries their
+        # union, so the variant that declares each parameter is the one whose
+        # source describes how it is indexed.
+        aggregator_variants = tuple(
+            aggregator
+            for aggregator in (
+                user_regime.get_koopmans_aggregator(phase="solve"),
+                user_regime.get_koopmans_aggregator(phase="simulate"),
+            )
+            if aggregator is not None
+        )
+        if aggregator_variants:
+            all_funcs["koopmans_aggregator"] = aggregator_variants[0]
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
             parts = tree_path_from_qname(func_param)
@@ -239,9 +256,19 @@ def convert_series_in_params(
             else:
                 resolved_func_name = parts[0] if len(parts) > 1 else func_param
 
-            # Runtime grid/process params are scalar — no AST inspection
-            if _is_runtime_grid_param(
-                func_name=resolved_func_name, user_regime=user_regime
+            if resolved_func_name == "koopmans_aggregator":
+                all_funcs["koopmans_aggregator"] = _variant_declaring(
+                    variants=aggregator_variants, param_name=param_name
+                )
+
+            # Runtime grid/process params are scalar — no AST inspection.
+            # `certainty_equivalent` and `taste_shocks` are pseudo-function keys
+            # whose parameters come from a declared name set rather than a
+            # signature, so there is no source to inspect for them either.
+            if resolved_func_name in _PSEUDO_KEYS_WITHOUT_A_SIGNATURE or (
+                _is_runtime_grid_param(
+                    func_name=resolved_func_name, user_regime=user_regime
+                )
             ):
                 converted_regime[func_param] = _convert_param_value(
                     value=value,
@@ -843,14 +870,16 @@ def _collect_state_names(
 
 
 def _state_grids_with_carried_domains(
-    states: Mapping[StateName, Grid | Phased | None],
-) -> dict[StateName, Grid]:
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
+) -> dict[StateName, Grid | AgeSpecializedGrid]:
     """Replace each carried-state declaration by its simulate-phase grid.
 
     A carried value (declared via `Phased(solve=..., simulate=Grid)`) is a
     genuine state in simulation input and output, so label/code discovery
     must see the inner grid like any other state grid. `None` masks are
-    resolved before the consumers here run; the filter narrows the type.
+    resolved before the consumers here run; the filter narrows the type. An
+    `AgeSpecializedGrid` is passed through unchanged — it is a continuous state,
+    so every consumer (all of which filter for `DiscreteGrid`) skips it.
     """
     return {
         name: cast("Grid", spec.simulate) if isinstance(spec, Phased) else spec
@@ -894,3 +923,23 @@ def _build_discrete_grid_lookup(
                     else:
                         lookup[var_name] = grid
     return lookup
+
+
+# Pseudo-function keys in the params template whose parameters are declared as a
+# name set rather than by a callable's signature, so there is no source for
+# `array_from_series` to inspect.
+_PSEUDO_KEYS_WITHOUT_A_SIGNATURE = frozenset({"certainty_equivalent", "taste_shocks"})
+
+
+def _variant_declaring(
+    *, variants: tuple[Callable[..., Any], ...], param_name: str
+) -> Callable[..., Any]:
+    """Return the first variant declaring `param_name`, else the first variant.
+
+    A `Phased` slot contributes both of its variants to the params template, so
+    a parameter may be declared by only one of them.
+    """
+    for variant in variants:
+        if param_name in inspect.signature(variant).parameters:
+            return variant
+    return variants[0]

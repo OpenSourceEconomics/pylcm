@@ -22,10 +22,17 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.canonicalize import canonicalize_regimes
+from _lcm.reachability import build_phase_reachability
+from _lcm.regime_building.canonicalize import (
+    canonicalize_phased_regimes,
+    canonicalize_regimes,
+)
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.phases import normalize_all_regime_phases
 from lcm import (
     DiscreteGrid,
+    LinearAggregator,
+    LinearExpectation,
     LinSpacedGrid,
     MarkovTransition,
     Phased,
@@ -79,7 +86,12 @@ def _regime(**overrides: Any) -> UserRegime:
 
 def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
     return canonicalize_regimes(
-        user_regimes=finalize_regimes(user_regimes=regimes, derived_categoricals={})
+        user_regimes=finalize_regimes(
+            user_regimes=regimes,
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+        )
     )
 
 
@@ -223,6 +235,46 @@ def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() 
     assert all(cell.underlying is _next_regime for cell in canonical.values())
 
 
+def test_temporal_graph_limits_canonical_transition_bundles() -> None:
+    """Dormant catalog targets do not create canonical transition bundles."""
+    regimes = {
+        "work": _regime(state_transitions={"wealth": _next_wealth}),
+        "retire": _regime(state_transitions={"wealth": _next_wealth}),
+        "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+    }
+    finalized = finalize_regimes(
+        user_regimes=regimes,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    graph = build_phase_reachability(
+        n_periods=2,
+        active_periods_by_regime={"work": {0}, "retire": {1}, "dead": {1}},
+        candidate_targets_by_source={
+            "work": {"work", "retire", "dead"},
+            "retire": {"work", "retire", "dead"},
+            "dead": set(),
+        },
+        terminal_regimes={"dead"},
+    )
+
+    specs = canonicalize_phased_regimes(
+        raw_specs=raw_specs,
+        all_regime_names=frozenset(regimes),
+        solution_reachability=graph,
+        simulation_reachability=graph,
+    )
+
+    wealth_transitions = specs["work"].solution.state_transitions["wealth"]
+    regime_transition = specs["work"].solution.regime_transition
+    assert isinstance(wealth_transitions, Mapping)
+    assert isinstance(regime_transition, Mapping)
+    assert set(wealth_transitions) == {"retire"}
+    assert set(regime_transition) == {"dead", "retire"}
+
+
 def test_per_target_regime_transition_passes_through() -> None:
     """A user per-target regime transition stays a mapping of exactly its cells."""
     to_retire = MarkovTransition(lambda age: jnp.asarray(0.6))  # noqa: ARG005
@@ -244,3 +296,48 @@ def test_terminal_regime_has_empty_canonical_transitions() -> None:
     assert specs["dead"].solution.state_transitions == {}
     assert specs["dead"].solution.regime_transition is None
     assert specs["dead"].terminal
+
+
+def test_two_step_seam_matches_wrapper() -> None:
+    """`canonicalize_phased_regimes` over `normalize_all_regime_phases` equals
+    the `canonicalize_regimes` wrapper.
+
+    The main model path splits the wrapper into an explicit phase-normalization
+    step and a canonicalization step so that model-level age normalization can
+    sit between them. The split must not change the end result.
+    """
+    finalized = finalize_regimes(
+        user_regimes={
+            "work": _regime(state_transitions={"wealth": _next_wealth}),
+            "retire": _regime(state_transitions={"wealth": _next_wealth}),
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
+
+    wrapper = canonicalize_regimes(user_regimes=finalized)
+
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    two_step = canonicalize_phased_regimes(
+        raw_specs=raw_specs,
+        all_regime_names=frozenset(finalized),
+    )
+
+    assert set(wrapper) == set(two_step)
+    for regime_name in wrapper:
+        for phase in ("solution", "simulation"):
+            wrapped_slice = getattr(wrapper[regime_name], phase)
+            two_step_slice = getattr(two_step[regime_name], phase)
+            assert dict(wrapped_slice.functions) == dict(two_step_slice.functions)
+            assert dict(wrapped_slice.constraints) == dict(two_step_slice.constraints)
+            assert dict(wrapped_slice.grid_states) == dict(two_step_slice.grid_states)
+            assert dict(wrapped_slice.state_transitions) == dict(
+                two_step_slice.state_transitions
+            )
+            assert wrapped_slice.regime_transition == two_step_slice.regime_transition
+            assert (
+                wrapped_slice.stochastic_regime_transition
+                == two_step_slice.stochastic_regime_transition
+            )

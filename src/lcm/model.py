@@ -33,6 +33,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.reachability import ModelReachability
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
@@ -42,7 +43,12 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
-from _lcm.regime_building.processing import Regime
+from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
+from _lcm.regime_building.processing import (
+    Regime,
+    compute_active_periods_by_regime,
+    prepare_model_structure,
+)
 from _lcm.simulation.compile import compile_all_simulation_phases
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -75,14 +81,21 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
+from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
     PyLCMError,
 )
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
-from lcm.typing import UserFacingParamsTemplate, UserInitialConditions, UserParams
+from lcm.typing import (
+    UserFacingParamsTemplate,
+    UserFunction,
+    UserInitialConditions,
+    UserParams,
+)
 
 
 class Model:
@@ -107,13 +120,16 @@ class Model:
 
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """The finalized regimes: plain `lcm.regime.Regime` instances, complete
-    (default `H` injected, completeness validated), with model-level slots
+    (Koopmans aggregator injected, completeness validated), with model-level slots
     merged in and broadcast variables pruned, still in user vocabulary."""
 
     pruned_variables: MappingProxyType[RegimeName, frozenset[str]]
     """Per regime, the broadcast states and actions pruned because no root
     computation of either phase reads them (directly or through a law of
     motion toward a reachable target that keeps them)."""
+
+    reachability: ModelReachability
+    """Static solution and simulation regime graphs."""
 
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
@@ -187,6 +203,8 @@ class Model:
         states: Mapping[str, object] = MappingProxyType({}),
         state_transitions: Mapping[str, object] = MappingProxyType({}),
         actions: Mapping[str, object] = MappingProxyType({}),
+        koopmans_aggregator: UserFunction = LinearAggregator(),
+        certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
     ) -> None:
         """Initialize the Model.
@@ -216,6 +234,16 @@ class Model:
                 `pruned_variables`). `distributed=True` is legal only here.
             state_transitions: Model-level laws of motion; same merge rule.
             actions: Model-level actions; same merge rule and pruning.
+            koopmans_aggregator: How every non-terminal regime combines current
+                utility with the certainty equivalent into `Q`. Same
+                all-or-nothing rule as `certainty_equivalent` below; terminal
+                regimes never receive it.
+            certainty_equivalent: How every non-terminal regime aggregates its
+                continuation lottery. Unlike the mapping slots above this is a
+                single value, so the rule is all-or-nothing rather than
+                per-name: declare it here, or in every regime that has a
+                continuation, never some of each. Terminal regimes never
+                receive it.
             n_subjects: Expected simulate batch size; if set, the first matching
                 `simulate(...)` call AOT-compiles all simulate functions for
                 batch shape `n_subjects` before backward induction starts.
@@ -230,6 +258,16 @@ class Model:
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
+
+        # The single canonical activity schedule: every regime's `active`
+        # predicate is evaluated exactly once, here, and threaded through
+        # pruning, validation, and model-structure preparation below. Its
+        # `.active` predicate is unaffected by slot merging/finalization, so
+        # the raw `regimes` argument is the correct — and only — evaluation
+        # point.
+        active_periods_by_regime = compute_active_periods_by_regime(
+            ages=ages, user_regimes=regimes
+        )
 
         model_slots = {
             "functions": functions,
@@ -246,10 +284,29 @@ class Model:
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
+            koopmans_aggregator=koopmans_aggregator,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
-        self.user_regimes = finalize_regimes(
+        finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             derived_categoricals=derived_categoricals,
+            koopmans_aggregator=koopmans_aggregator,
+            certainty_equivalent=certainty_equivalent,
+        )
+        # A process law named in `fixed_params` means exactly what the same
+        # value passed to the process constructor means, so it is bound into
+        # the grid here — before validation, structure preparation, and
+        # entry-law synthesis, all of which ask whether a process's law is
+        # known. What no process could take stays a runtime parameter and
+        # reaches `build_regimes_and_template` unchanged.
+        (
+            self.user_regimes,
+            residual_fixed_params,
+            params_consumed_by_binder,
+        ) = bind_fixed_process_laws(
+            user_regimes=finalized_regimes,
+            fixed_params=self.fixed_params,
         )
         validate_model_inputs(
             n_periods=self.n_periods,
@@ -257,6 +314,8 @@ class Model:
             regime_id_class=regime_id_class,
             n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
+            ages=self.ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -266,12 +325,20 @@ class Model:
                 )
             )
         )
+        prepared_structure = prepare_model_structure(
+            user_regimes=self.user_regimes,
+            ages=self.ages,
+            active_periods_by_regime=active_periods_by_regime,
+        )
+        self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
-            fixed_params=self.fixed_params,
+            fixed_params=residual_fixed_params,
+            params_already_consumed=params_consumed_by_binder,
+            prepared_structure=prepared_structure,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(

@@ -1,3 +1,5 @@
+import inspect
+
 from _lcm.grids import DiscreteGrid
 from _lcm.params.regime_template import (
     create_regime_params_template,
@@ -22,7 +24,7 @@ def test_create_params_without_processes(binary_category_class):
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"c": "no_annotation_found"},
             "next_b": {},
             "next_regime": {},
@@ -30,11 +32,111 @@ def test_create_params_without_processes(binary_category_class):
     )
 
 
-def test_create_params_with_custom_H_no_extra_params():
-    """A custom H with no extra params beyond utility and E_next_V."""
+def test_create_regime_params_template_has_no_representative_age_argument():
+    """Age specialization is resolved upstream, so the template is age-unaware.
 
-    def custom_H(utility: float, E_next_V: float) -> float:
-        return utility + E_next_V
+    `normalize_age_specialization` replaces every `AgeSpecializedFunction` by its
+    first-active concrete function before this runs, so the template reads concrete
+    signatures directly and needs no `representative_age` argument.
+    """
+    params = inspect.signature(create_regime_params_template).parameters
+    assert "representative_age" not in params
+
+
+def test_create_params_reads_concrete_function_params(binary_category_class):
+    """A concrete (normalized) function contributes its params under its name.
+
+    After normalization the regime carries the concrete first-active function in
+    place of any marker, so a real estimated parameter surfaces under its name with
+    no marker handling in the template.
+    """
+
+    def net_income(a, b, tax_rate):  # noqa: ARG001
+        return tax_rate
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": net_income,
+        },
+    )
+    got = create_regime_params_template(regime)
+    assert got["net_income"] == {"tax_rate": "no_annotation_found"}
+
+
+def test_create_params_unions_phased_variant_params(binary_category_class):
+    """`Phased` entries contribute the union of both variants' parameters."""
+
+    def solve_income(a, b, solve_rate):  # noqa: ARG001
+        return solve_rate
+
+    def simulate_income(a, b, simulate_rate):  # noqa: ARG001
+        return simulate_rate
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": lambda b: b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "net_income": Phased(solve=solve_income, simulate=simulate_income),
+        },
+    )
+    got = create_regime_params_template(regime)
+    assert got["net_income"] == {
+        "solve_rate": "no_annotation_found",
+        "simulate_rate": "no_annotation_found",
+    }
+
+
+def test_create_params_walks_a_phased_function_a_transition_reads(
+    binary_category_class,
+):
+    """A transition may read a `Phased` function, and both variants are walked.
+
+    `functions` and `state_transitions` both accept `Phased`, so a walk that
+    follows a law through the functions it reads meets one either way. Both
+    variants contribute their parameters.
+    """
+
+    def solve_adjustment(b, solve_rate):  # noqa: ARG001
+        return solve_rate
+
+    def simulate_adjustment(b, simulate_rate):  # noqa: ARG001
+        return simulate_rate
+
+    def next_b(adjustment):
+        return adjustment
+
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(binary_category_class)},
+        state_transitions={"b": next_b},
+        transition=lambda: 0,
+        functions={
+            "utility": lambda a, b: None,  # noqa: ARG005
+            "adjustment": Phased(solve=solve_adjustment, simulate=simulate_adjustment),
+        },
+    )
+
+    got = create_regime_params_template(regime)
+
+    assert got["adjustment"] == {
+        "solve_rate": "no_annotation_found",
+        "simulate_rate": "no_annotation_found",
+    }
+
+
+def test_create_params_with_custom_W_no_extra_params():
+    """A custom H with no extra params beyond utility and CE."""
+
+    def custom_W(utility: float, CE: float) -> float:
+        return utility + CE
 
     regime = MockRegime(
         actions={
@@ -43,11 +145,12 @@ def test_create_params_with_custom_H_no_extra_params():
         states={
             "b": None,
         },
-        functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
+        functions={"utility": lambda a, b, c: None},  # noqa: ARG005
+        koopmans_aggregator=custom_W,
     )
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
-        {"H": {}, "utility": {"c": "no_annotation_found"}}
+        {"koopmans_aggregator": {}, "utility": {"c": "no_annotation_found"}}
     )
 
 
@@ -55,7 +158,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     """H params matching a state name are excluded from the template.
 
     pylcm wires state/action values through `states_actions_params` and
-    filters into `H_kwargs` via the signature-derived `_H_accepted_params`.
+    filters into `W_kwargs` via the signature-derived `_H_accepted_params`.
     Names that match a state are therefore sourced from state values at
     runtime, not from the user-facing params dict, so they do not appear
     in the template.
@@ -70,7 +173,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {},
+            "koopmans_aggregator": {},
             "utility": {},
             "next_discount_factor": {},
             "next_regime": {},
@@ -78,7 +181,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
     )
 
 
-def test_custom_H_shadowing_state_is_allowed():
+def test_custom_W_shadowing_state_is_allowed():
     """Custom H may declare a state in its signature to subscript it.
 
     This is how a model with a `pref_type` state can have a custom H that
@@ -87,16 +190,19 @@ def test_custom_H_shadowing_state_is_allowed():
     call time from the state space.
     """
 
-    def custom_H(utility: float, E_next_V: float, wealth: float) -> float:
-        return utility + wealth * E_next_V
+    def custom_W(utility: float, CE: float, wealth: float) -> float:
+        return utility + wealth * CE
 
     regime = MockRegime(
         actions={"a": None},
         states={"wealth": None},
-        functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
+        functions={"utility": lambda a, wealth: None},  # noqa: ARG005
+        koopmans_aggregator=custom_W,
     )
     got = create_regime_params_template(regime)
-    assert got == ensure_containers_are_immutable({"H": {}, "utility": {}})
+    assert got == ensure_containers_are_immutable(
+        {"koopmans_aggregator": {}, "utility": {}}
+    )
 
 
 def test_solve_simulate_pair_template_contains_union_of_params() -> None:
@@ -108,24 +214,20 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     both phases.
     """
 
-    def exponential_h(utility: float, E_next_V: float, discount_factor: float) -> float:
-        return utility + discount_factor * E_next_V
+    def exponential_h(utility: float, CE: float, discount_factor: float) -> float:
+        return utility + discount_factor * CE
 
-    def beta_delta_h(
-        utility: float, E_next_V: float, beta: float, delta: float
-    ) -> float:
-        return utility + beta * delta * E_next_V
+    def beta_delta_h(utility: float, CE: float, beta: float, delta: float) -> float:
+        return utility + beta * delta * CE
 
     regime = MockRegime(
         actions={"a": None},
         states={"b": None},
-        functions={  # ty: ignore[invalid-argument-type]
-            "utility": lambda a, b: None,  # noqa: ARG005
-            "H": Phased(solve=exponential_h, simulate=beta_delta_h),
-        },
+        functions={"utility": lambda a, b: None},  # noqa: ARG005
+        koopmans_aggregator=Phased(solve=exponential_h, simulate=beta_delta_h),
     )
     got = create_regime_params_template(regime)
-    assert set(got["H"]) == {"discount_factor", "beta", "delta"}
+    assert set(got["koopmans_aggregator"]) == {"discount_factor", "beta", "delta"}
 
 
 def test_regular_function_taking_state_as_argument_no_error(binary_category_class):
@@ -144,7 +246,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"risk_aversion": "no_annotation_found"},
             "next_wealth": {},
             "next_regime": {},
@@ -183,7 +285,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
     got = create_regime_params_template(regime)
     assert got == ensure_containers_are_immutable(
         {
-            "H": {"discount_factor": "FloatND"},
+            "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {},
             "next_wealth": {},
             "next_aime": {},

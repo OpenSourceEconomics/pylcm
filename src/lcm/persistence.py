@@ -118,7 +118,7 @@ def load_snapshot(
     """
     path = Path(path)
 
-    with (path / "metadata.json").open() as fh:
+    with (path / "metadata.json").open(encoding="utf-8") as fh:
         metadata = json.load(fh)
 
     snapshot_type = metadata["snapshot_type"]

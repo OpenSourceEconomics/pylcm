@@ -24,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -230,6 +231,40 @@ def test_broadcast_action_prunes_where_unused() -> None:
     assert "effort" in model.pruned_variables["retired"]
 
 
+def test_broadcast_state_read_only_through_age_specialized_function_survives() -> None:
+    """A broadcast state read only inside an `AgeSpecializedFunction` is not pruned.
+
+    DAG-reachability pruning must resolve `AgeSpecializedFunction` markers before
+    walking the DAG, the same way model-level variable-usage validation already
+    does -- otherwise `get_ancestors` sees only the marker's generic
+    `(*args, **kwargs)` signature and cannot tell the broadcast state is used.
+    """
+
+    def build_policy_bonus(age: float):
+        return lambda bonus_base: bonus_base + age
+
+    model = _build_model(
+        regimes={
+            "work": _work_regime(
+                functions={
+                    "utility": lambda consumption, policy_bonus: (
+                        jnp.log(consumption) + policy_bonus
+                    ),
+                    "policy_bonus": AgeSpecializedFunction(
+                        build=build_policy_bonus, signature=lambda age: age
+                    ),
+                }
+            ),
+            "retired": _retired_regime(),
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        states={"bonus_base": LinSpacedGrid(start=0.0, stop=1.0, n_points=3)},
+        state_transitions={"bonus_base": fixed_transition("bonus_base")},
+    )
+    assert "bonus_base" in model.user_regimes["work"].states
+    assert "bonus_base" not in model.pruned_variables["work"]
+
+
 def test_sharded_state_pruned_anywhere_raises() -> None:
     """A model-level `distributed=True` state must survive pruning in every
     non-terminal regime."""
@@ -265,7 +300,7 @@ def test_model_broadcast_solves_and_simulates() -> None:
             "regime_id": jnp.full(4, _RegimeId.work),
         },
         period_to_regime_to_V_arr=None,
-        log_level="off",
+        log_level="debug",
         seed=3,
     )
     df = result.to_dataframe(use_labels=False)

@@ -7,9 +7,10 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import numpy as np
-from dags import concatenate_functions
+from dags import concatenate_functions, get_ancestors
 
 from _lcm.engine import Regime
+from _lcm.transition_laws import is_stochastic
 from _lcm.typing import FlatRegimeParams, RegimeName
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
@@ -61,7 +62,7 @@ def _collect_all_available_targets(
 
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime."""
-    excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    excluded = _get_stochastic_weight_function_names(regime)
     sim = regime.simulation
     return {
         name for name in sim.functions if name not in excluded
@@ -74,12 +75,12 @@ def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.simulation.stochastic_transition_names
+    transition_laws = regime.simulation.transition_laws
     return {
         f"weight_{target_regime_name}__{transition_name}"
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if transition_name in stochastic_transition_names
+        if is_stochastic(transition_laws, target_regime_name, transition_name)
     }
 
 
@@ -111,6 +112,9 @@ def _compute_targets(
     single pass. Values are identical to the single-pass evaluation.
     """
     functions_pool = _build_functions_pool(regime)
+    _fail_if_targets_depend_on_age_specialized(
+        targets=targets, functions_pool=functions_pool, regime=regime
+    )
     target_func = _create_target_function(
         functions_pool=functions_pool, targets=targets
     )
@@ -127,36 +131,85 @@ def _compute_targets(
     if not subject_batch_size or subject_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
-        return {k: jnp.squeeze(v) for k, v in result.items()}
+        return {k: _one_value_per_row(v, n_rows=n_rows) for k, v in result.items()}
 
     # Slice the (host-resident) inputs and move only one chunk to the device at a
-    # time. Squeeze the *concatenated* result, never a chunk — an uneven final
-    # chunk of one row would otherwise lose its row axis.
+    # time, so the fused DAG's workspace is bounded by the chunk.
     chunk_outputs: list[dict[str, np.ndarray]] = []
     for start in range(0, n_rows, subject_batch_size):
         stop = min(start + subject_batch_size, n_rows)
         chunk_kwargs = {k: jnp.asarray(v[start:stop]) for k, v in inputs.items()}
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
-        chunk_outputs.append({k: np.asarray(v) for k, v in chunk_result.items()})
+        chunk_outputs.append(
+            {
+                k: np.asarray(_one_value_per_row(v, n_rows=stop - start))
+                for k, v in chunk_result.items()
+            }
+        )
 
-    result: dict[str, FloatND | IntND | BoolND | np.ndarray] = {}
-    for name in chunk_outputs[0]:
-        per_chunk = [out[name] for out in chunk_outputs]
-        # A target with no per-subject variable (a constant, e.g. a terminal-regime
-        # `utility`) yields the same scalar from every chunk; keep one as a 0-d
-        # jax.Array to match the single-pass dtype rather than concatenating scalars.
-        if per_chunk[0].ndim == 0:
-            result[name] = jnp.asarray(per_chunk[0])
-        else:
-            result[name] = np.squeeze(np.concatenate(per_chunk))
-    return result
+    return {
+        name: np.concatenate([out[name] for out in chunk_outputs])
+        for name in chunk_outputs[0]
+    }
+
+
+def _one_value_per_row(
+    values: FloatND | IntND | BoolND | np.ndarray | float,
+    *,
+    n_rows: int,
+) -> FloatND | IntND | BoolND:
+    """Return a target's values shaped as exactly one entry per row.
+
+    A target that reads no per-subject variable — a terminal regime's constant
+    `utility` is the ordinary case — comes back from the vectorized DAG without
+    a row axis, and a single row's chunk comes back with one of length one that
+    a squeeze would remove. Either shape put into a `DataFrame` gives a column
+    of array objects rather than numbers, which then compares by identity and
+    carries no dtype.
+    """
+    arr = jnp.asarray(values)
+    if arr.ndim == 0:
+        return jnp.full((n_rows,), arr)
+    return arr.reshape(n_rows)
+
+
+def _fail_if_targets_depend_on_age_specialized(
+    *,
+    targets: list[str],
+    functions_pool: dict[str, UserFunction],
+    regime: Regime,
+) -> None:
+    """Reject targets whose DAG reads a policy-specialized function.
+
+    The rejected functions are those specialized via `AgeSpecializedFunction`.
+
+    The published simulation functions hold each specialized function resolved at
+    the regime's representative age only; computing a period-specific target from
+    them would silently use the wrong age's policy closure.
+    """
+    specialized = regime.simulation.age_specialized_function_names
+    if not specialized:
+        return
+    consumed = (
+        set(get_ancestors(functions_pool, targets=targets, include_targets=True))
+        & specialized
+    )
+    if consumed:
+        raise InvalidAdditionalTargetsError(
+            f"Targets {sorted(set(targets))} depend on the policy-specialized "
+            f"(`AgeSpecializedFunction`) function(s) {sorted(consumed)}. Published "
+            f"simulation functions hold one representative-age closure, so a "
+            f"period-specific value computed from them would use the wrong age's "
+            f"policy. Compute such quantities inside the model (as a state or a "
+            f"logged function) instead."
+        )
 
 
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
     sim = regime.simulation
     pool: dict[str, UserFunction] = {
-        **{k: v for k, v in sim.functions.items() if k != "H"},
+        **sim.functions,
         **sim.constraints,
     }
     if sim.compute_regime_transition_probs is not None:

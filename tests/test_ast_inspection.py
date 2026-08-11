@@ -1,5 +1,6 @@
 """Tests for AST-based array parameter indexing detection."""
 
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -165,4 +166,52 @@ def test_multiple_subscripts_raises() -> None:
     with pytest.raises(ValueError, match="multiple"):
         _get_func_indexing_params(
             func=_multiple_subscripts, array_param_name="probs_array"
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CallableMulti:
+    """A callable object whose `__call__` indexes an array parameter."""
+
+    def __call__(self, period: int, health: int, probs_array: Any) -> Any:
+        return probs_array[period, health]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CallableScalar:
+    """A callable object that never subscripts its array parameter."""
+
+    def __call__(self, period: int, probs_array: Any) -> Any:
+        return probs_array * period
+
+
+def test_callable_object_indexing_params_match_the_equivalent_function() -> None:
+    """A callable object is inspected through its `__call__`."""
+    assert _get_func_indexing_params(
+        func=_CallableMulti(), array_param_name="probs_array"
+    ) == ["period", "health"]
+
+
+def test_callable_object_without_a_subscript_returns_empty() -> None:
+    """A callable object that does not index its array parameter is scalar."""
+    assert (
+        _get_func_indexing_params(
+            func=_CallableScalar(), array_param_name="probs_array"
+        )
+        == []
+    )
+
+
+def test_uninspectable_callable_object_names_its_class() -> None:
+    """The error for an uninspectable callable object names the class, not a lambda."""
+    namespace: dict[str, Any] = {}
+    exec(  # noqa: S102
+        "class _Dynamic:\n"
+        "    def __call__(self, health, probs_array):\n"
+        "        return probs_array[health]\n",
+        namespace,
+    )
+    with pytest.raises(TypeError, match="_Dynamic"):
+        _get_func_indexing_params(
+            func=namespace["_Dynamic"](), array_param_name="probs_array"
         )

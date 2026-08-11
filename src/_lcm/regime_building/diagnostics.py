@@ -9,9 +9,9 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,39 +19,54 @@ import jax.numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
-from _lcm.regime_building.Q_and_F import get_compute_intermediates, get_period_targets
+from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.age_normalization import (
+    AgeGridSchedule,
+    continuation_group_key,
+    continuation_info_lookup,
+    expand_groups_to_periods,
+    group_periods_by_key,
+    resolve_periodized_nodes,
+)
+from _lcm.regime_building.Q_and_F import get_compute_intermediates
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
+    EconFunction,
     EconFunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
-    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
-from lcm.ages import AgeGrid
 from lcm.typing import BoolND, FloatND, IntND
 
 
 def _build_compute_intermediates_per_period(
     *,
+    active_periods: tuple[int, ...],
     flat_param_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    phase_reachability: PhaseReachability,
+    source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     grids: MappingProxyType[StateOrActionName, Grid],
-    ages: AgeGrid,
     enable_jit: bool,
-    certainty_equivalent: CertaintyEquivalent | None = None,
+    koopmans_aggregator: EconFunction,
+    certainty_equivalent: CertaintyEquivalent | None,
+    grid_schedule: AgeGridSchedule | None = None,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ) = None,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -69,8 +84,8 @@ def _build_compute_intermediates_per_period(
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition
             functions.
-        stochastic_transition_names: Frozenset of stochastic transition
-            function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability
             function for the current regime.
         regime_to_v_interpolation_info: Mapping of regime names to
@@ -78,8 +93,9 @@ def _build_compute_intermediates_per_period(
         state_action_space: State-action space used for productmap sizing.
         grids: Immutable mapping of state/action names to grid specs; used
             for per-state batch sizes.
-        ages: Age grid for the model.
         enable_jit: Whether to JIT-compile the fused closure.
+        koopmans_aggregator: The regime's Bellman aggregator, with params
+            renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
 
@@ -93,31 +109,53 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    configs: dict[tuple[RegimeName, ...], list[int]] = {}
-    for period in range(ages.n_periods):
-        complete = get_period_targets(
-            period=period,
-            transitions=transitions,
-            regimes_to_active_periods=regimes_to_active_periods,
-        )
-        configs.setdefault(complete, []).append(period)
+    # `continuation_info` mirrors `_build_Q_and_F_per_period.continuation_info` so a
+    # NaN diagnostic recomputes intermediates on the *same* period-specific target
+    # grid the primary solve used, not the representative grid. `group_key` mirrors
+    # `_build_Q_and_F_per_period.group_key`'s grouping.
+    continuation_info = continuation_info_lookup(
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    group_key = continuation_group_key(
+        phase_reachability=phase_reachability,
+        source_regime_name=source_regime_name,
+        functions=functions,
+        constraints=constraints,
+        grid_schedule=grid_schedule,
+    )
+
+    configs = group_periods_by_key(active_periods, group_key)
 
     variable_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[tuple[RegimeName, ...], Callable] = {}
-    for period_targets in configs:
+    built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
+    for key, periods in configs.items():
+        period_targets = key[0]
+        representative_period = periods[0]
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
-            functions=functions,
-            constraints=constraints,
+            functions=cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(functions, representative_period),
+            ),
+            constraints=cast(
+                "ConstraintFunctionsMapping",
+                resolve_periodized_nodes(constraints, representative_period),
+            ),
             period_targets=period_targets,
             transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            regime_to_v_interpolation_info=continuation_info(representative_period),
+            koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+            # The diagnostics are handed the full value arrays and map over
+            # every state, so none of the solve kernel's co-mapped axes have
+            # been sliced off here.
+            co_map_state_names=(),
         )
         mapped = _productmap_over_state_action_space(
             func=scalar,
@@ -126,14 +164,9 @@ def _build_compute_intermediates_per_period(
             state_batch_sizes=state_batch_sizes,
         )
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
-        built[period_targets] = jax.jit(fused) if enable_jit else fused
+        built[key] = jax.jit(fused) if enable_jit else fused
 
-    result: dict[int, Callable] = {}
-    for key, periods in configs.items():
-        for period in periods:
-            result[period] = built[key]
-
-    return MappingProxyType(result)
+    return expand_groups_to_periods(configs, built)
 
 
 def _wrap_with_reduction(
@@ -150,7 +183,7 @@ def _wrap_with_reduction(
 
     Args:
         func: Productmap'd closure returning
-            `(U_arr, F_arr, E_next_V, Q_arr, regime_probs)`. `regime_probs`
+            `(U_arr, F_arr, CE, Q_arr, regime_probs)`. `regime_probs`
             is a mapping of target regime names to per-point probability
             arrays.
         variable_names: Tuple of state + action names in the order that
@@ -160,8 +193,8 @@ def _wrap_with_reduction(
     Returns:
         Callable taking the same kwargs as `func` and returning a dict with
         `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
-        {`U_nan`, `E_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
-        a dict of per-target scalar means. The `{U,E,Q}_nan_*` fractions
+        {`U_nan`, `CE_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
+        a dict of per-target scalar means. The `{U,CE,Q}_nan_*` fractions
         are conditional on feasibility (numerator restricted to feasible
         cells, denominator is the feasible-cell count); `F_feasible_*`
         is the plain mean over all cells.
@@ -174,7 +207,7 @@ def _wrap_with_reduction(
     def reduced(
         **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
     ) -> dict[str, Any]:
-        U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
+        U_arr, F_arr, CE, Q_arr, regime_probs = func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells
         # contribute to numerators. Infeasible cells are zeroed out because
@@ -182,7 +215,7 @@ def _wrap_with_reduction(
         # propagates to V_arr — reporting it would conflate causes.
         nan_arrays: dict[str, FloatND] = {
             "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
-            "E_nan": jnp.isnan(E_next_V).astype(float) * F_float,
+            "CE_nan": jnp.isnan(CE).astype(float) * F_float,
             "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
         }
 

@@ -2,7 +2,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 
-from _lcm.engine import VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, categorical
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.next_state import (
@@ -11,8 +10,10 @@ from _lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
 )
 from _lcm.regime_building.processing import process_regimes
+from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
+from tests.conftest import build_prepared_structure
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -22,13 +23,20 @@ def test_get_next_state_function_with_solve_target():
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
+    finalized_user_regimes = finalize_regimes(
+        user_regimes=user_regimes,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
-        user_regimes=finalize_regimes(
-            user_regimes=user_regimes, derived_categoricals={}
-        ),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized_user_regimes, ages=ages
+        ),
     )
 
     internal_working = regimes["working_life"]
@@ -79,11 +87,6 @@ def test_get_next_state_function_with_simulate_target():
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
-    variables = Variables(
-        info=MappingProxyType(
-            {"b": VariableInfo(kind="state", topology="discrete", is_process=False)}
-        )
-    )
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
     )
@@ -93,7 +96,7 @@ def test_get_next_state_function_with_simulate_target():
         transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
-        variables=variables,
+        transition_laws=MappingProxyType({}),
     )
 
     got = got_func(state=jnp.array([1.0, 2.0]))

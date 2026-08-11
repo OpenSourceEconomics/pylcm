@@ -9,9 +9,16 @@ mathematically expected next-period values in solve and simulate.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
 
 
 @categorical(ordered=False)
@@ -142,3 +149,95 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
             np.testing.assert_allclose(
                 float(curr["wealth"]), expected_next_wealth, atol=1e-6
             )
+
+
+@categorical(ordered=True)
+class _Good:
+    bad: ScalarInt
+    good: ScalarInt
+
+
+@categorical(ordered=True)
+class _Capital:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class _Move:
+    stay: ScalarInt
+    invest: ScalarInt
+
+
+@categorical(ordered=False)
+class _RegimeIdF2:
+    live: ScalarInt
+    last: ScalarInt
+
+
+def _f2_next_capital(capital: DiscreteState, move: DiscreteAction) -> DiscreteState:
+    """Deterministic: investing lands in high capital, else persists current capital."""
+    return jnp.where(move == _Move.invest, _Capital.high, capital)
+
+
+def _f2_good_probs(next_capital: DiscreteState) -> FloatND:
+    """Stochastic weight law reading the deterministic chained next capital.
+
+    high capital -> P(good)=1; low capital -> P(bad)=1. The producer of
+    `next_capital` is another (deterministic) transition in the same target DAG.
+    """
+    return jnp.identity(2)[next_capital]
+
+
+def _f2_utility(good: DiscreteState, move: DiscreteAction) -> FloatND:
+    return good + 0.0 * move
+
+
+def _f2_next_regime(period: Period) -> ScalarInt:
+    return jnp.where(period >= 1, _RegimeIdF2.last, _RegimeIdF2.live)
+
+
+def _f2_build_model() -> Model:
+    live = UserRegime(
+        transition=_f2_next_regime,
+        active=lambda age: age < 27,
+        states={"good": DiscreteGrid(_Good), "capital": DiscreteGrid(_Capital)},
+        actions={"move": DiscreteGrid(_Move)},
+        state_transitions={
+            "good": MarkovTransition(_f2_good_probs),
+            "capital": _f2_next_capital,
+        },
+        functions={"utility": _f2_utility},
+    )
+    last = UserRegime(
+        transition=None,
+        active=lambda age: age >= 27,
+        functions={"utility": lambda: jnp.array(0.0)},
+    )
+    return Model(
+        regimes={"live": live, "last": last},
+        ages=AgeGrid(start=25, stop=27, step="1Y"),
+        regime_id_class=_RegimeIdF2,
+    )
+
+
+def test_stochastic_weight_reading_deterministic_next_state_solves() -> None:
+    """A Markov weight law reading a deterministic chained next-state solves.
+
+    `good`'s transition probabilities depend on `next_capital`, produced by the
+    deterministic `capital` transition in the same target DAG; the stochastic-weight
+    evaluator's function pool must include the deterministic transition producers,
+    not just `functions`, for such a read to resolve.
+    """
+    model = _f2_build_model()
+    V = model.solve(params={"discount_factor": 0.95}, log_level="debug")
+
+    v_live = V[0]["live"]
+    # Analytical value: from period 0, investing (or already being at high capital)
+    # deterministically makes next period's `good` state "good", so
+    # V[0]["live"](good, capital) = good + 0.95 * 1 for every capital -- period 1's
+    # value is `good` alone (utility ignores `move`/`capital`, and the terminal
+    # regime's utility is a constant zero), and reaching "good" with certainty next
+    # period is always at least as good as not investing.
+    expected_v_live = jnp.array([[0.95, 0.95], [1.95, 1.95]])
+    np.testing.assert_allclose(v_live, expected_v_live, atol=1e-6)

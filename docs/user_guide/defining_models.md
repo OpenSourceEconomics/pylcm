@@ -61,15 +61,16 @@ are merged into every regime under three rules:
   Masking a state also drops its broadcast law of motion, and masking a name that has no
   model-level entry behind it is an error.
 - **DAG pruning.** A model-level (broadcast) state or action survives in a given regime
-  only if some root computation of that regime — utility, `H`, a constraint, a derived
-  categorical, the regime transition, or a law of motion toward a reachable target that
-  carries the state — transitively reads it. Because "a law toward a reachable target
-  that carries the state" refers to *other* regimes' carried states, pruning one
-  variable in regime B can make a variable in regime A newly dead, so the pruning
-  iterates across all regimes until nothing more can be dropped (a cross-regime fixed
-  point). It runs separately on the solve slice and the simulate slice of each regime; a
-  variable is dropped only when dead in **both** phases. Regime-level declarations are
-  never pruned. `model.pruned_variables` records the outcome per regime.
+  only if some root computation of that regime — utility, the Koopmans aggregator, a
+  constraint, a derived categorical, the regime transition, or a law of motion toward a
+  reachable target that carries the state — transitively reads it. Because "a law toward
+  a reachable target that carries the state" refers to *other* regimes' carried states,
+  pruning one variable in regime B can make a variable in regime A newly dead, so the
+  pruning iterates across all regimes until nothing more can be dropped (a cross-regime
+  fixed point). It runs separately on the solve slice and the simulate slice of each
+  regime; a variable is dropped only when dead in **both** phases. Regime-level
+  declarations are never pruned. `model.pruned_variables` records the outcome per
+  regime.
 
 Pruning means a model-level state costs nothing in regimes that never touch it — the
 grid axis simply does not appear there. Two restrictions keep the device layout

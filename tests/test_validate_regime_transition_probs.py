@@ -3,10 +3,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.transition_checks import (
     _format_sum_violation,
     _validate_regime_transition_probs,
+    validate_state_transitions_all_periods,
 )
+from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -15,9 +18,12 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    InvalidStateTransitionProbabilitiesError,
+)
 from lcm.regime import Regime as UserRegime
-from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from lcm.typing import DiscreteAction, FloatND, ScalarFloat, ScalarInt
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
@@ -26,12 +32,14 @@ def test_valid_probs_accept_boundary_inputs():
     """Inclusive [0, 1] bounds and a sum within tolerance pass validation.
 
     Subject 0 splits probability exactly `[1.0, 0.0]` — values at the
-    inclusive bounds. Subject 1 sums to `1 - 2.5e-6`, just inside the
-    `jnp.allclose` default tolerance. The validator must accept both.
+    inclusive bounds. Subject 1 falls short of unit mass by a few epsilons
+    of the working dtype, the rounding slack a genuine probability sum can
+    accumulate. The validator must accept both.
     """
+    eps = float(jnp.finfo(canonical_float_dtype()).eps)
     probs = MappingProxyType(
         {
-            "working_life": jnp.array([1.0, 0.4999975]),
+            "working_life": jnp.array([1.0, 0.5 - 4 * eps]),
             "retirement": jnp.array([0.0, 0.5]),
         }
     )
@@ -42,6 +50,31 @@ def test_valid_probs_accept_boundary_inputs():
         age=25.0,
         next_age=26.0,
     )
+
+
+def test_raises_for_mass_large_enough_to_reverse_an_argmax():
+    """A total mass of `1.000005` is rejected, not absorbed as rounding.
+
+    At float32 that much excess mass is enough to flip a Bellman `argmax`,
+    so it is a defect in the transition rather than accumulated rounding.
+    """
+    probs = MappingProxyType(
+        {
+            "working_life": jnp.array([0.500005]),
+            "retirement": jnp.array([0.5]),
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"1 of 1 probability vectors do not sum to 1\.0",
+    ):
+        _validate_regime_transition_probs(
+            regime_transition_probs=probs,
+            active_regimes_next_period=("working_life", "retirement"),
+            regime_name="working_life",
+            age=25.0,
+            next_age=26.0,
+        )
 
 
 def test_valid_probs_with_inactive_regime_at_zero():
@@ -349,4 +382,103 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
             params=params,
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=None,
+        )
+
+
+def test_dual_invalid_regime_probs_report_sum_error_first():
+    """When both the sum-to-one and graph-membership checks fail, sum wins.
+
+    Restores the validation order (range in `[0, 1]` -> sum-to-one ->
+    positive mass confined to active regimes) so a doubly-broken
+    `next_regime` reports a stable, deterministic message regardless of
+    which check would otherwise run first.
+    """
+    probs = MappingProxyType(
+        {
+            "working_life": jnp.array([0.5]),
+            "dead": jnp.array([0.3]),
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"do not sum to 1\.0",
+    ):
+        _validate_regime_transition_probs(
+            regime_transition_probs=probs,
+            active_regimes_next_period=("working_life",),
+            regime_name="working_life",
+            age=25.0,
+            next_age=26.0,
+        )
+
+
+@categorical(ordered=False)
+class _AuxOutcome:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class _SoloTermRegimeId:
+    solo: ScalarInt
+    term: ScalarInt
+
+
+def _zero_utility() -> ScalarFloat:
+    return jnp.float32(0)
+
+
+def _one_probability() -> ScalarFloat:
+    return jnp.float32(1)
+
+
+def _malformed_aux_probs() -> FloatND:
+    """Deliberately invalid: [0.5, 0.6] does not sum to 1."""
+    return jnp.array([0.5, 0.6])
+
+
+def test_coarse_state_transition_is_checked_with_empty_period_targets():
+    """A coarse stochastic state law is checked even with no retained regime target.
+
+    `solo` is active only at period 1 (age 21) and `term` only at period 0
+    (age 20) — temporally disjoint, so `solo`'s only candidate target
+    (`term`) is never adjacent-period compatible and `solo`'s
+    regime-transition graph retains no target at any period it is active
+    (`targets(period=1, source="solo") == ()`). The coarse
+    (`target_regime_name is None`) `MarkovTransition` on state `aux` must
+    still be numerically validated at period 1 regardless — that emptiness
+    is a fact about the regime transition, not about whether the coarse
+    state law applies.
+    """
+    model = Model(
+        regimes={
+            "solo": UserRegime(
+                transition={"term": MarkovTransition(_one_probability)},
+                active=lambda age: age >= 21,
+                states={"aux": DiscreteGrid(_AuxOutcome)},
+                state_transitions={"aux": MarkovTransition(_malformed_aux_probs)},
+                constraints={"aux_is_valid": lambda aux: aux >= 0},
+                functions={"utility": _zero_utility},
+            ),
+            "term": UserRegime(
+                transition=None,
+                active=lambda age: age < 21,
+                functions={"utility": _zero_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=_SoloTermRegimeId,
+        enable_jit=False,
+    )
+    assert model.reachability.solution.targets(period=1, source="solo") == ()
+
+    flat_params = model._process_params({"discount_factor": 1.0})
+    logger = get_logger(log_level="debug")
+
+    with pytest.raises(InvalidStateTransitionProbabilitiesError):
+        validate_state_transitions_all_periods(
+            regimes=model._regimes,
+            flat_params=flat_params,
+            ages=model.ages,
+            logger=logger,
         )

@@ -20,6 +20,7 @@ from types import MappingProxyType
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
 from _lcm.grids import Grid
+from _lcm.reachability import PhaseReachability
 from _lcm.typing import (
     MaxQOverAFunction,
     QAndFFunction,
@@ -40,6 +41,9 @@ class SolverBuildContext:
     state_action_space: StateActionSpace
     """The regime's state-action space."""
 
+    solution_reachability: PhaseReachability
+    """Static solution graph used to derive solver layouts."""
+
     Q_and_F_functions: MappingProxyType[int, QAndFFunction]
     """Immutable mapping of period to Q-and-F closures."""
 
@@ -52,7 +56,7 @@ class SolverBuildContext:
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any.
 
     `GridSearch` consumes it via the compiled Q-and-F closures; solvers

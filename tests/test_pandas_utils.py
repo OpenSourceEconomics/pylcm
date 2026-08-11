@@ -20,13 +20,14 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Phased,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -534,7 +535,17 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
 
 
 def test_initial_conditions_heterogeneous_state_sets() -> None:
-    """Handle regimes where a state only exists in some regimes."""
+    """Handle regimes where a state only exists in some regimes.
+
+    `with_status` and `without_status` each transition to `dead` only, via a
+    per-target dict — not a bare coarse transition. A bare transition
+    declares conservative support over every regime active next period, and
+    `without_status` neither carries `status` nor defines an entry law for
+    it, so a coarse transition between the two would fail strict
+    state-handoff validation. The per-target dict is required here, not an
+    arbitrary workaround: it narrows each regime's declared targets to
+    `dead`, which needs no `status` handoff.
+    """
 
     @categorical(ordered=False)
     class _Rid:
@@ -547,8 +558,8 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         low: ScalarInt
         high: ScalarInt
 
-    def _next_regime() -> ScalarInt:
-        return _Rid.dead
+    def _one_probability() -> ScalarFloat:
+        return jnp.float32(1)
 
     def _utility_with_status(wealth: float, status: int) -> float:
         return wealth + status
@@ -557,7 +568,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         return wealth
 
     with_status = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "status": DiscreteGrid(_Status),
@@ -569,7 +580,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         functions={"utility": _utility_with_status},
     )
     without_status = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility_without_status},
@@ -609,7 +620,16 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
 
 def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
-    """A process state (income) only present in one regime is NaN-filled elsewhere."""
+    """A process state (income) only present in one regime is NaN-filled elsewhere.
+
+    `earner` and `retiree` each transition to `dead` only, via a per-target
+    dict — not a bare coarse transition. A bare transition declares
+    conservative support over every regime active next period, and `retiree`
+    neither carries `income` nor defines an entry law for it, so a coarse
+    transition from `earner` would fail strict state-handoff validation. The
+    per-target dict is required here, not an arbitrary workaround: it narrows
+    `earner`'s declared targets to `dead`, which needs no `income` handoff.
+    """
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
     @categorical(ordered=False)
@@ -618,8 +638,8 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         retiree: ScalarInt
         dead: ScalarInt
 
-    def _next_regime() -> ScalarInt:
-        return _Rid.dead
+    def _one_probability() -> ScalarFloat:
+        return jnp.float32(1)
 
     def _earner_utility(wealth: float, income: float) -> float:
         return wealth + income
@@ -628,7 +648,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         return wealth
 
     earner = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
@@ -637,7 +657,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
-        transition=_next_regime,
+        transition={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
@@ -1445,8 +1465,8 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     # Model-level param is broadcast to all regimes/functions that need it
-    assert result["working_life"]["H__discount_factor"] == 0.95
-    assert result["retirement"]["H__discount_factor"] == 0.95
+    assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
+    assert result["retirement"]["koopmans_aggregator__discount_factor"] == 0.95
 
 
 def test_convert_series_regime_level_series() -> None:
@@ -1493,7 +1513,7 @@ def test_convert_series_mixed_dict() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    assert result["working_life"]["H__discount_factor"] == 0.95
+    assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
     assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert result["working_life"]["next_wealth__interest_rate"] == 0.05

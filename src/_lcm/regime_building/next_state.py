@@ -1,21 +1,24 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import MappingProxyType
 
 import jax
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 
-from _lcm.engine import Variables
 from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.ar1 import _AR1Process
 from _lcm.processes.iid import _IIDProcess
+from _lcm.transition_laws import (
+    TransitionLaws,
+    is_interpolation_basis,
+    is_stochastic,
+)
 from _lcm.typing import (
     EconFunctionsMapping,
     NextStateSimulationFunction,
-    ProcessName,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -31,12 +34,16 @@ def get_next_state_function_for_solution(
     *,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
+    targets: Sequence[TransitionFunctionName] | None = None,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        targets: Laws to compute, defaulting to every law in `transitions`. A law
+            reading one of this target's own draws is resolved on the node axis
+            instead, so the caller leaves it out here.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -49,7 +56,7 @@ def get_next_state_function_for_solution(
 
     return concatenate_functions(
         functions=functions_to_concatenate,
-        targets=list(transitions.keys()),
+        targets=list(transitions.keys() if targets is None else targets),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -61,8 +68,7 @@ def get_next_state_function_for_simulation(
     transitions: TransitionFunctionsMapping,
     functions: EconFunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variables: Variables,
-    stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
+    transition_laws: TransitionLaws,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -81,8 +87,8 @@ def get_next_state_function_for_simulation(
         transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        variables: States and actions of the regime with kind/topology/process tags.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -97,8 +103,7 @@ def get_next_state_function_for_simulation(
             target_regime_name=target_regime_name,
             bundle=bundle,
             all_grids=all_grids,
-            variables=variables,
-            stochastic_transition_names=stochastic_transition_names,
+            transition_laws=transition_laws,
         )
         per_target_funcs[target_regime_name] = concatenate_functions(
             functions=dict(extended) | dict(functions),
@@ -122,7 +127,7 @@ def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -130,19 +135,108 @@ def get_next_stochastic_weights_function(
         regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
+    return _get_next_weights_function(
+        regime_name=regime_name,
+        functions=functions,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        select=is_stochastic,
+    )
+
+
+def get_next_interpolation_basis_weights_function(
+    *,
+    regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+) -> Callable[..., dict[str, FloatND | IntND]]:
+    """Get function that computes the node-basis weights of the declared entries.
+
+    These weights place one declared value on the target's nodes; they are the
+    coefficients of an interpolation, not probabilities, and the caller contracts
+    them into a single continuation before any certainty equivalent runs.
+
+    Args:
+        regime_name: Name of the regime that the transitions target.
+        functions: Immutable mapping of auxiliary functions of the model.
+        transitions: Transitions to the target regime.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+
+    Returns:
+        Function that computes the node-basis weights of the declared entries.
+
+    """
+    return _get_next_weights_function(
+        regime_name=regime_name,
+        functions=functions,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        select=is_interpolation_basis,
+    )
+
+
+def _get_next_weights_function(
+    *,
+    regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
+    transition_laws: TransitionLaws,
+    select: Callable[[TransitionLaws, RegimeName, TransitionFunctionName], bool],
+) -> Callable[..., dict[str, FloatND | IntND]]:
+    """Build the DAG producing one kind of target-qualified weight vector.
+
+    Args:
+        regime_name: Name of the regime that the transitions target.
+        functions: Immutable mapping of auxiliary functions of the model.
+        transitions: Transitions to the target regime.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
+        select: Predicate picking the laws whose weights to build.
+
+    Returns:
+        Function that computes the selected weight vectors.
+
+    """
     targets = [
         f"weight_{regime_name}__{func_name}"
         for func_name in transitions
-        if func_name in stochastic_transition_names
+        if select(transition_laws, regime_name, func_name)
     ]
+    # A weight law may read another transition's `next_<state>` output within the
+    # same target's DAG -- the supported transition-reads-transition composition
+    # that the solution next-state builder
+    # (`get_next_state_function_for_solution`) already relies on. Those producers
+    # live in `transitions`, not `functions`, so the deterministic transitions
+    # belong in the weight DAG; otherwise the read is left as an unsupplied
+    # argument and the Q build fails with a missing input.
+    #
+    # Availability is decided by whether a law has a physical value to publish,
+    # never by whether weights were built for it:
+    #
+    # - An interpolation-basis law is deterministic -- it names one value -- so it
+    #   stays a producer. Its weights place that value on the target's private
+    #   node axis; they do not replace it.
+    # - A stochastic law realizes a draw, which has no value while the expectation
+    #   over it is still being built. Excluding it leaves a dependency on one
+    #   unresolved, which surfaces the unsupported composition loudly rather than
+    #   pricing a conditional joint kernel the product-of-marginals form cannot
+    #   represent.
+    available_transitions = {
+        name: func
+        for name, func in transitions.items()
+        if not is_stochastic(transition_laws, regime_name, name)
+    }
     return concatenate_functions(
-        functions=functions,
+        functions=dict(available_transitions) | dict(functions),
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -155,8 +249,7 @@ def _extend_bundle_for_simulation(
     target_regime_name: RegimeName,
     bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    variables: Variables,
-    stochastic_transition_names: frozenset[TransitionFunctionName],
+    transition_laws: TransitionLaws,
 ) -> dict[TransitionFunctionName, Callable[..., FloatND | IntND]]:
     """Replace stochastic transitions for one target with realisation wrappers.
 
@@ -174,23 +267,23 @@ def _extend_bundle_for_simulation(
         bundle: Mapping of unqualified `next_<state>` transition names
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        variables: States and actions of the current regime with
-            kind/topology/process tags.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
 
     Returns:
         Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
-    process_names: frozenset[ProcessName] = frozenset(variables.process_names)
+    laws = transition_laws.get(target_regime_name, MappingProxyType({}))
     extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
         bundle
     )
     for next_state_name in bundle:
-        if next_state_name not in stochastic_transition_names:
+        law = laws.get(next_state_name)
+        if law is None or not law.stochastic:
             continue
         state_name = next_state_name.removeprefix("next_")
-        if state_name in process_names:
+        if law.continuous_process:
             extended[next_state_name] = _create_continuous_stochastic_next_func(
                 target_regime_name=target_regime_name,
                 next_state_name=next_state_name,

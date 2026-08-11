@@ -24,13 +24,16 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.regime_building.age_normalization import _regime_has_markers
+from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
-from _lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.processing import (
+    PreparedModelStructure,
     Regime,
     process_regimes,
 )
+from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -53,6 +56,8 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    params_already_consumed: frozenset[str],
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -66,6 +71,10 @@ def build_regimes_and_template(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
+        params_already_consumed: Flat keys the process-law binder resolved and
+            acted on. They are broadcasts, so they stay in `fixed_params` for
+            the slots they may still serve; naming them here keeps a broadcast
+            that served only a bound process from reading as an unknown key.
 
     Returns:
         Tuple of (regimes, params_template).
@@ -77,6 +86,7 @@ def build_regimes_and_template(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
+            prepared_structure=prepared_structure,
         )
         params_template = create_params_template(regimes)
     else:
@@ -86,6 +96,8 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=fixed_params,
+            params_already_consumed=params_already_consumed,
+            prepared_structure=prepared_structure,
         )
 
     return regimes, params_template
@@ -98,6 +110,8 @@ def _build_regimes_and_template_with_fixed_params(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    params_already_consumed: frozenset[str],
+    prepared_structure: PreparedModelStructure,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -108,6 +122,8 @@ def _build_regimes_and_template_with_fixed_params(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
+        params_already_consumed: Flat keys the process-law binder resolved and
+            acted on.
 
     Returns:
         Tuple of regimes and params_template with fixed params
@@ -119,11 +135,14 @@ def _build_regimes_and_template_with_fixed_params(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
+        prepared_structure=prepared_structure,
     )
     raw_params_template = create_params_template(raw_regimes)
 
     fixed_flat_params = _resolve_fixed_params(
-        fixed_params=dict(fixed_params), template=raw_params_template
+        fixed_params=dict(fixed_params),
+        template=raw_params_template,
+        already_consumed=params_already_consumed,
     )
     if has_series(fixed_flat_params):
         fixed_flat_params = convert_series_in_params(
@@ -164,6 +183,8 @@ def validate_model_inputs(
     regime_id_class: type,
     n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -172,6 +193,9 @@ def validate_model_inputs(
     function with their declared types. This function focuses on value and
     cross-field rules.
 
+    `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
+    each regime's representative age, so a state read only by a policy-specialized
+    function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
@@ -216,7 +240,10 @@ def validate_model_inputs(
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes, broadcast_variables=broadcast_variables
+            user_regimes,
+            broadcast_variables=broadcast_variables,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
         )
     )
 
@@ -252,17 +279,20 @@ def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
+    ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must appear in at least one of:
     - The concurrent valuation (utility or constraints)
     - A transition function
-    - A regime function whose output H consumes at the Bellman step
+    - A regime function whose output the Koopmans aggregator consumes at
+      the Bellman step
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
-    of motion toward a reachable target (which this per-regime check cannot
+    of motion toward a candidate target (which this per-regime check cannot
     see).
 
     Args:
@@ -282,6 +312,39 @@ def _validate_all_variables_used(
         if broadcast_variables is not None:
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        if ages is not None:
+            active_periods = (
+                ()
+                if active_periods_by_regime is None
+                else active_periods_by_regime.get(regime_name, ())
+            )
+            if not active_periods and _regime_has_markers(user_regime):
+                # This regime is about to fail with the precise
+                # "active at no model age" `RegimeInitializationError` once
+                # `normalize_age_specialization` runs. Leaving its markers
+                # unresolved here would make `get_ancestors` see only
+                # `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`
+                # signature, misreporting a variable used only through a marker
+                # as unused and raising that instead — so skip this regime's
+                # variable-usage check and let the real cause surface.
+                continue
+            if active_periods:
+                # Resolve any `AgeSpecializedFunction` marker to its concrete
+                # function at a representative active age so `get_ancestors` sees
+                # the real argument dependencies. The dependency structure is
+                # age-invariant, so any active age serves; a stateful factory
+                # could in principle be validated as one object and installed as
+                # another (see the `_AgeSpecialized` docstring), so this relies on
+                # `build` being pure — its result is not cached or reused
+                # elsewhere.
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                user_functions = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in user_functions.items()
+                    },
+                )
 
         targets = [
             "utility",
@@ -292,7 +355,14 @@ def _validate_all_variables_used(
                 if name.startswith("next_")
                 and not getattr(user_functions[name], "_is_auto_identity", False)
             ),
-            *get_dag_targets_consumed_by_H(user_functions),
+            # Both phases, because a `Phased` aggregator may consume a variable
+            # in only one of them and the variable is used either way.
+            *get_dag_targets_consumed_by_W(
+                user_functions, user_regime.get_koopmans_aggregator(phase="solve")
+            ),
+            *get_dag_targets_consumed_by_W(
+                user_functions, user_regime.get_koopmans_aggregator(phase="simulate")
+            ),
         ]
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False
@@ -325,17 +395,28 @@ def _resolve_fixed_params(
     *,
     fixed_params: dict[str, object],
     template: ParamsTemplate,
+    already_consumed: frozenset[str],
 ) -> FlatParams:
     """Resolve fixed_params against the params template.
 
     Like `process_params`, support model/regime/function level specification, but
     do NOT require all template keys to be present — only match what's provided.
 
+    Args:
+        fixed_params: Parameters fixed at model initialization.
+        template: The params template to resolve against.
+        already_consumed: Flat keys the process-law binder acted on, which the
+            template no longer holds a slot for.
+
+    Returns:
+        The resolved flat params.
+
     """
     return broadcast_to_template(
         params=fixed_params,
         template=template,
         required=False,
+        already_consumed=already_consumed,
     )
 
 
@@ -422,6 +503,17 @@ def _partial_fixed_params_into_regimes(
                 if solution.compute_regime_transition_probs is not None
                 else None
             ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    solution.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solution.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solution.validation_regime_transition_probs is not None
+                else None
+            ),
         )
 
         # Build new simulation phase with partialled functions
@@ -434,7 +526,12 @@ def _partial_fixed_params_into_regimes(
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(simulation.next_state, **regime_fixed),
+            next_state=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.next_state.items()
+                }
+            ),
             compute_regime_transition_probs=(
                 functools.partial(
                     simulation.compute_regime_transition_probs,

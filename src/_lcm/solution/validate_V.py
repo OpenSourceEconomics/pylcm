@@ -4,7 +4,7 @@
 and once on the V handed to `simulate.py`. On NaN it invokes the
 diagnostic-intermediates closure (built during regime canonicalization in
 `regime_building/diagnostics.py`) to pinpoint which intermediate
-(`U`, `F`, `E[V]`, `Q`) produced the NaN, then raises an
+(`U`, `F`, `CE`, `Q`) produced the NaN, then raises an
 `InvalidValueFunctionError` enriched with that breakdown.
 
 """
@@ -23,6 +23,27 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
+def _entry_support_cause(entered_process_names: tuple[str, ...]) -> str:
+    """Return the entry-support bullet, naming the processes this regime enters.
+
+    Args:
+        entered_process_names: Processes entered through a declared law.
+
+    Returns:
+        The bullet, or an empty string when the regime enters no process.
+
+    """
+    if not entered_process_names:
+        return ""
+    named = ", ".join(f"'{name}'" for name in sorted(entered_process_names))
+    return (
+        f"- An entry law named a value outside the support of {named}, which "
+        f"has no representation on that process's nodes. The weights are "
+        f"poisoned there so the value cannot pass silently; widen the support "
+        f"or enter inside it.\n"
+    )
+
+
 def validate_V(
     *,
     V_arr: FloatND,
@@ -34,12 +55,13 @@ def validate_V(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] | None = None,
     flat_params: FlatRegimeParams | None = None,
     period: int | None = None,
+    entered_process_names: tuple[str, ...] = (),
 ) -> None:
     """Validate the value function array for NaN values.
 
     When `compute_intermediates` is provided, NaN detection triggers a
     diagnostic run of the (already productmapped + JIT-compiled) closure to
-    pinpoint which intermediate (U, F, E[V], Q) contains NaN.
+    pinpoint which intermediate (U, F, CE, Q) contains NaN.
 
     Args:
         V_arr: The value function array to validate.
@@ -54,6 +76,9 @@ def validate_V(
         next_regime_to_V_arr: Next-period value function arrays.
         flat_params: Flat regime parameters.
         period: The current period index (forwarded to diagnostic closure).
+        entered_process_names: Processes this regime enters through a declared
+            law. Named in the message, because leaving such a process's support
+            is the one NaN cause the engine mints deliberately.
 
     The NaN reduction stays sharded via `v_array_has_nan` (jit-wrapped so GSPMD
     partitions it across the V-array's devices instead of gathering V onto the
@@ -74,14 +99,15 @@ def validate_V(
     exc = InvalidValueFunctionError(
         f"Value function at age {age}{regime_part}: {fraction_hint} values "
         f"are NaN.\n\n"
-        "NaN propagates through Q = U + beta * E[V]. Common causes:\n"
+        "NaN propagates through Q = U + beta * CE. Common causes:\n"
         "- A missing feasibility constraint (e.g. negative leisure passed "
         "to a fractional exponent).\n"
         "- A regime parameter is NaN.\n"
         "- The utility function returned NaN (e.g. log of a non-positive "
         "argument).\n"
         "- The regime transition function returned NaN probabilities "
-        "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
+        "(e.g. from a NaN survival probability or a NaN fixed param).\n"
+        f"{_entry_support_cause(entered_process_names)}\n"
         "See the [NOTE] below for the per-intermediate / per-axis "
         "breakdown produced by `compute_intermediates`. When `log_path` "
         "is configured, an additional [NOTE] points to the on-disk "
@@ -103,7 +129,7 @@ def validate_V(
                 age=float(age),
                 period=period,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logging.getLogger("lcm").warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
@@ -208,7 +234,7 @@ def _summarize_diagnostics(
 
     for key_out, key_in in [
         ("U_nan_fraction", "U_nan"),
-        ("E_nan_fraction", "E_nan"),
+        ("CE_nan_fraction", "CE_nan"),
         ("Q_nan_fraction", "Q_nan"),
         ("F_feasible_fraction", "F_feasible"),
     ]:
@@ -243,12 +269,12 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
     ]
 
     u_frac = summary.get("U_nan_fraction", {}).get("overall", 0)
-    e_frac = summary.get("E_nan_fraction", {}).get("overall", 0)
+    ce_frac = summary.get("CE_nan_fraction", {}).get("overall", 0)
     f_feas = summary.get("F_feasible_fraction", {}).get("overall", 0)
     lines.append(f"  F: {f_feas:.4f} feasible")
     lines.append(
         f"  Among feasible state-action pairs:  "
-        f"U: {u_frac:.4f} NaN  |  E[V]: {e_frac:.4f} NaN"
+        f"U: {u_frac:.4f} NaN  |  CE: {ce_frac:.4f} NaN"
     )
 
     probs = summary.get("regime_probs", {})
@@ -256,7 +282,7 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
         prob_parts = [f"{t}: {p:.4f}" for t, p in probs.items()]
         lines.append(f"  Regime probs: {' | '.join(prob_parts)}")
 
-    for label, key in (("U", "U_nan_fraction"), ("E[V]", "E_nan_fraction")):
+    for label, key in (("U", "U_nan_fraction"), ("CE", "CE_nan_fraction")):
         info = summary.get(key, {})
         frac = info.get("overall", 0)
         by_dim = info.get("by_dim", {})

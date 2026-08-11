@@ -88,7 +88,7 @@ def _write_metadata(
         "platform": _get_platform(),
         "fields": fields,
     }
-    with (snap_dir / "metadata.json").open("w") as fh:
+    with (snap_dir / "metadata.json").open("w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2)
 
 
@@ -117,7 +117,7 @@ def _write_environment_files(snap_dir: Path) -> None:
 
         Platform: {platform_str}
     """)
-    (snap_dir / "REPRODUCE.md").write_text(reproduce_md)
+    (snap_dir / "REPRODUCE.md").write_text(reproduce_md, encoding="utf-8")
 
 
 def _snapshot_counter(entry: Path, prefix: str) -> int:

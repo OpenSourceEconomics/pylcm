@@ -158,7 +158,7 @@ def vmap_1d(
             in_axes_for_vmap[parameters.index(name)] = axes
 
         vmapped = vmap(func, in_axes=in_axes_for_vmap)
-    vmapped.__signature__ = signature  # ty: ignore[invalid-assignment]
+    vmapped.__signature__ = signature  # ty: ignore[unresolved-attribute]
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(vmapped, enforce=False)

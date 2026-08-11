@@ -10,6 +10,8 @@ from jax import Array
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import PhaseReachability
+from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -306,11 +308,17 @@ class SolutionPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
+
+    reachability: PhaseReachability
+    """Construction-time solve graph shared by every canonical regime."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
+
+    validation_regime_transition_probs: RegimeTransitionFunction | None
+    """Probability function retaining declared cells for runtime validation."""
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
@@ -321,9 +329,9 @@ class SolutionPhase:
     Productmap-wrapped and fused with on-device reductions inside a single
     `jax.jit`; invoked only in the error path when `validate_V` detects
     NaN. Each closure returns a flat dict of reductions — scalar
-    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
+    `{U_nan,CE_nan,Q_nan,F_feasible}_overall` entries, per-dimension
     `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
-    scalar means — so full-shape U/F/E/Q arrays never materialise in
+    scalar means — so full-shape U/F/CE/Q arrays never materialise in
     host-visible memory.
     """
 
@@ -332,6 +340,17 @@ class SolutionPhase:
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
+
+    period_state_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
+    ) = None
+    """Per-period node arrays for age-varying (`AgeSpecializedGrid`) states.
+
+    `{period: {state_name: nodes}}` — the current period's grid nodes for each
+    age-varying continuous state, used by backward induction to override the
+    (representative) base axis so period `t`'s value function is tabulated on
+    period `t`'s grid. `None` for age-invariant regimes (the base axis is used
+    unchanged)."""
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -476,8 +495,11 @@ class SimulationPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[TransitionFunctionName]
-    """Frozenset of stochastic transition function names."""
+    transition_laws: TransitionLaws
+    """Immutable mapping of target regime names to their transition laws."""
+
+    reachability: PhaseReachability
+    """Construction-time simulate graph shared by every canonical regime."""
 
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
@@ -485,8 +507,17 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
-    next_state: NextStateSimulationFunction
-    """Compiled function to compute next-period states."""
+    next_state: MappingProxyType[int, NextStateSimulationFunction]
+    """Immutable mapping of period to next-period-state functions."""
+
+    age_specialized_function_names: frozenset[FunctionName] = frozenset()
+    """Function names that were `AgeSpecializedFunction` in the user regime.
+
+    The published `functions` hold these resolved at the regime's representative
+    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    carry the true per-age closures. Consumers computing period-specific outputs
+    from `functions` (e.g. `additional_targets`) must reject targets that depend
+    on these names."""
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -598,7 +629,7 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

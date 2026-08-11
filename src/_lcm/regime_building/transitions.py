@@ -29,7 +29,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
+from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 if TYPE_CHECKING:
@@ -37,14 +37,14 @@ if TYPE_CHECKING:
 
 
 def collect_state_transitions(
-    states: Mapping[StateName, Grid | Phased | None],
+    states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
     state_transitions: Mapping[
         StateName,
         UserFunction
         | Callable
         | Phased
-        | None
-        | Mapping[RegimeName, UserFunction | Callable | Phased],
+        | Mapping[RegimeName, UserFunction | Callable | Phased]
+        | None,
     ],
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.

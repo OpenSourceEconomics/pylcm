@@ -27,6 +27,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   including into states the source regime does not carry and across grids that
   differ between regimes.
 
+- A bare callable or bare `MarkovTransition` on `Regime.transition` declares
+  conservative support over every regime active in the next period, so every
+  temporally compatible candidate must have a valid state handoff (a carried
+  state, a deterministic/stochastic law, or an explicit target-local/entry
+  law). Use a per-target mapping to declare narrower support instead. Runtime
+  transition probabilities of zero do not narrow this topology — only the
+  declared form does.
+
 - Model-level regime slots: `Model(functions=..., constraints=..., states=...,
   state_transitions=..., actions=...)` declares shared structure once and
   merges it into every regime under the exactly-one-level rule. Broadcast

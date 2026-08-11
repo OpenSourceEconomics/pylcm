@@ -6,17 +6,27 @@ Engine modules may import directly from here.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax.numpy as jnp
 from beartype import beartype
 
-from _lcm.beartype_conf import REGIME_CONF
+from _lcm.beartype_conf import PARAMS_CONF, REGIME_CONF
+from _lcm.power_mean import weighted_power_mean
+from _lcm.probability import (
+    flattened_to_one_scale,
+    is_live,
+    is_negative,
+    is_represented_zero,
+    rescaled_lottery_weights,
+    restored_against_a_nonfinite_value,
+)
 from _lcm.utils.functools import get_union_of_args
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import FloatND
+from lcm.typing import FloatND, IntND
 
 # Reserved argument name through which transform callables receive values.
 CE_VALUE_ARG = "value"
@@ -26,16 +36,160 @@ class CertaintyEquivalent(ABC):
     """Base class for certainty-equivalent specifications.
 
     Declared on a non-terminal `Regime` via `certainty_equivalent=...`. The
-    engine dispatches on the concrete subclass; `QuasiArithmeticMean` is
-    the shipped implementation. When the field is `None` (the default), the
-    continuation is aggregated as the linear expectation `E[V']`. Only
-    `GridSearch` supports a nonlinear certainty equivalent.
+    shipped implementations are `LinearExpectation` (expected utility, the
+    default) and `QuasiArithmeticMean` with its `PowerMean` specialization.
+
+    `aggregate` reduces the whole joint continuation lottery in one piece,
+    because a transform has to be applied before any expectation is taken.
+    `LinearExpectation` needs no transform, so the engine reduces each target
+    regime on its own instead and never materializes the joint lottery; its
+    `aggregate` states the same quantity and serves as the reference that
+    route is tested against. Only `GridSearch` supports a nonlinear certainty
+    equivalent.
     """
 
     @property
     @abstractmethod
     def param_names(self) -> frozenset[str]:
         """Names of the certainty equivalent's runtime parameters."""
+
+    @abstractmethod
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce the continuation lottery over its last axis.
+
+        The whole lottery — every stochastic node of every reachable target
+        regime, weighted by that target's regime-transition probability —
+        arrives flattened, so a transform is applied before every expectation
+        and inverted exactly once.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative weights over `values`.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce a continuation lottery whose weights carry per-entry scales.
+
+        Node `i` carries probability `coefficients[i] * 2**-shifts[i]`. A joint
+        probability formed from several rare factors can sit further below the
+        likeliest node than the exponent field spans, and the pair is then the
+        only form in which the lottery is exact — on any single scale the
+        rarest node has to be rounded.
+
+        This default flattens onto one scale and defers to `aggregate`, which
+        understates a node it cannot represent there. That is the declared
+        approximation and it is safe in the direction that matters, a node
+        never being made likelier than it is. A certainty equivalent that can
+        take the scales exactly overrides this; `PowerMean` does, reducing in
+        the log domain where the spread costs nothing.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            coefficients: The weights' significands, over the same axis.
+            shifts: Each weight's own base-two scale, broadcast against them.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        return self.aggregate(
+            values=values,
+            weights=restored_against_a_nonfinite_value(
+                coefficients=coefficients,
+                lowered=flattened_to_one_scale(
+                    coefficients=coefficients, shifts=shifts
+                ),
+                values=values,
+            ),
+            params=params,
+        )
+
+    @property
+    def flat_param_names(self) -> MappingProxyType[str, str]:
+        """Immutable mapping of each runtime parameter to its flat params name.
+
+        The parameters live under the pseudo-function name
+        `certainty_equivalent` in the regime's flat params, so the Q-and-F
+        closure can assemble `aggregate`'s `params` straight from
+        `states_actions_params`.
+        """
+        return MappingProxyType(
+            {arg: f"certainty_equivalent__{arg}" for arg in self.param_names}
+        )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class LinearExpectation(CertaintyEquivalent):
+    """Certainty equivalent of expected utility: the plain expectation `E[V']`.
+
+    The engine recognizes this specification and reduces each target regime on
+    its own rather than flattening the joint lottery, which is cheaper by
+    roughly a factor of two on any lottery past a couple of nodes. `aggregate`
+    below states the same quantity over the flattened lottery; it is the
+    reference the engine's route is tested against, not the route it takes.
+    """
+
+    @property
+    def param_names(self) -> frozenset[str]:
+        """The plain expectation has no runtime parameters."""
+        return frozenset()
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],  # noqa: ARG002
+    ) -> FloatND:
+        """Return the probability-weighted mean of the lottery.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative weights over `values`, normalized by their
+                sum; a lottery carrying no mass aggregates to NaN.
+            params: Unused — the plain expectation has no parameters.
+
+        Returns:
+            The expectation, reduced over the last axis.
+
+        """
+        # Rescaling by a common power of two leaves the mean unchanged and
+        # keeps a weight below the normal range out of the multiplication,
+        # where a backend that flushes it would turn a rare node's `-inf` into
+        # `0 * -inf` and take the whole lottery down as NaN. No power of two
+        # reaches a weight of exactly zero, so the node that cannot occur is
+        # still annihilated by the term itself — the scale is accounted for by
+        # that point, so this is its cheap branch.
+        weights = rescaled_lottery_weights(weights)
+        return jnp.sum(
+            zero_safe_weighted_term(
+                weight=weights, value=values, subnormal_is_accounted_for=True
+            ),
+            axis=-1,
+        ) / jnp.sum(weights, axis=-1)
 
 
 @beartype(conf=REGIME_CONF)
@@ -52,7 +206,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
     pseudo-function name `certainty_equivalent` in the regime's params
     (`{"certainty_equivalent": {"<arg>": ...}}`).
 
-    Combined with a user-supplied Bellman aggregator `H` this expresses
+    Combined with a user-supplied Koopmans aggregator `W` this expresses
     Epstein-Zin and other transformed-expectation recursive preferences.
     The parameters are read from the params template only, not from DAG
     function outputs.
@@ -82,6 +236,160 @@ class QuasiArithmeticMean(CertaintyEquivalent):
             get_union_of_args([self.transform, self.inverse]) - {CE_VALUE_ARG}
         )
 
+    @beartype(conf=PARAMS_CONF)
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the certainty equivalent `g⁻¹(Σ w · g(v))` over the last axis.
+
+        The single aggregation entry point of the engine: the whole
+        continuation lottery — every stochastic node of every reachable
+        target regime, weighted by the regime probability — arrives here
+        flattened, so `transform` is applied before every expectation and
+        `inverse` exactly once.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            weights: Nonnegative weights over `values`. The lottery is a
+                probability distribution, so the weights are normalized by
+                their sum; scaling them all by a constant leaves the result
+                unchanged, and a lottery carrying no mass aggregates to NaN.
+                Because that normalization divides any lost mass back out
+                without leaving a trace, the caller — not this method — is
+                responsible for the weights summing to one; the engine checks
+                it in `_lcm.regime_building.Q_and_F`.
+            params: Mapping of runtime parameter names to their values.
+                `transform` and `inverse` each receive the subset their
+                signature declares.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        # A node carrying no weight must not be able to inject a non-finite
+        # quantity into the reduction. `transform` is arbitrary user code and
+        # may be unbounded at the edge of its domain — `log` at zero is the
+        # ordinary case — and a weight of exactly zero does not cancel an
+        # infinity: `0 * inf` is NaN, which would take the well-specified nodes
+        # down with it. Transforming a stand-in value instead keeps the
+        # reduction finite and changes nothing, the node's weight being zero.
+        # The stand-in is copied from the heaviest node rather than being a
+        # constant, because an arbitrary constant need not lie in `transform`'s
+        # domain while a value already in the lottery always does. A constant
+        # `transform` is unbounded at would leave `0 * inf` on the branch the
+        # mask discards — absent from the value, NaN in its derivative.
+        # `transform` can be unbounded, so a weight the dtype cannot multiply
+        # is not a negligible term here: `g(v)` at a near-zero value can be
+        # large enough that the product is of order one. Rescaling the lottery
+        # by a common power of two leaves every ratio exactly as supplied and
+        # puts every live weight where the arithmetic can use it.
+        # A negative weight is not a lottery. Mapping it to NaN makes it
+        # propagate like any other malformed weight instead of being read as
+        # "dead" by the liveness test below and silently dropped — which would
+        # return the surviving nodes' mean as though the caller had asked for
+        # it. `weighted_power_mean` opens the same way, for the same reason.
+        weights = rescaled_lottery_weights(weights)
+        weights = jnp.where(is_negative(weights), jnp.nan, weights)
+        live = is_live(weights)
+        stand_in = jnp.take_along_axis(
+            values, jnp.argmax(weights, axis=-1, keepdims=True), axis=-1
+        )
+        safe_values = jnp.where(live, values, stand_in)
+        transformed = self.transform(
+            value=safe_values, **_args_for(self.transform, params)
+        )
+        weight_sum = jnp.sum(weights, axis=-1)
+        return self.inverse(
+            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
+            / weight_sum,
+            **_args_for(self.inverse, params),
+        )
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Reduce the scaled lottery, deciding liveness on `g(v)` rather than `v`.
+
+        The base implementation lowers the pairs and hands the result to
+        `aggregate`, which is where `transform` is applied — so a weight the
+        lowering could not state is classified before the mean has seen the
+        quantity it actually averages. `transform` is arbitrary user code and
+        may be unbounded inside its domain: `1/v` at a value of zero, `log v`
+        likewise. A node whose value is ordinary and whose *transformed* value
+        is an infinity carries the whole certainty equivalent, and a node whose
+        transformed value is `NaN` is a specification outside the transform's
+        domain that must fail loudly. Neither may be read as an event that
+        cannot occur because its probability is too small to write down.
+
+        The order is therefore: replace the values that genuinely cannot occur,
+        transform, then decide what a vanished weight was standing against.
+
+        Args:
+            values: Continuation values of the lottery along the last axis.
+            coefficients: The weights' significands, over the same axis.
+            shifts: Each weight's own base-two scale, broadcast against them.
+            params: Mapping of the runtime parameter names in `param_names`
+                to their values.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        coefficients = jnp.asarray(coefficients)
+        # Lowering onto one scale is what makes a weight nameable at all;
+        # rescaling is what makes it usable. A weight that survives the lowering
+        # as a subnormal is live, so nothing restores it, and the arithmetic
+        # still cannot multiply it — which against an unbounded `transform` loses
+        # a term of order one just as surely as flushing it to zero would.
+        lowered = rescaled_lottery_weights(
+            flattened_to_one_scale(coefficients=coefficients, shifts=shifts)
+        )
+        # The null events are the represented zeros of the coefficient, which no
+        # scale can change. Reading them off `lowered` instead would take with
+        # them every node the shared scale cannot state — the ones this method
+        # exists to keep. The stand-in comes from the heaviest node that can
+        # occur, because an arbitrary constant need not lie in `transform`'s
+        # domain while a value already in the lottery always does.
+        stand_in = jnp.take_along_axis(
+            values,
+            jnp.argmax(
+                jnp.where(is_live(coefficients), lowered, -jnp.inf),
+                axis=-1,
+                keepdims=True,
+            ),
+            axis=-1,
+        )
+        safe_values = jnp.where(is_represented_zero(coefficients), stand_in, values)
+        transformed = self.transform(
+            value=safe_values, **_args_for(self.transform, params)
+        )
+        # A negative coefficient is not a probability. It reaches the result
+        # through the mass rather than the numerator, exactly as in `aggregate`:
+        # the liveness test would read a NaN weight as a node that cannot occur.
+        weights = jnp.where(
+            is_negative(coefficients),
+            jnp.nan,
+            restored_against_a_nonfinite_value(
+                coefficients=coefficients, lowered=lowered, values=transformed
+            ),
+        )
+        live = is_live(weights)
+        return self.inverse(
+            value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
+            / jnp.sum(weights, axis=-1),
+            **_args_for(self.inverse, params),
+        )
+
 
 def power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
     """Apply `g(v) = v^(1 - risk_aversion)`, or `log(v)` at `risk_aversion = 1`."""
@@ -108,54 +416,125 @@ class PowerMean(QuasiArithmeticMean):
 
     `CE = (E[V'^(1 - risk_aversion)])^(1 / (1 - risk_aversion))` with the
     runtime parameter `{"certainty_equivalent": {"risk_aversion": ...}}`.
-    Requires strictly positive continuation values. `risk_aversion = 1` is
-    the geometric-mean (log) limit, `CE = exp(E[log V'])`; `risk_aversion
-    = 0` reduces to the linear expectation.
+    `risk_aversion = 1` is the geometric-mean (log) limit,
+    `CE = exp(E[log V'])`; `risk_aversion = 0` reduces to the linear
+    expectation. Continuation values must be positive, except that a value of
+    exactly zero is admitted as the limiting case.
+
+    The aggregation is evaluated in an anchored log form, so the result stays
+    finite wherever the mathematical power mean is — including high risk
+    aversion at continuation values near the borrowing constraint, where
+    `V'^(1 - risk_aversion)` alone would overflow the dtype, and a lottery
+    whose lowest value carries almost none of the probability mass.
     """
 
     transform: Callable[..., FloatND] = power_transform
+    """`g` — fixed to the power transform; see `inverse`."""
+
     inverse: Callable[..., FloatND] = power_inverse
+    """`g⁻¹` — fixed to the power inverse.
 
-
-def resolve_certainty_equivalent(
-    certainty_equivalent: CertaintyEquivalent | None,
-) -> tuple[
-    QuasiArithmeticMean | None,
-    MappingProxyType[str, str],
-    MappingProxyType[str, str],
-]:
-    """Narrow the certainty equivalent and map its args to flat param names.
-
-    The runtime parameters live under the pseudo-function name
-    `certainty_equivalent` in the regime's flat params
-    (`certainty_equivalent__<arg>`); the returned mappings let the Q-and-F
-    closure pull each callable's kwargs from `states_actions_params`.
-
-    Returns:
-        Tuple of the narrowed quasi-arithmetic-mean CE (or `None`), the
-        transform's arg-to-flat-name mapping, and the inverse's
-        arg-to-flat-name mapping.
-
+    The pair defines the mean, and `aggregate` evaluates it by a route that
+    survives ranges where applying them directly overflows. They are therefore
+    the reference the anchored form is tested against rather than the code path
+    it takes, and neither may be replaced: swapping one would leave `aggregate`
+    computing something else entirely.
     """
-    if certainty_equivalent is None:
-        return None, MappingProxyType({}), MappingProxyType({})
-    if not isinstance(certainty_equivalent, QuasiArithmeticMean):
-        msg = (
-            "Only `QuasiArithmeticMean` certainty equivalents are "
-            f"supported, got {type(certainty_equivalent).__name__}."
-        )
-        raise NotImplementedError(msg)
 
-    def flat_names(func: Callable[..., FloatND]) -> MappingProxyType[str, str]:
-        return MappingProxyType(
-            {
-                arg: f"certainty_equivalent__{arg}"
-                for arg in get_union_of_args([func]) - {CE_VALUE_ARG}
-            }
+    def __post_init__(self) -> None:
+        for name, expected in (
+            ("transform", power_transform),
+            ("inverse", power_inverse),
+        ):
+            if getattr(self, name) is not expected:
+                msg = (
+                    f"`PowerMean` aggregates the power transform "
+                    f"`v^(1 - risk_aversion)` in a form specific to it, so it "
+                    f"cannot honour a custom `{name}`. Use "
+                    f"`QuasiArithmeticMean` for other transform pairs."
+                )
+                raise RegimeInitializationError(msg)
+        super().__post_init__()
+
+    @beartype(conf=PARAMS_CONF)
+    def aggregate(
+        self,
+        *,
+        values: FloatND,
+        weights: FloatND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the weighted power mean `(Σ w̃ · v^(1-ra))^(1/(1-ra))`, stably.
+
+        `ra` is `risk_aversion` and `w̃` the mass-normalized weights. The
+        evaluation is `weighted_power_mean`, which the Koopmans aggregator
+        `CESAggregator` shares: the naive `inverse(Σ w · transform(v))`
+        overflows when `risk_aversion > 1` and `v` is near the borrowing
+        constraint, so the mean is taken in an anchored log form instead. It
+        stays finite wherever the mathematical value is, and the
+        geometric-mean limit stays exact arbitrarily close to
+        `risk_aversion = 1`, where the result is `exp(E[log v])`.
+
+        The geometric mean is selected by an exact `risk_aversion == 1` test,
+        so at that one point the result carries no dependence on
+        `risk_aversion` and its derivative there reads as zero rather than the
+        true finite value. Gradient-based work that starts exactly at unit risk
+        aversion should offset the starting value.
+
+        Args:
+            values: Strictly positive continuation values along the last axis.
+                A value of exactly zero is admitted as the limiting case: it
+                sends the certainty equivalent to zero above unit risk
+                aversion and contributes nothing below it.
+            weights: Nonnegative weights over `values`. The lottery is a
+                probability distribution, so the weights are normalized by
+                their sum; scaling them all by a constant leaves the result
+                unchanged, and a lottery carrying no mass aggregates to NaN.
+                Zero-weight entries drop out exactly, while a NaN weight
+                propagates. Because that normalization divides any lost mass
+                back out without leaving a trace, the caller — not this method
+                — is responsible for the weights summing to one; the engine
+                checks it in `_lcm.regime_building.Q_and_F`.
+            params: Mapping carrying the `risk_aversion` runtime parameter.
+
+        Returns:
+            The certainty equivalent, reduced over the last axis.
+
+        """
+        return weighted_power_mean(
+            values=values,
+            weights=weights,
+            exponent=1.0 - params["risk_aversion"],
+            # Weights given as plain numbers already share one scale.
+            shifts=jnp.zeros((), jnp.int32),
         )
 
-    return (
-        certainty_equivalent,
-        flat_names(certainty_equivalent.transform),
-        flat_names(certainty_equivalent.inverse),
-    )
+    @beartype(conf=PARAMS_CONF)
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        """Return the power mean of a lottery carrying per-entry scales, exactly.
+
+        `weighted_power_mean` reduces in the log domain, where a node's scale
+        is a subtraction rather than a magnitude the format has to hold. The
+        lottery is therefore priced at whatever spread it arrives with, and
+        nothing is understated.
+        """
+        return weighted_power_mean(
+            values=values,
+            weights=coefficients,
+            exponent=1.0 - params["risk_aversion"],
+            shifts=shifts,
+        )
+
+
+def _args_for(
+    func: Callable[..., FloatND], params: Mapping[str, FloatND]
+) -> dict[str, FloatND]:
+    """Pick the entries of `params` that `func`'s signature declares."""
+    return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}

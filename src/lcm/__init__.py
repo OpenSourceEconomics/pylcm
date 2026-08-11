@@ -66,6 +66,7 @@ from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
+    LinearExpectation,
     PowerMean,
     QuasiArithmeticMean,
 )
@@ -79,6 +80,7 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -107,8 +109,11 @@ from lcm.regime import (  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import DCEGM, GridSearch  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
-from lcm.temporal_aggregation import H_epstein_zin, H_linear  # noqa: E402
-from lcm.transition import fixed_transition  # noqa: E402
+from lcm.transition import (  # noqa: E402
+    AgeSpecializedFunction,
+    AgeSpecializedGrid,
+    fixed_transition,
+)
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -128,14 +133,17 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "DCEGM",
     "AgeGrid",
+    "AgeSpecializedFunction",
+    "AgeSpecializedGrid",
+    "CESAggregator",
     "CertaintyEquivalent",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
     "GridSearch",
-    "H_epstein_zin",
-    "H_linear",
     "IrregSpacedGrid",
     "LinSpacedGrid",
+    "LinearAggregator",
+    "LinearExpectation",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MarkovTransition",
