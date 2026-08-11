@@ -44,9 +44,9 @@ jobs:
         # remaining set.
         include:
           - os: macos-latest
-            pytest_extra: -m "not slow"
+            pytest_extra: -m "not slow and not manual"
           - os: windows-latest
-            pytest_extra: -m "not slow"
+            pytest_extra: -m "not slow and not manual"
     steps:
       - uses: actions/checkout@v7
       - uses: prefix-dev/setup-pixi@v0.10.1
@@ -100,7 +100,7 @@ jobs:
         # - the phases stay separate, each starting from a fresh process, as a
         #   second line of defence and so coverage can be appended across them.
         run: |
-          pixi run -e tests-cpu pytest tests -m "not slow" \
+          pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
             --release-compiled-programs --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m slow \
             --release-compiled-programs --cov=./ --cov-append --cov-report= -n 2 \
@@ -189,8 +189,8 @@ jobs:
         env:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
-          pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
-            --release-compiled-programs -n 4 \
+          pixi run -e tests-cpu pytest tests --precision=32 \
+            -m "not slow and not manual" --release-compiled-programs -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 -m slow \
             --release-compiled-programs -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
