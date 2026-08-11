@@ -66,6 +66,9 @@ The case-piece kernels solve a single means-tested cliff on the liquid margin, s
 - declare its boundary with `equality="otherwise"` and `kind="jump"`, on the liquid
   state itself;
 - give each piece a signature of flat params only — no state, no action;
+- declare `lcm.cash_on_hand_with_subsidy` as its budget node and one of
+  `lcm.liquid_law_from_savings` / `lcm.liquid_law_from_resources` as the liquid law (see
+  "Fixed forms" below);
 - declare no discrete action and no taste shocks (the kernels maximize over consumption
   alone and take a hard maximum).
 
@@ -78,6 +81,10 @@ import jax.numpy as jnp
 
 import lcm
 from lcm.typing import BoolND, ContinuousState, FloatND
+
+# The kernels form cash-on-hand themselves, so the regime declares pylcm's own
+# node rather than a local spelling of the same arithmetic.
+resources = lcm.cash_on_hand_with_subsidy
 
 
 @lcm.case_boundary(
@@ -103,15 +110,37 @@ def subsidy_medicaid(subsidy_high: float) -> FloatND:
 def subsidy_private(subsidy_low: float) -> FloatND:
     """Subsidy into market resources for the private (high-asset) case."""
     return jnp.asarray(subsidy_low)
-
-
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
-    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
-    return liquid + subsidy
 ```
 
 The Medicaid-eligible subsidy exceeds the private one, so market resources — and hence
 the value function — jump down as liquid wealth crosses the limit upward.
+
+### Fixed forms — the budget the single-liquid kernels solve
+
+The case-piece kernels do not call the regime's budget node or its liquid law. They
+apply one hardcoded cash-on-hand and one hardcoded affine law of motion, reading the
+coefficients under fixed qualified parameter names. A regime taking that route therefore
+has to declare the same forms, and no finite check establishes that an arbitrary
+callable computes them: a global rescaling agrees at every sampled point and still moves
+every state's value.
+
+So pylcm exports the declarations themselves, and the route accepts them by identity:
+
+- `lcm.cash_on_hand_with_subsidy(liquid, subsidy)` — the budget node,
+  `liquid + subsidy`.
+- `lcm.liquid_law_from_savings(savings, return_liquid, income)` — the law of motion for
+  a regime declaring a `post_decision_function`.
+- `lcm.liquid_law_from_resources(resources, consumption, return_liquid, income)` — the
+  same law in displacement form, for a regime that reaches savings through its budget
+  and consumption.
+
+They are ordinary functions and stay executable, so the same model solves identically
+under `GridSearch` and the agreement tests keep their meaning.
+
+A budget these forms cannot express does not belong on the case-piece route. Declare a
+`lcm.piecewise_affine` schedule with a `post_decision_function` — which composes the
+budget from the DAG and reads whatever it declares — or solve the regime with
+`GridSearch`.
 
 ### Piecewise-affine schedules — brackets, tapers, and floors
 
