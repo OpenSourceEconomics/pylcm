@@ -17,11 +17,12 @@ import numpy as np
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -37,14 +38,13 @@ _INTERIOR = slice(8, None)
 
 
 def next_liquid_net_of_a_fixed_cost(
-    resources: FloatND,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: FloatND,
     income: FloatND,
     fixed_cost: float,
 ) -> ContinuousState:
     """The conventional law, less a charge levied once per period."""
-    return (1.0 + return_liquid) * (resources - consumption) + income - fixed_cost
+    return (1.0 + return_liquid) * savings + income - fixed_cost
 
 
 def cash_on_hand(liquid: ContinuousState) -> FloatND:
@@ -62,6 +62,7 @@ def _model(*, variant, n_consumption=120):
         alive_functions={
             "utility": utility,
             "resources": cash_on_hand,
+            "savings": savings,
         },
         liquid_law=next_liquid_net_of_a_fixed_cost,
         alive_solver=resolve_solver(variant, savings_grid=_SAVINGS_GRID),

@@ -14,8 +14,9 @@ from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -48,8 +49,12 @@ def _build_model(*, variant: str) -> Model:
         n_liquid=40,
         liquid_max=30.0,
         n_consumption=120,
-        alive_functions={"utility": utility, "resources": _resources},
-        liquid_law=next_liquid,
+        alive_functions={
+            "utility": utility,
+            "resources": _resources,
+            "savings": savings,
+        },
+        liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),

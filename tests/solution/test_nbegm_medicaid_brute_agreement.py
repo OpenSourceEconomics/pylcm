@@ -146,7 +146,10 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         states={"liquid": grid},
         state_transitions={
-            "liquid": {"alive": toy.next_liquid, "dead": toy.next_liquid}
+            "liquid": {
+                "alive": toy.next_liquid_from_savings,
+                "dead": toy.next_liquid_from_savings,
+            }
         },
         constraints={"feasible": toy.feasible},
         transition={
@@ -159,6 +162,7 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
             "subsidy_when": subsidy_when,
             "subsidy_otherwise": subsidy_otherwise,
             "resources": toy.resources,
+            "savings": toy.savings,
         },
         active=lambda age: age < 1.0,
         solver=NBEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),
