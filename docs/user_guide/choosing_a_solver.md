@@ -33,7 +33,7 @@ flowchart TD
     q0 -->|"1"| qbp{"Declared institutional breakpoints? (asset tests, brackets, notches, floors)"}
     q0 -->|"2"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
 
-    q2d -->|"Yes"| twodim["TwoAssetEGM (G2EGM)"]
+    q2d -->|"Yes"| twodim["Not in pylcm — published with its paper"]
     q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| qnest{"Declared breakpoints on the liquid margin?"}
 
     qnest -->|"Yes"| nnbegm["NNBEGM"]
@@ -70,8 +70,8 @@ flowchart TD
 
     g1 -->|"Yes"| gs["GridSearch — dense map-reduce usually wins"]
     g1 -->|"No — fine grid, or cliffs"| g2{"Full-row envelope is the memory wall?"}
-    g2 -->|"Yes"| gq["Query-side segmented envelope: NBEGM, or DCEGM(upper_envelope='ltm')"]
-    g2 -->|"No"| ge["EGM-family: EGM / NEGM / TwoAssetEGM / NBEGM"]
+    g2 -->|"Yes"| gq["Query-side segmented envelope: NBEGM, or DCEGM(envelope='ltm')"]
+    g2 -->|"No"| ge["EGM-family: EGM / NEGM / NBEGM"]
 
     c1 -->|"Yes"| cd["DCEGM — FUES / RFC / LTM / MSS all viable on CPU"]
     c1 -->|"No — smooth"| ce["EGM, or GridSearch"]
@@ -81,29 +81,30 @@ Two cross-cutting factors:
 
 - **GPU parallelism.** A GPU favours dense, static-shape map-reduces — `GridSearch`, and
   the query-side upper envelope used by `NBEGM` (and available to `DCEGM` via
-  `upper_envelope="ltm"`). A CPU tolerates the sequential, topology-discovering envelope
-  scans (`DCEGM`'s default FUES backend) that a GPU runs poorly. So at the
-  secondary-kink leaf, prefer `NBEGM`'s query-side envelope on a GPU and `DCEGM`'s FUES
-  on a CPU.
+  `envelope="ltm"`). A CPU tolerates the sequential, topology-discovering envelope scans
+  (`DCEGM`'s FUES backend) that a GPU runs poorly. So at the secondary-kink leaf, prefer
+  `NBEGM`'s query-side envelope on a GPU and `DCEGM`'s FUES on a CPU.
 - **Compile-shape explosion.** Many static shapes — long age grids, per-period target
   splits, branch axes — multiply compiled programs. When that dominates, fall back to
   `GridSearch` or a simple EGM.
 
 ## Solvers at a glance
 
-| Solver        | Use when                                                                                                                                              | Key constructor arguments                                                              |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `GridSearch`  | The default. Any regime, especially with a modest continuous-action grid on a GPU.                                                                    | *(none)*                                                                               |
-| `EGM`         | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`                                                                         |
-| `DCEGM`       | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `upper_envelope` |
-| `NEGM`        | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
-| `TwoAssetEGM` | Two continuous assets whose first-order conditions are genuinely coupled (the G2EGM setting).                                                         | `a_grid`, `b_grid`, `consumption_grid`, `threshold`                                    |
-| `NNBEGM`      | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                           |
-| `NBEGM`       | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                            |
+| Solver       | Use when                                                                                                                                              | Key constructor arguments                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `GridSearch` | The default. Any regime, especially with a modest continuous-action grid on a GPU.                                                                    | *(none)*                                                                         |
+| `EGM`        | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`                                                                   |
+| `DCEGM`      | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `envelope` |
+| `NEGM`       | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                     |
+| `NNBEGM`     | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                     |
+| `NBEGM`      | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                      |
 
-`DCEGM`'s upper-envelope backend is selectable via `upper_envelope=` (`"fues"`, `"rfc"`,
-`"ltm"`, `"mss"`). `"fues"` is a topology-discovering scan (CPU-friendly); `"ltm"` is a
-query-side segment evaluator (GPU-friendly). Switch only under a benchmark.
+`DCEGM`'s upper-envelope backend is selectable via `envelope=` (`"exact"`, `"fues"`,
+`"rfc"`, `"ltm"`, `"mss"`). `"exact"` is the default and pylcm's own construction, which
+resolves ownership by certified comparison rather than by scanning; the other four are
+ports of the method columns of Dobrescu & Shanker 2024. `"fues"` is a
+topology-discovering scan (CPU-friendly); `"ltm"` is a query-side segment evaluator
+(GPU-friendly). Switch only under a benchmark.
 
 ## A note on current-state dependence
 
