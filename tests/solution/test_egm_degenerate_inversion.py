@@ -80,8 +80,8 @@ def test_a_zero_marginal_continuation_publishes_the_consume_everything_corner(
         savings_grid=_SAVINGS_GRID,
         discount_factor=_DISCOUNT_FACTOR,
         preferences=preferences,
-        return_liquid=_RETURN_LIQUID,
-        income=_INCOME,
+        next_liquid=(1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,
+        marginal_return=jnp.full_like(_SAVINGS_GRID, 1.0 + _RETURN_LIQUID),
     )
     expected_value = (
         preferences.utility(_LIQUID_GRID) + _DISCOUNT_FACTOR * _NEXT_VALUE_LEVEL

@@ -65,16 +65,18 @@ def _closed_form_consumption(next_nodes: tuple[float, ...]) -> np.ndarray:
 def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
     """Consumption matches the closed form for any next-period grid."""
     next_grid = jnp.asarray(next_nodes)
+    savings_grid = jnp.asarray(_SAVINGS_GRID)
+    gross_return = 1.0 + _RETURN
     step = egm_one_asset_step(
         next_value=jnp.log(next_grid),
         next_marginal=1.0 / next_grid,
         liquid_grid=jnp.asarray(_CURRENT_GRID),
         next_liquid_grid=next_grid,
-        savings_grid=jnp.asarray(_SAVINGS_GRID),
+        savings_grid=savings_grid,
         discount_factor=_DISCOUNT,
         preferences=crra_preferences(1.0),
-        return_liquid=_RETURN,
-        income=_INCOME,
+        next_liquid=gross_return * savings_grid + _INCOME,
+        marginal_return=jnp.full_like(savings_grid, gross_return),
     )
 
     np.testing.assert_array_almost_equal(

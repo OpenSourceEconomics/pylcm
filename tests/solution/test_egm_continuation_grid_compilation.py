@@ -25,6 +25,9 @@ from tests.test_models.deterministic.ds_pension import get_model, get_params
 def _reader_cache_entries(next_m_grids):
     """Trace-cache size after reading one affine `V` on several target grids."""
     liquid_grid = jnp.linspace(0.5, 3.0, 5)
+    savings_grid = jnp.linspace(0.0, 2.0, 6)
+    gross_return = 1.02
+    income = 1.0
 
     @jax.jit
     def read(next_value, next_marginal, next_liquid_grid):
@@ -33,11 +36,11 @@ def _reader_cache_entries(next_m_grids):
             next_marginal=next_marginal,
             liquid_grid=liquid_grid,
             next_liquid_grid=next_liquid_grid,
-            savings_grid=jnp.linspace(0.0, 2.0, 6),
+            savings_grid=savings_grid,
             discount_factor=0.98,
             preferences=crra_preferences(2.0),
-            return_liquid=0.02,
-            income=1.0,
+            next_liquid=gross_return * savings_grid + income,
+            marginal_return=jnp.full_like(savings_grid, gross_return),
         ).value
 
     for next_liquid_grid in next_m_grids:
