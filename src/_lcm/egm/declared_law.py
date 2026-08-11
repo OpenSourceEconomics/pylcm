@@ -29,6 +29,7 @@ from _lcm.typing import (
     FloatND,
     RegimeName,
     StateName,
+    StateOrActionName,
     TransitionFunctionName,
     TransitionFunctionsMapping,
 )
@@ -43,6 +44,7 @@ def build_declared_liquid_law(
     post_decision_name: str,
     target: RegimeName,
     target_state: StateName,
+    variable_names: frozenset[StateOrActionName],
 ) -> Callable[..., tuple[Float1D, Float1D]]:
     """Build the declared law of motion as a function of savings.
 
@@ -53,6 +55,13 @@ def build_declared_liquid_law(
         post_decision_name: Name of the function computing post-decision savings.
         target: The regime active next period, whose law is composed.
         target_state: The target's own name for its single continuous state.
+        variable_names: The regime's state and action names. A composed law that
+            still reads one of them after the post-decision function is removed
+            has reached it by some other route, which is refused here.
+
+    Raises:
+        RegimeInitializationError: If the composed law reads a state or action
+            rather than the post-decision node.
 
     Returns:
         A callable taking `savings_grid` and the regime's flat params, returning
@@ -75,6 +84,13 @@ def build_declared_liquid_law(
     wanted = frozenset(inspect.signature(next_state_func).parameters) - {
         post_decision_name
     }
+    _fail_if_law_reaches_past_the_post_decision(
+        reads=wanted,
+        variable_names=variable_names,
+        post_decision_name=post_decision_name,
+        regime_target=target,
+        law_name=law_name,
+    )
 
     def law(
         *, savings_grid: Float1D, **params: FloatND | float
@@ -96,6 +112,37 @@ def build_declared_liquid_law(
         return jax.vmap(jax.value_and_grad(landing))(savings_grid)
 
     return law
+
+
+def _fail_if_law_reaches_past_the_post_decision(
+    *,
+    reads: frozenset[str],
+    variable_names: frozenset[StateOrActionName],
+    post_decision_name: str,
+    regime_target: RegimeName,
+    law_name: TransitionFunctionName,
+) -> None:
+    """Require the composed law to read savings and params, nothing else.
+
+    With the post-decision function removed from the DAG its name becomes an
+    input, so whatever else the composed law still asks for it reached by some
+    other route. A state or action among those means the law is not a function
+    of savings at all, and neither the landing point nor its derivative with
+    respect to savings is the quantity the Euler inversion needs.
+    """
+    reached = sorted(reads & variable_names)
+    if not reached:
+        return
+    msg = (
+        f"The law '{law_name}' toward regime '{regime_target}' reads "
+        f"{reached} directly rather than reaching them through the "
+        f"post-decision function '{post_decision_name}'. The endogenous grid "
+        f"method inverts the Euler equation on the savings grid, so the law "
+        f"must be a function of '{post_decision_name}' and parameters alone. "
+        f"Write the law in terms of '{post_decision_name}', or use GridSearch, "
+        f"which maximizes over the action grid and needs no such form."
+    )
+    raise RegimeInitializationError(msg)
 
 
 def fail_if_declared_law_is_not_increasing(

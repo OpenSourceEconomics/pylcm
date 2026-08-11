@@ -50,6 +50,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     StateName,
+    StateOrActionName,
 )
 
 
@@ -197,6 +198,9 @@ class EGM(Solver):
                     target_state=target_state,
                     post_decision_function=self.post_decision_function,
                     transitions=context.transitions,
+                    variable_names=frozenset(context.state_action_space.states)
+                    | frozenset(context.state_action_space.continuous_actions)
+                    | frozenset(context.state_action_space.discrete_actions),
                     functions=context.functions,
                     koopmans_aggregator=cast(
                         "EconFunction", context.koopmans_aggregator
@@ -339,6 +343,7 @@ def _build_egm_core(
     target_state: StateName,
     post_decision_function: FunctionName,
     transitions: TransitionFunctionsMapping,
+    variable_names: frozenset[StateOrActionName],
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
@@ -385,6 +390,7 @@ def _build_egm_core(
         post_decision_name=post_decision_function,
         target=target,
         target_state=target_state,
+        variable_names=variable_names,
     )
 
     def core(

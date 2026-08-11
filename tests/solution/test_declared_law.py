@@ -48,6 +48,15 @@ def next_wealth_falling_in_savings(savings: FloatND) -> ContinuousState:
     return 10.0 - savings
 
 
+def next_wealth_reaching_past_the_post_decision(
+    wealth: ContinuousState,
+    consumption: FloatND,
+    return_liquid: float,
+) -> ContinuousState:
+    """A law written straight from the state and the action, bypassing savings."""
+    return (1.0 + return_liquid) * (wealth - consumption)
+
+
 def _law_for(func):
     """Build the declared-law reader for a single-target regime using `func`."""
     return build_declared_liquid_law(
@@ -60,7 +69,22 @@ def _law_for(func):
         post_decision_name="savings",
         target="retired",
         target_state="wealth",
+        variable_names=frozenset({"wealth", "consumption"}),
     )
+
+
+def test_a_law_that_bypasses_the_post_decision_node_is_rejected_by_name():
+    """A law reaching the state or action directly names them and says why.
+
+    The method reads where a level of savings lands and how that landing point
+    moves; both are only defined if the law is a function of savings. A law
+    written straight from the state and the action is not, and is refused when
+    the law is composed rather than failing later inside the composition.
+    """
+    with pytest.raises(
+        RegimeInitializationError, match=r"reads \['consumption', 'wealth'\]"
+    ):
+        _law_for(next_wealth_reaching_past_the_post_decision)
 
 
 def test_the_conventional_law_yields_the_gross_return_as_its_slope():
