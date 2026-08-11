@@ -380,6 +380,8 @@ def _build_egm_core(
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
+        gross_return = 1.0 + params[f"{liquid_law}__{return_param}"]
+        income = params[f"{liquid_law}__{income_param}"]
         step = egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -388,8 +390,9 @@ def _build_egm_core(
             savings_grid=savings_grid,
             discount_factor=read_discount_factor(params),
             preferences=build_preferences(params),
-            return_liquid=params[f"{liquid_law}__{return_param}"],
-            income=params[f"{liquid_law}__{income_param}"],
+            next_liquid=gross_return * savings_grid + income,
+            marginal_return=jnp.broadcast_to(gross_return, savings_grid.shape),
+            next_liquid_at_zero_savings=income,
         )
         carry = EGMCarry(
             endog_grid=liquid,

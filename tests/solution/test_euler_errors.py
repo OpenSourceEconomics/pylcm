@@ -66,8 +66,9 @@ def _retired_median_euler_error(*, n_liquid):
         savings_grid=savings_grid,
         discount_factor=_DISCOUNT,
         preferences=crra_preferences(_CRRA),
-        return_liquid=_RETURN,
-        income=_INCOME,
+        next_liquid=(1.0 + _RETURN) * savings_grid + _INCOME,
+        marginal_return=jnp.full_like(savings_grid, 1.0 + _RETURN),
+        next_liquid_at_zero_savings=_INCOME,
     )
     # The continuation is the terminal bequest: at death all wealth is consumed, so the
     # next-period consumption policy is the identity in liquid.
