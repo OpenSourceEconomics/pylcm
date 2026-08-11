@@ -159,12 +159,23 @@ def weighted_power_mean(
     # nothing at a payoff of one, and an overflow to infinity at the top of the
     # range, where the rounded logarithm exponentiates past the largest number
     # the format holds.
-    anchor_payoff_high = jnp.max(jnp.where(anchorable, values, -jnp.inf), axis=-1)
-    anchor_payoff_low = jnp.min(jnp.where(anchorable, values, jnp.inf), axis=-1)
-    anchor_payoff = jnp.where(exponent >= 0.0, anchor_payoff_high, anchor_payoff_low)
+    # Selected by *index* and gathered, never reduced over. A `max` or `min` over
+    # the payoffs flushes a subnormal operand to zero on this backend, which
+    # would lose a payoff the format can represent before it ever reaches the
+    # result. The logarithms are safely reducible — `log` of the smallest
+    # subnormal is an ordinary number — and `log` is monotone, so the anchoring
+    # node is the same one either way.
+    anchor_index = jnp.where(
+        exponent >= 0.0,
+        jnp.argmax(jnp.where(anchorable, log_v, -jnp.inf), axis=-1),
+        jnp.argmin(jnp.where(anchorable, log_v, jnp.inf), axis=-1),
+    )
+    anchor_payoff = jnp.take_along_axis(
+        jnp.broadcast_to(values, log_v.shape), anchor_index[..., None], axis=-1
+    )[..., 0]
     # With no anchorable node the anchor fell back to a log value of zero, whose
-    # payoff is one, so the multiplication leaves the deviation alone.
-    anchor_payoff = jnp.where(jnp.isfinite(anchor_payoff), anchor_payoff, 1.0)
+    # payoff is one, so applying the deviation leaves it alone.
+    anchor_payoff = jnp.where(jnp.any(anchorable, axis=-1), anchor_payoff, 1.0)
     # A dead node's value was replaced by `1.0` above, so its `log v` is `0` —
     # a point the anchor knows nothing about, since only live nodes may anchor.
     # Left alone it can sit arbitrarily far above the anchored range, overflow
@@ -246,7 +257,21 @@ def weighted_power_mean(
     deviation_power = log_moment / safe_exponent
     deviation_geometric = jnp.sum(normalized * centered, axis=-1)
     deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
-    return anchor_payoff * jnp.exp(deviation)
+    return _applied_to_anchor(payoff=anchor_payoff, deviation=deviation)
+
+
+def _applied_to_anchor(*, payoff: FloatND, deviation: FloatND) -> FloatND:
+    """Return `payoff * exp(deviation)`, without touching an untouched payoff.
+
+    A deviation of exactly zero is the riskless lottery: the answer *is* the
+    anchor's payoff, and multiplying it by one is an operation with no
+    mathematical content. It is not free, though — XLA flushes a subnormal
+    operand to zero on this backend, so `subnormal * 1.0` is `0.0` and a payoff
+    the format can represent would be lost to an arithmetic step that had
+    nothing to do. Selecting the payoff instead passes it through by
+    representation, which is exact at every magnitude the format holds.
+    """
+    return jnp.where(deviation == 0.0, payoff, payoff * jnp.exp(deviation))
 
 
 def _log_sum(log_terms: FloatND) -> FloatND:
@@ -383,16 +408,20 @@ def weighted_power_mean_of_pair(
     # The anchor's own payoff, kept rather than recovered from its logarithm —
     # see `weighted_power_mean`. A pair paying one amount on both sides has a
     # deviation of exactly zero and so returns that amount bit for bit.
-    anchor_payoff_high = jnp.maximum(
-        jnp.where(first_anchorable, first, -jnp.inf),
-        jnp.where(second_anchorable, second, -jnp.inf),
+    # Chosen by comparing the *logarithms* and then selected, never reduced over
+    # the payoffs themselves — see `weighted_power_mean`: a `maximum` over a
+    # subnormal payoff flushes it to zero on this backend, while a `where` passes
+    # it through by representation.
+    anchor_is_first = jnp.where(
+        exponent >= 0.0,
+        first_anchorable & (~second_anchorable | (log_first >= log_second)),
+        first_anchorable & (~second_anchorable | (log_first <= log_second)),
     )
-    anchor_payoff_low = jnp.minimum(
-        jnp.where(first_anchorable, first, jnp.inf),
-        jnp.where(second_anchorable, second, jnp.inf),
+    anchor_payoff = jnp.where(
+        first_anchorable | second_anchorable,
+        jnp.where(anchor_is_first, first, second),
+        1.0,
     )
-    anchor_payoff = jnp.where(exponent >= 0.0, anchor_payoff_high, anchor_payoff_low)
-    anchor_payoff = jnp.where(jnp.isfinite(anchor_payoff), anchor_payoff, 1.0)
 
     masked_first_weight = jnp.where(
         first_live | jnp.isnan(first_weight), first_weight, 0.0
@@ -457,4 +486,4 @@ def weighted_power_mean_of_pair(
         + masked_second_weight * jnp.where(second_live, log_second - anchor, 0.0)
     ) / safe_weight
     deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
-    return anchor_payoff * jnp.exp(deviation)
+    return _applied_to_anchor(payoff=anchor_payoff, deviation=deviation)
