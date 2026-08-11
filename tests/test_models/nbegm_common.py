@@ -25,7 +25,15 @@ import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
+)
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, Solver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -68,26 +76,15 @@ def feasible(resources: FloatND, consumption: ContinuousAction) -> BoolND:
     return consumption <= resources
 
 
-def next_liquid(
-    resources: FloatND,
-    consumption: ContinuousAction,
-    return_liquid: float,
-    income: float,
-) -> ContinuousState:
-    """Liquid law of motion: saved cash earns the liquid return, plus income."""
-    return (1.0 + return_liquid) * (resources - consumption) + income
+# The single-liquid route takes pylcm's own laws, so the toys declare those
+# rather than a local spelling of the same arithmetic.
+next_liquid = liquid_law_from_resources
+next_liquid_from_savings = liquid_law_from_savings
 
 
 def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision savings: cash-on-hand net of consumption."""
     return resources - consumption
-
-
-def next_liquid_from_savings(
-    savings: FloatND, return_liquid: float, income: float
-) -> ContinuousState:
-    """Liquid law of motion in savings form: savings earn the return, plus income."""
-    return (1.0 + return_liquid) * savings + income
 
 
 def prob_stay_alive(age: int, final_age_alive: float) -> FloatND:

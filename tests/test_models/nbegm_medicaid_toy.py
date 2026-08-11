@@ -19,7 +19,7 @@ import jax.numpy as jnp
 
 import lcm
 from _lcm.grids.base import Grid
-from lcm import LinSpacedGrid, Model
+from lcm import LinSpacedGrid, Model, cash_on_hand_with_subsidy
 from lcm.typing import BoolND, ContinuousState, FloatND
 
 # RegimeId, bequest, and the survival probabilities are re-exported: the
@@ -70,9 +70,9 @@ def subsidy(
     return jnp.where(medicaid_eligible, subsidy_medicaid, subsidy_private)
 
 
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
-    """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
-    return liquid + subsidy
+# The case-piece route takes pylcm's own cash-on-hand, so the toy declares that
+# rather than a local spelling of the same arithmetic.
+resources = cash_on_hand_with_subsidy
 
 
 def build_model(

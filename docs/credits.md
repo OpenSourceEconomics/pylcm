@@ -62,9 +62,8 @@ involved — see the Carroll (2006) reference at the top of this file.
 
 ### Multidimensional & nested EGM
 
-pylcm solves models with more than one continuous (Euler) state through its nested-EGM
-(`NEGM`) and two-dimensional (`TwoAssetEGM`, G2EGM) solvers, with roof-cut/RFC upper
-envelopes for the multidimensional case. Those methods are due to:
+pylcm solves models with more than one continuous (Euler) state by nesting, through its
+`NEGM` solver. Those methods are due to:
 
 - Druedahl (2021), "A Guide on Solving Non-convex Consumption-Saving Models,"
   *Computational Economics* 58(3), 747–775,

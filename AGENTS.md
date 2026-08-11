@@ -418,9 +418,9 @@ def subsidy_private(subsidy_low: float) -> FloatND:
     return jnp.asarray(subsidy_low)
 
 
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
-    """Market resources: liquid wealth plus the Medicaid-contingent subsidy."""
-    return liquid + subsidy
+# The kernels form cash-on-hand themselves, so the regime declares pylcm's own
+# node rather than a local spelling of the same arithmetic.
+resources = lcm.cash_on_hand_with_subsidy
 ```
 
 - `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
@@ -438,6 +438,13 @@ def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
   declares no discrete action and no taste shocks. Kinks, floors, and every other
   bracket shape go through `lcm.piecewise_affine` instead — see
   `docs/user_guide/nbegm.md`.
+- The single-liquid kernels apply a hardcoded budget rather than calling the regime's,
+  so the route accepts pylcm's own declarations of those forms by identity:
+  `lcm.cash_on_hand_with_subsidy` as the budget node, and `lcm.liquid_law_from_savings`
+  (or `lcm.liquid_law_from_resources` in displacement form) as the liquid law. They stay
+  ordinary executable functions, so the same model solves identically under
+  `GridSearch`. A budget they cannot express goes through a `lcm.piecewise_affine`
+  schedule with a `post_decision_function`, or `GridSearch`.
 - The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
   nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
   mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to

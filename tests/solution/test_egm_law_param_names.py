@@ -13,14 +13,10 @@ difference at all would mean a parameter reached the wrong slot.
 """
 
 import numpy as np
-import pytest
 from dags import rename_arguments
 
-from lcm.solvers import EGM, TwoAssetEGM
+from lcm.solvers import EGM
 from tests.solution.test_egm_continuation_grid_provenance import (
-    _A_GRID,
-    _B_GRID,
-    _CONSUMPTION_GRID,
     _N_PERIODS,
     _SAVINGS_GRID,
 )
@@ -66,33 +62,17 @@ def _rename_params(params):
 
 
 def _default_solvers():
-    return {
-        "working": TwoAssetEGM(
-            a_grid=_A_GRID, b_grid=_B_GRID, consumption_grid=_CONSUMPTION_GRID
-        ),
-        "retired": EGM(savings_grid=_SAVINGS_GRID),
-    }
+    return {"retired": EGM(savings_grid=_SAVINGS_GRID)}
 
 
 def _renamed_solvers():
     """The same solvers, told which parameter fills each of their roles."""
     return {
-        "working": TwoAssetEGM(
-            a_grid=_A_GRID,
-            b_grid=_B_GRID,
-            consumption_grid=_CONSUMPTION_GRID,
-            return_liquid_param=_RENAMED["return_liquid"],
-            return_pension_param=_RENAMED["return_pension"],
-            match_rate_param=_RENAMED["match_rate"],
-            wage_param=_RENAMED["wage"],
-            retirement_income_param=_RENAMED["retirement_income"],
-            pension_payout_return_param=_RENAMED["pension_payout_return"],
-        ),
         "retired": EGM(
             savings_grid=_SAVINGS_GRID,
             return_param=_RENAMED["return_liquid"],
             income_param=_RENAMED["retirement_income"],
-        ),
+        )
     }
 
 
@@ -108,9 +88,9 @@ def _solve_renamed():
     ).solve(params=_rename_params(get_params()), log_level="debug")
 
 
-@pytest.mark.parametrize("regime", ["working", "retired"])
-def test_renaming_every_law_parameter_leaves_the_solution_unchanged(regime):
-    """Both EGM solvers read their roles out of the declared parameter names."""
+def test_renaming_every_law_parameter_leaves_the_solution_unchanged():
+    """The EGM solver reads its roles out of the declared parameter names."""
+    regime = "retired"
     default = _solve_default()
     renamed = _solve_renamed()
     compared = 0
