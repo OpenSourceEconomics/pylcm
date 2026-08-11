@@ -50,13 +50,10 @@ def next_wealth_net_of_a_fixed_cost(
     return (1.0 + return_liquid) * savings + retirement_income - fixed_cost
 
 
-def _model(*, solver, n_consumption=200):
+def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
     """The closed-form consumption--saving lifecycle, plus a fixed cost."""
     last_age = float(_N_PERIODS - 1)
-    law = {
-        "saving": next_wealth_net_of_a_fixed_cost,
-        "done": next_wealth_net_of_a_fixed_cost,
-    }
+    law = {"saving": law, "done": law}
     saving = Regime(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=n_consumption)
