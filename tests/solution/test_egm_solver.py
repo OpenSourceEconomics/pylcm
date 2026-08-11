@@ -64,13 +64,17 @@ def terminal_utility(wealth: ContinuousState, crra: float) -> FloatND:
     return wealth ** (1.0 - crra) / (1.0 - crra)
 
 
+def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    """The end-of-period balance the law of motion is written through."""
+    return wealth - consumption
+
+
 def next_wealth(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: float,
     retirement_income: float,
 ) -> ContinuousState:
-    return (1.0 + return_liquid) * (wealth - consumption) + retirement_income
+    return (1.0 + return_liquid) * savings + retirement_income
 
 
 def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
@@ -102,7 +106,7 @@ def _model(*, solver, n_consumption=200):
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility},
+        functions={"utility": utility, "savings": savings},
         active=lambda age, la=last_age: age < la,
         solver=solver,
     )
@@ -148,9 +152,9 @@ def _closed_form(wealth, *, periods_of_consumption):
 @pytest.mark.parametrize("period", [0, 1, 2])
 def test_egm_value_matches_the_analytical_solution(period):
     """Each period's solved value equals the closed form on the unconstrained set."""
-    solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=_params(), log_level="debug"
-    )
+    solution = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    ).solve(params=_params(), log_level="debug")
     wealth = np.asarray(_WEALTH_GRID.to_jax())[_UNCONSTRAINED]
     _, expected = _closed_form(wealth, periods_of_consumption=_N_PERIODS - period)
     got = np.asarray(solution[period]["saving"])[_UNCONSTRAINED]
@@ -164,9 +168,9 @@ def test_egm_agrees_with_dense_grid_search():
     equation, so it cannot share a mistake in the inversion.
     """
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
-    )
+    egm = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    ).solve(params=params, log_level="debug")
     brute = _model(solver=GridSearch(), n_consumption=1200).solve(
         params=params, log_level="debug"
     )

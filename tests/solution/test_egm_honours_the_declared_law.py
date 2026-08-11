@@ -19,7 +19,7 @@ import pytest
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
-from lcm.typing import ContinuousAction, ContinuousState
+from lcm.typing import ContinuousState, FloatND
 from tests.solution.test_egm_solver import (
     _CRRA,
     _DISCOUNT_FACTOR,
@@ -32,6 +32,7 @@ from tests.solution.test_egm_solver import (
     feasible,
     prob_continue,
     prob_stop,
+    savings,
     terminal_utility,
     utility,
 )
@@ -40,16 +41,13 @@ _FIXED_COST = 0.5
 
 
 def next_wealth_net_of_a_fixed_cost(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: float,
     retirement_income: float,
     fixed_cost: float,
 ) -> ContinuousState:
     """The conventional law, less a charge levied once per period."""
-    return (
-        (1.0 + return_liquid) * (wealth - consumption) + retirement_income - fixed_cost
-    )
+    return (1.0 + return_liquid) * savings + retirement_income - fixed_cost
 
 
 def _model(*, solver, n_consumption=200):
@@ -70,7 +68,7 @@ def _model(*, solver, n_consumption=200):
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility},
+        functions={"utility": utility, "savings": savings},
         active=lambda age, la=last_age: age < la,
         solver=solver,
     )
@@ -109,9 +107,9 @@ def _params():
 def test_a_fixed_cost_in_the_law_reaches_the_egm_value(period):
     """`EGM` and a dense `GridSearch` agree on a law carrying a fixed cost."""
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
-    )
+    egm = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    ).solve(params=params, log_level="debug")
     brute = _model(solver=GridSearch(), n_consumption=1200).solve(
         params=params, log_level="debug"
     )

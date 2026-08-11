@@ -40,6 +40,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
+    TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
@@ -47,6 +48,7 @@ from lcm.typing import (
     ActionName,
     Float1D,
     FloatND,
+    FunctionName,
     StateName,
 )
 
@@ -68,18 +70,21 @@ class EGM(Solver):
     """
 
     savings_grid: ContinuousGrid
-    """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
+    """Exogenous post-decision savings grid; its lower bound is the borrowing limit.
 
-    return_param: str = "return_liquid"
-    """Name of the law's gross-return parameter.
-
-    The Euler inversion needs the return on the liquid balance, but which of
-    the law's parameters carries it is the modeller's choice, exactly as which
-    state fills the liquid role is. The default is the conventional spelling.
+    Zero for a household that cannot borrow, minus the limit for one that can.
+    The corner is read off this bound rather than assumed to be zero savings.
     """
 
-    income_param: str = "retirement_income"
-    """Name of the law's additive income parameter."""
+    post_decision_function: FunctionName
+    """Name of the post-decision function in `Regime.functions`.
+
+    The end-of-period balance (e.g. savings) the liquid state's transition is
+    written through. The Euler inversion needs where a level of savings lands
+    next period and how that landing point moves when savings move; both are
+    read off the declared law as a function of this node, so the law must
+    consume it and must reach the continuous action only through it.
+    """
 
     @property
     def requires_continuation(self) -> bool:
@@ -190,8 +195,8 @@ class EGM(Solver):
                     savings_grid=savings_grid,
                     target=target,
                     target_state=target_state,
-                    return_param=self.return_param,
-                    income_param=self.income_param,
+                    post_decision_function=self.post_decision_function,
+                    transitions=context.transitions,
                     functions=context.functions,
                     koopmans_aggregator=cast(
                         "EconFunction", context.koopmans_aggregator
@@ -332,8 +337,8 @@ def _build_egm_core(
     savings_grid: Float1D,
     target: RegimeName,
     target_state: StateName,
-    return_param: str,
-    income_param: str,
+    post_decision_function: FunctionName,
+    transitions: TransitionFunctionsMapping,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
@@ -343,17 +348,20 @@ def _build_egm_core(
     The core reads the state grid under the private role keyword `liquid`, the
     continuation value and marginal, and the regime's scalar params, runs
     `egm_one_asset_step`, and returns the value array and the marginal-value
-    carry on the liquid grid. The law's params are qualified by the transition
-    into the *target's* name for its continuation state
-    (`{target}__next_{target_state}__...`) — that is the namespace the params
-    template writes them under — so the role keyword stays private and the
-    modeller's vocabulary reaches the template unchanged.
+    carry on the liquid grid.
+
+    The two things the Euler inversion needs from the budget constraint — where
+    a level of savings lands next period, and how that landing point moves when
+    savings move — are read off the law the regime declares toward `target`,
+    composed as a function of the post-decision node. So a term outside the
+    conventional `return x balance + income` form reaches the inversion like any
+    other, and the modeller's parameter names never have to be guessed at.
 
     Preferences and the discount factor come from the regime itself: the
     felicity trio is bound out of `functions` at each call, and beta is read
     off the aggregator's own signature.
     """
-    liquid_law = f"{target}__next_{target_state}"
+    from _lcm.egm.declared_law import build_declared_liquid_law  # noqa: PLC0415
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
     from _lcm.egm.preferences import (  # noqa: PLC0415
         NEWTON_ACTION_FLOOR,
@@ -371,6 +379,13 @@ def _build_egm_core(
     read_discount_factor = get_discount_factor_reader(
         functions=functions, koopmans_aggregator=koopmans_aggregator
     )
+    declared_law = build_declared_liquid_law(
+        transitions=transitions,
+        functions=functions,
+        post_decision_name=post_decision_function,
+        target=target,
+        target_state=target_state,
+    )
 
     def core(
         *,
@@ -380,8 +395,7 @@ def _build_egm_core(
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        gross_return = 1.0 + params[f"{liquid_law}__{return_param}"]
-        income = params[f"{liquid_law}__{income_param}"]
+        next_liquid, marginal_return = declared_law(savings_grid=savings_grid, **params)
         step = egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -390,8 +404,8 @@ def _build_egm_core(
             savings_grid=savings_grid,
             discount_factor=read_discount_factor(params),
             preferences=build_preferences(params),
-            next_liquid=gross_return * savings_grid + income,
-            marginal_return=jnp.broadcast_to(gross_return, savings_grid.shape),
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
         )
         carry = EGMCarry(
             endog_grid=liquid,
