@@ -68,6 +68,7 @@ def pilot_report() -> PilotReport:
     )
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None:
     assert np.isfinite(pilot_report.f_star).all()
@@ -77,6 +78,7 @@ def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None
     assert np.isfinite(pilot_report.ad_tangent).all()
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
     pilot_report: PilotReport,
@@ -122,6 +124,7 @@ def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
             }
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_real_model_kink_is_materially_nonstationary(
     pilot_report: PilotReport,

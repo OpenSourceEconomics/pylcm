@@ -235,12 +235,14 @@ def fine_capture() -> dict:
     return _solve_and_capture(_mesh(initial=17, max_nodes=65, rounds=4, tol=1e-4))
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_captured_period_is_fully_finite(coarse_capture: dict) -> None:
     for name in ("keeper_V", "V", "p_adjust"):
         assert np.isfinite(coarse_capture[name]).all(), name
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_exact_keeper_dominance_under_the_fixed_cost_fold(
     coarse_capture: dict,
@@ -262,6 +264,7 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
         )
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_coarse_fine_outer_convergence(
     coarse_capture: dict, fine_capture: dict
@@ -279,6 +282,7 @@ def test_coarse_fine_outer_convergence(
     np.testing.assert_allclose(fine_V, coarse_V, atol=2e-3, rtol=1e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.manual
 def test_next_habit_is_continuous_not_grid_snapped(coarse_capture: dict) -> None:
     """A material share of cells selects an off-node continuous next habit.

@@ -362,19 +362,24 @@ ini_options.addopts = [
   # one (pytest keeps the last `-m` it sees), so `pytest ... -m manual` still
   # runs them.
   #
-  # That override is why this line cannot be the whole mechanism, and the
-  # exposure runs the opposite way to the intuition. `manual` REPLACES `slow`
-  # on these gates rather than joining it, so a caller passing `-m "not slow"`
-  # does not exclude them — it selects them, and it discards the `not manual`
-  # here while doing so. Left alone, `cpu.yml`'s first phase would pull all
-  # seven never-finishing gates into the FAST `-n 4` phase, which is strictly
-  # worse than marking them `slow` and doing nothing. Every `-m "not slow"`
-  # caller therefore spells `-m "not slow and not manual"`.
+  # That override is why this line cannot be the whole mechanism: `-m` on the
+  # command line REPLACES this expression wholesale rather than intersecting
+  # with it, so any caller passing its own `-m` silently drops `not manual`.
   #
-  # The `-m slow` phases need no conjunct: a `manual` gate carries no `slow`
-  # mark, so they exclude it already. Any NEW caller passing `-m` must decide
-  # this for itself — the rule is that `-m` on the command line replaces this
-  # line wholesale, never intersects with it.
+  # The two markers answer different questions and stack rather than compete:
+  #
+  #   slow   — too heavy for the small CI runners. Dropped on macOS/Windows and
+  #            split into its own phases on Linux, where it still runs.
+  #   manual — solves the real paper-scale model. Runs nowhere in CI, on any
+  #            runner, at any budget.
+  #
+  # The Mahler-Yum gates are both, and carry both marks. Neither mark implies
+  # the other in general — a `manual` gate need not be `slow`, and most `slow`
+  # tests are not `manual` — so CI cannot lean on one to exclude the other.
+  # Every `cpu.yml` invocation therefore states `not manual` itself, whichever
+  # side of `slow` it wants: `-m "not slow and not manual"` for the fast phases,
+  # `-m "slow and not manual"` for the heavy ones. That is an invariant of the
+  # workflow, not an artifact of how today's gates happen to be marked.
   "-m",
   "not manual",
 ]
