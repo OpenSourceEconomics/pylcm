@@ -442,23 +442,29 @@ class NBEGM(Solver):
 
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
+        laws: dict[RegimeName, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         consumption_action = next(iter(context.state_action_space.continuous_actions))
+        variable_names = (
+            frozenset(context.state_action_space.states)
+            | frozenset(context.state_action_space.continuous_actions)
+            | frozenset(context.state_action_space.discrete_actions)
+        )
         for period, target in period_to_target.items():
             if target not in cores:
-                liquid_law = build_declared_liquid_law(
+                laws[target] = build_declared_liquid_law(
                     transitions=context.transitions,
                     functions=context.functions,
                     post_decision_name=post_decision_name,
                     target=target,
                     target_state=liquid_state_name,
+                    variable_names=variable_names,
                 )
                 if schedule_discrete_spec is not None:
                     core = _build_nbegm_schedule_discrete_core(
                         savings_grid=savings_grid,
                         functions=context.functions,
                         consumption_action=consumption_action,
-                        liquid_law=liquid_law,
                         spec=schedule_discrete_spec,
                         taste_shock_scale=0.0,
                         envelope_arithmetic=self.envelope_arithmetic,
@@ -468,7 +474,6 @@ class NBEGM(Solver):
                         savings_grid=savings_grid,
                         functions=context.functions,
                         consumption_action=consumption_action,
-                        liquid_law=liquid_law,
                         schedule_spec=schedule_spec,
                         envelope_arithmetic=self.envelope_arithmetic,
                     )
@@ -477,7 +482,6 @@ class NBEGM(Solver):
                         savings_grid=savings_grid,
                         functions=context.functions,
                         consumption_action=consumption_action,
-                        liquid_law=liquid_law,
                         discrete_spec=discrete_spec,
                         taste_shock_scale=0.0,
                         envelope_arithmetic=self.envelope_arithmetic,
@@ -496,13 +500,14 @@ class NBEGM(Solver):
                         savings_grid=savings_grid,
                         functions=context.functions,
                         consumption_action=consumption_action,
-                        liquid_law=liquid_law,
                         case_spec=case_spec,
                         envelope_arithmetic=self.envelope_arithmetic,
                     )
                 cores[target] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
                 core=cores[target],
+                declared_law=laws[target],
+                savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
                 liquid_state=liquid_state_name,
@@ -1588,7 +1593,6 @@ def _build_nbegm_core(
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
-    liquid_law: Callable[..., tuple[Float1D, Float1D]],
     case_spec: _NBEGMCaseSpec,
     envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
@@ -1618,6 +1622,8 @@ def _build_nbegm_core(
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
@@ -1634,7 +1640,6 @@ def _build_nbegm_core(
             }
         )
         asset_limit = params[f"{case_spec.predicate_name}__{case_spec.threshold_name}"]
-        next_liquid, marginal_return = liquid_law(savings_grid=savings_grid, **params)
         value, marginal, _policy = nbegm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -2834,7 +2839,6 @@ def _build_nbegm_continuous_core(
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
-    liquid_law: Callable[..., tuple[Float1D, Float1D]],
     schedule_spec: _NBEGMScheduleSpec,
     envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
@@ -2874,6 +2878,8 @@ def _build_nbegm_continuous_core(
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
@@ -2900,7 +2906,6 @@ def _build_nbegm_continuous_core(
         coh_slopes, coh_intercepts = interval_segment_coefficients(
             schedule=coh_of_liquid, interval_midpoints=midpoints
         )
-        next_liquid, marginal_return = liquid_law(savings_grid=savings_grid, **params)
         value, marginal, _policy = _solve_cliffed_budget(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -4436,7 +4441,6 @@ def _build_nbegm_schedule_discrete_core(
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
-    liquid_law: Callable[..., tuple[Float1D, Float1D]],
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
     envelope_arithmetic: ComparisonArithmetic = "certified",
@@ -4479,6 +4483,8 @@ def _build_nbegm_schedule_discrete_core(
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
@@ -4488,9 +4494,6 @@ def _build_nbegm_schedule_discrete_core(
             order_sensitive=order_sensitive,
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
-        # The law is a property of the continuation target, so it is read once
-        # and shared by every branch of the discrete action.
-        next_liquid, marginal_return = liquid_law(savings_grid=savings_grid, **params)
         values: list[Float1D] = []
         marginals: list[Float1D] = []
         for code in spec.discrete_action_codes:
@@ -4551,7 +4554,6 @@ def _build_nbegm_discrete_core(
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
-    liquid_law: Callable[..., tuple[Float1D, Float1D]],
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
     envelope_arithmetic: ComparisonArithmetic = "certified",
@@ -4585,6 +4587,8 @@ def _build_nbegm_discrete_core(
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
@@ -4610,7 +4614,6 @@ def _build_nbegm_discrete_core(
                     "breakpoints": empty_breakpoints,
                 }
             )
-        next_liquid, marginal_return = liquid_law(savings_grid=savings_grid, **params)
         value, marginal, _policy, _choice = nbegm_discrete_envelope_step(
             next_value=next_value,
             next_marginal=next_marginal,
