@@ -67,7 +67,7 @@ def test_the_conventional_law_yields_the_gross_return_as_its_slope():
     """A law of the assumed form reproduces what the assumption computed."""
     law = _law_for(next_wealth_conventional)
 
-    next_liquid, marginal_return, at_zero = law(
+    next_liquid, marginal_return = law(
         savings_grid=_SAVINGS, return_liquid=0.03, retirement_income=2.0
     )
 
@@ -81,14 +81,13 @@ def test_the_conventional_law_yields_the_gross_return_as_its_slope():
         np.full(_SAVINGS.shape, 1.03),
         decimal=DECIMAL_PRECISION,
     )
-    np.testing.assert_almost_equal(float(at_zero), 2.0, decimal=DECIMAL_PRECISION)
 
 
 def test_a_fixed_cost_moves_the_landing_points_and_not_the_slope():
     """A term outside the assumed form reaches the level but not the derivative."""
     law = _law_for(next_wealth_with_a_fixed_cost)
 
-    next_liquid, marginal_return, at_zero = law(
+    next_liquid, marginal_return = law(
         savings_grid=_SAVINGS,
         return_liquid=0.03,
         retirement_income=2.0,
@@ -105,15 +104,32 @@ def test_a_fixed_cost_moves_the_landing_points_and_not_the_slope():
         np.full(_SAVINGS.shape, 1.03),
         decimal=DECIMAL_PRECISION,
     )
-    np.testing.assert_almost_equal(float(at_zero), 1.5, decimal=DECIMAL_PRECISION)
 
 
 def test_a_law_falling_in_savings_is_rejected_with_an_ordering_explanation():
     """The endogenous grid is read back by interpolation, which needs ascent."""
     law = _law_for(next_wealth_falling_in_savings)
-    next_liquid, _marginal_return, _at_zero = law(savings_grid=_SAVINGS)
+    next_liquid, _marginal_return = law(savings_grid=_SAVINGS)
 
-    with pytest.raises(RegimeInitializationError, match="strictly increase"):
+    with pytest.raises(RegimeInitializationError, match="falls as savings rise"):
         fail_if_declared_law_is_not_increasing(
             next_liquid=next_liquid, regime_name="working", target="retired"
+        )
+
+
+def test_a_law_flat_over_a_band_is_rejected_as_flat_rather_than_falling():
+    """A means test clawing a transfer back one-for-one is flat, not backwards.
+
+    Such a law is still outside the method — several savings levels reach the
+    same landing point, so the level behind a given one is not unique — but a
+    modeller reading `falls as savings rise` would look for a sign error that
+    is not there.
+    """
+    clawed_back = jnp.concatenate(
+        [jnp.linspace(0.0, 3.0, 4), jnp.full((4,), 3.0), jnp.linspace(4.0, 7.0, 3)]
+    )
+
+    with pytest.raises(RegimeInitializationError, match="is flat over a range"):
+        fail_if_declared_law_is_not_increasing(
+            next_liquid=clawed_back, regime_name="working", target="retired"
         )
