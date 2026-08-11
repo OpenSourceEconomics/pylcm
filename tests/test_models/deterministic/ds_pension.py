@@ -251,9 +251,8 @@ def get_model(
         solvers: Optional mapping of regime name to its `Solver`. A name absent from
             the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
             default model is the dense-grid brute oracle. Pass
-            `{"working": TwoAssetEGM(...)}` to drive the working regime by the
-            two-asset method, and `{"retired": EGM(...)}` for the 1-D retired
-            consumption--saving problem.
+            `{"retired": EGM(...)}` for the 1-D retired consumption--saving
+            problem.
         laws: Optional mapping of law-of-motion function name to a replacement.
             A name absent from the mapping keeps this module's own function. Use
             it to vary a law's parameter spellings without varying its

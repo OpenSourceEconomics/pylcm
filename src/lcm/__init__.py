@@ -140,7 +140,6 @@ from lcm.solvers import (  # noqa: E402
     EGM,
     NEGM,
     GridSearch,
-    TwoAssetEGM,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
@@ -199,7 +198,6 @@ __all__ = [
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
-    "TwoAssetEGM",
     "UniformIIDProcess",
     "__version__",
     "categorical",

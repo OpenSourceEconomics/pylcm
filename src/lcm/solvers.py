@@ -17,10 +17,11 @@ backward induction:
   discrete kinks. Inverting the Euler equation on the post-decision savings
   grid solves such a period exactly, so this is the specialization whose step
   needs no upper envelope at all.
-- `TwoAssetEGM(...)`: the two-continuous-state endogenous grid method. Name the
-  regime's two continuous states with `liquid_state=` and `pension_state=`;
-  `envelope=` picks the refinement that resolves the resulting candidate cloud,
-  either the G2EGM mesh (`"g2egm"`) or the rooftop-cut RFC (`"rfc"`).
+A second continuous state is reached by nesting: `NEGM` solves an inner 1-D
+problem conditional on the outer margin, rather than inverting two coupled
+first-order conditions jointly. Solvers specialized to one model's accounting
+are replicated and published alongside the paper that reports them, not carried
+here.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
@@ -34,7 +35,6 @@ from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.negm import NEGM
-from _lcm.solution.two_asset_egm import TwoAssetEGM
 
 __all__ = [
     "DCEGM",
@@ -44,5 +44,4 @@ __all__ = [
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
-    "TwoAssetEGM",
 ]
