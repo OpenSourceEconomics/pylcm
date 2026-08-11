@@ -106,6 +106,11 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
+from lcm.fixed_forms import (  # noqa: E402
+    cash_on_hand_with_subsidy,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
+)
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -217,8 +222,11 @@ __all__ = [
     "affine_breakpoint",
     "boundary",
     "case_boundary",
+    "cash_on_hand_with_subsidy",
     "categorical",
     "fixed_transition",
+    "liquid_law_from_resources",
+    "liquid_law_from_savings",
     "load_snapshot",
     "load_solution",
     "piece",

@@ -69,6 +69,12 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
+from lcm.fixed_forms import (
+    FIXED_FORM_ATTRIBUTE,
+    cash_on_hand_with_subsidy,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
+)
 from lcm.phased import Phased
 from lcm.typing import (
     ActionName,
@@ -403,11 +409,6 @@ class NBEGM(Solver):
         fail_if_kernel_fixed_form_contract_unmet(
             context=context,
             liquid_state_name=liquid_state_name,
-            budget_target=self.budget_target,
-            savings_name=self.post_decision_function,
-            consumption_action=next(
-                iter(context.state_action_space.continuous_actions)
-            ),
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
@@ -1263,6 +1264,26 @@ def _validate_nbegm_boundary_scope(
 # The fixed names the single-liquid kernels read: the state their grid argument
 # binds to, the function and parameter carrying the CRRA coefficient, and the
 # liquid law's budget parameters.
+_KERNEL_LIQUID_LAWS = frozenset(
+    {liquid_law_from_savings.__name__, liquid_law_from_resources.__name__}
+)
+_KERNEL_BUDGET_NODES = frozenset({cash_on_hand_with_subsidy.__name__})
+
+
+def _declares_fixed_form(func: object, *, allowed: frozenset[str]) -> bool:
+    """Report whether `func` is one of `allowed`, seen through the DAG's wrappers.
+
+    The declaration reaches the solver wrapped, so the marker is followed along
+    the `__wrapped__` chain rather than compared by identity.
+    """
+    seen: object | None = func
+    while seen is not None:
+        if getattr(seen, FIXED_FORM_ATTRIBUTE, None) in allowed:
+            return True
+        seen = getattr(seen, "__wrapped__", None)
+    return False
+
+
 _KERNEL_LIQUID_STATE = "liquid"
 _KERNEL_LIQUID_LAW_PARAMS = ("return_liquid", "income")
 _KERNEL_DEFAULT_SAVINGS_NAME = "savings"
@@ -1272,9 +1293,6 @@ def fail_if_kernel_fixed_form_contract_unmet(
     *,
     context: SolverBuildContext,
     liquid_state_name: StateName,
-    budget_target: str,
-    savings_name: FunctionName | None,
-    consumption_action: ActionName,
 ) -> None:
     """Check the fixed economic form the single-liquid NB-EGM kernels solve.
 
@@ -1361,22 +1379,23 @@ def fail_if_kernel_fixed_form_contract_unmet(
                 "DAG, or use `GridSearch` for this regime."
             )
             raise RegimeInitializationError(msg)
-        if callable(liquid_law):
-            _fail_if_liquid_law_differs_from_kernel_budget(
-                liquid_law=liquid_law,
-                return_liquid_param=(
-                    f"{target}__{liquid_law_name}__{_KERNEL_LIQUID_LAW_PARAMS[0]}"
-                ),
-                income_param=(
-                    f"{target}__{liquid_law_name}__{_KERNEL_LIQUID_LAW_PARAMS[1]}"
-                ),
-                savings_name=savings_name or _KERNEL_DEFAULT_SAVINGS_NAME,
-                budget_target=budget_target,
-                consumption_action=consumption_action,
-                regime_name=regime_name,
-                target=target,
-                liquid_law_name=liquid_law_name,
+        if callable(liquid_law) and not _declares_fixed_form(
+            liquid_law, allowed=_KERNEL_LIQUID_LAWS
+        ):
+            msg = (
+                f"NBEGM's single-liquid kernels apply a fixed budget rather than "
+                f"calling the declared law, so this route takes the law pylcm "
+                f"supplies and not an arbitrary callable: regime {regime_name!r}'s "
+                f"transition to {target!r} declares {liquid_law_name!r} as "
+                f"{getattr(liquid_law, '__name__', liquid_law)!r}. Declare "
+                f"`lcm.liquid_law_from_savings` or `lcm.liquid_law_from_resources`, "
+                "whose identity settles the contract by construction. A budget "
+                "those forms cannot express does not belong on this route — "
+                "declare a `lcm.piecewise_affine` schedule with a "
+                "`post_decision_function` so the budget is composed from the DAG, "
+                "or use `GridSearch` for this regime."
             )
+            raise RegimeInitializationError(msg)
 
 
 _KERNEL_LIQUID_LAW_PROBE_SAVINGS = (0.0, 0.25, 1.0, 7.5, 100.0)

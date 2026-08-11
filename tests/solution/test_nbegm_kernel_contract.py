@@ -141,6 +141,37 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
     )
 
 
+def _hand_written_liquid_law(
+    savings: FloatND, return_liquid: float, income: float
+) -> ContinuousState:
+    """A user's own spelling of the fixed law, computing exactly the same value."""
+    return (1.0 + return_liquid) * savings + income
+
+
+def _rescaled_liquid_law(
+    savings: FloatND, return_liquid: float, income: float
+) -> ContinuousState:
+    """The fixed law scaled by `1 + 9e-6`, a difference no probe set separates."""
+    return (1.0 + 9e-6) * ((1.0 + return_liquid) * savings + income)
+
+
+@pytest.mark.parametrize("law", [_hand_written_liquid_law, _rescaled_liquid_law])
+def test_a_hand_written_liquid_law_is_refused_by_the_single_liquid_route(law) -> None:
+    """The single-liquid route takes pylcm's own law object, not a user callable.
+
+    The kernels apply a fixed budget rather than calling the declared law, and no
+    finite check establishes that an arbitrary callable computes it — a global
+    rescaling agrees at every sampled point and still moves every state's value.
+    So the route accepts the law pylcm supplies, whose identity settles the
+    question by construction, and refuses everything else with somewhere to go.
+    """
+    with pytest.raises(RegimeInitializationError, match="liquid_law_from_savings"):
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=law,
+        )
+
+
 def test_a_liquid_law_without_a_return_liquid_parameter_is_named_at_build() -> None:
     """The kernels read `next_liquid__return_liquid`, so `interest` is refused."""
     with pytest.raises(
