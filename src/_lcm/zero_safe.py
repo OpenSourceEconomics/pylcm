@@ -251,6 +251,29 @@ def zero_safe_weighted_term(
     return balanced_product(effective_weight, safe_value)
 
 
+def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
+    """Sum ``values`` after canonicalising the floating-point reduction order.
+
+    Floating-point addition is not associative.  When the entries are keyed by
+    economically inert identifiers (regime labels, stakeholder names), reducing in
+    declaration order can therefore make a value — and even a strict argmax — depend
+    on those identifiers.  Sorting the NUMERIC contributions before the sum makes the
+    reduction order a function of the contribution multiset alone.
+
+    This is not a correctly-rounded summation algorithm; it is the shared invariant
+    used where identifier permutations must not select a different reduction tree.
+
+    Args:
+        values: Contributions to sum.
+        axis: Axis containing the permutable contributions.
+
+    Returns:
+        The value-ordered sum over ``axis``.
+    """
+    arr = jnp.asarray(values)
+    return jnp.sum(jnp.sort(arr, axis=axis), axis=axis)
+
+
 def scaled_weighted_terms(
     *, coefficients: FloatND, shifts: IntND, values: FloatND
 ) -> FloatND:
