@@ -96,8 +96,11 @@ class EGM(Solver):
         Every message reports the regimes' own state names, never the solver's
         internal role vocabulary.
 
-        The regime must also keep the default Koopmans aggregator: the Euler
-        inversion the step runs is the one that aggregator implies.
+        The regime must also carry no discrete action and keep the default
+        Koopmans aggregator: a discrete choice folds the candidate value
+        correspondence, which is the case the envelope-free step does not
+        cover, and the Euler inversion the step runs is the one that
+        aggregator implies.
         """
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_custom_koopmans_aggregator,
@@ -108,6 +111,16 @@ class EGM(Solver):
             user_regime=context.user_regimes[context.regime_name],
             solver_name="EGM",
         )
+        discrete_actions = tuple(context.state_action_space.discrete_actions)
+        if discrete_actions:
+            msg = (
+                f"EGM regime '{context.regime_name}' has discrete actions "
+                f"{sorted(discrete_actions)}. A discrete choice makes the "
+                f"candidate value correspondence multi-valued, which the "
+                f"envelope-free one-asset step does not solve. Use DCEGM, "
+                f"which refines the candidates to their upper envelope."
+            )
+            raise RegimeInitializationError(msg)
         continuous = tuple(
             context.regime_to_v_interpolation_info[
                 context.regime_name

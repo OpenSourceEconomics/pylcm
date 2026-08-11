@@ -23,6 +23,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.egm.euler import invert_euler
 from _lcm.egm.preferences import Preferences
 from lcm.typing import Float1D, ScalarFloat
 
@@ -85,8 +86,10 @@ def egm_one_asset_step(
     value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
-    consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+    consumption = invert_euler(
+        expected_marginal_continuation=gross_return * marginal_next,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=preferences.inverse_marginal_utility,
     )
     liquid_endog = consumption + savings_grid
     value_endog = preferences.utility(consumption) + discount_factor * value_next
