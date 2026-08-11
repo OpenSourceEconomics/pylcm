@@ -36,7 +36,8 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.nbegm import NBEGMRegistry
-from _lcm.egm.upper_envelope.query import EnvelopeArithmetic
+from _lcm.egm.preferences import Preferences
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
@@ -60,6 +61,7 @@ from _lcm.solution.egm import (
     _EGMPeriodKernel,
 )
 from _lcm.typing import (
+    EconFunctionsMapping,
     FlatParams,
     RegimeName,
     TransitionFunctionsMapping,
@@ -67,6 +69,13 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
+from lcm.fixed_forms import (
+    FIXED_FORM_ATTRIBUTE,
+    cash_on_hand_with_subsidy,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
+)
+from lcm.phased import Phased
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -180,7 +189,7 @@ class NBEGM(Solver):
     intermediate). Raise it when the query grid is large enough that the per-cell
     bracket matrix dominates the per-cell memory budget.
     """
-    envelope_arithmetic: EnvelopeArithmetic = "certified"
+    envelope_arithmetic: ComparisonArithmetic = "certified"
     """Which arithmetic decides ownership in the merged upper envelope.
 
     Every case, corner, and node candidate is read at each liquid query point and
@@ -403,7 +412,8 @@ class NBEGM(Solver):
             )
         )
         fail_if_kernel_fixed_form_contract_unmet(
-            context=context, liquid_state_name=liquid_state_name
+            context=context,
+            liquid_state_name=liquid_state_name,
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
@@ -423,15 +433,29 @@ class NBEGM(Solver):
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
         )
+        _fail_if_budget_node_differs_from_kernel_cash_on_hand(
+            context=context,
+            routes_to_case_piece_core=(
+                case_spec is not None
+                and schedule_discrete_spec is None
+                and schedule_spec is None
+                and discrete_spec is None
+            ),
+            budget_target=self.budget_target,
+            liquid_state_name=liquid_state_name,
+        )
 
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        consumption_action = next(iter(context.state_action_space.continuous_actions))
         for period, target in period_to_target.items():
             if target not in cores:
                 if schedule_discrete_spec is not None:
                     core = _build_nbegm_schedule_discrete_core(
                         savings_grid=savings_grid,
+                        functions=context.functions,
+                        consumption_action=consumption_action,
                         target=target,
                         spec=schedule_discrete_spec,
                         taste_shock_scale=0.0,
@@ -440,6 +464,8 @@ class NBEGM(Solver):
                 elif schedule_spec is not None:
                     core = _build_nbegm_continuous_core(
                         savings_grid=savings_grid,
+                        functions=context.functions,
+                        consumption_action=consumption_action,
                         target=target,
                         schedule_spec=schedule_spec,
                         envelope_arithmetic=self.envelope_arithmetic,
@@ -447,6 +473,8 @@ class NBEGM(Solver):
                 elif discrete_spec is not None:
                     core = _build_nbegm_discrete_core(
                         savings_grid=savings_grid,
+                        functions=context.functions,
+                        consumption_action=consumption_action,
                         target=target,
                         discrete_spec=discrete_spec,
                         taste_shock_scale=0.0,
@@ -464,6 +492,8 @@ class NBEGM(Solver):
                         raise RegimeInitializationError(msg)
                     core = _build_nbegm_core(
                         savings_grid=savings_grid,
+                        functions=context.functions,
+                        consumption_action=consumption_action,
                         target=target,
                         case_spec=case_spec,
                         envelope_arithmetic=self.envelope_arithmetic,
@@ -1250,29 +1280,53 @@ def _validate_nbegm_boundary_scope(
 # The fixed names the single-liquid kernels read: the state their grid argument
 # binds to, the function and parameter carrying the CRRA coefficient, and the
 # liquid law's budget parameters.
+_KERNEL_LIQUID_LAWS = frozenset(
+    {liquid_law_from_savings.__name__, liquid_law_from_resources.__name__}
+)
+_KERNEL_BUDGET_NODES = frozenset({cash_on_hand_with_subsidy.__name__})
+
+
+def _declares_fixed_form(func: object, *, allowed: frozenset[str]) -> bool:
+    """Report whether `func` is one of `allowed`, seen through the DAG's wrappers.
+
+    The declaration reaches the solver wrapped, so the marker is followed along
+    the `__wrapped__` chain rather than compared by identity.
+    """
+    seen: object | None = func
+    while seen is not None:
+        if getattr(seen, FIXED_FORM_ATTRIBUTE, None) in allowed:
+            return True
+        seen = getattr(seen, "__wrapped__", None)
+    return False
+
+
 _KERNEL_LIQUID_STATE = "liquid"
-_KERNEL_UTILITY = ("utility", "crra")
 _KERNEL_LIQUID_LAW_PARAMS = ("return_liquid", "income")
+_KERNEL_DEFAULT_SAVINGS_NAME = "savings"
 
 
 def fail_if_kernel_fixed_form_contract_unmet(
-    *, context: SolverBuildContext, liquid_state_name: StateName
+    *,
+    context: SolverBuildContext,
+    liquid_state_name: StateName,
 ) -> None:
     """Check the fixed economic form the single-liquid NB-EGM kernels solve.
 
-    Those kernels are not DAG-composed. They bind the Euler grid to a keyword
-    named `liquid` and solve one fixed consumption-saving problem — CRRA flow
-    utility and an affine liquid law — reading its coefficients under fixed
-    qualified parameter names. The declared `utility` and liquid-law bodies are
-    never called.
+    Those kernels compose the regime's felicity from its own `utility` target,
+    but they bind the Euler grid to a keyword named `liquid` and solve one fixed
+    budget — `(1 + return_liquid) * savings + income` — reading its coefficients
+    under fixed qualified parameter names rather than calling the declared law.
 
-    So the contract is exact in both directions:
+    So the contract is checked in three directions:
 
     - a *missing* coefficient would otherwise fail deep inside a traced kernel
       with a missing-argument error that says nothing about the contract broken;
     - an *extra* flat parameter is structure the kernel cannot honour, and
       accepting it would silently solve a different problem from the declared
-      one — a wrong value and policy rather than an error.
+      one — a wrong value and policy rather than an error;
+    - a law naming exactly the two coefficients still says nothing about what it
+      computes with them, so it is evaluated and required to equal the budget the
+      kernels apply.
 
     The ride-along schedule route composes its budget and utility from the DAG
     and is exempt; a regime needing a richer objective declares a
@@ -1281,11 +1335,17 @@ def fail_if_kernel_fixed_form_contract_unmet(
     Args:
         context: The regime's solver build context.
         liquid_state_name: The resolved Euler axis.
+        budget_target: Name of the DAG node carrying cash-on-hand, which is how
+            the law names it when it states savings as budget minus consumption.
+        savings_name: Name of the post-decision savings function, which is how
+            the law names savings when it reads them directly. `None` where the
+            regime declares none.
+        consumption_action: Name of the continuous consumption action.
 
     Raises:
-        RegimeInitializationError: If the liquid state, the utility function's
-            CRRA parameter, or the liquid law's budget parameters are named
-            differently, or if either carries a flat parameter beyond them.
+        RegimeInitializationError: If the liquid state or the liquid law's budget
+            parameters are named differently, if the law carries a flat parameter
+            beyond them, or if what it computes differs from the kernel budget.
 
     """
     regime_name = context.regime_name
@@ -1296,31 +1356,6 @@ def fail_if_kernel_fixed_form_contract_unmet(
             f"{liquid_state_name!r}. Rename the state, or declare a "
             "`lcm.piecewise_affine` schedule with a `post_decision_function` so "
             "the budget is composed from the DAG instead."
-        )
-        raise RegimeInitializationError(msg)
-    utility_name, crra_name = _KERNEL_UTILITY
-    utility_func = context.functions.get(utility_name)
-    qualified_crra = f"{utility_name}__{crra_name}"
-    if not callable(utility_func) or qualified_crra not in _parameter_names(
-        utility_func
-    ):
-        msg = (
-            f"NBEGM's single-liquid kernels read the CRRA coefficient as the "
-            f"{crra_name!r} parameter of a function named {utility_name!r} "
-            f"(the flat param {qualified_crra!r}); regime {regime_name!r} does "
-            "not declare it."
-        )
-        raise RegimeInitializationError(msg)
-    extra_utility_params = _flat_params(utility_func) - {qualified_crra}
-    if extra_utility_params:
-        msg = (
-            f"NBEGM's single-liquid kernels evaluate unscaled CRRA flow utility, "
-            f"so {qualified_crra!r} is the only parameter of {utility_name!r} "
-            f"they read; regime {regime_name!r} also declares "
-            f"{sorted(extra_utility_params)}, which would not enter the solved "
-            "objective. Declare a `lcm.piecewise_affine` schedule with a "
-            "`post_decision_function` so the utility is composed from the DAG, "
-            "or use `GridSearch` for this regime."
         )
         raise RegimeInitializationError(msg)
     liquid_law_name = f"next_{_KERNEL_LIQUID_STATE}"
@@ -1360,6 +1395,85 @@ def fail_if_kernel_fixed_form_contract_unmet(
                 "DAG, or use `GridSearch` for this regime."
             )
             raise RegimeInitializationError(msg)
+        if callable(liquid_law) and not _declares_fixed_form(
+            liquid_law, allowed=_KERNEL_LIQUID_LAWS
+        ):
+            msg = (
+                f"NBEGM's single-liquid kernels apply a fixed budget rather than "
+                f"calling the declared law, so this route takes the law pylcm "
+                f"supplies and not an arbitrary callable: regime {regime_name!r}'s "
+                f"transition to {target!r} declares {liquid_law_name!r} as "
+                f"{getattr(liquid_law, '__name__', liquid_law)!r}. Declare "
+                f"`lcm.liquid_law_from_savings` or `lcm.liquid_law_from_resources`, "
+                "whose identity settles the contract by construction. A budget "
+                "those forms cannot express does not belong on this route — "
+                "declare a `lcm.piecewise_affine` schedule with a "
+                "`post_decision_function` so the budget is composed from the DAG, "
+                "or use `GridSearch` for this regime."
+            )
+            raise RegimeInitializationError(msg)
+
+
+def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
+    *,
+    context: SolverBuildContext,
+    routes_to_case_piece_core: bool,
+    budget_target: str,
+    liquid_state_name: StateName,
+) -> None:
+    """Check the regime declares the cash-on-hand the case-piece kernels form.
+
+    The case-piece core evaluates each piece to a scalar and adds it to the liquid
+    state itself, so the declared budget node is never called. An arbitrary
+    callable reading exactly the liquid state and the split output can still
+    combine them any way at all, and no finite check separates the ones that
+    agree: a global rescaling reproduces the sum at every sampled point and still
+    moves every state's value. So the route accepts `lcm.cash_on_hand_with_subsidy`
+    — the form the kernels implement, recognized by identity — and refuses
+    everything else. Every other route composes the budget node from the DAG and
+    may read whatever it declares, so only that core's regimes are checked.
+
+    Args:
+        context: The regime's solver build context.
+        routes_to_case_piece_core: Whether the regime's kernels come from the
+            case-piece core, the one route that forms cash-on-hand itself.
+        budget_target: Name of the budget node in the regime's function pool.
+        liquid_state_name: Name of the liquid (Euler) state.
+
+    Raises:
+        RegimeInitializationError: If the node splits by phase, or is anything
+            other than the declared fixed form.
+
+    """
+    regime_name = context.regime_name
+    split_output = _NBEGM_SPLIT_OUTPUT
+    budget_node = context.user_regimes[regime_name].functions.get(budget_target)
+    if not routes_to_case_piece_core or budget_node is None:
+        return
+    if isinstance(budget_node, Phased):
+        msg = (
+            f"NBEGM's case-piece kernels form cash-on-hand as "
+            f"`{liquid_state_name} + {split_output}` in both phases, so regime "
+            f"{regime_name!r} cannot give {budget_target!r} a phase-dependent "
+            "form. Declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the budget is composed from the DAG, or "
+            "use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
+    if not _declares_fixed_form(budget_node, allowed=_KERNEL_BUDGET_NODES):
+        msg = (
+            f"NBEGM's case-piece kernels add the split output to the liquid state "
+            f"themselves rather than calling the declared budget node, so this "
+            f"route takes the node pylcm supplies and not an arbitrary callable: "
+            f"regime {regime_name!r} declares {budget_target!r} as "
+            f"{getattr(budget_node, '__name__', budget_node)!r}. Declare "
+            "`lcm.cash_on_hand_with_subsidy`, whose identity settles the contract "
+            "by construction. A budget that form cannot express does not belong "
+            "on this route — declare a `lcm.piecewise_affine` schedule with a "
+            "`post_decision_function` so the budget is composed from the DAG, or "
+            "use `GridSearch` for this regime."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _flat_params(func: Callable[..., object]) -> frozenset[str]:
@@ -1497,12 +1611,13 @@ def _collect_nbegm_case_spec(
         )
         raise RegimeInitializationError(msg)
     space = context.state_action_space
+    liquid_state_name = _single_liquid_state_name(
+        context=context, declared=continuous_state, path="case-piece path"
+    )
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
-        liquid_state_name=_single_liquid_state_name(
-            context=context, declared=continuous_state, path="case-piece path"
-        ),
+        liquid_state_name=liquid_state_name,
         reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
     )
     when_callable = functions[piece_set.when_func]
@@ -1523,9 +1638,11 @@ def _collect_nbegm_case_spec(
 def _build_nbegm_core(
     *,
     savings_grid: Float1D,
+    functions: EconFunctionsMapping,
+    consumption_action: ActionName,
     target: RegimeName,
     case_spec: _NBEGMCaseSpec,
-    envelope_arithmetic: EnvelopeArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
     """Build the jittable case-piece EGM core closing over the case split.
 
@@ -1534,14 +1651,28 @@ def _build_nbegm_core(
     returns the value array and the marginal-value carry on the liquid grid.
     """
     from _lcm.egm.nbegm_step import nbegm_one_asset_step  # noqa: PLC0415
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(savings_grid),
+    )
 
     def core(
         *,
         liquid: Float1D,
+        next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
+        preferences = build_preferences(params)
         subsidy_when = case_spec.when_callable(
             **{
                 p: params[f"{case_spec.when_func}__{p}"]
@@ -1559,9 +1690,10 @@ def _build_nbegm_core(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
-            crra=params["utility__crra"],
+            preferences=preferences,
             return_liquid=params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],
             subsidy_when=subsidy_when,
@@ -2638,9 +2770,10 @@ def _solve_cliffed_budget(
     next_value: Float1D,
     next_marginal: Float1D,
     liquid: Float1D,
+    next_liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: FloatND,
-    crra: FloatND,
+    preferences: Preferences,
     return_liquid: FloatND,
     income: FloatND,
     coh_slopes: Float1D,
@@ -2651,7 +2784,7 @@ def _solve_cliffed_budget(
     is_mixed: bool,
     jump_mask: tuple[bool, ...],
     flat_mask: tuple[bool, ...] | None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a cliffed single-liquid budget, dispatching on kind.
 
@@ -2677,9 +2810,10 @@ def _solve_cliffed_budget(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             return_liquid=return_liquid,
             income=income,
             subsidy_when=coh_intercepts[0],
@@ -2696,9 +2830,10 @@ def _solve_cliffed_budget(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             gross_return=gross_return,
             income=income,
             subsidy_levels=coh_intercepts,
@@ -2714,9 +2849,10 @@ def _solve_cliffed_budget(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            crra=crra,
+            preferences=preferences,
             gross_return=gross_return,
             income=income,
             coh_slopes=coh_slopes,
@@ -2729,9 +2865,10 @@ def _solve_cliffed_budget(
         next_value=next_value,
         next_marginal=next_marginal,
         liquid_grid=liquid,
+        next_liquid_grid=next_liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        crra=crra,
+        preferences=preferences,
         gross_return=gross_return,
         income=income,
         coh_slopes=coh_slopes,
@@ -2745,9 +2882,11 @@ def _solve_cliffed_budget(
 def _build_nbegm_continuous_core(
     *,
     savings_grid: Float1D,
+    functions: EconFunctionsMapping,
+    consumption_action: ActionName,
     target: RegimeName,
     schedule_spec: _NBEGMScheduleSpec,
-    envelope_arithmetic: EnvelopeArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
     """Build the jittable continuous-schedule EGM core for one continuation target.
 
@@ -2766,13 +2905,28 @@ def _build_nbegm_continuous_core(
     )
     order_sensitive = len(set(kinds)) > 1
 
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(savings_grid),
+    )
+
     def core(
         *,
         liquid: Float1D,
+        next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
+        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in schedule_spec.coh_param_names}
 
         def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
@@ -2800,9 +2954,10 @@ def _build_nbegm_continuous_core(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
-            crra=params["utility__crra"],
+            preferences=preferences,
             return_liquid=params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],
             coh_slopes=coh_slopes,
@@ -2900,15 +3055,14 @@ def _solve_ride_along_cell_step(
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: FloatND,
-    utility_of_action: Callable[[FloatND], FloatND],
-    inverse_marginal_utility: Callable[[FloatND], FloatND],
+    preferences: Preferences,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     extra_savings: Float1D | None = None,
     extra_cont_value: Float1D | None = None,
     inverse_eis: FloatND | None = None,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
@@ -2916,7 +3070,7 @@ def _solve_ride_along_cell_step(
     jump breakpoint uses the unified jump-and-kink step, both reading the expected
     value and marginal already evaluated on the savings grid. The Euler inversion,
     the period value, and the marginal value of liquid all read the regime's own
-    utility through `utility_of_action` and `inverse_marginal_utility` (bound to this
+    utility through the `preferences` bundle (bound to this
     cell). The jump positions locate the jump breakpoints in the sorted partition —
     static for a single variable, a per-cell traced tuple when several variables
     reorder per cell.
@@ -2940,8 +3094,7 @@ def _solve_ride_along_cell_step(
             liquid_grid=liquid_grid,
             savings_grid=savings_grid,
             discount_factor=discount_factor,
-            utility_of_action=utility_of_action,
-            inverse_marginal_utility=inverse_marginal_utility,
+            preferences=preferences,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -2956,8 +3109,7 @@ def _solve_ride_along_cell_step(
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        utility_of_action=utility_of_action,
-        inverse_marginal_utility=inverse_marginal_utility,
+        preferences=preferences,
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
@@ -3114,7 +3266,7 @@ class _NBEGMRideAlongStatics:
     envelope_segment_block_size: int
     """Block size for streaming the merged upper envelope over candidate segments;
     `0` keeps the one-shot dense envelope (see `NBEGM.envelope_segment_block_size`)."""
-    envelope_arithmetic: EnvelopeArithmetic
+    envelope_arithmetic: ComparisonArithmetic
     """Which arithmetic decides envelope ownership (see
     `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
@@ -3153,7 +3305,7 @@ def _nbegm_ride_along_statics(
     schedule_spec: _NBEGMScheduleSpec,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     envelope_segment_block_size: int = 0,
-    envelope_arithmetic: EnvelopeArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "certified",
     cell_block_size: int = 0,
     interval_batch_size: int = 0,
     branch_batch_size: int = 0,
@@ -3828,20 +3980,21 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     from _lcm.egm.nbegm_step import (  # noqa: PLC0415
         nbegm_per_interval_continuation_step_savings,
     )
-    from _lcm.egm.numeric_inverse import (  # noqa: PLC0415
-        numeric_inverse_marginal_utility,
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        newton_action_ceiling,
+        preferences_from_utility,
     )
 
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
     discount_factor_dag = schedule_spec.discount_factor_dag
     # This route composes period utility from the DAG, so the Euler equation has no
-    # closed form to invert and its root is always bracketed numerically: a small
-    # floor up to a generous multiple of the savings grid's top node (the resources
-    # scale). The clamped near-zero-marginal corner whose root exceeds the bracket
-    # lands far to the right and is discarded by the upper envelope.
-    action_upper = savings_grid[-1] * 1000.0 + 1000.0
-    action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+    # closed form to invert and its root is always bracketed numerically. The
+    # clamped near-zero-marginal corner whose root exceeds the bracket lands far to
+    # the right and is discarded by the upper envelope.
+    action_upper = newton_action_ceiling(savings_grid)
+    action_lower = jnp.asarray(NEWTON_ACTION_FLOOR, dtype=action_upper.dtype)
     import inspect  # noqa: PLC0415
 
     # The action binds into a branch's period utility only when the utility DAG reads
@@ -3959,17 +4112,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         **utility_action_binding,
                     )
 
-                marginal_utility = jax.grad(utility_of_consumption)
-
-                def inverse_marginal_utility(
-                    marginal_continuation: FloatND,
-                ) -> FloatND:
-                    return numeric_inverse_marginal_utility(
-                        marginal_continuation=marginal_continuation,
-                        marginal_utility=marginal_utility,
-                        c_lower=action_lower,
-                        c_upper=action_upper,
-                    )
+                preferences = preferences_from_utility(
+                    utility_of_action=utility_of_consumption,
+                    action_lower=action_lower,
+                    action_upper=action_upper,
+                )
 
                 # Recompute the breakpoint partition with the action bound: when the
                 # action enters the schedule variable, its asset preimage — and so the
@@ -4001,8 +4148,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         liquid_grid=query_grid,
                         savings_grid=savings_grid,
                         discount_factor=cell_discount_factor,
-                        utility_of_action=utility_of_consumption,
-                        inverse_marginal_utility=inverse_marginal_utility,
+                        preferences=preferences,
                         coh_slopes=coh_slopes,
                         coh_intercepts=coh_intercepts,
                         breakpoints=branch_breakpoints,
@@ -4022,8 +4168,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     liquid_grid=query_grid,
                     savings_grid=savings_grid,
                     discount_factor=cell_discount_factor,
-                    utility_of_action=utility_of_consumption,
-                    inverse_marginal_utility=inverse_marginal_utility,
+                    preferences=preferences,
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,
                     breakpoints=branch_breakpoints,
@@ -4355,10 +4500,12 @@ def _discrete_envelope_over_branches(
 def _build_nbegm_schedule_discrete_core(
     *,
     savings_grid: Float1D,
+    functions: EconFunctionsMapping,
+    consumption_action: ActionName,
     target: RegimeName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: EnvelopeArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
     """Build the discrete-envelope core over a cliffed single-liquid budget.
 
@@ -4379,13 +4526,28 @@ def _build_nbegm_schedule_discrete_core(
     )
     order_sensitive = len(set(spec.breakpoint_kinds)) > 1
 
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(savings_grid),
+    )
+
     def core(
         *,
         liquid: Float1D,
+        next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
+        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in spec.coh_param_names}
         breakpoints = _sorted_thresholds(
             jnp.stack([params[name] for name in spec.threshold_param_names]),
@@ -4412,9 +4574,10 @@ def _build_nbegm_schedule_discrete_core(
                 next_value=next_value,
                 next_marginal=next_marginal,
                 liquid=liquid,
+                next_liquid_grid=next_liquid_grid,
                 savings_grid=savings_grid,
                 discount_factor=params["koopmans_aggregator__discount_factor"],
-                crra=params["utility__crra"],
+                preferences=preferences,
                 return_liquid=params[f"{target}__next_liquid__return_liquid"],
                 income=params[f"{target}__next_liquid__income"],
                 coh_slopes=coh_slopes,
@@ -4449,10 +4612,12 @@ def _build_nbegm_schedule_discrete_core(
 def _build_nbegm_discrete_core(
     *,
     savings_grid: Float1D,
+    functions: EconFunctionsMapping,
+    consumption_action: ActionName,
     target: RegimeName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
-    envelope_arithmetic: EnvelopeArithmetic = "certified",
+    envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
     """Build the jittable discrete-envelope core for one continuation target.
 
@@ -4464,14 +4629,28 @@ def _build_nbegm_discrete_core(
     from _lcm.egm.nbegm_step import (  # noqa: PLC0415
         nbegm_discrete_envelope_step,
     )
+    from _lcm.egm.preferences import (  # noqa: PLC0415
+        NEWTON_ACTION_FLOOR,
+        get_preferences_builder,
+        newton_action_ceiling,
+    )
+
+    build_preferences = get_preferences_builder(
+        functions=functions,
+        action_name=consumption_action,
+        action_lower=NEWTON_ACTION_FLOOR,
+        action_upper=newton_action_ceiling(savings_grid),
+    )
 
     def core(
         *,
         liquid: Float1D,
+        next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
+        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in discrete_spec.coh_param_names}
         empty_breakpoints = jnp.zeros((0,), dtype=liquid.dtype)
         choices: list[dict[str, Float1D]] = []
@@ -4498,9 +4677,10 @@ def _build_nbegm_discrete_core(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
+            next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
-            crra=params["utility__crra"],
+            preferences=preferences,
             gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
             income=params[f"{target}__next_liquid__income"],
             choices=tuple(choices),

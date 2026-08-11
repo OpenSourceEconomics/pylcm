@@ -8,6 +8,7 @@ the inverse has exponent `1/[phi(1-rho)-1]`. The basic single-good flow is
 `phi = 1`, where the exponent reduces to `-1/rho`.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,12 +24,31 @@ from _lcm.egm.ez_kernel import (
     ez_transform_scalar,
 )
 from _lcm.egm.nbegm_step import _ez_flow_power_structure
+from _lcm.egm.preferences import Preferences
 from lcm import CESAggregator
 
 # These are float64 specs of the kernel algebra (closed-form identities,
 # finite-difference checks, and float32-versus-float64 comparisons), so the
 # module runs with x64 enabled regardless of the suite's `--precision` flag.
 pytestmark = pytest.mark.usefixtures("x64_enabled")
+
+
+def _flow_preferences(utility_of_action) -> Preferences:
+    """The bundle `_ez_flow_power_structure` reads off a period flow.
+
+    It reads the felicity and its marginal at a unit action to recover the flow's
+    scale and elasticity, and never inverts, so the inverse marginal is a
+    placeholder that raises if the contract ever changes.
+    """
+
+    def _never_inverted(_marginal):
+        raise AssertionError("the flow's power structure does not invert the Euler")
+
+    return Preferences(
+        utility=utility_of_action,
+        marginal_utility=jax.grad(utility_of_action),
+        inverse_marginal_utility=_never_inverted,
+    )
 
 
 def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:
@@ -641,7 +661,7 @@ def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
     inversion computing a finite but meaningless consumption.
     """
     log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
-        utility_of_action=lambda consumption: consumption**2,
+        preferences=_flow_preferences(lambda consumption: consumption**2),
         inverse_eis=jnp.asarray(0.5),
     )
     assert bool(jnp.isnan(flow_exponent))
@@ -651,7 +671,7 @@ def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
 def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
     """For `q = c` and `rho = 2` the structure is `(log 1, -rho) = (0, -2)` exactly."""
     log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
-        utility_of_action=lambda consumption: consumption,
+        preferences=_flow_preferences(lambda consumption: consumption),
         inverse_eis=jnp.asarray(2.0),
     )
     np.testing.assert_allclose(np.asarray(log_flow_coefficient), 0.0, atol=1e-12)
@@ -813,7 +833,7 @@ def test_flow_power_structure_returns_a_finite_log_coefficient() -> None:
     rho = 25.0
 
     log_coefficient, flow_exponent = _ez_flow_power_structure(
-        utility_of_action=lambda consumption: scale * consumption**power,
+        preferences=_flow_preferences(lambda consumption: scale * consumption**power),
         inverse_eis=jnp.asarray(rho),
     )
     consumption = ez_consumption_from_euler(

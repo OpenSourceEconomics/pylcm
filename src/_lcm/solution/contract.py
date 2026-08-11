@@ -60,21 +60,43 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.typing import BoolND, Float1D, FloatND
 
+# Both names below state a rule the engine must obey, not a fact about which
+# concrete type they happen to bind to today. Neither is a polymorphism point:
+# a second implementation does not arrive by widening the alias to a union,
+# which would say nothing about what may be done with a value. It arrives as a
+# protocol, because the engine would then need a declared operation to call.
+# Each is a documented single-implementation seam, not an abstraction that
+# happens to have one subclass so far.
+
 # The cross-period continuation channel a continuation-based parent
-# interpolates. Named solver-agnostically on the seam so the engine threads it
-# without knowing it is an EGM carry; today the only continuation payload is
-# the EGM carry itself.
+# interpolates. The rule is **opacity**: backward induction stores this, threads
+# it to the next period, and hands it back to a solver without reading a field.
+# The solver-agnostic name is what keeps that ignorance checkable — an
+# `.endog_grid` access inside the induction loop reads as a layering violation
+# at the call site rather than as an ordinary attribute read. Reaching for one
+# is the signal to introduce a protocol. Solvers own the carry and read it
+# freely; the rule binds the engine that threads it, not the code that fills it.
 type ContinuationPayload = EGMCarry
 
-# The published off-grid simulation-policy artifact. The engine threads it
-# opaquely across periods (store/return), but — unlike `ContinuationPayload`
-# — the simulation read dispatches on the concrete payload type over this
-# CLOSED union (round-3 audit F11): a `NestedEGMSimPolicy` routes to the
-# engine-owned nested continuous-outer reader (`_read_nested_policy`, which the
-# self-describing payload parameterizes), a flat `EGMSimPolicy` routes to the
-# solver-supplied `egm_policy_read`. So it is a deliberate closed-union dispatch
-# in the engine's simulation loop, not an open solver-owned reader seam; adding
-# a payload class means extending both this union and that dispatch.
+# The published off-grid simulation-policy artifact. The rule here is a **fixed
+# read set** rather than opacity, because simulation genuinely interpolates the
+# rows: it reads the row arrays (`endog_grid` to locate a query, `value` or
+# `policy` as the field asked for, `marginal_utility` for the node slopes the
+# value convention needs) and the row-axis name tuples that say which regime
+# variable each leading axis stands for. Those two groups are the contract, and
+# a second implementation has to publish both. Any *further* field the engine
+# reaches for is the signal to introduce a protocol rather than to grow this
+# one — the seam is a stated read set, not permission to read whatever is there.
+#
+# The read set says what may be read off a row; this union says which rows
+# exist, and the two are separate rules. The simulation read dispatches on the
+# concrete payload type over this CLOSED union (round-3 audit F11): a
+# `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
+# (`_read_nested_policy`, which the self-describing payload parameterizes), a
+# flat `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
+# a deliberate closed-union dispatch in the engine's simulation loop, not an
+# open solver-owned reader seam; adding a payload class means extending both
+# this union and that dispatch.
 type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:

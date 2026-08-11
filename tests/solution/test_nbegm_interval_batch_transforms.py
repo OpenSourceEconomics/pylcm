@@ -14,19 +14,12 @@ import pytest
 
 from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 2.0
 _DISCOUNT = 0.96
 _N_SAVINGS = 50
 _N_LIQUID = 40
-
-
-def _utility_of_action(consumption):
-    return consumption ** (1.0 - _CRRA) / (1.0 - _CRRA)
-
-
-def _inverse_marginal_utility(marginal_continuation):
-    return marginal_continuation ** (-1.0 / _CRRA)
 
 
 def _build_inputs(n_intervals: int) -> dict:
@@ -39,8 +32,7 @@ def _build_inputs(n_intervals: int) -> dict:
         "liquid_grid": jnp.linspace(0.1, 30.0, _N_LIQUID),
         "savings_grid": jnp.linspace(0.0, 28.0, _N_SAVINGS),
         "discount_factor": jnp.asarray(_DISCOUNT),
-        "utility_of_action": _utility_of_action,
-        "inverse_marginal_utility": _inverse_marginal_utility,
+        "preferences": crra_preferences(_CRRA),
         "coh_slopes": jnp.linspace(1.0, 1.3, n_intervals),
         "coh_intercepts": jnp.linspace(0.5, 2.0, n_intervals),
         "breakpoints": jnp.linspace(2.0, 27.0, n_intervals - 1),
@@ -95,14 +87,15 @@ def test_jitted_solve_matches_the_eager_solve(
     arrays = {
         name: value
         for name, value in inputs.items()
-        if name not in ("utility_of_action", "inverse_marginal_utility")
+        # The preference bundle carries Python callables, so it is supplied
+        # inside the closure rather than traced as an argument.
+        if name != "preferences"
     }
 
     def solve(**kwargs):
         return nbegm_per_interval_continuation_step_savings(
             **kwargs,
-            utility_of_action=_utility_of_action,
-            inverse_marginal_utility=_inverse_marginal_utility,
+            preferences=crra_preferences(_CRRA),
         )
 
     _assert_same(jax.jit(solve)(**arrays), reference)

@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 2.0
 _DISCOUNT = 0.95
@@ -53,8 +54,7 @@ def test_high_liquid_value_uses_the_upper_savings_corner():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        utility_of_action=_utility_of_action,
-        inverse_marginal_utility=_inverse_marginal_utility,
+        preferences=crra_preferences(_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=jnp.asarray([], dtype=liquid_grid.dtype),
@@ -101,8 +101,7 @@ def test_corners_use_true_cash_on_hand_where_the_affine_model_goes_negative():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        utility_of_action=_utility_of_action,
-        inverse_marginal_utility=_inverse_marginal_utility,
+        preferences=crra_preferences(_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=jnp.asarray([], dtype=liquid_grid.dtype),
@@ -139,8 +138,7 @@ def test_corner_is_visible_when_an_interval_holds_one_grid_point():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        utility_of_action=_utility_of_action,
-        inverse_marginal_utility=_inverse_marginal_utility,
+        preferences=crra_preferences(_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,

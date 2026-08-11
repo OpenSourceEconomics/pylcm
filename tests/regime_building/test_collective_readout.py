@@ -7,12 +7,17 @@ off each stakeholder's OWN Q at that common argmax (eqs. 10-12 of Eckstein-Keane
 Lifshitz 2019). See `pylcm-extension-collective-regimes.md` §2 (E1).
 """
 
+import itertools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.collective import collective_readout
+from _lcm.regime_building.collective import (
+    _weighted_sum,
+    collective_readout,
+)
 
 
 def test_readout_reads_own_Q_at_household_argmax_single_state():
@@ -181,3 +186,41 @@ def test_mismatched_keys_raise():
             weights={"f": 0.5},
             action_axes=(0,),
         )
+
+
+def test_multi_party_household_choice_is_invariant_to_stakeholder_order():
+    """A relabeling of three stakeholders cannot select a summation order.
+
+    The exact objectives are ``[1, 1/2]``. A declaration-order left fold yields
+    either ``[1, 1/2]`` or ``[0, 1/2]`` because the first action cancels two large
+    terms. The public API accepts multi-party households, so all six permutations
+    must retain the exact-side action and one objective bit pattern.
+    """
+    dtype = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+    large = jnp.asarray(2.0 ** (53 if jax.config.jax_enable_x64 else 24), dtype=dtype)
+    stakeholder_q = {
+        "a": jnp.asarray([2.0 * large, 1.0], dtype=dtype),
+        "b": jnp.asarray([-4.0 * large, 0.0], dtype=dtype),
+        "c": jnp.asarray([4.0, 0.0], dtype=dtype),
+    }
+    weights = {"a": 0.5, "b": 0.25, "c": 0.25}
+    policies = set()
+    patterns = set()
+
+    for order in itertools.permutations(stakeholder_q):
+        q = {name: stakeholder_q[name] for name in order}
+        w = {name: weights[name] for name in order}
+        # `order` and `w` are bound as defaults rather than captured: the lambda is
+        # rebuilt each iteration, and a late-bound closure would silently jit the
+        # last permutation for every one of them.
+        objective = jax.jit(
+            lambda *arrays, _order=order, _w=w: _weighted_sum(
+                stakeholder_Q=dict(zip(_order, arrays, strict=True)),
+                weights=_w,
+            )
+        )(*(q[name] for name in order))
+        policies.add(int(jnp.argmax(objective)))
+        patterns.add(np.asarray(objective).tobytes())
+
+    assert policies == {0}
+    assert len(patterns) == 1

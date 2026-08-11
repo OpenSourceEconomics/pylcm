@@ -24,10 +24,12 @@ backward induction:
 - `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
   `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
   their exact NB-EGM treatment inside every outer candidate.
-- `TwoAssetEGM(...)`: the two-continuous-state endogenous grid method. Name the
-  regime's two continuous states with `liquid_state=` and `pension_state=`;
-  `envelope=` picks the refinement that resolves the resulting candidate cloud,
-  either the G2EGM mesh (`"g2egm"`) or the rooftop-cut RFC (`"rfc"`).
+
+A second continuous state is reached by nesting: `NEGM` and `NNBEGM` solve an
+inner 1-D problem conditional on the outer margin, rather than inverting two
+coupled first-order conditions jointly. Solvers specialized to one model's
+accounting are replicated and published alongside the paper that reports them,
+not carried here.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
@@ -43,7 +45,6 @@ from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.solution.nnbegm import NNBEGM
-from _lcm.solution.two_asset_egm import TwoAssetEGM
 from lcm.branch_aggregation import (
     BranchAggregateResult,
     DeterministicOuterMaximum,
@@ -74,6 +75,5 @@ __all__ = [
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
-    "TwoAssetEGM",
     "UniformObservedFixedCost",
 ]

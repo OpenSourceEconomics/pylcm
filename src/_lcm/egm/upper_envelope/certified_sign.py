@@ -41,10 +41,14 @@ are reported apart:
   state between them is demonstrably better and a caller may choose either,
   provided it chooses deterministically.
 - `UNRESOLVED_SIGN` — no determinant worth reading was produced at all: an input
-  was non-finite, a product left the range where the transforms are exact, or an
-  operand did not survive the shared scaling intact. Nothing follows about the
-  geometry, which may be far apart, so a caller must fail loud rather than
-  choose.
+  was non-finite, a product overflowed, or an operand did not survive the shared
+  scaling intact. Nothing follows about the geometry, which may be far apart, so
+  a caller must fail loud rather than choose.
+
+A product that underflows is *not* one of those cases. It has a known magnitude
+bound — below the smallest normal — which the error bound carries, so a group
+spanning more of the exponent range than any one scaling can hold is still
+decided by whichever term is an ordinary number.
 
 Collapsing the two would be a fail-open: the second case is exactly the one where
 a large true margin can be reported as no margin. Callers must mask dead
@@ -75,9 +79,9 @@ from _lcm.egm.upper_envelope.double_double import (
 )
 from lcm.typing import BoolND, FloatND, IntND
 
-# Returned where no usable determinant was produced — a non-finite input, a
-# product outside the transform domain, or a positive width the shared scaling
-# flattened. Nothing is known about the geometry; callers must fail loud.
+# Returned where no usable determinant was produced — a non-finite input, an
+# overflowing product, or a positive width the shared scaling flattened. Nothing
+# is known about the geometry; callers must fail loud.
 UNRESOLVED_SIGN: int = 2
 
 # Returned where the determinant is real but smaller than its own error bound:
@@ -140,8 +144,8 @@ def certified_margin_sign(
     # the binade around one is what keeps the products out of the range where the
     # error-free transforms stop being error-free: a determinant that would
     # underflow to zero in the caller's units is an ordinary number in these.
-    abscissa_exponent = normalizing_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
-    value_exponent = normalizing_exponent(a_v0, a_v1, b_v0, b_v1)
+    abscissa_exponent = _shared_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
+    value_exponent = _shared_exponent(a_v0, a_v1, b_v0, b_v1)
     source_abscissae = (a_x0, a_x1, b_x0, b_x1, x_query)
     source_values = (a_v0, a_v1, b_v0, b_v1)
     scaled_abscissae = tuple(
@@ -151,14 +155,16 @@ def certified_margin_sign(
         scale_by_power_of_two(term, -value_exponent) for term in source_values
     )
 
-    # That homogeneity argument holds only while the scaling is exact, and the
-    # shared exponent comes from the largest abscissa, so an operand far below it
-    # need not survive: a narrow link's endpoints round onto the same number, and
-    # a query near zero flushes to zero outright. What follows is then a true
-    # statement about geometry the caller never supplied — and its most emphatic
-    # form is a certified tie, which licenses taking either link. Scaling back is
-    # exact whenever the scaling was, so the round trip tests that premise itself
-    # rather than any one way of breaking it.
+    # That homogeneity argument holds only while the scaling is exact. The shared
+    # exponent is chosen to keep every operand normal, so an operand far below the
+    # largest one ordinarily survives — but a backend that reads subnormals as zero
+    # can still flatten one, and a group spanning more than the whole exponent range
+    # leaves no exponent that suits every term. What follows from a flattened
+    # operand is a true statement about geometry the caller never supplied — a
+    # narrow link whose endpoints have rounded onto the same number, most
+    # emphatically a certified tie licensing either link. Scaling back is exact
+    # whenever the scaling was, so the round trip tests that premise itself rather
+    # than any one way of breaking it.
     scaling_exact = _round_trips(
         scaled_abscissae, source_abscissae, abscissa_exponent
     ) & _round_trips(scaled_values, source_values, value_exponent)
@@ -171,19 +177,18 @@ def certified_margin_sign(
     width_a = dd_from_difference(a_x1, a_x0)
     width_b = dd_from_difference(b_x1, b_x0)
 
-    product_a = dd_mul(numerator_a, width_b)
-    product_b = dd_mul(numerator_b, width_a)
+    product_a = _bounded_product(numerator_a, width_b)
+    product_b = _bounded_product(numerator_b, width_a)
     determinant = dd_add(product_a, dd_negate(product_b))
 
-    # Normalization makes an underflowed product unreachable for representable
-    # inputs, but it is the premise the certificate rests on rather than an
-    # observation, so it is checked: outside the domain where `two_prod` is
-    # exact, a zero is not evidence of a tie and the sign stays unresolved.
-    in_domain = _product_in_transform_domain(
-        numerator_a[0], width_b[0]
-    ) & _product_in_transform_domain(numerator_b[0], width_a[0])
+    # A product that leaves the top of the range says nothing about the determinant
+    # it was meant to contribute to, so it stays unresolved. The bottom of the range
+    # is not symmetric with it and is handled inside `_bounded_product`.
+    products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
-    return _certified_sign_of(determinant, finite=finite & in_domain & scaling_exact)
+    return _certified_sign_of(
+        determinant, finite=finite & products_finite & scaling_exact
+    )
 
 
 class QuotientMargin(NamedTuple):
@@ -236,8 +241,8 @@ def certified_quotient_margin(
 
     """
     determinant = dd_add(
-        dd_mul(left_numerator, right_divisor),
-        dd_negate(dd_mul(right_numerator, left_divisor)),
+        _bounded_product(left_numerator, right_divisor),
+        dd_negate(_bounded_product(right_numerator, left_divisor)),
     )
     divisor_product = dd_mul(left_divisor, right_divisor)
     high, low = dd_quotient(determinant, divisor_product)
@@ -264,11 +269,15 @@ def certified_quotient_margin(
     # widening is multiplicative, so a residual of exactly zero stays exactly zero.
     bound = (unreproduced / divisor_floor) * (1.0 + 8.0 * epsilon)
 
-    # Dekker's transform is exact only while its products stay normal. Outside that
+    # Dekker's transform is exact only while its products stay normal. Above that
     # range the determinant is not evidence of anything, least of all of a tie.
+    # Below it the numerator products are bounded rather than unknown, which
+    # `_bounded_product` has already carried into the error bound; the divisor
+    # product is not, since a quotient cannot be referred back through a divisor
+    # whose own magnitude is in doubt.
     in_domain = (
-        _product_in_transform_domain(left_numerator[0], right_divisor[0])
-        & _product_in_transform_domain(right_numerator[0], left_divisor[0])
+        jnp.isfinite(left_numerator[0] * right_divisor[0])
+        & jnp.isfinite(right_numerator[0] * left_divisor[0])
         & _product_in_transform_domain(left_divisor[0], right_divisor[0])
     )
     return QuotientMargin(
@@ -306,6 +315,67 @@ def _round_trips(
             scale_by_power_of_two(scaled_term, exponent) == source_term
             for scaled_term, source_term in zip(scaled, source, strict=True)
         ),
+    )
+
+
+def _shared_exponent(*terms: FloatND) -> IntND:
+    """Return the exponent by which a group of operands is scaled.
+
+    `normalizing_exponent` lands the largest term near one, which is what keeps
+    the products inside the domain where the transforms are exact. A group whose
+    magnitudes span more than the format's exponent range cannot have that for
+    every term at once: scaling the largest term down to one pushes the smallest
+    into the subnormals, where the scaling stops being exact and the comparison
+    is refused — although a pair that far apart is the easiest comparison there
+    is. Backing the exponent off keeps every term normal instead. The largest
+    term then sits further from one than it otherwise would, which costs only the
+    headroom the product's own range check already polices.
+    """
+    largest = normalizing_exponent(*terms)
+    # `frexp` reports the smallest normal as `0.5 * 2**(minexp + 1)`, so a term
+    # whose scaled exponent stays at or above that bound stays normal.
+    smallest_normal_exponent = jnp.finfo(terms[0].dtype).minexp + 1
+    return jnp.minimum(largest, _smallest_exponent(*terms) - smallest_normal_exponent)
+
+
+def _smallest_exponent(*terms: FloatND) -> IntND:
+    """Return the `frexp` exponent of the smallest finite nonzero term.
+
+    Zero and non-finite terms carry no scale of their own and are ignored; a
+    group holding nothing else scales by `2**0`, which leaves it alone.
+    """
+    magnitude = jnp.full_like(terms[0], jnp.inf)
+    for term in terms:
+        usable = jnp.isfinite(term) & (term != 0.0)
+        magnitude = jnp.minimum(magnitude, jnp.where(usable, jnp.abs(term), jnp.inf))
+    _mantissa, exponent = jnp.frexp(
+        jnp.where(jnp.isfinite(magnitude), magnitude, 1.0),
+    )
+    return exponent
+
+
+def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
+    """Return the product, or a certified bound where it underflows.
+
+    Dekker's transform is exact only while the product and the splitting
+    intermediates stay normal, so a product landing among the subnormals loses
+    the tail the certificate reads and must never be mistaken for an exact zero.
+    It is not unknown, though: its magnitude is below the smallest normal. Saying
+    exactly that — an exact zero carrying that magnitude as its discarded tail —
+    is a true statement the error bound already knows how to carry, and it is
+    what lets a determinant whose other term is an ordinary number still be
+    decided. Two negligible terms fall below resolution rather than certifying a
+    tie they have not earned.
+    """
+    high, low, dropped = dd_mul(left, right)
+    tiny = jnp.finfo(high.dtype).tiny
+    both_nonzero = (left[0] != 0.0) & (right[0] != 0.0)
+    negligible = both_nonzero & (jnp.abs(left[0] * right[0]) < tiny)
+    zero = jnp.zeros_like(high)
+    return (
+        jnp.where(negligible, zero, high),
+        jnp.where(negligible, zero, low),
+        jnp.where(negligible, tiny, dropped),
     )
 
 

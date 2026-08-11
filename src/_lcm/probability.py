@@ -191,8 +191,14 @@ def normalized_scaled_weights(
     own_exponent = _unbiased_exponent(arr)
     exponent = own_exponent - shifts
     live = is_live(arr) & jnp.isfinite(arr)
-    peak = jnp.max(jnp.where(live, exponent, jnp.min(exponent)))
-    mass = jnp.sum(jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)))
+    # Both reductions run along the lottery's own axis: a batch holds unrelated
+    # lotteries, and one row's likeliest node says nothing about what another
+    # row's mass should be measured against.
+    floor = jnp.min(exponent, axis=-1, keepdims=True)
+    peak = jnp.max(jnp.where(live, exponent, floor), axis=-1, keepdims=True)
+    mass = jnp.sum(
+        jnp.ldexp(arr, -(shifts + peak).astype(jnp.int32)), axis=-1, keepdims=True
+    )
     safe_mass = jnp.where(mass > 0.0, mass, jnp.ones_like(mass))
     carries_a_scale = ~is_represented_zero(arr) & jnp.isfinite(arr)
     return (
@@ -231,7 +237,12 @@ def flattened_to_one_scale(*, coefficients: FloatND, shifts: _BitsND) -> FloatND
     """
     arr = jnp.asarray(coefficients)
     shifts = jnp.asarray(shifts)
-    common = jnp.min(shifts)
+    # The lottery is the last axis, and the lotteries beside it in a batch are
+    # unrelated. A scale taken across the whole array would let the likeliest
+    # node anywhere decide what is representable everywhere, so a batch row whose
+    # nodes are all rare would come down to nothing although on its own terms its
+    # weights are ordinary.
+    common = jnp.min(shifts, axis=-1, keepdims=True)
     return jnp.ldexp(arr, (common - shifts).astype(jnp.int32))
 
 
@@ -874,6 +885,39 @@ def binades_above_smallest_normal(values: FloatND) -> _BitsND:
         jnp.zeros((), jnp.int32),
         (_unbiased_exponent(arr) - (1 - _exponent_bias(arr))).astype(jnp.int32),
     )
+
+
+def binades_to_fit_product(*, left: FloatND, right: FloatND) -> _BitsND:
+    """Halvings of `left` that bring `left * right` inside the format's range.
+
+    A caller reducing a weighted mean uses this to scale a row's weight total
+    against its largest value, so the weighted sum cannot reach infinity while
+    the mean it states is an ordinary number. The shift is a power of two
+    applied to both sides of the ratio, so it is exact and leaves the mean
+    unchanged.
+
+    It is the *smallest* such shift, which matters at the other end of the
+    range: every binade spent here is one the smallest term of the same sum
+    loses, and one binade too many turns a representable contribution into a
+    subnormal a backend may flush. A product that already fits needs none.
+
+    Args:
+        left: The factor to be scaled down — the weight total.
+        right: The factor it will meet — the largest value in the row.
+
+    Returns:
+        The non-negative number of halvings of `left` that make the product
+        representable.
+
+    """
+    arr = jnp.asarray(left)
+    largest_exponent = jnp.finfo(arr.dtype).maxexp - 2
+    excess = (
+        _unbiased_exponent(arr)
+        + _unbiased_exponent(jnp.asarray(right))
+        - largest_exponent
+    )
+    return jnp.maximum(excess, 0).astype(jnp.int32)
 
 
 def _unbiased_exponent(values: FloatND) -> _BitsND:

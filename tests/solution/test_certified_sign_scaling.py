@@ -13,6 +13,8 @@ so it may not be issued on geometry the transform silently altered. The
 unresolved verdict exists for exactly this case.
 """
 
+from fractions import Fraction
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -129,6 +131,47 @@ def test_the_verdict_does_not_depend_on_the_choice_of_units(unit_shift: int) -> 
         )
         in _HONEST_VERDICTS
     )
+
+
+@pytest.mark.parametrize("swap", [False, True])
+def test_a_value_range_no_scaling_can_hold_is_still_decided(*, swap: bool) -> None:
+    """A gap too large to represent is the easiest comparison, not an open one.
+
+    One link's values sit at the top of the format while the other's are
+    ordinary, so no single power of two brings both groups into the range where
+    the transforms are exact — the smaller group's contribution to the
+    determinant underflows whatever exponent is chosen. That contribution is
+    bounded rather than unknown, so the large link decides the sign, and it must
+    be the sign of the exact difference.
+    """
+    dtype, jax_dtype = _working_dtypes()
+    huge = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
+    falling = (huge, -huge)
+    flat = (dtype(0.25), dtype(0.25))
+    first, second = (flat, falling) if swap else (falling, flat)
+    query = dtype(0.75)
+
+    def value_at(endpoints: tuple) -> Fraction:
+        low, high = (Fraction(float(term)) for term in endpoints)
+        return low + (high - low) * Fraction(float(query))
+
+    expected = value_at(first) - value_at(second)
+    assert expected != 0, "witness is vacuous if the two links agree"
+
+    sign = int(
+        certified_margin_sign(
+            a_x0=jnp.asarray(dtype(0.0), dtype=jax_dtype),
+            a_x1=jnp.asarray(dtype(1.0), dtype=jax_dtype),
+            a_v0=jnp.asarray(first[0], dtype=jax_dtype),
+            a_v1=jnp.asarray(first[1], dtype=jax_dtype),
+            b_x0=jnp.asarray(dtype(0.0), dtype=jax_dtype),
+            b_x1=jnp.asarray(dtype(1.0), dtype=jax_dtype),
+            b_v0=jnp.asarray(second[0], dtype=jax_dtype),
+            b_v1=jnp.asarray(second[1], dtype=jax_dtype),
+            x_query=jnp.asarray(query, dtype=jax_dtype),
+        )
+    )
+    assert sign == (1 if expected > 0 else -1)
 
 
 def test_ordinary_width_ratios_still_resolve_strictly() -> None:

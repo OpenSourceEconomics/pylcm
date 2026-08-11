@@ -17,6 +17,7 @@ import pytest
 
 from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from tests.solution._crra_preferences import crra_preferences
 
 _CRRA = 2.0
 _DISCOUNT = 0.96
@@ -45,8 +46,7 @@ def _build_inputs(n_intervals: int) -> dict:
         "liquid_grid": liquid_grid,
         "savings_grid": savings_grid,
         "discount_factor": jnp.asarray(_DISCOUNT),
-        "utility_of_action": _utility_of_action,
-        "inverse_marginal_utility": _inverse_marginal_utility,
+        "preferences": crra_preferences(_CRRA),
         "coh_slopes": jnp.linspace(1.0, 1.3, n_intervals),
         "coh_intercepts": jnp.linspace(0.5, 2.0, n_intervals),
         "breakpoints": breakpoints,

@@ -55,7 +55,11 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
+from _lcm.zero_safe import (
+    scaled_joint_weight,
+    sum_in_value_order,
+    zero_safe_weighted_term,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
@@ -161,7 +165,7 @@ def _sum_regime_mixture(
     contributions = zero_safe_weighted_term(
         weight=probs, value=values, subnormal_is_accounted_for=False
     )
-    return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
+    return sum_in_value_order(contributions, axis=0)
 
 
 def get_Q_and_F(

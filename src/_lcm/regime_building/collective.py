@@ -27,8 +27,14 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
+
+# Up to this many stakeholders, the scalarization's reduction order is not a choice:
+# one term is returned as-is and two admit a single association. From three terms on,
+# a declaration-order left fold lets an economically inert relabeling select a
+# different reduction tree, so the sum is canonicalized by contribution value instead.
+_LARGEST_ORDER_FREE_HOUSEHOLD = 2
 
 
 def collective_argmax_and_readout(
@@ -164,10 +170,21 @@ def _weighted_sum(
             subnormal_is_accounted_for=False,
         )
 
-    objective = _term(names[0])
-    for name in names[1:]:
-        objective = objective + _term(name)
-    return objective
+    terms = [_term(name) for name in names]
+    if len(terms) <= _LARGEST_ORDER_FREE_HOUSEHOLD:
+        # Preserve the established one-/two-stakeholder arithmetic exactly.  With
+        # two terms there is no association choice, so relabeling cannot select a
+        # different reduction tree.
+        objective = terms[0]
+        for term in terms[1:]:
+            objective = objective + term
+        return objective
+
+    # ``stakeholders`` is an ordered representation of identities, not an economic
+    # ordering of summands.  For three or more terms a declaration-order left fold
+    # can cross a strict action boundary under cancellation.  Canonicalise by the
+    # contribution VALUES, the same invariant used for the regime mixture.
+    return sum_in_value_order(jnp.stack(terms, axis=0), axis=0)
 
 
 def _gather_along_actions(
