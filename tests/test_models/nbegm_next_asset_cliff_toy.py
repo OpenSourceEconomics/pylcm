@@ -111,13 +111,9 @@ def build_model(
         continuous_state="liquid",
         **solver_kwargs,
     )
-    if variant == "nbegm":
-        alive_functions = {**alive_functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
-        constraints = {}
-    else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+    alive_functions = {**alive_functions, "savings": savings}
+    liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return make_alive_dead_model(
         n_periods=n_periods,

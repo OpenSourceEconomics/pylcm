@@ -32,7 +32,6 @@ from lcm.typing import (
 from tests.test_models.nbegm_common import (
     bequest,
     feasible,
-    next_liquid,
     next_liquid_from_savings,
     resolve_solver,
     savings,
@@ -101,19 +100,19 @@ def _build_living_regime(
     final_age: float,
 ) -> Regime:
     """Assemble one living regime transitioning to both living regimes and dead."""
-    functions = {"utility": utility, "tax": tax, "resources": resources}
+    functions = {
+        "utility": utility,
+        "tax": tax,
+        "resources": resources,
+        "savings": savings,
+    }
     solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         post_decision_function="savings",
     )
-    if variant == "nbegm":
-        functions = {**functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
-        constraints = {}
-    else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+    liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return Regime(
         actions={

@@ -164,13 +164,9 @@ def build_model(
         post_decision_function="savings",
         stochastic_node_batch_size=stochastic_node_batch_size,
     )
-    if variant == "nbegm":
-        alive_functions = {**alive_functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
-        constraints = {}
-    else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+    alive_functions = {**alive_functions, "savings": savings}
+    liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     extra_states: dict[str, Grid] = {"income": income_grid}
     extra_state_transitions = None
