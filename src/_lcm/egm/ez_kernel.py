@@ -31,6 +31,7 @@ small-but-nonzero elasticity into the wrong formula.
 
 import jax.numpy as jnp
 
+from _lcm.power_mean import weighted_power_mean_of_pair
 from lcm.typing import FloatND, ScalarFloat
 
 
@@ -487,11 +488,18 @@ def ez_period_value(
     """Return the Epstein-Zin recursive value index at a state.
 
     `V = [(1-beta) flow^(1-rho) + beta nu^(1-rho)]^(1/(1-rho))`, with the
-    Cobb-Douglas limit `flow^(1-beta) nu^beta` at unit elasticity (`rho = 1`),
-    matching `CESAggregator`. The aggregator is a CES combination of the
-    current-period flow and the continuation certainty equivalent; it stays
-    strictly positive for strictly positive inputs, which the recursion (and
-    the power-mean certainty equivalent) require.
+    Cobb-Douglas limit `flow^(1-beta) nu^beta` at unit elasticity (`rho = 1`).
+    The aggregator is a CES combination of the current-period flow and the
+    continuation certainty equivalent; it stays strictly positive for strictly
+    positive inputs, which the recursion (and the power-mean certainty
+    equivalent) require.
+
+    This is the weighted power mean of `(flow, nu)` at weights
+    `(1 - beta, beta)` and exponent `1 - rho`, evaluated by the same routine
+    the public `CESAggregator` calls. Both therefore publish one cardinal
+    value bit for bit, and the kernel inherits the anchored log form, the
+    exact geometric-mean limit at unit elasticity, and the weight rescaling
+    that routine documents.
 
     Args:
         flow: The current-period flow `q` (consumption in the single-good case).
@@ -503,34 +511,11 @@ def ez_period_value(
         The recursive value index.
 
     """
-    one_minus_rho = 1.0 - inverse_eis
-    # The unselected CES branch must not divide by zero at `rho = 1`.
-    safe_one_minus_rho = jnp.where(one_minus_rho == 0.0, 1.0, one_minus_rho)
-    log_flow = jnp.log(flow)
-    log_nu = jnp.log(nu)
-    cobb_douglas = jnp.exp(
-        (1.0 - discount_factor) * log_flow + discount_factor * log_nu
+    beta = jnp.asarray(discount_factor)
+    return weighted_power_mean_of_pair(
+        first=flow,
+        second=nu,
+        first_weight=1.0 - beta,
+        second_weight=beta,
+        exponent=jnp.asarray(1.0 - inverse_eis),
     )
-    # Log-domain CES with two complementary stable forms:
-    # - the deviation form `log V = log q + log1p(beta expm1(e d)) / e` with
-    #   `d = log nu - log q` is algebraically exact and keeps the quotient
-    #   accurate arbitrarily close to `rho = 1` (a rounded log-sum divided by a
-    #   near-zero `e` loses the Cobb-Douglas limit to cancellation);
-    # - the log-sum-exp form covers the deviation form's one blind spot,
-    #   `e d` past the dtype's exp range, where `expm1` overflows while the
-    #   aggregate is still representable.
-    deviation = safe_one_minus_rho * (log_nu - log_flow)
-    deviation_form = (
-        log_flow
-        + jnp.log1p(discount_factor * jnp.expm1(deviation)) / safe_one_minus_rho
-    )
-    lse_form = (
-        jnp.logaddexp(
-            jnp.log1p(-discount_factor) + safe_one_minus_rho * log_flow,
-            jnp.log(discount_factor) + safe_one_minus_rho * log_nu,
-        )
-        / safe_one_minus_rho
-    )
-    exp_range = 0.9 * jnp.log(jnp.finfo(jnp.result_type(flow)).max)
-    ces = jnp.exp(jnp.where(deviation > exp_range, lse_form, deviation_form))
-    return jnp.where(one_minus_rho == 0.0, cobb_douglas, ces)
