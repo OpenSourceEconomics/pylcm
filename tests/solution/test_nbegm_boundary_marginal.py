@@ -25,6 +25,9 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
     coh_case_grid = coh_slope_value * liquid_grid + 4.0
     coh_slope = jnp.full_like(liquid_grid, coh_slope_value)
     next_value = jnp.linspace(-5.0, -1.0, 8)
+    # A unit law: savings land one-for-one, so the published marginal isolates the
+    # cash-on-hand slope the test is about.
+    savings_grid = jnp.linspace(0.0, 9.0, 8)
 
     _endog, _value, policy, marginal = _boundary_targeting_coh(
         liquid_grid=liquid_grid,
@@ -33,8 +36,9 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
         next_value=next_value,
         discount_factor=0.95,
         preferences=crra_preferences(crra),
-        gross_return=1.0,
-        income=0.0,
+        savings_grid=savings_grid,
+        next_liquid=savings_grid,
+        marginal_return=jnp.ones_like(savings_grid),
         asset_limit=3.0,
         prev_limit=liquid_grid[0] - 1.0,
         next_limit=liquid_grid[-1] + 1.0,

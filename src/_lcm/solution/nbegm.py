@@ -1677,8 +1677,12 @@ def _build_nbegm_core(
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
             preferences=preferences,
-            return_liquid=params[f"{target}__next_liquid__return_liquid"],
-            income=params[f"{target}__next_liquid__income"],
+            next_liquid=(1.0 + params[f"{target}__next_liquid__return_liquid"])
+            * savings_grid
+            + params[f"{target}__next_liquid__income"],
+            marginal_return=jnp.full_like(
+                savings_grid, 1.0 + params[f"{target}__next_liquid__return_liquid"]
+            ),
             subsidy_when=subsidy_when,
             subsidy_otherwise=subsidy_otherwise,
             asset_limit=asset_limit,
@@ -2783,7 +2787,11 @@ def _solve_cliffed_budget(
         nbegm_unified_step,
     )
 
+    # The conventional law's values on the savings grid. Forming them here keeps
+    # the kernels free of any assumption about the law's shape.
     gross_return = 1.0 + return_liquid
+    next_liquid = gross_return * savings_grid + income
+    marginal_return = jnp.full_like(savings_grid, gross_return)
     if is_single_jump:
         # A single jump in cash-on-hand is the binary case the case-piece step solves
         # exactly, including its recurring jumped continuation: each interval's
@@ -2797,8 +2805,8 @@ def _solve_cliffed_budget(
             savings_grid=savings_grid,
             discount_factor=discount_factor,
             preferences=preferences,
-            return_liquid=return_liquid,
-            income=income,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
             subsidy_when=coh_intercepts[0],
             subsidy_otherwise=coh_intercepts[1],
             asset_limit=breakpoints[0],
@@ -2817,8 +2825,8 @@ def _solve_cliffed_budget(
             savings_grid=savings_grid,
             discount_factor=discount_factor,
             preferences=preferences,
-            gross_return=gross_return,
-            income=income,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
             subsidy_levels=coh_intercepts,
             jump_breakpoints=breakpoints,
             equality_owner="otherwise",
@@ -2836,8 +2844,8 @@ def _solve_cliffed_budget(
             savings_grid=savings_grid,
             discount_factor=discount_factor,
             preferences=preferences,
-            gross_return=gross_return,
-            income=income,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
             coh_slopes=coh_slopes,
             coh_intercepts=coh_intercepts,
             breakpoints=breakpoints,
@@ -2852,8 +2860,8 @@ def _solve_cliffed_budget(
         savings_grid=savings_grid,
         discount_factor=discount_factor,
         preferences=preferences,
-        gross_return=gross_return,
-        income=income,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,
@@ -4647,8 +4655,12 @@ def _build_nbegm_discrete_core(
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
             preferences=preferences,
-            gross_return=1.0 + params[f"{target}__next_liquid__return_liquid"],
-            income=params[f"{target}__next_liquid__income"],
+            next_liquid=(1.0 + params[f"{target}__next_liquid__return_liquid"])
+            * savings_grid
+            + params[f"{target}__next_liquid__income"],
+            marginal_return=jnp.full_like(
+                savings_grid, 1.0 + params[f"{target}__next_liquid__return_liquid"]
+            ),
             choices=tuple(choices),
             taste_shock_scale=taste_shock_scale,
             arithmetic=envelope_arithmetic,
