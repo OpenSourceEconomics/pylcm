@@ -137,6 +137,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility_with_labor_disutility,
+            "new_illiquid": n_nbegm_toy.new_illiquid,
             "resources": n_nbegm_toy.resources,
             "liquid_savings": n_nbegm_toy.liquid_savings,
             "keep_illiquid": n_nbegm_toy.keep_illiquid,

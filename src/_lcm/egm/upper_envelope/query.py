@@ -19,31 +19,41 @@ that read carries is proportional to its magnitude, and a decision needs a bound
 proportional to the *gap* — otherwise a common value level, which moves no
 crossing and reverses no ordering, decides the ownership.
 
-So ownership is settled on differences. One bracketing segment is taken as the
-pivot; every segment's margin over it is certified by `certified_sign`, which
-cross-multiplies before dividing so the common level cancels in arithmetic that
-loses nothing. Subtracting one and the same pivot from every candidate leaves the
-ordering alone, so the winner is the largest certified margin, and the bounds
-that decide it live at the scale of the gaps rather than of the values. A segment
-stays in contention only while its margin could still be the largest; where
-several could, the documented right-continuous tie-break chooses among them
-deterministically, and value, policy, and marginal are all published from the one
-segment it names.
+So ownership is settled on differences, and by the *sign* of one — never by how
+near two reads are. One bracketing segment is carried as the reference line, and
+every segment is compared with it by `certified_sign`, which cross-multiplies
+before dividing so the common level cancels in arithmetic that loses nothing. A
+strict sign orders the two outright: a segment certified above the reference
+replaces it, and a bounded number of such promotions is followed by a validation
+round that no remaining bracketing segment beats the one about to be published.
+Each promotion strictly raises the true value at the query, so the sequence
+cannot cycle.
 
-Where a margin cannot be certified at all — a product outside the range where the
-error-free transforms are exact — nothing follows about the geometry, and the two
-segments may be far apart. Such a query is published as NaN in all three channels
-rather than handed to the tie-break, identically in both backends below.
+An interval, by contrast, cannot order anything it overlaps. Deciding among
+candidates whose error bounds overlap would promote "not separated" to "equal",
+and the tie-break — which prefers the larger value-slope — would then hand the
+query to whichever strict loser happens to be steeper. So overlap is not a tie:
+only a sign certified *exactly zero*, or a difference certified below the
+arithmetic's own resolution, reaches the documented right-continuous tie-break,
+which chooses among genuine ties deterministically. Value, policy, and marginal
+are all published from the one segment it names.
+
+Failing to *separate* two segments is therefore an ordinary outcome with a
+defined answer. Failing to *compute* the comparison at all is not: where a
+product leaves the range in which the error-free transforms are exact, nothing
+follows about the geometry and the segments may be far apart. Only that second
+case abstains, publishing NaN in all three channels rather than a guess,
+identically in both backends below.
 
 By default the evaluation is a fixed-shape `(n_query, n_segment)`
 bracket-and-reduce: no sequential scan, no NaN-padded refined row,
 branch-parallel and reduction-heavy, which is the shape an accelerator runs
 fastest. This is the backend asset-row mode wants — one query per Euler node, no
 full envelope to refine. For a large `(n_query, n_segment)` that dense matrix is
-itself the memory wall; `segment_block_size` swaps it for a two-pass blocked
-scan over segment blocks (running certified lower bound, then the winner among
-the segments that could still reach it), which peaks at `(n_query, block)`
-instead of `(n_query, n_segment)` and returns the identical result.
+itself the memory wall; `segment_block_size` swaps it for a blocked scan over
+segment blocks (the reference line, then the promotions, then the winner among
+the segments certified level with it), which peaks at `(n_query, block)` instead
+of `(n_query, n_segment)` and returns the identical result.
 """
 
 import functools
@@ -54,8 +64,11 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
+    UNRESOLVED_SIGN,
     QuotientMargin,
     affine_numerator,
+    certified_margin_sign,
     certified_quotient_margin,
 )
 from _lcm.egm.upper_envelope.double_double import (
@@ -67,8 +80,17 @@ from _lcm.egm.upper_envelope.double_double import (
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
-# Which arithmetic decides envelope ownership; see `envelope_at_query`.
-type EnvelopeArithmetic = Literal["certified", "ordinary"]
+# Which arithmetic compares two candidates; see `envelope_at_query`. It names what
+# varies between the two backends — the comparison — rather than the arithmetic
+# itself, which `double_double` already is.
+type ComparisonArithmetic = Literal["certified", "ordinary"]
+
+# How many times a query's reference line may be replaced by a candidate certified
+# above it before the comparison that publishes. Each promotion strictly raises the
+# true value at the query, so the sequence cannot cycle; the round after the last
+# one certifies that nothing remains above. A query needing more promotions than
+# this publishes NaN rather than a candidate that was never validated.
+_PROMOTION_ROUNDS = 2
 
 
 def _along_link(
@@ -78,7 +100,7 @@ def _along_link(
     query: FloatND,
     left_grid: FloatND,
     right_grid: FloatND,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> FloatND:
     """Read a channel along a link at `query`.
 
@@ -193,15 +215,191 @@ def _take_column(value: DoubleDouble, index: IntND) -> DoubleDouble:
 
 
 def _pivot_index(*, brackets: BoolND, value: FloatND) -> IntND:
-    """Pick the candidate every other one's margin is measured against.
+    """Pick the candidate every other one is first compared against.
 
-    Any bracketing candidate serves: subtracting one common value from all of them
-    leaves the ordering, and so the winner, alone. The choice only decides how
-    small the margins come out, and the plain read's maximum is the cheapest good
-    guess at the segment they will all be closest to.
+    Any bracketing candidate serves as the opening reference: the promotions that
+    follow replace it with anything certified above it, so the choice decides how
+    many promotions are needed and nothing else. The plain read's maximum is the
+    cheapest good guess at the one already on top.
     """
     index = jnp.argmax(jnp.where(brackets, value, -jnp.inf), axis=1)
     return index[:, None].astype(jnp.int32)
+
+
+class _ComparableLines(NamedTuple):
+    """Each link as an ascending, positive-width affine line.
+
+    `certified_margin_sign` compares lines, and states plainly what it will not
+    invent: a link of zero width has no affine value line, and a non-finite input
+    is unresolved rather than false. Both are shaped here instead, once, so every
+    comparison downstream is handed operands it can actually decide on.
+    """
+
+    x0: FloatND
+    """Lower abscissa."""
+    x1: FloatND
+    """Upper abscissa, strictly above `x0`."""
+    v0: FloatND
+    """Value at `x0`."""
+    v1: FloatND
+    """Value at `x1`."""
+
+
+def _comparable_lines(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+) -> _ComparableLines:
+    """Shape each link into a line the certified comparison can decide on.
+
+    Three cases, and only the first carries information:
+
+    - a link stored right-to-left is swapped. An affine line is the same line
+      read either way, so this is exact and changes no answer.
+    - a *live* lone candidate is a zero-width self-bracket. The flat line through
+      its own point reads exactly its own value at the one abscissa it brackets,
+      and `nextafter` is the narrowest positive width the format has, so no other
+      query can reach it.
+    - a dead or non-finite entry is replaced by a fixed placeholder line. This is
+      the case that would otherwise do damage: a NaN abscissa makes every
+      comparison against it `UNRESOLVED`, which is the loud failure signal, so a
+      padded row would abstain on a query it should simply have won. The
+      placeholder is never read — a dead entry brackets nothing — it only keeps
+      the arithmetic finite.
+    """
+    usable = live & jnp.isfinite(left_grid) & jnp.isfinite(right_grid)
+    floor = jnp.zeros_like(left_grid)
+    ceiling = jnp.ones_like(left_grid)
+    lower = jnp.where(usable, left_grid, floor)
+    upper = jnp.where(usable, right_grid, ceiling)
+    at_lower = jnp.where(usable, left_value, floor)
+    at_upper = jnp.where(usable, right_value, floor)
+
+    stored_descending = upper < lower
+    x0 = jnp.where(stored_descending, upper, lower)
+    x1 = jnp.where(stored_descending, lower, upper)
+    v0 = jnp.where(stored_descending, at_upper, at_lower)
+    v1 = jnp.where(stored_descending, at_lower, at_upper)
+
+    degenerate = x1 <= x0
+    return _ComparableLines(
+        x0=x0,
+        x1=jnp.where(degenerate, jnp.nextafter(x0, jnp.inf), x1),
+        v0=v0,
+        v1=jnp.where(degenerate, v0, v1),
+    )
+
+
+def _sign_against_reference(
+    *, lines: _ComparableLines, reference: _ComparableLines, query: FloatND
+) -> IntND:
+    """Certified sign of each candidate's value at `query` less the reference's."""
+    return certified_margin_sign(
+        a_x0=lines.x0,
+        a_x1=lines.x1,
+        a_v0=lines.v0,
+        a_v1=lines.v1,
+        b_x0=reference.x0,
+        b_x1=reference.x1,
+        b_v0=reference.v0,
+        b_v1=reference.v1,
+        x_query=query,
+    )
+
+
+class _CertifiedOwner(NamedTuple):
+    """Which candidate owns each query, and whether that could be settled."""
+
+    index: IntND
+    """Column of the winning candidate, per query."""
+    settled: BoolND
+    """Whether every bracketing comparison was computable and none beat the winner."""
+
+
+def _certain_lower_bound(*, brackets: BoolND, margin: QuotientMargin) -> FloatND:
+    """The largest margin over the pivot anything bracketing can be shown to reach."""
+    return jnp.max(
+        jnp.where(brackets & margin.trustworthy, margin.value - margin.bound, -jnp.inf),
+        axis=1,
+        keepdims=True,
+    )
+
+
+def _contending_against(
+    *, brackets: BoolND, margin: QuotientMargin, certain_lower: FloatND
+) -> BoolND:
+    """Which bracketing candidates the margins over the pivot leave in contention.
+
+    Each candidate's margin over the common pivot comes with an error bound, so a
+    candidate is certainly beaten when its own upper bound falls short of the best
+    lower bound anyone reaches. That is a *certified exclusion* and it is the one
+    thing bounds can decide: they measure every candidate against the same pivot,
+    after subtracting its value level exactly, so they stay sharp where an
+    ordinary comparison of two large near-equal values would not.
+
+    What bounds cannot do is order the candidates they fail to exclude — overlap
+    is not equality. Those go on to the pairwise comparison, which is sharp in the
+    opposite regime. A candidate whose own bound is untrustworthy excludes
+    nothing and is excluded by nothing; it is simply left for the sharper test.
+    """
+    return brackets & (
+        ~margin.trustworthy | (margin.value + margin.bound >= certain_lower)
+    )
+
+
+def _certified_owner(
+    *,
+    lines: _ComparableLines,
+    reference: _ComparableLines,
+    contending: BoolND,
+    query: FloatND,
+    value: FloatND,
+    right_available: BoolND,
+    slope: FloatND,
+) -> _CertifiedOwner:
+    """Settle ownership among the contenders by certified sign.
+
+    A candidate certified strictly above the reference replaces it, up to
+    `_PROMOTION_ROUNDS` times; the round after that is a validation the winner has
+    to survive against every remaining contender. Candidates certified level with
+    the winner — exactly equal, or apart by less than the arithmetic can resolve —
+    are the ones the right-continuous tie-break chooses among. The winner is
+    always among them, provided the reference is itself a contender: a line
+    compared with the candidate it was taken from yields its own sign, which is
+    never strict, so no separate record of which candidate it was needs carrying.
+    """
+    lines = _ComparableLines(
+        *(jnp.broadcast_to(field, contending.shape) for field in lines)
+    )
+    for _ in range(_PROMOTION_ROUNDS):
+        sign = _sign_against_reference(lines=lines, reference=reference, query=query)
+        beats = contending & (sign == 1)
+        challenger = jnp.argmax(jnp.where(beats, value, -jnp.inf), axis=1)[:, None]
+        promoted = jnp.any(beats, axis=1, keepdims=True)
+        reference = _ComparableLines(
+            *(
+                jnp.where(
+                    promoted, jnp.take_along_axis(field, challenger, axis=1), held
+                )
+                for field, held in zip(lines, reference, strict=True)
+            )
+        )
+
+    sign = _sign_against_reference(lines=lines, reference=reference, query=query)
+    level_with = contending & ((sign == 0) | (sign == BELOW_RESOLUTION_SIGN))
+    return _CertifiedOwner(
+        index=jnp.argmax(
+            _right_continuous_rank(
+                near_max=level_with, right_available=right_available, slope=slope
+            ),
+            axis=1,
+        )[:, None].astype(jnp.int32),
+        settled=~jnp.any(contending & (sign == 1), axis=1)
+        & ~jnp.any(contending & (sign == UNRESOLVED_SIGN), axis=1),
+    )
 
 
 def _link_geometry(
@@ -277,7 +475,7 @@ def envelope_at_query(
     segment_id: Float1D,
     x_query: FloatND,
     segment_block_size: int = 0,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[FloatND, FloatND, FloatND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
@@ -364,7 +562,7 @@ def envelope_at_query(
     return _envelope_dense(links=links, query=query, arithmetic=arithmetic).published
 
 
-def _fail_if_blocked_scan_cannot_serve(*, arithmetic: EnvelopeArithmetic) -> None:
+def _fail_if_blocked_scan_cannot_serve(*, arithmetic: ComparisonArithmetic) -> None:
     """The blocked scan carries only the certified arithmetic.
 
     Refusing is the point: silently serving the certified result for an
@@ -393,7 +591,7 @@ def _envelope_dense(
     *,
     links: _SegmentLinks,
     query: FloatND,
-    arithmetic: EnvelopeArithmetic = "certified",
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> _EnvelopeReduction:
     """Evaluate the envelope at every query as one `(n_query, n_segment)` reduction."""
     flat = query.reshape(-1)[:, None]
@@ -431,20 +629,31 @@ def _envelope_dense(
     )
 
     any_bracket = jnp.any(brackets, axis=1)
-    # Ownership is settled on margins over one common pivot, so the bounds that
-    # decide it are proportional to the gaps between candidates rather than to the
-    # level they sit on. A candidate stays in contention while its own margin could
-    # still be the largest — its upper bound reaches the best lower bound any
-    # candidate certifies — so a link is never dropped for an error its own
-    # arithmetic already declared.
+    # Among candidates the arithmetic certifies level with one another, break the
+    # tie right-continuously, matching the kernel's `side="right"` read: prefer one
+    # that extends strictly to the right of the query (so "larger value-slope is
+    # higher just to the right" is meaningful), and among those the larger slope.
+    # Only at the global upper endpoint, where nothing continues right, fall back
+    # to the largest slope. `_right_continuous_rank` folds both keys into one
+    # comparable scalar so this dense reduction and the blocked scan select the
+    # same winner.
+    slope = (right_value - left_value)[None, :] / safe_width
+    right_available = flat < upper
     if arithmetic == "ordinary":
-        # No certificate, so no abstention: the largest read wins outright, and a
-        # query anything brackets is decided. Ties are left to the shared
-        # right-continuous rank below, exactly as in the certified branch.
+        # No certificate, so nothing to order by but the reads themselves: the
+        # largest wins outright and a query anything brackets is decided. Ties go
+        # to the same right-continuous rank as the certified branch.
         best_read = jnp.max(
             jnp.where(brackets, value_interp, -jnp.inf), axis=1, keepdims=True
         )
-        near_max = brackets & (value_interp >= best_read)
+        best = jnp.argmax(
+            _right_continuous_rank(
+                near_max=brackets & (value_interp >= best_read),
+                right_available=right_available,
+                slope=slope,
+            ),
+            axis=1,
+        )[:, None]
         decided = any_bracket
     else:
         pivot = _pivot_index(brackets=brackets, value=value_interp)
@@ -460,28 +669,40 @@ def _envelope_dense(
             right_numerator=_take_column(numerator, pivot),
             right_divisor=_take_column(divisor, pivot),
         )
-        certain_lower = jnp.max(
-            jnp.where(brackets, margin.value - margin.bound, -jnp.inf),
-            axis=1,
-            keepdims=True,
+        contending = _contending_against(
+            brackets=brackets,
+            margin=margin,
+            certain_lower=_certain_lower_bound(brackets=brackets, margin=margin),
         )
-        near_max = brackets & (margin.value + margin.bound >= certain_lower)
-        decided = any_bracket & ~jnp.any(brackets & ~margin.trustworthy, axis=1)
-    # Among candidates no arithmetic separates, break the tie right-continuously,
-    # matching the kernel's `side="right"` read: prefer one that extends strictly
-    # to the right of the query (so "larger value-slope is higher just to the
-    # right" is meaningful), and among those the larger slope. Only at the global
-    # upper endpoint, where nothing continues right, fall back to the largest
-    # near-max slope. `_right_continuous_rank` folds both keys into one comparable
-    # scalar so this dense reduction and the blocked scan select the same winner.
-    slope = (right_value - left_value)[None, :] / safe_width
-    right_available = flat < upper
-    best = jnp.argmax(
-        _right_continuous_rank(
-            near_max=near_max, right_available=right_available, slope=slope
-        ),
-        axis=1,
-    )[:, None]
+        lines = _comparable_lines(
+            left_grid=left_grid[None, :],
+            right_grid=right_grid[None, :],
+            left_value=left_value[None, :],
+            right_value=right_value[None, :],
+            live=segment_live[None, :],
+        )
+        # The reference has to be a contender, or the winner could fall outside
+        # the set the tie-break chooses from. The highest-reading contender is
+        # both cheap and already close to the answer.
+        opening = _pivot_index(brackets=contending, value=value_interp)
+        owner = _certified_owner(
+            lines=lines,
+            reference=_ComparableLines(
+                *(
+                    jnp.take_along_axis(
+                        jnp.broadcast_to(field, brackets.shape), opening, axis=1
+                    )
+                    for field in lines
+                )
+            ),
+            contending=contending,
+            query=flat,
+            value=value_interp,
+            right_available=right_available,
+            slope=slope,
+        )
+        best = owner.index
+        decided = any_bracket & owner.settled
 
     def _from_winner(channel: FloatND) -> FloatND:
         """Publish one channel of the winner, or NaN where no winner was decided."""
@@ -586,106 +807,106 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
     )
 
 
-def _blocked_pivot(
-    *, blocks: FloatND, live_blocks: BoolND, flat: Float1D, dtype: jnp.dtype
-) -> tuple[DoubleDouble, DoubleDouble, FloatND]:
-    """Find the link each query's margins are taken over, one block at a time.
+def _block_lines(*, block: FloatND, live: BoolND) -> _ComparableLines:
+    """One block's links as lines the certified comparison can decide on."""
+    return _comparable_lines(
+        left_grid=block[:, 0][None, :],
+        right_grid=block[:, 1][None, :],
+        left_value=block[:, 2][None, :],
+        right_value=block[:, 3][None, :],
+        live=live[None, :],
+    )
 
-    Returns the pivot's numerator and divisor along with the value level every
-    candidate is shifted by, which is the pivot's own plain read.
+
+def _highest_reading_line_over_blocks(
+    *,
+    blocks: FloatND,
+    live_blocks: BoolND,
+    flat: Float1D,
+    dtype: jnp.dtype,
+    held: _ComparableLines | None,
+    eligible: Callable[[_BlockTerms, _ComparableLines], BoolND],
+) -> tuple[_ComparableLines, FloatND]:
+    """Keep the highest-reading eligible link across all blocks, as a line.
+
+    The same fold serves the opening reference (every bracketing link is
+    eligible) and a promotion round (only links certified above the line being
+    held). `held` is what a query keeps when no block offers an eligible link;
+    a query nothing brackets keeps a placeholder whose comparisons nothing reads,
+    since such a query publishes NaN on `any_bracket` regardless.
     """
     n_query = flat.shape[0]
 
-    def pivot_step(
-        carry: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
-        block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND, FloatND], None]:
-        best_value, left_grid, right_grid, left_value, right_value = carry
+    def step(
+        carry: tuple[FloatND, ...], block_and_live: tuple[FloatND, BoolND]
+    ) -> tuple[tuple[FloatND, ...], None]:
+        best_read, *kept = carry
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        candidate = jnp.where(terms.brackets, terms.value, -jnp.inf)
+        lines = _block_lines(block=block, live=block_live)
+        candidate = jnp.where(eligible(terms, lines), terms.value, -jnp.inf)
         index = jnp.argmax(candidate, axis=1)[:, None]
-
-        def _take(column: FloatND) -> FloatND:
-            """The winning link's entry in one endpoint column, per query."""
-            spread = jnp.broadcast_to(column[None, :], candidate.shape)
-            return jnp.take_along_axis(spread, index, axis=1)[:, 0]
-
-        block_value = jnp.take_along_axis(candidate, index, axis=1)[:, 0]
-        take = block_value > best_value
+        take = jnp.take_along_axis(candidate, index, axis=1)[:, 0] > best_read
+        taken = (
+            jnp.take_along_axis(
+                jnp.broadcast_to(field, candidate.shape), index, axis=1
+            )[:, 0]
+            for field in lines
+        )
         return (
-            jnp.where(take, block_value, best_value),
-            jnp.where(take, _take(block[:, 0]), left_grid),
-            jnp.where(take, _take(block[:, 1]), right_grid),
-            jnp.where(take, _take(block[:, 2]), left_value),
-            jnp.where(take, _take(block[:, 3]), right_value),
+            jnp.where(
+                take, jnp.take_along_axis(candidate, index, axis=1)[:, 0], best_read
+            ),
+            *(
+                jnp.where(take, offered, standing)
+                for offered, standing in zip(taken, kept, strict=True)
+            ),
         ), None
 
-    # A query nothing brackets keeps this placeholder link. Its margins mean
-    # nothing, and nothing reads them: such a query publishes NaN on `any_bracket`
-    # regardless, so the placeholder only has to keep the arithmetic finite.
     zeros = jnp.zeros((n_query,), dtype=dtype)
+    placeholder = _ComparableLines(
+        x0=zeros, x1=jnp.ones((n_query,), dtype=dtype), v0=zeros, v1=zeros
+    )
+    standing = (
+        placeholder
+        if held is None
+        else _ComparableLines(*(field[:, 0] for field in held))
+    )
     carry, _ = jax.lax.scan(
-        pivot_step,
-        (
-            jnp.full((n_query,), -jnp.inf, dtype=dtype),
-            zeros,
-            jnp.ones((n_query,), dtype=dtype),
-            zeros,
-            zeros,
-        ),
+        step,
+        (jnp.full((n_query,), -jnp.inf, dtype=dtype), *standing),
         (blocks, live_blocks),
     )
-    best_value, left_grid, right_grid, left_value, right_value = carry
-    level = jnp.where(jnp.isfinite(best_value), best_value, 0.0)[:, None]
-    numerator, divisor = _value_quotient(
-        left=left_value[:, None],
-        right=right_value[:, None],
-        query=flat[:, None],
-        left_grid=left_grid[:, None],
-        right_grid=right_grid[:, None],
-        level=level,
-    )
-    return numerator, divisor, level
-
-
-def _block_quotients(
-    *, block: FloatND, flat: Float1D, level: FloatND
-) -> tuple[DoubleDouble, DoubleDouble]:
-    """Numerators and divisors of one block's values above the query's `level`."""
-    return _value_quotient(
-        left=block[:, 2][None, :],
-        right=block[:, 3][None, :],
-        query=flat[:, None],
-        left_grid=block[:, 0][None, :],
-        right_grid=block[:, 1][None, :],
-        level=level,
-    )
+    return _ComparableLines(*(field[:, None] for field in carry[1:])), carry[0][:, None]
 
 
 def _envelope_blocked(
     *, links: _SegmentLinks, query: FloatND, block_size: int
 ) -> _EnvelopeReduction:
-    """Evaluate the dense `(n_query, n_segment)` reduction in two blocked passes.
+    """Evaluate the dense `(n_query, n_segment)` reduction as blocked passes.
 
-    Both passes are exact associative folds against a fixed target, so the result
-    matches the dense path (up to floating-point reassociation between the two
-    XLA lowerings):
+    Every pass is an exact associative fold against a fixed target, so the result
+    matches the dense path (up to floating-point reassociation between the two XLA
+    lowerings):
 
     - Pass 1 accumulates the running per-query maximum of the plain read and the
-      endpoints of the link that attained it: the pivot every margin is taken
-      over. Any bracketing link would serve, so only its own block-order matters,
-      and that is fixed.
-    - Pass 2 re-scans the blocks and accumulates the running maximum of the
-      certified lower bound on the margin over that pivot — the largest margin any
-      candidate can be *shown* to reach — together with a running `any_bracket`
-      flag and a running flag for whether every bracketing margin was certifiable.
-    - Pass 3 re-scans once more and, among segments whose margin could still reach
-      that bound, keeps the winner of the right-continuous rank
-      (`_right_continuous_rank`: a right-extending near-max segment over one
-      ending at the query, then larger value-slope) — the dense path's tie-break.
-      The strict cross-block `>` keeps the earliest such winner, matching the
-      dense `argmax`, and value, policy, and marginal are all published from it.
+      line of the link that attained it: the reference each query opens against.
+      Any bracketing link would serve, so only its own block-order matters, and
+      that is fixed.
+    - One pass per promotion round re-scans the blocks and replaces that line with
+      the highest-reading link certified strictly above it. Whether a link is
+      above the reference is a property of the two alone, so a block can answer it
+      without seeing any other block — which is why the reference travels as a
+      *line* rather than as a segment index the blocks would have to resolve.
+    - The final pass re-scans once more and, among segments certified level with
+      the reference, keeps the winner of the right-continuous rank
+      (`_right_continuous_rank`: a right-extending segment over one ending at the
+      query, then larger value-slope) — the dense path's tie-break. The strict
+      cross-block `>` keeps the earliest such winner, matching the dense `argmax`,
+      and value, policy, and marginal are all published from it. The same pass
+      accumulates whether any bracketing link still beats the reference, and
+      whether any bracketing comparison could not be computed at all; either
+      leaves the query undecided.
 
     The links are padded to a multiple of `block_size` with dead segments (which
     never bracket) and reshaped to `(n_block, block_size)`; the scan peaks at
@@ -724,13 +945,34 @@ def _envelope_blocked(
     live_blocks = live.reshape(-1, block_size)
     dtype = links.left_grid.dtype
 
-    pivot_numerator, pivot_divisor, level = _blocked_pivot(
-        blocks=blocks, live_blocks=live_blocks, flat=flat, dtype=dtype
+    pivot_lines, best_read = _highest_reading_line_over_blocks(
+        blocks=blocks,
+        live_blocks=live_blocks,
+        flat=flat,
+        dtype=dtype,
+        held=None,
+        eligible=lambda terms, _lines: terms.brackets,
+    )
+    level = jnp.where(jnp.isfinite(best_read), best_read, 0.0)
+    pivot_numerator, pivot_divisor = _value_quotient(
+        left=pivot_lines.v0,
+        right=pivot_lines.v1,
+        query=flat[:, None],
+        left_grid=pivot_lines.x0,
+        right_grid=pivot_lines.x1,
+        level=level,
     )
 
-    def _block_margin(block: FloatND) -> QuotientMargin:
-        """Certify every link in the block against the query's pivot."""
-        numerator, divisor = _block_quotients(block=block, flat=flat, level=level)
+    def _block_margin(lines: _ComparableLines) -> QuotientMargin:
+        """Certify every link of one block against the query's pivot."""
+        numerator, divisor = _value_quotient(
+            left=lines.v0,
+            right=lines.v1,
+            query=flat[:, None],
+            left_grid=lines.x0,
+            right_grid=lines.x1,
+            level=level,
+        )
         return certified_quotient_margin(
             left_numerator=numerator,
             left_divisor=divisor,
@@ -739,44 +981,79 @@ def _envelope_blocked(
         )
 
     def bounds_step(
-        carry: tuple[FloatND, BoolND, BoolND],
-        block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, BoolND, BoolND], None]:
-        running_lower, any_bracket, certifiable = carry
+        carry: FloatND, block_and_live: tuple[FloatND, BoolND]
+    ) -> tuple[FloatND, None]:
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        margin = _block_margin(block)
-        block_lower = jnp.max(
-            jnp.where(terms.brackets, margin.value - margin.bound, -jnp.inf), axis=1
-        )
-        return (
-            jnp.maximum(running_lower, block_lower),
-            any_bracket | jnp.any(terms.brackets, axis=1),
-            certifiable & ~jnp.any(terms.brackets & ~margin.trustworthy, axis=1),
+        margin = _block_margin(_block_lines(block=block, live=block_live))
+        return jnp.maximum(
+            carry,
+            jnp.max(
+                jnp.where(
+                    terms.brackets & margin.trustworthy,
+                    margin.value - margin.bound,
+                    -jnp.inf,
+                ),
+                axis=1,
+            ),
         ), None
 
-    (certain_lower, any_bracket, certifiable), _ = jax.lax.scan(
+    running, _ = jax.lax.scan(
         bounds_step,
-        (
-            jnp.full((n_query,), -jnp.inf, dtype=dtype),
-            jnp.zeros((n_query,), dtype=bool),
-            jnp.ones((n_query,), dtype=bool),
-        ),
+        jnp.full((n_query,), -jnp.inf, dtype=dtype),
         (blocks, live_blocks),
     )
+    certain_lower = running[:, None]
+
+    def block_contending(terms: _BlockTerms, lines: _ComparableLines) -> BoolND:
+        """Which of the block's bracketing links the margins leave in contention."""
+        return _contending_against(
+            brackets=terms.brackets,
+            margin=_block_margin(lines),
+            certain_lower=certain_lower,
+        )
+
+    reference, _ = _highest_reading_line_over_blocks(
+        blocks=blocks,
+        live_blocks=live_blocks,
+        flat=flat,
+        dtype=dtype,
+        held=None,
+        eligible=block_contending,
+    )
+    for _ in range(_PROMOTION_ROUNDS):
+        standing = reference
+        reference, _ = _highest_reading_line_over_blocks(
+            blocks=blocks,
+            live_blocks=live_blocks,
+            flat=flat,
+            dtype=dtype,
+            held=standing,
+            eligible=lambda terms, lines, standing=standing: (
+                block_contending(terms, lines)
+                & (
+                    _sign_against_reference(
+                        lines=lines, reference=standing, query=flat[:, None]
+                    )
+                    == 1
+                )
+            ),
+        )
 
     def winner_step(
-        carry: tuple[FloatND, FloatND, FloatND, FloatND],
+        carry: tuple[FloatND, FloatND, FloatND, FloatND, BoolND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND], None]:
-        best_rank, best_value, best_policy, best_marginal = carry
+    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND, BoolND, BoolND], None]:
+        best_rank, best_value, best_policy, best_marginal, any_bracket, settled = carry
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        margin = _block_margin(block)
-        reaches = margin.value + margin.bound >= certain_lower[:, None]
-        near_max = terms.brackets & reaches
+        lines = _block_lines(block=block, live=block_live)
+        contending = block_contending(terms, lines)
+        sign = _sign_against_reference(
+            lines=lines, reference=reference, query=flat[:, None]
+        )
         rank = _right_continuous_rank(
-            near_max=near_max,
+            near_max=contending & ((sign == 0) | (sign == BELOW_RESOLUTION_SIGN)),
             right_available=flat[:, None] < terms.upper,
             slope=terms.slope,
         )
@@ -792,16 +1069,27 @@ def _envelope_blocked(
             jnp.where(take, _take(terms.value), best_value),
             jnp.where(take, _take(terms.policy), best_policy),
             jnp.where(take, _take(terms.marginal), best_marginal),
+            any_bracket | jnp.any(terms.brackets, axis=1),
+            settled
+            & ~jnp.any(contending & (sign == 1), axis=1)
+            & ~jnp.any(contending & (sign == UNRESOLVED_SIGN), axis=1),
         ), None
 
     empty = jnp.full((n_query,), jnp.nan, dtype=dtype)
-    (_, env_value, env_policy, env_marginal), _ = jax.lax.scan(
+    (_, env_value, env_policy, env_marginal, any_bracket, settled), _ = jax.lax.scan(
         winner_step,
-        (jnp.full((n_query,), -jnp.inf, dtype=dtype), empty, empty, empty),
+        (
+            jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            empty,
+            empty,
+            empty,
+            jnp.zeros((n_query,), dtype=bool),
+            jnp.ones((n_query,), dtype=bool),
+        ),
         (blocks, live_blocks),
     )
 
-    decided = any_bracket & certifiable
+    decided = any_bracket & settled
 
     def _published(channel: FloatND) -> FloatND:
         """Shape one channel like the query, NaN where no winner was decided."""

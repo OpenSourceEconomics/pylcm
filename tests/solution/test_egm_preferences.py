@@ -1,7 +1,7 @@
 """The EGM solvers read preferences and the discount factor off the regime itself.
 
-Neither `EGM` nor `TwoAssetEGM` assumes a preference family. Felicity, its
-marginal, and its inverse marginal come from the regime's own `functions`, and
+`EGM` assumes no preference family. Felicity, its marginal, and its inverse
+marginal come from the regime's own `functions`, and
 the discount factor from its Koopmans aggregator — so a regime that declares no
 analytic `inverse_marginal_utility` is still solvable (the Euler equation is
 inverted numerically), and a regime that declares an aggregator the Euler
@@ -15,25 +15,17 @@ from numpy.testing import assert_allclose
 from lcm import LinSpacedGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import CESAggregator
-from lcm.solvers import EGM, TwoAssetEGM
+from lcm.solvers import EGM
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
 _N_PERIODS = 5
 
-_A_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=18)
-_B_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=16)
-_CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=18)
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 
 
 def _solvers():
-    return {
-        "working": TwoAssetEGM(
-            a_grid=_A_GRID, b_grid=_B_GRID, consumption_grid=_CONSUMPTION_GRID
-        ),
-        "retired": EGM(savings_grid=_SAVINGS_GRID),
-    }
+    return {"retired": EGM(savings_grid=_SAVINGS_GRID)}
 
 
 def test_numeric_inverse_reproduces_the_analytic_euler_inversion():
@@ -64,8 +56,7 @@ def test_numeric_inverse_reproduces_the_analytic_euler_inversion():
             )
 
 
-@pytest.mark.parametrize("regime_name", ["working", "retired"])
-def test_custom_koopmans_aggregator_is_rejected_by_the_egm_solvers(regime_name):
+def test_custom_koopmans_aggregator_is_rejected_by_the_egm_solvers():
     """An EGM regime whose aggregator is not the default `W` fails to build.
 
     The Euler inversion hard-codes `W = utility + discount_factor * CE`, so a
@@ -75,6 +66,6 @@ def test_custom_koopmans_aggregator_is_rejected_by_the_egm_solvers(regime_name):
     with pytest.raises(ModelInitializationError, match="Koopmans aggregator"):
         get_model(
             n_periods=_N_PERIODS,
-            solvers={regime_name: _solvers()[regime_name]},
+            solvers={"retired": _solvers()["retired"]},
             koopmans_aggregator=CESAggregator(),
         )
