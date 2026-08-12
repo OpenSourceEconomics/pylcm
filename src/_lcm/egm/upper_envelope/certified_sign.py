@@ -564,12 +564,19 @@ def _on_its_own_scale(
     the other link's. So they move together by one power of two, and what that
     contributes to the determinant is a positive constant factor.
 
+    The exponent is the one that suits the whole triple rather than its largest
+    member. A query sitting one ulp from an endpoint of a link that spans most of
+    the range puts a distance near the top of the format alongside one near the
+    bottom, and landing the first on one would flatten the second — refusing a
+    comparison that the same three distances decide easily when left further from
+    one.
+
     Scaling by a power of two is exact only while the result stays normal, so a
     round trip establishes it for every component; the reported flag says whether
     it held. Where it did not, the distances come back as they were, because the
     alternative to a scaling that lost something is not a different scaling.
     """
-    exponent = normalizing_exponent(*(term[0] for term in distances))
+    exponent = _shared_exponent(*(term[0] for term in distances))
     rescaled: tuple[DoubleDouble, ...] = tuple(
         (
             scale_by_power_of_two(high, -exponent),
