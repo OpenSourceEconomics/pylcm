@@ -149,7 +149,7 @@ def certified_margin_sign(
     # rather than bounded somewhere that would report it as a near-tie. Reading
     # such an operand at all needs an arithmetic over significands and exponents
     # rather than over floats.
-    readable = ~reduce(operator.or_, (_is_subnormal(term) for term in operands))
+    readable = ~reduce(operator.or_, (is_subnormal(term) for term in operands))
 
     # Two lines given by the same four endpoints are one line, and one line is
     # exactly level with itself at every query. Read off the operands, this
@@ -201,7 +201,7 @@ def certified_margin_sign(
     # subnormal *magnitudes* are unreadable, and a magnitude is not what an
     # ordering needs — but two distinct subnormals do compare equal, so a tie
     # they report is not certified and is handed back to the determinant.
-    both_readable = ~_is_subnormal(a_node_value) & ~_is_subnormal(b_node_value)
+    both_readable = ~is_subnormal(a_node_value) & ~is_subnormal(b_node_value)
     node_sign = jnp.where(
         a_node_value > b_node_value,
         jnp.int32(1),
@@ -257,13 +257,13 @@ def certified_margin_sign(
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
     sign = _certified_sign_of(
-        determinant, finite=finite & readable & products_finite & scaling_exact
+        determinant,
+        finite=finite & products_finite & scaling_exact,
+        readable=readable,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
-    return jnp.where(finite & readable & settled_off_the_operands, exact, sign).astype(
-        jnp.int32
-    )
+    return jnp.where(finite & settled_off_the_operands, exact, sign).astype(jnp.int32)
 
 
 class QuotientMargin(NamedTuple):
@@ -394,13 +394,19 @@ def _same_bits(left: FloatND, right: FloatND) -> BoolND:
     )
 
 
-def _is_subnormal(value: FloatND) -> BoolND:
+def is_subnormal(value: FloatND) -> BoolND:
     """Report where a float is subnormal, and so reads as zero to every operation.
 
     A subnormal's *ordering* against a normal number still comes out right — the
     flush makes it zero, and zero is on the correct side of any nonzero normal.
     What is lost is its ordering against another subnormal, and against zero
     itself, where the flush makes distinct numbers compare equal.
+
+    Decided on the bit pattern, which `bitcast_convert_type` preserves. Nothing
+    arithmetic can answer it: the comparisons that would ask — against zero,
+    against `tiny` — are themselves subject to the flushing they are meant to
+    detect, and `frexp` reports the same exponent for every subnormal whatever
+    its magnitude.
     """
     _unsigned, exponent_mask, mantissa_mask = _IEEE_FIELDS[jnp.dtype(value.dtype).name]
     bits = jax.lax.bitcast_convert_type(value, jnp.dtype(_unsigned))
@@ -513,8 +519,20 @@ def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
     return jnp.isfinite(product) & (~both_nonzero | (product >= tiny))
 
 
-def _certified_sign_of(value: DoubleDouble, *, finite: BoolND) -> IntND:
-    """Turn a double-double with an error bound into a certified sign."""
+def _certified_sign_of(
+    value: DoubleDouble, *, finite: BoolND, readable: BoolND
+) -> IntND:
+    """Turn a double-double with an error bound into a certified sign.
+
+    `readable` says whether every operand was one the arithmetic could see. Where
+    it was not, only a *strict* verdict survives: the margin then exceeds the
+    tolerance by more than a flushed operand could have contributed, since a
+    flushed operand is below the smallest normal while the margin is not. What
+    does not survive is the near-zero end, where the whole difference is of the
+    order of what went missing — and that is the end where the collapse is
+    total, leaving an estimate of exactly zero with an error bound of exactly
+    zero, because nothing was rounded on the way to losing everything.
+    """
     high, low, dropped = value
     estimate = high + low
     epsilon = jnp.finfo(estimate.dtype).eps
@@ -523,13 +541,14 @@ def _certified_sign_of(value: DoubleDouble, *, finite: BoolND) -> IntND:
     exactly_zero = (dropped == 0.0) & (estimate == 0.0)
     unresolved = jnp.asarray(UNRESOLVED_SIGN, dtype=jnp.int32)
     below_resolution = jnp.asarray(BELOW_RESOLUTION_SIGN, dtype=jnp.int32)
+    undecided = jnp.where(
+        readable,
+        jnp.where(exactly_zero, jnp.int32(0), below_resolution),
+        unresolved,
+    )
     sign = jnp.where(
         estimate > tolerance,
         jnp.int32(1),
-        jnp.where(
-            estimate < -tolerance,
-            jnp.int32(-1),
-            jnp.where(exactly_zero, jnp.int32(0), below_resolution),
-        ),
+        jnp.where(estimate < -tolerance, jnp.int32(-1), undecided),
     )
     return jnp.where(finite, sign, unresolved).astype(jnp.int32)

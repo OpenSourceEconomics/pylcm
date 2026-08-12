@@ -70,6 +70,7 @@ from _lcm.egm.upper_envelope.certified_sign import (
     affine_numerator,
     certified_margin_sign,
     certified_quotient_margin,
+    is_subnormal,
 )
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
@@ -261,8 +262,15 @@ def _comparable_lines(
       read either way, so this is exact and changes no answer.
     - a *live* lone candidate is a zero-width self-bracket. The flat line through
       its own point reads exactly its own value at the one abscissa it brackets,
-      and `nextafter` is the narrowest positive width the format has, so no other
-      query can reach it.
+      and one representable step is the narrowest width that keeps every other
+      query outside it. At abscissa zero that step is a subnormal, which the
+      backend flushes, so the line handed to the comparison has both endpoints at
+      the same place. A query *on* the point is unaffected — it is a node of the
+      self-bracket, and a node is read off the stored value rather than through
+      the width. A rival straddling the point without a node there is refused
+      instead of decided, which is the honest outcome: this arithmetic compares
+      two lines through a shared scaling, and no width it could be given here
+      survives that scaling against an ordinary link.
     - a dead or non-finite entry is replaced by a fixed placeholder line. This is
       the case that would otherwise do damage: a NaN abscissa makes every
       comparison against it `UNRESOLVED`, which is the loud failure signal, so a
@@ -617,35 +625,8 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     the failure loud, so a wrong number is never published in place of one the
     format holds perfectly well.
     """
-    in_row = jnp.any(jnp.stack([jnp.any(_is_subnormal(term)) for term in row]))
-    return in_row | _is_subnormal(query)
-
-
-def _is_subnormal(value: FloatND) -> BoolND:
-    """Report where a float is subnormal, and so reads as zero to every operation.
-
-    Decided on the bit pattern, which `bitcast_convert_type` preserves. Nothing
-    arithmetic can answer this: the comparisons that would ask it — against zero,
-    against `tiny` — are themselves subject to the flushing they are meant to
-    detect, and `frexp` reports the same exponent for every subnormal regardless
-    of magnitude.
-    """
-    unsigned, exponent_mask, mantissa_mask = _IEEE_FIELDS[jnp.dtype(value.dtype).name]
-    bits = jax.lax.bitcast_convert_type(value, jnp.dtype(unsigned))
-    return ((bits & bits.dtype.type(exponent_mask)) == 0) & (
-        (bits & bits.dtype.type(mantissa_mask)) != 0
-    )
-
-
-# The unsigned type each float bitcasts to, and the masks selecting its biased
-# exponent and its significand. A subnormal is exactly a zero exponent field
-# over a nonzero significand. The masks stay plain integers: the 64-bit ones do
-# not fit a 32-bit word, and building them as arrays here would fail at import
-# in the default configuration, which does not enable 64-bit types at all.
-_IEEE_FIELDS = {
-    "float32": ("uint32", 0x7F800000, 0x007FFFFF),
-    "float64": ("uint64", 0x7FF0000000000000, 0x000FFFFFFFFFFFFF),
-}
+    in_row = jnp.any(jnp.stack([jnp.any(is_subnormal(term)) for term in row]))
+    return in_row | is_subnormal(query)
 
 
 def _fail_if_blocked_scan_cannot_serve(*, arithmetic: ComparisonArithmetic) -> None:
