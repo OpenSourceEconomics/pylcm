@@ -528,9 +528,12 @@ def _publish_V_and_carry_rows(
 ) -> tuple[FloatND, Float1D, Float1D]:
     """Interpolate V onto the exogenous grid and finish the carry value rows.
 
-    Below the lowest refined envelope point the interpolant edge-clamps, so
-    the published value there is the closed-form constrained value — the
-    exact value of saving exactly the borrowing limit. Above it, the refined
+    Below the lowest refined envelope point the published value is the
+    closed-form constrained value — the exact value of saving exactly the
+    borrowing limit — substituted outright. It has to be substituted: the
+    interpolant continues the first bracket's secant below its first node
+    rather than clamping, so left to itself it would read the constrained
+    region off an extrapolant. Above that point, the refined
     envelope is read with the cubic Hermite interpolant (the marginal-utility
     row is the value row's exact slope by the envelope theorem), floored at
     the constrained value, which remains a feasible-policy lower bound
@@ -581,10 +584,12 @@ def _publish_V_and_carry_rows(
         + discounted_expected_value_at_limit,
         -jnp.inf,
     )
-    # Below the lowest refined point the interpolant edge-clamps, so the
-    # closed-form constrained value (the exact value of saving exactly the
-    # borrowing limit) is published outright there. Everywhere else it is a
-    # feasible-policy floor under the Hermite read of the refined envelope:
+    # Below the lowest refined point the closed-form constrained value (the
+    # exact value of saving exactly the borrowing limit) is published outright,
+    # replacing the interpolant rather than agreeing with it: the interpolant
+    # continues the first bracket's secant below its first node. Everywhere
+    # else the constrained value is a feasible-policy floor under the Hermite
+    # read of the refined envelope:
     # forcing it further up — e.g. to the first Euler point — would discard
     # envelope information wherever degenerate inversions push that point
     # right (a zero-ish marginal continuation makes it ~1/eps), and the
