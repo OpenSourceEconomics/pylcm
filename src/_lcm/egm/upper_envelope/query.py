@@ -631,20 +631,20 @@ def _is_subnormal(value: FloatND) -> BoolND:
     of magnitude.
     """
     unsigned, exponent_mask, mantissa_mask = _IEEE_FIELDS[jnp.dtype(value.dtype).name]
-    bits = jax.lax.bitcast_convert_type(value, unsigned)
-    return ((bits & exponent_mask) == 0) & ((bits & mantissa_mask) != 0)
+    bits = jax.lax.bitcast_convert_type(value, jnp.dtype(unsigned))
+    return ((bits & bits.dtype.type(exponent_mask)) == 0) & (
+        (bits & bits.dtype.type(mantissa_mask)) != 0
+    )
 
 
 # The unsigned type each float bitcasts to, and the masks selecting its biased
 # exponent and its significand. A subnormal is exactly a zero exponent field
-# over a nonzero significand.
+# over a nonzero significand. The masks stay plain integers: the 64-bit ones do
+# not fit a 32-bit word, and building them as arrays here would fail at import
+# in the default configuration, which does not enable 64-bit types at all.
 _IEEE_FIELDS = {
-    "float32": (jnp.uint32, jnp.uint32(0x7F800000), jnp.uint32(0x007FFFFF)),
-    "float64": (
-        jnp.uint64,
-        jnp.uint64(0x7FF0000000000000),
-        jnp.uint64(0x000FFFFFFFFFFFFF),
-    ),
+    "float32": ("uint32", 0x7F800000, 0x007FFFFF),
+    "float64": ("uint64", 0x7FF0000000000000, 0x000FFFFFFFFFFFFF),
 }
 
 
