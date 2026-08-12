@@ -1,3 +1,7 @@
+import ctypes
+import ctypes.util
+import functools
+import pathlib
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 
@@ -186,6 +190,64 @@ def pytest_collection_modifyitems(items):
 # its boundary and pays nothing extra.
 _TESTS_BETWEEN_RELEASES = 64
 
+# How far a worker may grow past its last release before the next one, in MiB.
+#
+# A test count cannot bound memory, because what a test costs is the programs it
+# builds and that is not a property of it being one test: the certified query
+# battery is 52 tests -- under the count above, so it would release *never* --
+# and a single one of them adds 1278 MiB. Growth is therefore also measured
+# directly, which needs no per-module tuning and cannot be invalidated by a new
+# module the way a count is.
+#
+# A worker's peak is then roughly its post-release size plus this allowance plus
+# the largest single test, so 1 GiB leaves the two CI workers well inside a 16 GB
+# runner while an ordinary module, which never grows this far between module
+# boundaries, keeps releasing exactly where it did before and pays nothing.
+_MIB_BETWEEN_RELEASES = 1024.0
+
+_STATUS_PATH = pathlib.Path("/proc/self/status")
+
+
+def resident_mebibytes() -> float | None:
+    """This process's resident set size in MiB, or `None` where it is unavailable.
+
+    Read straight from the kernel rather than from a high-water mark, so a
+    release that returns memory is visible as a fall.
+    """
+    try:
+        status = _STATUS_PATH.read_text()
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            return int(line.split()[1]) / 1024.0
+    return None
+
+
+@functools.cache
+def _malloc_trim():
+    """The C library's arena-trimming entry point, or `None` if it has none."""
+    name = ctypes.util.find_library("c")
+    if name is None:
+        return None
+    try:
+        return ctypes.CDLL(name).malloc_trim
+    except OSError, AttributeError:
+        return None
+
+
+def return_free_heap_to_os() -> bool:
+    """Hand every arena's free heap back to the operating system.
+
+    Report whether the allocator offers the operation at all; a platform without
+    it simply keeps whatever it keeps.
+    """
+    trim = _malloc_trim()
+    if trim is None:
+        return False
+    trim(0)
+    return True
+
 
 def pytest_runtest_teardown(item, nextitem):
     """Release compiled programs at module boundaries, and periodically within one.
@@ -197,21 +259,51 @@ def pytest_runtest_teardown(item, nextitem):
     module's programs. The persistent on-disk cache absorbs most of the cost:
     a program compiled again is a lookup rather than a fresh compile.
 
-    Within a LARGE module that bound is still too loose -- see
-    `_TESTS_BETWEEN_RELEASES` -- so the cache is released every so many tests as
-    well, whether or not the module is about to change.
+    Within a LARGE module that bound is still too loose, so a release also
+    happens whenever either of two allowances runs out, whether or not the module
+    is about to change:
+
+    - `_TESTS_BETWEEN_RELEASES`, which bounds the mapping count.
+    - `_MIB_BETWEEN_RELEASES`, which bounds the resident memory. This is the one
+      that binds for a module of few but expensive tests.
+
+    Releasing takes two steps, and neither is worth much alone. Dropping the
+    cache marks the memory free but frees nothing the operating system can see;
+    XLA:CPU builds each program through LLVM, whose intermediate representation
+    is ordinary heap, and a C allocator holds a freed block in its arena rather
+    than returning it. Compilation is multi-threaded and an arena belongs to a
+    thread, so the next program allocates fresh instead of reusing what the last
+    one left, and resident memory tracks the sum of every program ever built
+    rather than the largest one live at a time. Measured on the certified query
+    battery, a worker at 9304 MiB fell to 1472 MiB on dropping the cache and
+    trimming, having given back under 60 MiB for a trim without a drop.
     """
     if not item.config.getoption("--release-compiled-programs"):
         return
     session = item.session
     seen = getattr(session, "_lcm_tests_since_release", 0) + 1
+    resident = resident_mebibytes()
+    if resident is not None and getattr(session, "_lcm_mib_at_last_release", 0) == 0:
+        session._lcm_mib_at_last_release = resident
+    since = getattr(session, "_lcm_mib_at_last_release", 0)
+    grown = resident is not None and resident - since >= _MIB_BETWEEN_RELEASES
     current = getattr(item, "module", None)
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
-    if upcoming is not None and upcoming is current and seen < _TESTS_BETWEEN_RELEASES:
+    if (
+        upcoming is not None
+        and upcoming is current
+        and seen < _TESTS_BETWEEN_RELEASES
+        and not grown
+    ):
         session._lcm_tests_since_release = seen
         return
     session._lcm_tests_since_release = 0
     jax.clear_caches()
+    return_free_heap_to_os()
+    # Measured after the release, so a module whose memory is held by something a
+    # release cannot reach -- a session fixture, say -- settles at its own level
+    # instead of releasing on every test from then on.
+    session._lcm_mib_at_last_release = resident_mebibytes() or 0
 
 
 def build_prepared_structure(
