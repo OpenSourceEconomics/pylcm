@@ -386,7 +386,21 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         source_name="src",
         target_name="target",
     )
-    assert float(bound[shift_arg]) == _SRC_SHIFT  # ty: ignore[invalid-argument-type]
+    # WHICH namespace the value came from is a discrete fact -- the source declares 0.1,
+    # the target 0.9 -- so exact equality against a decimal literal is the wrong
+    # instrument for it. float32 cannot represent 0.1: `float()` widens the bound array
+    # to 0.10000000149011612 and the identity fails on the format rather than on the
+    # provenance, which is what broke the `--precision=32` leg. Assert the decision
+    # itself first, exactly and with no tolerance, then the value to the working
+    # precision.
+    got = float(bound[shift_arg])  # ty: ignore[invalid-argument-type]
+    assert abs(got - _SRC_SHIFT) < abs(got - _TARGET_SHIFT), (
+        f"bound {got}, which is nearer the TARGET's {_TARGET_SHIFT} than the source's "
+        f"{_SRC_SHIFT} -- provenance resolved to the wrong namespace"
+    )
+    np.testing.assert_allclose(
+        got, _SRC_SHIFT, rtol=8.0 * float(np.finfo(jnp.zeros(()).dtype).eps)
+    )
 
     next_states = MappingProxyType(
         {
