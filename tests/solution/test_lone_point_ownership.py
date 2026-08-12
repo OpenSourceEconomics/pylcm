@@ -157,3 +157,62 @@ def test_coincident_nodes_storing_different_values_publish_the_larger(position):
     np.testing.assert_array_almost_equal(
         np.asarray(published), [8.0], decimal=DECIMAL_PRECISION
     )
+
+
+def _straddled_case(rng, *, dtype):
+    """Draw one lone point at zero with a rival strictly straddling it.
+
+    The rival's endpoints are placed so its reading at zero is a definite
+    distance from the lone point's stored value, in units of the working
+    format's spacing at the larger of the two. That separation is what makes an
+    abstention a defect here rather than an honest near-tie: the two candidates
+    are further apart than the arithmetic's own resolution by construction, so a
+    certificate that cannot order them has lost something it was given.
+    """
+    scale = float(10.0 ** rng.integers(-4, 5))
+    left_x = -scale * float(rng.uniform(0.25, 4.0))
+    right_x = scale * float(rng.uniform(0.25, 4.0))
+    rival_at_zero = float(rng.uniform(-50.0, 50.0))
+    slope = float(rng.uniform(-20.0, 20.0)) / scale
+    left_v = rival_at_zero + slope * left_x
+    right_v = rival_at_zero + slope * right_x
+
+    gap = float(np.finfo(dtype).eps) * max(abs(rival_at_zero), 1.0) * 1e4
+    point_v = rival_at_zero + float(rng.choice([-1.0, 1.0])) * gap * rng.uniform(
+        1.0, 1e3
+    )
+    return {
+        "endog": [0.0, left_x, right_x],
+        "value": [point_v, left_v, right_v],
+        "segment": [1.0, 0.0, 0.0],
+        "query": [0.0],
+    }
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_the_certified_owner_at_zero_agrees_with_the_ordinary_read(seed):
+    """Over the straddled-lone-point class, the certificate costs no answers.
+
+    The class is a lone point at abscissa zero — the arrangement whose flat line
+    the arithmetic cannot read without a width — against rivals swept over
+    magnitude, slope, sign and which of the two stores the larger value. Wherever
+    the two candidates are separated by far more than the format's resolution,
+    the certified route owes the same winner as the plain read, in all three
+    published channels, and owes an answer at all.
+    """
+    dtype = jnp.zeros(()).dtype
+    rng = np.random.default_rng(seed=seed)
+    for _ in range(24):
+        case = _straddled_case(rng, dtype=dtype)
+        certified = _envelope(**case, arithmetic="certified")
+        ordinary = _envelope(**case, arithmetic="ordinary")
+        for channel, got, expected in zip(
+            ("value", "policy", "marginal"), certified, ordinary, strict=True
+        ):
+            np.testing.assert_allclose(
+                np.asarray(got),
+                np.asarray(expected),
+                rtol=10.0**-DECIMAL_PRECISION,
+                atol=10.0**-DECIMAL_PRECISION,
+                err_msg=f"{channel} disagrees for {case}",
+            )
