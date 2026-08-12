@@ -36,6 +36,7 @@ from _lcm.egm.upper_envelope.query import (
     _TieBreakKey,
     envelope_at_query,
 )
+from tests.conftest import DECIMAL_PRECISION
 
 
 def _key_at(key: _TieBreakKey, column: int) -> tuple[float, ...]:
@@ -360,17 +361,14 @@ def test_a_lone_candidate_at_zero_owns_its_own_query() -> None:
         assert float(channel[0]) == lone_value
 
 
-def test_a_lone_candidate_at_zero_is_refused_against_a_rival_that_straddles_it() -> (
-    None
-):
-    """A rival passing through a lone candidate's abscissa makes the query abstain.
+def test_a_lone_candidate_at_zero_wins_against_a_rival_that_straddles_it() -> None:
+    """A lone candidate at zero owns its own abscissa against a rival passing over it.
 
-    The lone candidate has no width the format can read at zero, and the rival
-    has no node there to be read off instead, so the two lines are compared
-    through a shared scaling that no width available here survives. The query
-    then publishes NaN in every channel. That is the loud failure the caller is
-    meant to see: the candidate would in fact have won, and reporting a number
-    would mean reporting one this arithmetic never established.
+    The candidate stands for a flat line, which takes its stored value at every
+    abscissa, so the width it is compared through changes no reading and is free
+    to be one the arithmetic can read. The rival straddles the point and carries
+    no node there, so it is read by interpolation and comes in lower. All three
+    channels are published from the candidate.
     """
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.asarray([0.0, 0.0, -0.5, 1.0]),
@@ -382,4 +380,6 @@ def test_a_lone_candidate_at_zero_is_refused_against_a_rival_that_straddles_it()
     )
 
     for channel in (value, policy, marginal):
-        assert np.isnan(float(channel[0]))
+        np.testing.assert_array_almost_equal(
+            np.asarray(channel), [5.0], decimal=DECIMAL_PRECISION
+        )
