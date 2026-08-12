@@ -5,12 +5,15 @@ single continuous state `liquid`, a single continuous action `consumption`, and 
 discrete choice. With one continuous state the endogenous grid method needs no upper
 envelope — invert the consumption Euler equation
 
-$$u'(c) = \\beta (1+r) V'_{\\text{next}}\\big((1+r)(\\text{liquid}-c)+y\\big)$$
+$$u'(c) = \\beta\\, g'(s)\\, V'_{\\text{next}}\\big(g(s)\\big)$$
 
-on a post-decision savings grid $s = \\text{liquid} - c \\ge 0$, read the next-period
-value and its marginal off the prior arrays, and map the resulting endogenous liquid
-back onto the regular liquid grid. Below the natural borrowing limit the constraint
-binds and the agent consumes all liquid.
+on a post-decision savings grid $s = \\text{liquid} - c$, read the next-period value and
+its marginal off the prior arrays, and map the resulting endogenous liquid back onto the
+regular liquid grid. Here $g$ is the regime's own law of motion, taken as the two
+readings `next_liquid` and `marginal_return` rather than assumed; for the conventional
+law $g(s) = (1+r)s + y$ it is the gross return that discounts the continuation marginal.
+At the savings grid's lower bound the borrowing constraint binds and the agent consumes
+everything above it.
 
 The step carries the **marginal value of liquid** $V'(\\text{liquid})$ between periods
 rather than finite-differencing the value array: by the envelope theorem
@@ -68,8 +71,9 @@ def egm_one_asset_step(
         liquid_grid: Regular liquid-state grid for this period (ascending).
         next_liquid_grid: The same state's grid in the *next* period (ascending);
             the abscissae of `next_value` and `next_marginal`.
-        savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending,
-            starting at 0), shape `(n_savings,)`.
+        savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending),
+            shape `(n_savings,)`. Its lower bound is the borrowing limit: zero for a
+            household that cannot borrow, minus the limit for one that can.
         discount_factor: Discount factor `beta`.
         preferences: The regime's felicity `u`, its marginal `u'`, and its
             inverse marginal `(u')^-1`, bound to this solve's parameters.

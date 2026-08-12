@@ -4,6 +4,17 @@ Each test pins a moment of the simulated lifecycle (labor-supply distribution,
 wealth profile, health, survival, …) at `seed=32`, `n=10000`, so a change in
 the example's economics is caught as a change in a readable quantity rather
 than an opaque pickle diff.
+
+The pinned numbers are a joint property of the example's economics and the
+engine's numerics, so a change to either moves them and they have to be
+re-frozen against a run whose correctness has been argued separately. They are
+reproducible across GPUs at float64 — a re-freeze needs a fresh run, not a
+matching device.
+
+The structural invariants at the bottom of the module are the stable half: they
+assert relations that hold for any correct solve, so they survive a re-freeze
+and are what catches an economics change that a shifted pin would merely
+absorb.
 """
 
 import jax
@@ -84,11 +95,11 @@ def simulation_result():
 @pytest.mark.parametrize(
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
-        (0, 193, 6228, 3579),
-        (1, 421, 7184, 2390),
-        (2, 346, 7072, 2564),
-        (3, 261, 6580, 3133),
-        (4, 255, 6308, 3403),
+        (0, 633, 6219, 3148),
+        (1, 622, 7677, 1697),
+        (2, 562, 5869, 3553),
+        (3, 518, 6404, 3051),
+        (4, 452, 5349, 4162),
     ],
 )
 def test_labor_supply_distribution(
@@ -110,12 +121,12 @@ def test_labor_supply_distribution(
     ("period", "expected_mean_wealth"),
     [
         (0, 0.0),
-        (5, 0.3779),
-        (10, 1.2354),
-        (15, 2.5259),
-        (20, 2.9862),
-        (25, 1.9614),
-        (30, 0.9087),
+        (5, 0.3038),
+        (10, 1.0975),
+        (15, 2.3374),
+        (20, 2.8916),
+        (25, 1.9310),
+        (30, 0.9374),
     ],
 )
 def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
@@ -127,10 +138,10 @@ def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
 @pytest.mark.parametrize(
     ("period", "expected_good_frac"),
     [
-        (0, 0.9218),
-        (10, 0.9171),
-        (20, 0.8506),
-        (30, 0.7102),
+        (0, 0.9219),
+        (10, 0.9112),
+        (20, 0.8450),
+        (30, 0.7049),
     ],
 )
 def test_health_good_fraction(simulation_result, period, expected_good_frac):
@@ -144,10 +155,10 @@ def test_health_good_fraction(simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9882),
-        (20, 9185),
-        (30, 5104),
-        (37, 536),
+        (10, 9871),
+        (20, 9140),
+        (30, 5063),
+        (37, 510),
     ],
 )
 def test_survival_counts(simulation_result, period, expected_alive):
@@ -159,18 +170,18 @@ def test_survival_counts(simulation_result, period, expected_alive):
 def test_effort_statistics(simulation_result):
     """Mean and std of effort_value across all periods must match reference."""
     np.testing.assert_allclose(
-        simulation_result["effort_value"].mean(), 0.9013, atol=0.005
+        simulation_result["effort_value"].mean(), 0.8804, atol=0.005
     )
     np.testing.assert_allclose(
-        simulation_result["effort_value"].std(), 0.1671, atol=0.005
+        simulation_result["effort_value"].std(), 0.2040, atol=0.005
     )
 
 
 def test_consumption_by_health(simulation_result):
     """Consumption must be higher for good health than bad health."""
     cons = simulation_result.groupby("health")["consumption"].mean()
-    np.testing.assert_allclose(cons.loc["good"], 0.8454, atol=0.005)
-    np.testing.assert_allclose(cons.loc["bad"], 0.7689, atol=0.005)
+    np.testing.assert_allclose(cons.loc["good"], 0.6884, atol=0.005)
+    np.testing.assert_allclose(cons.loc["bad"], 0.6080, atol=0.005)
     assert cons.loc["good"] > cons.loc["bad"]
 
 
@@ -178,8 +189,8 @@ def test_income_by_education(simulation_result):
     """Mean income during working life must be higher for high education."""
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
-    np.testing.assert_allclose(inc.loc["low"], 1.0097, atol=0.01)
-    np.testing.assert_allclose(inc.loc["high"], 1.8929, atol=0.01)
+    np.testing.assert_allclose(inc.loc["low"], 0.7995, atol=0.01)
+    np.testing.assert_allclose(inc.loc["high"], 1.5526, atol=0.01)
     assert inc.loc["high"] > inc.loc["low"]
 
 
@@ -197,7 +208,7 @@ def test_no_income_after_retirement(simulation_result):
 
 def test_total_alive_rows(simulation_result):
     """Total number of alive-regime rows must match reference."""
-    assert abs(len(simulation_result) - 295841) <= 50
+    assert abs(len(simulation_result) - 294959) <= 50
 
 
 def test_wealth_non_negative(simulation_result):

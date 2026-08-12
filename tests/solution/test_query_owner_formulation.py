@@ -285,3 +285,101 @@ def test_a_subnormal_operand_is_refused_rather_than_certified(
     )
 
     assert int(sign) == UNRESOLVED_SIGN
+
+
+@pytest.mark.parametrize("halvings", [1, 2, 20])
+def test_a_link_narrower_than_the_format_never_certifies_a_tie(
+    halvings: int,
+) -> None:
+    """A link whose far node is subnormal does not certify a tie against a rival.
+
+    This is the shape an EGM row reaches. The lower node sits at the borrowing
+    constraint, so its abscissa is exactly zero, and the adjacent candidate can
+    land below the smallest normal — a link the format cannot give a width to,
+    because under flush-to-zero its two endpoints are the same number. The
+    query and both value lines are entirely ordinary; only the link's far node
+    is unreadable.
+
+    That is enough to collapse the determinant. Here a flat link at `-1` is
+    compared with a rival reading `+0.5` at the query, and certifying the two
+    level is an error of one and a half in value units, on ordinary inputs. So
+    the comparison abstains, and the caller learns that it must.
+    """
+    dtype = np.float32 if jnp.zeros(()).dtype.itemsize == 4 else np.float64
+    at_constraint = dtype(0.0)
+    narrow_far_node = dtype(np.ldexp(np.float64(np.finfo(dtype).tiny), -halvings))
+    query = dtype(0.5)
+
+    flat, rival_at_query = dtype(-1.0), dtype(1.0)
+    assert _exact_line_at(
+        x0=at_constraint, x1=narrow_far_node, v0=flat, v1=flat, query=query
+    ) < _exact_line_at(
+        x0=at_constraint,
+        x1=dtype(1.0),
+        v0=at_constraint,
+        v1=rival_at_query,
+        query=query,
+    )
+
+    sign = certified_margin_sign(
+        a_x0=jnp.asarray(at_constraint),
+        a_x1=jnp.asarray(narrow_far_node),
+        a_v0=jnp.asarray(flat),
+        a_v1=jnp.asarray(flat),
+        b_x0=jnp.asarray(at_constraint),
+        b_x1=jnp.asarray(dtype(1.0)),
+        b_v0=jnp.asarray(at_constraint),
+        b_v1=jnp.asarray(rival_at_query),
+        x_query=jnp.asarray(query),
+    )
+
+    assert int(sign) in {UNRESOLVED_SIGN, -1}
+
+
+def test_a_lone_candidate_at_zero_owns_its_own_query() -> None:
+    """A candidate sitting at abscissa zero is published at its own abscissa.
+
+    A lone candidate brackets exactly one query — its own — and the value,
+    policy and marginal there are the ones stored on it. Nothing about the
+    abscissa being zero changes that. It is the one abscissa whose self-bracket
+    the format cannot give a readable width to, so it is also the one the
+    comparison must settle without reading a width at all.
+    """
+    lone_value = 5.0
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.asarray([0.0, 1.0]),
+        policy=jnp.asarray([lone_value, 7.0]),
+        value=jnp.asarray([lone_value, 7.0]),
+        marginal=jnp.asarray([lone_value, 7.0]),
+        segment_id=jnp.asarray([0.0, 1.0]),
+        x_query=jnp.asarray([0.0]),
+    )
+
+    for channel in (value, policy, marginal):
+        assert float(channel[0]) == lone_value
+
+
+def test_a_lone_candidate_at_zero_is_refused_against_a_rival_that_straddles_it() -> (
+    None
+):
+    """A rival passing through a lone candidate's abscissa makes the query abstain.
+
+    The lone candidate has no width the format can read at zero, and the rival
+    has no node there to be read off instead, so the two lines are compared
+    through a shared scaling that no width available here survives. The query
+    then publishes NaN in every channel. That is the loud failure the caller is
+    meant to see: the candidate would in fact have won, and reporting a number
+    would mean reporting one this arithmetic never established.
+    """
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.asarray([0.0, 0.0, -0.5, 1.0]),
+        policy=jnp.asarray([5.0, 5.0, 1.0, 3.0]),
+        value=jnp.asarray([5.0, 5.0, 1.0, 3.0]),
+        marginal=jnp.asarray([5.0, 5.0, 1.0, 3.0]),
+        segment_id=jnp.asarray([0.0, 0.0, 1.0, 1.0]),
+        x_query=jnp.asarray([0.0]),
+    )
+
+    for channel in (value, policy, marginal):
+        assert np.isnan(float(channel[0]))
