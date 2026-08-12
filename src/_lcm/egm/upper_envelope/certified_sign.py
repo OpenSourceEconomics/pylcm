@@ -120,7 +120,8 @@ def certified_margin_sign(
 
     Returns:
         `+1` where `A` is certainly above `B`, `-1` where it is certainly below,
-        `0` where the difference is certified exactly zero, and
+        `0` where the difference is certified exactly zero — which includes two
+        lines given by the same endpoints, since they are one line — and
         `BELOW_RESOLUTION_SIGN` where the determinant is under its own error
         bound, and `UNRESOLVED_SIGN` where none could be computed (including any
         non-finite input).
@@ -137,6 +138,21 @@ def certified_margin_sign(
         & jnp.isfinite(b_v1)
         & jnp.isfinite(x_query)
     )
+
+    # Two lines given by the same four endpoints are one line, and one line is
+    # exactly level with itself at every query. Read off the operands, this
+    # costs four comparisons and is exactly true.
+    #
+    # The determinant cannot reach that conclusion on its own. Its two products
+    # are then formed from identical operands, so they discard identical tails
+    # and the tails cancel with everything else — but `dropped` accumulates them
+    # as though they were independent errors, which is sound and, here, not
+    # tight. What comes back is a zero estimate carrying a positive bound, which
+    # is `BELOW_RESOLUTION_SIGN`: the arithmetic reporting it could not separate
+    # a line from itself. Callers that compare a set against one of its own
+    # members would then find no certified tie anywhere, including with the
+    # member they took the reference from.
+    same_line = (a_x0 == b_x0) & (a_x1 == b_x1) & (a_v0 == b_v0) & (a_v1 == b_v1)
 
     # `D` is homogeneous of degree two in the abscissae and degree one in the
     # values, so scaling each group by a power of two multiplies `D` by a
@@ -186,9 +202,10 @@ def certified_margin_sign(
     # is not symmetric with it and is handled inside `_bounded_product`.
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
-    return _certified_sign_of(
+    sign = _certified_sign_of(
         determinant, finite=finite & products_finite & scaling_exact
     )
+    return jnp.where(finite & same_line, jnp.int32(0), sign).astype(jnp.int32)
 
 
 class QuotientMargin(NamedTuple):

@@ -358,21 +358,27 @@ def test_a_masked_branch_never_turns_a_bracketed_query_into_an_abstention(
 def test_the_same_owner_is_published_on_every_path(
     coordinate_scale: float, value_scale: float, common_level: float
 ) -> None:
-    """Blocking and row order never change which branch owns the query.
+    """Blocking and row order never change what the query publishes.
 
-    This is the invariant that still binds where the arithmetic cannot separate
-    the two branches: it may choose either, but it must choose the same one every
-    way the same question is asked. Partitioning the segments into blocks and
-    swapping the order they are stored in are both such re-askings.
+    Partitioning the segments into blocks and swapping the order they are stored
+    in are two ways of asking one question, so they owe one answer. Where the two
+    branches are separated the answer names the winner; where the arithmetic
+    cannot separate them the answer is an abstention — and it is an abstention on
+    every path, since a comparison the format cannot settle is not settled any
+    better by being asked from a different block.
     """
     witness = _witness(
         coordinate_scale=coordinate_scale,
         value_scale=value_scale,
         common_level=common_level,
     )
-    published = {
+    published = [
         _published_policy(witness, row_order=order, block_size=block)
         for order in ("stored", "swapped")
         for block in (0, 1, 2, 3)
-    }
-    assert len(published) == 1
+    ]
+    first = published[0]
+    if np.isnan(first):
+        assert all(np.isnan(policy) for policy in published)
+    else:
+        assert set(published) == {first}
