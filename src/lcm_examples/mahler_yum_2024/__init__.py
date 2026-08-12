@@ -58,8 +58,27 @@ simulation draws the cost continuously. (ii) The simulated moments' numerical
 derivative does not converge across finite-difference steps, which is why MSM
 inference is withheld in the replication. The instability is a property of this
 implementation, not of the paper's model — the authors searched continuously and
-estimated successfully — but the measurements do not isolate *which* numerical
-choice produces it; the grid is a consistent explanation, not an identified one.
+estimated successfully.
+
+The mechanism behind (ii) is identified: the discrete action grid makes the MSM
+criterion piecewise constant in the parameters, so the difference quotient is
+zero almost everywhere and undefined on the jump set, and which of the two a
+given column reports depends on the step size. What identifies it rather than
+merely fitting it is how the Jacobian responds to the number of simulated
+agents. Monte Carlo noise would shrink as `1/sqrt(n)` in *every* column;
+instead, raising the agent count leaves columns that reach the moments through
+an argmax flat while a column reaching them through a continuous channel
+smooths. That split follows the channel exactly, and it is a prediction that
+could have failed. It follows from the mechanism: an argmax flip at the action
+grid changes a mass share, and a share is invariant to `n`.
+
+What is *not* identified is exclusivity. Consequence (i) above could contribute
+a second source, and the measurements do not separate the two.
+
+Rank and conditioning do not detect any of this — the Jacobian is full rank at
+a condition number an ordinary guard passes without comment. The only diagnostic
+that catches it is recomputing the Jacobian at several finite-difference steps
+and reading the columnwise spread.
 """
 
 import dataclasses
