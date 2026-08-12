@@ -149,6 +149,15 @@ def certified_margin_sign(
     # rather than bounded somewhere that would report it as a near-tie. Reading
     # such an operand at all needs an arithmetic over significands and exponents
     # rather than over floats.
+    #
+    # The refusal is silent at this point, so what a user sees is a NaN-bearing
+    # solution and a generic `InvalidValueFunctionError`. Naming itself is the
+    # ordinary poison-then-raise-at-debug strategy, but the trigger is a tracer,
+    # so the flag has to be returned from JIT and raised host-side after
+    # synchronization — and no function on the path from here to the solve
+    # boundary carries a logger to raise from. What such an operand would take
+    # to read, and why both halves are deferred rather than dropped, is recorded
+    # in https://github.com/OpenSourceEconomics/pylcm/issues/425.
     readable = ~reduce(operator.or_, (is_subnormal(term) for term in operands))
 
     # Two lines given by the same four endpoints are one line, and one line is
