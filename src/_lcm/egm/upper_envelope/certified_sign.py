@@ -251,10 +251,49 @@ def certified_margin_sign(
     a_x0, a_x1, b_x0, b_x1, x_query = scaled_abscissae
     a_v0, a_v1, b_v0, b_v1 = scaled_values
 
-    numerator_a = affine_numerator(x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query)
-    numerator_b = affine_numerator(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
-    width_a = dd_from_difference(a_x1, a_x0)
-    width_b = dd_from_difference(b_x1, b_x0)
+    # One shared abscissa exponent keeps the whole group normal, but it cannot
+    # put two links of very different widths in the same part of the range: the
+    # narrow one keeps its width and lands wherever that is. Everything the
+    # determinant reads from a link — both distances to the query, and the width
+    # — carries that link's own scale, so each link's contribution can sit far
+    # below one while every operand remains an ordinary number, and what cancels
+    # between the two contributions is smaller again by the ratio between them.
+    # The subtraction then falls under the smallest normal.
+    #
+    # Nothing else sees that. The operands are readable, each product stays
+    # inside the domain where the transforms are exact, and the transforms
+    # discard nothing on the way — so a backend that flushes the difference
+    # returns an estimate of exactly zero carrying an error bound of exactly
+    # zero, which is the certificate for an exact tie, for links that are
+    # strictly ordered.
+    #
+    # `D` is bilinear in the two links' distances: every term it is built from
+    # multiplies one distance taken from `A` by one taken from `B`. So each link
+    # may be measured on its own scale — the two factors multiply `D` by a
+    # positive constant and leave its sign alone — and normalizing them
+    # separately is what puts the cancellation where the format has precision to
+    # hold it.
+    distances_a, a_on_scale = _on_its_own_scale(
+        (
+            dd_from_difference(a_x1, x_query),
+            dd_from_difference(x_query, a_x0),
+            dd_from_difference(a_x1, a_x0),
+        )
+    )
+    distances_b, b_on_scale = _on_its_own_scale(
+        (
+            dd_from_difference(b_x1, x_query),
+            dd_from_difference(x_query, b_x0),
+            dd_from_difference(b_x1, b_x0),
+        )
+    )
+    numerator_a = dd_add(
+        dd_mul_float(distances_a[0], a_v0), dd_mul_float(distances_a[1], a_v1)
+    )
+    numerator_b = dd_add(
+        dd_mul_float(distances_b[0], b_v0), dd_mul_float(distances_b[1], b_v1)
+    )
+    width_a, width_b = distances_a[2], distances_b[2]
 
     product_a = _bounded_product(numerator_a, width_b)
     product_b = _bounded_product(numerator_b, width_a)
@@ -267,7 +306,7 @@ def certified_margin_sign(
 
     sign = _certified_sign_of(
         determinant,
-        finite=finite & products_finite & scaling_exact,
+        finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
         readable=readable,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
@@ -512,6 +551,41 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
         jnp.where(negligible, zero, low),
         jnp.where(negligible, tiny, dropped),
     )
+
+
+def _on_its_own_scale(
+    distances: tuple[DoubleDouble, ...],
+) -> tuple[tuple[DoubleDouble, ...], BoolND]:
+    """Return one link's distances scaled together into the binade around one.
+
+    The three of them — the two distances from the query to the endpoints, and
+    the width between the endpoints — are the only way this link enters the
+    determinant, and every term multiplies exactly one of them by exactly one of
+    the other link's. So they move together by one power of two, and what that
+    contributes to the determinant is a positive constant factor.
+
+    Scaling by a power of two is exact only while the result stays normal, so a
+    round trip establishes it for every component; the reported flag says whether
+    it held. Where it did not, the distances come back as they were, because the
+    alternative to a scaling that lost something is not a different scaling.
+    """
+    exponent = normalizing_exponent(*(term[0] for term in distances))
+    rescaled: tuple[DoubleDouble, ...] = tuple(
+        (
+            scale_by_power_of_two(high, -exponent),
+            scale_by_power_of_two(low, -exponent),
+            scale_by_power_of_two(dropped, -exponent),
+        )
+        for high, low, dropped in distances
+    )
+    exact = reduce(
+        operator.and_,
+        (
+            _round_trips(scaled, source, exponent)
+            for scaled, source in zip(rescaled, distances, strict=True)
+        ),
+    )
+    return rescaled, exact
 
 
 def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
