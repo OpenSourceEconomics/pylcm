@@ -120,10 +120,13 @@ def certified_margin_sign(
 
     Returns:
         `+1` where `A` is certainly above `B`, `-1` where it is certainly below,
-        `0` where the difference is certified exactly zero, and
+        `0` where the difference is certified exactly zero,
         `BELOW_RESOLUTION_SIGN` where the determinant is under its own error
         bound, and `UNRESOLVED_SIGN` where none could be computed (including any
-        non-finite input).
+        non-finite input). Two cases are read straight off the operands and never
+        reach the determinant: two lines given by the same endpoints are one
+        line, and a query on an endpoint of both lines is decided by the two
+        stored values there.
 
     """
     finite = (
@@ -136,6 +139,43 @@ def certified_margin_sign(
         & jnp.isfinite(b_v0)
         & jnp.isfinite(b_v1)
         & jnp.isfinite(x_query)
+    )
+
+    # Two lines given by the same four endpoints are one line, and one line is
+    # exactly level with itself at every query. Read off the operands, this
+    # costs four comparisons and is exactly true.
+    #
+    # The determinant cannot reach that conclusion on its own. Its two products
+    # are then formed from identical operands, so they discard identical tails
+    # and the tails cancel with everything else — but `dropped` accumulates them
+    # as though they were independent errors, which is sound and, here, not
+    # tight. What comes back is a zero estimate carrying a positive bound, which
+    # is `BELOW_RESOLUTION_SIGN`: the arithmetic reporting it could not separate
+    # a line from itself. Callers that compare a set against one of its own
+    # members would then find no certified tie anywhere, including with the
+    # member they took the reference from.
+    same_line = (a_x0 == b_x0) & (a_x1 == b_x1) & (a_v0 == b_v0) & (a_v1 == b_v1)
+
+    # A query sitting on an endpoint of both lines is settled by comparing the
+    # two stored values there. An affine line takes exactly its endpoint value at
+    # its own endpoint, so this is the difference itself rather than an estimate
+    # of it, and a comparison of two stored floats decides it without arithmetic.
+    #
+    # This is the common case, not a corner: every candidate is also a zero-width
+    # self-bracket at its own abscissa, and consecutive links share the node
+    # between them. It is also where the determinant is weakest, because the
+    # bound it carries is set by the largest operand in the group rather than by
+    # anything near the query — one steep link to a far-away neighbour widens the
+    # bound past a difference that is exactly zero.
+    a_node_value = jnp.where(x_query == a_x0, a_v0, a_v1)
+    b_node_value = jnp.where(x_query == b_x0, b_v0, b_v1)
+    both_at_node = ((x_query == a_x0) | (x_query == a_x1)) & (
+        (x_query == b_x0) | (x_query == b_x1)
+    )
+    node_sign = jnp.where(
+        a_node_value > b_node_value,
+        jnp.int32(1),
+        jnp.where(a_node_value < b_node_value, jnp.int32(-1), jnp.int32(0)),
     )
 
     # `D` is homogeneous of degree two in the abscissae and degree one in the
@@ -186,9 +226,11 @@ def certified_margin_sign(
     # is not symmetric with it and is handled inside `_bounded_product`.
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
-    return _certified_sign_of(
+    sign = _certified_sign_of(
         determinant, finite=finite & products_finite & scaling_exact
     )
+    exact = jnp.where(same_line, jnp.int32(0), node_sign)
+    return jnp.where(finite & (same_line | both_at_node), exact, sign).astype(jnp.int32)
 
 
 class QuotientMargin(NamedTuple):
