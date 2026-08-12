@@ -260,17 +260,24 @@ def _comparable_lines(
 
     - a link stored right-to-left is swapped. An affine line is the same line
       read either way, so this is exact and changes no answer.
-    - a *live* lone candidate is a zero-width self-bracket. The flat line through
-      its own point reads exactly its own value at the one abscissa it brackets,
-      and one representable step is the narrowest width that keeps every other
-      query outside it. At abscissa zero that step is a subnormal, which the
-      backend flushes, so the line handed to the comparison has both endpoints at
-      the same place. A query *on* the point is unaffected — it is a node of the
-      self-bracket, and a node is read off the stored value rather than through
-      the width. A rival straddling the point without a node there is refused
-      instead of decided, which is the honest outcome: this arithmetic compares
-      two lines through a shared scaling, and no width it could be given here
-      survives that scaling against an ordinary link.
+    - a *live* lone candidate is a zero-width self-bracket, and so is a link
+      between two coincident nodes. Both are given a flat line one representable
+      step wide. A flat line takes its endpoint value at every abscissa, so that
+      width changes no reading, and it cannot widen the link's reach either:
+      which queries a link brackets is settled from the stored abscissae, never
+      from this line, so a self-bracket brackets its own abscissa and nothing
+      else. At abscissa zero, though, one step is the smallest subnormal, and a
+      subnormal operand is refused outright — which would abstain on a query
+      whose candidates are separated by orders of magnitude. So a line that is
+      flat *as a matter of fact*, both endpoints carrying one stored value, is
+      given unit width there instead. The reading is unchanged and the decision
+      does not depend on which width it was: rivals spanning nine orders of
+      magnitude either side of it are decided alike.
+    - where two coincident nodes disagree, the flat line is imposed rather than
+      factual — it reports the lower-stored endpoint and drops the other. That
+      is left exactly as it is, because nothing rests on it: each of the two
+      nodes also reaches the envelope as its own self-bracket, and the higher of
+      them wins there, so the imposed line settles nothing it should not.
     - a dead or non-finite entry is replaced by a fixed placeholder line. This is
       the case that would otherwise do damage: a NaN abscissa makes every
       comparison against it `UNRESOLVED`, which is the loud failure signal, so a
@@ -293,9 +300,18 @@ def _comparable_lines(
     v1 = jnp.where(stored_descending, at_lower, at_upper)
 
     degenerate = x1 <= x0
+    step = jnp.nextafter(x0, jnp.inf)
+    # One representable step is a readable width at every abscissa but zero,
+    # where it is the smallest subnormal — and a subnormal operand is refused
+    # outright, so the comparison would abstain on a query whose candidates are
+    # separated by orders of magnitude. A flat line takes its endpoint value at
+    # every abscissa, so replacing that width changes no reading; it is only
+    # widened where the line is flat as a matter of fact rather than by
+    # imposition, which is what `v1 == v0` asks.
+    flat_at_zero = degenerate & (v1 == v0) & (x0 == 0.0)
     return _ComparableLines(
         x0=x0,
-        x1=jnp.where(degenerate, jnp.nextafter(x0, jnp.inf), x1),
+        x1=jnp.where(flat_at_zero, jnp.ones_like(x0), jnp.where(degenerate, step, x1)),
         v0=v0,
         v1=jnp.where(degenerate, v0, v1),
     )
