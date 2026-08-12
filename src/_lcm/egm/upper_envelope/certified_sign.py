@@ -64,6 +64,7 @@ import operator
 from functools import reduce
 from typing import NamedTuple
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.egm.upper_envelope.double_double import (
@@ -129,17 +130,26 @@ def certified_margin_sign(
         stored values there.
 
     """
-    finite = (
-        jnp.isfinite(a_x0)
-        & jnp.isfinite(a_x1)
-        & jnp.isfinite(a_v0)
-        & jnp.isfinite(a_v1)
-        & jnp.isfinite(b_x0)
-        & jnp.isfinite(b_x1)
-        & jnp.isfinite(b_v0)
-        & jnp.isfinite(b_v1)
-        & jnp.isfinite(x_query)
-    )
+    operands = (a_x0, a_x1, a_v0, a_v1, b_x0, b_x1, b_v0, b_v1, x_query)
+    finite = reduce(operator.and_, (jnp.isfinite(term) for term in operands))
+
+    # A subnormal operand is not a small number here, it is an unreadable one.
+    # The backend flushes subnormals to zero in arithmetic and in comparison
+    # alike, so every difference formed from one is taken against zero rather
+    # than against the operand, and the determinant that results is a true
+    # statement about geometry the caller never supplied. It is not a bounded
+    # error either: with `x0 = 0`, `x1 = tiny` and a subnormal query the two
+    # numerators both collapse to exactly zero, `dropped` is exactly zero
+    # because nothing was discarded, and the predicate certifies an exact tie
+    # between lines that are strictly ordered — the one outcome that licenses a
+    # caller to choose freely.
+    #
+    # Nothing downstream can undo that, because the magnitude is gone before the
+    # first subtraction. So it is refused here, where a caller must fail loud,
+    # rather than bounded somewhere that would report it as a near-tie. Reading
+    # such an operand at all needs an arithmetic over significands and exponents
+    # rather than over floats.
+    readable = ~reduce(operator.or_, (_is_subnormal(term) for term in operands))
 
     # Two lines given by the same four endpoints are one line, and one line is
     # exactly level with itself at every query. Read off the operands, this
@@ -154,7 +164,12 @@ def certified_margin_sign(
     # a line from itself. Callers that compare a set against one of its own
     # members would then find no certified tie anywhere, including with the
     # member they took the reference from.
-    same_line = (a_x0 == b_x0) & (a_x1 == b_x1) & (a_v0 == b_v0) & (a_v1 == b_v1)
+    same_line = (
+        _same_bits(a_x0, b_x0)
+        & _same_bits(a_x1, b_x1)
+        & _same_bits(a_v0, b_v0)
+        & _same_bits(a_v1, b_v1)
+    )
 
     # A query sitting on an endpoint of both lines is settled by comparing the
     # two stored values there. An affine line takes exactly its endpoint value at
@@ -167,11 +182,26 @@ def certified_margin_sign(
     # bound it carries is set by the largest operand in the group rather than by
     # anything near the query — one steep link to a far-away neighbour widens the
     # bound past a difference that is exactly zero.
-    a_node_value = jnp.where(x_query == a_x0, a_v0, a_v1)
-    b_node_value = jnp.where(x_query == b_x0, b_v0, b_v1)
-    both_at_node = ((x_query == a_x0) | (x_query == a_x1)) & (
-        (x_query == b_x0) | (x_query == b_x1)
+    # Whether the query *is* a node is asked of the bit patterns, not of the
+    # floats. Under flush-to-zero a subnormal query compares equal to a zero
+    # node while being a strictly interior point of the link, so the float test
+    # fires where the shortcut does not apply and then reads the wrong pair of
+    # endpoint values — publishing a confident tie for lines that are strictly
+    # ordered. Bit equality cannot say that. It declines two representations of
+    # zero, which costs only the shortcut and falls back to the determinant.
+    a_at_low = _same_bits(x_query, a_x0)
+    b_at_low = _same_bits(x_query, b_x0)
+    a_node_value = jnp.where(a_at_low, a_v0, a_v1)
+    b_node_value = jnp.where(b_at_low, b_v0, b_v1)
+    both_at_node = (a_at_low | _same_bits(x_query, a_x1)) & (
+        b_at_low | _same_bits(x_query, b_x1)
     )
+    # The values themselves are compared as floats, which is exact for an
+    # ordering: two stored floats that differ compare as they differ. Only the
+    # subnormal *magnitudes* are unreadable, and a magnitude is not what an
+    # ordering needs — but two distinct subnormals do compare equal, so a tie
+    # they report is not certified and is handed back to the determinant.
+    both_readable = ~_is_subnormal(a_node_value) & ~_is_subnormal(b_node_value)
     node_sign = jnp.where(
         a_node_value > b_node_value,
         jnp.int32(1),
@@ -227,10 +257,13 @@ def certified_margin_sign(
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
     sign = _certified_sign_of(
-        determinant, finite=finite & products_finite & scaling_exact
+        determinant, finite=finite & readable & products_finite & scaling_exact
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
-    return jnp.where(finite & (same_line | both_at_node), exact, sign).astype(jnp.int32)
+    settled_off_the_operands = same_line | (both_at_node & both_readable)
+    return jnp.where(finite & readable & settled_off_the_operands, exact, sign).astype(
+        jnp.int32
+    )
 
 
 class QuotientMargin(NamedTuple):
@@ -340,6 +373,51 @@ def affine_numerator(
         dd_mul_float(dd_from_difference(x1, x_query), v0),
         dd_mul_float(dd_from_difference(x_query, x0), v1),
     )
+
+
+def _same_bits(left: FloatND, right: FloatND) -> BoolND:
+    """Report whether two floats have identical representations.
+
+    Float equality is the wrong instrument wherever an operand may be
+    subnormal. The backend flushes subnormals to zero in comparisons as well as
+    in arithmetic, so `==` reports a subnormal equal to zero and equal to every
+    other subnormal — statements about the backend, not about the operands. Two
+    identical representations are identical numbers whatever the backend does
+    with them.
+
+    Signed zeros have different representations and are declined, which costs
+    only a shortcut and never an answer.
+    """
+    unsigned = _IEEE_FIELDS[jnp.dtype(left.dtype).name][0]
+    return jax.lax.bitcast_convert_type(left, jnp.dtype(unsigned)) == (
+        jax.lax.bitcast_convert_type(right, jnp.dtype(unsigned))
+    )
+
+
+def _is_subnormal(value: FloatND) -> BoolND:
+    """Report where a float is subnormal, and so reads as zero to every operation.
+
+    A subnormal's *ordering* against a normal number still comes out right — the
+    flush makes it zero, and zero is on the correct side of any nonzero normal.
+    What is lost is its ordering against another subnormal, and against zero
+    itself, where the flush makes distinct numbers compare equal.
+    """
+    _unsigned, exponent_mask, mantissa_mask = _IEEE_FIELDS[jnp.dtype(value.dtype).name]
+    bits = jax.lax.bitcast_convert_type(value, jnp.dtype(_unsigned))
+    return ((bits & bits.dtype.type(exponent_mask)) == 0) & (
+        (bits & bits.dtype.type(mantissa_mask)) != 0
+    )
+
+
+# The unsigned type each float bitcasts to, and the masks selecting its biased
+# exponent and its significand. A subnormal is exactly a zero exponent field over
+# a nonzero significand. The masks stay plain integers: the 64-bit ones do not fit
+# a 32-bit word, and building them as arrays here would fail at import in the
+# default configuration, which does not enable 64-bit types at all.
+_IEEE_FIELDS = {
+    "float32": ("uint32", 0x7F800000, 0x007FFFFF),
+    "float64": ("uint64", 0x7FF0000000000000, 0x000FFFFFFFFFFFFF),
+}
 
 
 def _round_trips(

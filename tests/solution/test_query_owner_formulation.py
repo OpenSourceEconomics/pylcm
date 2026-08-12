@@ -26,6 +26,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.upper_envelope.certified_sign import (
+    UNRESOLVED_SIGN,
+    certified_margin_sign,
+)
 from _lcm.egm.upper_envelope.query import (
     _slope_words,
     _tie_break_key,
@@ -223,3 +227,61 @@ def test_a_subnormal_affine_reading_is_never_published_as_zero() -> None:
     for channel in (value, policy, marginal):
         published = float(channel[0])
         assert np.isnan(published) or published == expected
+
+
+# How far below the smallest normal the query sits. One halving is the worst
+# case of the family, not merely a case: the exact gap is 0.25 there and halves
+# with every further step down, so the damage is greatest at the *top* edge of
+# the subnormal band. The float32 band is 23 halvings deep, so these stay
+# strictly inside it at both precisions — below that the query is not
+# unreadable, it is genuinely zero, which is a different thing and not a defect.
+@pytest.mark.parametrize("halvings", [1, 2, 20])
+def test_a_subnormal_operand_is_refused_rather_than_certified(
+    halvings: int,
+) -> None:
+    """A comparison whose operands the backend cannot read reports unresolved.
+
+    The backend flushes subnormals to zero in comparison as well as in
+    arithmetic, so a difference formed from one is taken against zero rather
+    than against the operand. With `x0 = 0`, `x1` the smallest normal and a
+    subnormal query, both affine numerators collapse to exactly zero and
+    nothing is discarded on the way — so the determinant is exactly zero,
+    carries no error at all, and would certify two strictly ordered lines as
+    exactly level. That is the one outcome that lets a caller choose freely,
+    which is why the operands are refused before the determinant is read.
+
+    Only the *abscissa* is unreadable, and the values it is read against are
+    ordinary. One halving puts the query at `tiny/2`, where the two lines read
+    `0.5` and `0.25` — so certifying them level is an error of a quarter, not
+    of a rounding. Nothing here rests on the difference being too small to
+    represent; it rests on the abscissa being unreadable, and the error that
+    follows is the size of the values.
+
+    The construction is scale-free — the lines span `[0, tiny]` and the query is
+    a fraction of `tiny`, so the readings are `0.5` and `0.25` wherever `tiny`
+    happens to sit. Raising the precision does not shrink the error, it only
+    moves the band it lives in, which is why the same figures hold at float32
+    and at float64.
+    """
+    dtype = np.float32 if jnp.zeros(()).dtype.itemsize == 4 else np.float64
+    x0, x1 = dtype(0.0), dtype(np.finfo(dtype).tiny)
+    query = dtype(np.ldexp(np.float64(x1), -halvings))
+    above, below = dtype(1.0), dtype(0.5)
+
+    at_above = _exact_line_at(x0=x0, x1=x1, v0=dtype(0.0), v1=above, query=query)
+    at_below = _exact_line_at(x0=x0, x1=x1, v0=dtype(0.0), v1=below, query=query)
+    assert at_above > at_below
+
+    sign = certified_margin_sign(
+        a_x0=jnp.asarray(x0),
+        a_x1=jnp.asarray(x1),
+        a_v0=jnp.asarray(dtype(0.0)),
+        a_v1=jnp.asarray(above),
+        b_x0=jnp.asarray(x0),
+        b_x1=jnp.asarray(x1),
+        b_v0=jnp.asarray(dtype(0.0)),
+        b_v1=jnp.asarray(below),
+        x_query=jnp.asarray(query),
+    )
+
+    assert int(sign) == UNRESOLVED_SIGN
