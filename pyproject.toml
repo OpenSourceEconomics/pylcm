@@ -135,6 +135,7 @@ view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PL
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
 pytest-cov = "*"
+pytest-timeout = "*"
 pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
