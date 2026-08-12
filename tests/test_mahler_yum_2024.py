@@ -17,7 +17,6 @@ and are what catches an economics change that a shifted pin would merely
 absorb.
 """
 
-import jax
 import numpy as np
 import pytest
 
@@ -39,7 +38,6 @@ from tests.conftest import X64_ENABLED
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.gpu,
-    pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(
         not X64_ENABLED, reason="moments calibrated for 64-bit precision"
     ),

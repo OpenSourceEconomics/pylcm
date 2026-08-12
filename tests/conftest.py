@@ -167,6 +167,8 @@ def pytest_collection_modifyitems(items):
         if "solution" in item.path.parts:
             item.add_marker(slow)
 
+    _apply_backend_skips(items=items)
+
 
 # Tests run within one module before compiled programs are released anyway.
 #
@@ -260,3 +262,53 @@ def _fixture_x64_enabled() -> Iterator[None]:
         yield
     finally:
         jax_config.update("jax_enable_x64", val=previous)
+
+
+def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
+    """Apply the backend-keyed skip markers, both of which mean "not on CPU".
+
+    Which backend a run gets is never passed to the tests: CI picks a pixi
+    environment (`tests-cpu` or `tests-cuda*`), that decides which jaxlib is
+    installed, and `jax.default_backend()` reads the consequence. A skip keyed
+    on it is therefore correct in every CI leg with no change to any CI
+    command, which a `-m` selector would not be — `-m` replaces the configured
+    expression rather than intersecting it, so every invocation would have to
+    restate it and any that forgot would silently include the test.
+
+    This runs at collection rather than as an autouse fixture, because a
+    higher-scoped fixture is instantiated before a function-scoped one: a
+    module-scoped fixture that solves a GPU-scale model would run — and exhaust
+    the box — before a fixture-based skip could fire.
+
+    The two markers say different things and are kept apart on purpose:
+
+    - `gpu` — the test *needs* a GPU. A permanent property of the test: it is
+      too large for a CPU-only box, or its expected values were generated on
+      one. Pass `reason=` for anything more specific than "requires GPU".
+    - `skipif_cpu` — the test would run fine on CPU, but XLA:CPU's LLVM does
+      not finish compiling the program. A defect in a dependency, not a
+      property of the test, so it is expected to be retired: re-run the marked
+      tests on CPU at both precisions, and if they complete, delete the marker
+      instead of letting it decay into a permanent skip.
+    """
+    if jax.default_backend() != "cpu":
+        return
+
+    for item in items:
+        requires_gpu = item.get_closest_marker("gpu")
+        if requires_gpu:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=requires_gpu.kwargs.get("reason", "requires GPU")
+                )
+            )
+        elif item.get_closest_marker("skipif_cpu"):
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=(
+                        "XLA:CPU does not finish compiling this program; it "
+                        "compiles on GPU. Re-run the marked tests on CPU to "
+                        "check whether this still holds."
+                    )
+                )
+            )

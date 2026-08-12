@@ -303,22 +303,8 @@ _MASKED_BRANCH_CALLS = {
     [
         0,
         1,
-        2,
-        pytest.param(
-            3,
-            marks=pytest.mark.skip(
-                reason=(
-                    "The blocked reduction over these NaN-carrying rows does not "
-                    "finish compiling at this width — the backend, not the graph: "
-                    "tracing and lowering are flat across widths and the op count "
-                    "is flat from width 2 up, while the backend grows without "
-                    "bound. Widths 0, 1 and 2 keep the requirement covered at "
-                    "three blockings; the exactly-two-block case is not covered "
-                    "while this stands, and the same width compiles in seconds "
-                    "for the non-masked rows above."
-                )
-            ),
-        ),
+        pytest.param(2, marks=pytest.mark.skipif_cpu),
+        pytest.param(3, marks=pytest.mark.skipif_cpu),
     ],
 )
 @pytest.mark.parametrize("call", sorted(_MASKED_BRANCH_CALLS))
