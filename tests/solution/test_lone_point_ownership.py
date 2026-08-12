@@ -216,3 +216,73 @@ def test_the_certified_owner_at_zero_agrees_with_the_ordinary_read(seed):
                 atol=10.0**-DECIMAL_PRECISION,
                 err_msg=f"{channel} disagrees for {case}",
             )
+
+
+def _step_ulps(value, *, steps, dtype):
+    """Return `value` moved `steps` representable steps, signed toward ±inf."""
+    out = dtype(value)
+    toward = dtype(np.inf if steps > 0 else -np.inf)
+    for _ in range(abs(steps)):
+        out = np.nextafter(out, toward, dtype=dtype)
+    return out
+
+
+@pytest.mark.parametrize("block_size", _ROUTES)
+@pytest.mark.parametrize("width_exponent", [-8, -60, -120, -400, -1000])
+@pytest.mark.parametrize("lone_point_is_higher", [True, False])
+def test_the_higher_line_owns_the_abscissa_at_any_width_ratio(
+    lone_point_is_higher, width_exponent, block_size
+):
+    """Whichever line reads higher owns the abscissa however narrow the rival is.
+
+    The rival's width and the gap being decided are independent quantities: a
+    branch may pass over the point across an interval many orders of magnitude
+    narrower than the values it carries, and the ordering of the two candidates
+    at the shared abscissa does not depend on how wide either of them is. A
+    comparison that loses the ordering as the rival narrows is reporting the
+    scale of the operands rather than the geometry.
+
+    Both orderings are asserted. A comparison that has stopped deciding and is
+    merely defaulting can still publish the right winner for one of them, so a
+    test that only ever expects the lone point to win cannot tell a decision
+    from a lucky default.
+
+    The gap here is 64 representable steps of the rival's own value, so it is a
+    normal-input difference at every width, not a near-tie.
+    """
+    dtype = np.dtype(jnp.zeros(()).dtype).type
+    if np.ldexp(1.0, width_exponent) < float(np.finfo(dtype).tiny):
+        pytest.skip("rival width is subnormal in this format")
+    half_width = dtype(np.ldexp(1.0, width_exponent))
+    rival_value = dtype(0.75)
+    point_value = _step_ulps(
+        rival_value, steps=64 if lone_point_is_higher else -64, dtype=dtype
+    )
+    expected = (
+        (point_value, dtype(1.0), dtype(11.0))
+        if lone_point_is_higher
+        else (rival_value, dtype(0.0), dtype(22.0))
+    )
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.asarray([dtype(0.0), -half_width, half_width]),
+        policy=jnp.asarray([dtype(1.0), dtype(0.0), dtype(0.0)]),
+        value=jnp.asarray([point_value, rival_value, rival_value]),
+        marginal=jnp.asarray([dtype(11.0), dtype(22.0), dtype(22.0)]),
+        segment_id=jnp.asarray([dtype(1.0), dtype(0.0), dtype(0.0)]),
+        x_query=jnp.asarray([dtype(0.0)]),
+        segment_block_size=block_size,
+        arithmetic="certified",
+    )
+
+    # Ownership is a discrete decision, so it is asserted exactly: the published
+    # triple either comes from the winning candidate or it does not.
+    for channel, got, want in zip(
+        ("value", "policy", "marginal"),
+        (value, policy, marginal),
+        expected,
+        strict=True,
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(got), [want], err_msg=f"{channel} came from the losing line"
+        )
