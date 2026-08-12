@@ -32,6 +32,13 @@ def test_interior_quadratic_maximum_to_golden_accuracy() -> None:
         iterations=_ITERATIONS,
     )
     tol = float(_INV_PHI**_ITERATIONS)  # final bracket width for unit domain
+    # ...but a bracket cannot shrink below the format's own resolution on the domain,
+    # so under `--precision=32` (eps ~1.2e-7) the forty iterations stop resolving long
+    # before the golden factor says they do, and `4 * tol**2` then asks for a value
+    # accuracy no float32 search could deliver. Flooring `tol` at one epsilon of the
+    # unit domain states the achievable accuracy at either precision and leaves float64
+    # untouched: there 2.2e-16 is seven decades below the golden width.
+    tol = max(tol, float(np.finfo(jnp.zeros(()).dtype).eps))
     np.testing.assert_allclose(np.asarray(result.x), [0.3], atol=2 * tol)
     np.testing.assert_allclose(np.asarray(result.value), [0.0], atol=4 * tol**2)
     assert bool(result.valid[0])

@@ -19,6 +19,21 @@ from _lcm.egm.outer_interpolation import (
 _INTERP = LocalCubicOuterInterpolant()
 
 
+def _exactness_atol(expected: np.ndarray, *, floor: float) -> float:
+    """`floor`, or this scale's resolution in the working format -- whichever is looser.
+
+    The recovery tests below assert that a polynomial comes back to the precision the
+    format can carry. A fixed `1e-12` says exactly that at float64 and something
+    impossible at float32, where one ULP at these magnitudes is already ~1e-7: under
+    `--precision=32` the constant failed on the format rather than on the interpolant.
+    Taking the maximum leaves the float64 bound bit-for-bit what it was, so nothing is
+    loosened where it was previously meaningful.
+    """
+    values = np.asarray(expected)
+    scale = float(np.max(np.abs(values))) or 1.0
+    return max(floor, 64.0 * float(np.finfo(values.dtype).eps) * scale)
+
+
 def test_satisfies_the_protocol() -> None:
     assert isinstance(_INTERP, OuterInterpolant)
 
@@ -41,9 +56,17 @@ def test_quadratic_is_recovered_exactly_with_derivative() -> None:
     value, derivative = _INTERP.evaluate_with_derivative(
         nodes=nodes, values=f(nodes), query=query
     )
-    np.testing.assert_allclose(np.asarray(value), np.asarray(f(query)), atol=1e-12)
+    expected_value = np.asarray(f(query))
+    expected_slope = np.asarray(4.0 * query - 3.0)
     np.testing.assert_allclose(
-        np.asarray(derivative), np.asarray(4.0 * query - 3.0), atol=1e-12
+        np.asarray(value),
+        expected_value,
+        atol=_exactness_atol(expected_value, floor=1e-12),
+    )
+    np.testing.assert_allclose(
+        np.asarray(derivative),
+        expected_slope,
+        atol=_exactness_atol(expected_slope, floor=1e-12),
     )
 
 
@@ -58,11 +81,17 @@ def test_cubic_is_recovered_exactly() -> None:
     value, derivative = _INTERP.evaluate_with_derivative(
         nodes=nodes, values=f(nodes), query=query
     )
-    np.testing.assert_allclose(np.asarray(value), np.asarray(f(query)), atol=1e-12)
+    expected_value = np.asarray(f(query))
+    expected_slope = np.asarray(3.0 * query**2 - 4.0 * query + 0.5)
+    np.testing.assert_allclose(
+        np.asarray(value),
+        expected_value,
+        atol=_exactness_atol(expected_value, floor=1e-12),
+    )
     np.testing.assert_allclose(
         np.asarray(derivative),
-        np.asarray(3.0 * query**2 - 4.0 * query + 0.5),
-        atol=1e-11,
+        expected_slope,
+        atol=_exactness_atol(expected_slope, floor=1e-11),
     )
 
 
@@ -70,15 +99,28 @@ def test_derivative_matches_central_finite_difference() -> None:
     nodes = jnp.linspace(0.0, 1.0, 33)
     values = jnp.sin(3.0 * nodes)
     query = jnp.array([0.21, 0.52, 0.83])
-    eps = 1e-6
+
+    # The step is a property of the format, not a constant. A central difference
+    # carries truncation error ~ h**2 and cancellation error ~ machine_eps / h, so the
+    # step that balances them is the cube root of the machine epsilon -- ~6e-6 at
+    # float64, but ~5e-3 at float32. The old fixed `1e-6` is the float64 answer; at
+    # float32 it sits three decades below the optimum, where cancellation dominates and
+    # the "reference" difference quotient is itself wrong by ~4e-2. The test then failed
+    # on its own yardstick rather than on the interpolant's derivative. Both the step
+    # and the bound are therefore derived from the working dtype, with the float64
+    # tolerance floored at its previous value so nothing is loosened there.
+    machine_eps = float(np.finfo(np.asarray(values).dtype).eps)
+    step = machine_eps ** (1.0 / 3.0)
+    atol = max(1e-6, 100.0 * step**2)
+
     _, derivative = _INTERP.evaluate_with_derivative(
         nodes=nodes, values=values, query=query
     )
     fd = (
-        _INTERP.evaluate(nodes=nodes, values=values, query=query + eps)
-        - _INTERP.evaluate(nodes=nodes, values=values, query=query - eps)
-    ) / (2.0 * eps)
-    np.testing.assert_allclose(np.asarray(derivative), np.asarray(fd), atol=1e-6)
+        _INTERP.evaluate(nodes=nodes, values=values, query=query + step)
+        - _INTERP.evaluate(nodes=nodes, values=values, query=query - step)
+    ) / (2.0 * step)
+    np.testing.assert_allclose(np.asarray(derivative), np.asarray(fd), atol=atol)
 
 
 def test_nonfinite_gap_is_not_bridged() -> None:

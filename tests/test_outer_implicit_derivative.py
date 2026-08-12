@@ -85,7 +85,13 @@ def test_jvp_is_zero_when_optimum_does_not_move() -> None:
         return f_star[0]
 
     grad = jax.grad(f_star_of)(jnp.array(2.0))
-    np.testing.assert_allclose(np.asarray(grad), 0.0, atol=1e-8)
+    # This tangent is `-(f* - 0.4) / theta`, so its error IS the abscissa error, and an
+    # interior maximum of a smooth objective is only located to `sqrt(eps)` -- the
+    # objective is flat there to second order. That floor is 1.5e-8 at float64 and
+    # 3.4e-4 at float32, so the fixed `1e-8` sat just *below* the float64 floor (one
+    # unlucky rounding from flaky) and was unreachable at float32.
+    eps = float(np.finfo(jnp.zeros(()).dtype).eps)
+    np.testing.assert_allclose(np.asarray(grad), 0.0, atol=max(1e-8, 2.0 * eps**0.5))
 
 
 def test_value_tangent_is_envelope_term() -> None:

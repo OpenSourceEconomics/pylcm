@@ -55,11 +55,24 @@ def test_closed_form_matches_dense_quadrature(
         upper=upper,
     )
     expected, probability = _quadrature(keeper, adjuster, scale, lower, upper)
+    # The quadrature reference is always float64, but the closed form is evaluated in
+    # whatever precision the suite runs at, so its own error is a few epsilon of that
+    # format. `rtol=1e-9` is a float64-grade bound: at float32 it would be testing the
+    # format rather than the formula. Flooring both tolerances at the working
+    # resolution leaves float64 exactly as it was -- there the epsilon term is ~7e-15,
+    # six decades under the constants.
+    eps = float(np.finfo(jnp.zeros(()).dtype).eps)
     np.testing.assert_allclose(
-        float(result.expected_value), expected, rtol=1e-9, atol=1e-10
+        float(result.expected_value),
+        expected,
+        rtol=max(1e-9, 32.0 * eps),
+        atol=max(1e-10, 32.0 * eps),
     )
     np.testing.assert_allclose(
-        float(result.adjustment_probability), probability, rtol=1e-6, atol=1e-6
+        float(result.adjustment_probability),
+        probability,
+        rtol=max(1e-6, 32.0 * eps),
+        atol=max(1e-6, 32.0 * eps),
     )
     np.testing.assert_allclose(
         float(result.no_adjustment_probability),
