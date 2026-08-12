@@ -178,13 +178,22 @@ def test_adaptive_mesh_converges_on_a_smooth_surface() -> None:
     )
     dense_grid = jnp.linspace(0.0, 1.0, 200_001)
     dense = _smooth_surface(dense_grid)
+    # The peak *value* is owed only representation accuracy, but the peak *abscissa*
+    # is owed far less: the surface is flat there to second order, so the location is
+    # resolvable only to `sqrt(eps)` -- 1.5e-8 at float64, 3.4e-4 at float32. That
+    # limit binds on both sides of this comparison, the dense reference argmax
+    # included: over 200,001 float32 nodes the values within 3.4e-4 of the peak are
+    # indistinguishable. Both floors are inactive at float64.
+    eps = float(np.finfo(jnp.zeros(()).dtype).eps)
     np.testing.assert_allclose(
-        np.asarray(search.value), np.asarray(jnp.max(dense, axis=0)), atol=1e-6
+        np.asarray(search.value),
+        np.asarray(jnp.max(dense, axis=0)),
+        atol=max(1e-6, 32.0 * eps),
     )
     np.testing.assert_allclose(
         np.asarray(search.x),
         np.asarray(dense_grid[jnp.argmax(dense, axis=0)]),
-        atol=1e-4,
+        atol=max(1e-4, 4.0 * eps**0.5),
     )
 
 

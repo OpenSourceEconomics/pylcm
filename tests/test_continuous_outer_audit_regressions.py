@@ -34,6 +34,7 @@ from _lcm.optimization.implicit_outer_derivative import (
 )
 from lcm.exceptions import OuterSearchConvergenceError, RegimeInitializationError
 from lcm.grids import LinSpacedGrid
+from tests.conftest import assert_agrees_to_ulp
 
 
 def _hidden_peak_objective(x: jnp.ndarray) -> jnp.ndarray:
@@ -335,11 +336,17 @@ def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
     the interpolant while flattening.
     """
     interp = LocalCubicOuterInterpolant()
-    nodes = jnp.linspace(0.0, 1.0, 9, dtype=jnp.float64)
+    # The suite's working float rather than a fixed `float64`: the claim here is
+    # bit-for-bit equality between two shapes of the same read, which holds at either
+    # precision, while a hard-coded `float64` is truncated under `--precision=32` and
+    # JAX warns about it -- failing the fp32 leg on the dtype request rather than on
+    # the invariance being tested.
+    working = jnp.zeros(()).dtype
+    nodes = jnp.linspace(0.0, 1.0, 9, dtype=working)
     flat_values = jnp.asarray(
-        np.linspace(-1.0, 2.0, 9 * 6).reshape(9, 6), dtype=jnp.float64
+        np.linspace(-1.0, 2.0, 9 * 6).reshape(9, 6), dtype=working
     )
-    query_flat = jnp.linspace(0.05, 0.95, 6, dtype=jnp.float64)
+    query_flat = jnp.linspace(0.05, 0.95, 6, dtype=working)
 
     v_flat, d_flat = interp.evaluate_with_derivative(
         nodes=nodes, values=flat_values, query=query_flat
@@ -374,8 +381,19 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
 
     # Centering collapses the cancellation: the residual interpolation ripple
     # is at most a few ULP of the value scale, not an O(1e-1) spurious peak.
+    #
+    # Stated in ULP of the working format rather than as a fixed absolute, because
+    # that is what the sentence above claims and it is the same claim at either
+    # precision. A literal `1e-12` reads as "a few ULP" only at float64; at float32
+    # one ULP at this value scale is already 9.5e-07, so the fixed bound failed the
+    # fp32 leg on the format rather than on the cancellation this guards against.
     dense = interp.evaluate(nodes=nodes, values=values, query=jnp.linspace(0, 3, 601))
-    assert float(jnp.max(dense) - 10.0) < 1e-12
+    assert_agrees_to_ulp(
+        jnp.max(dense),
+        jnp.asarray(10.0, dtype=dense.dtype),
+        n_ulp=4,
+        err_msg="constant surface grew an interpolation peak",
+    )
 
     # ... and the tie band resolves whatever ripple remains to the smaller node.
     result = safeguarded_continuous_argmax(
@@ -403,8 +421,11 @@ def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
     """
     node_x = jnp.linspace(0.0, 1.0, 19)
     heights = {1 + 2 * k: 100.0 - 10.0 * k for k in range(9)}  # idx 1,3,..,17
+    # Working float, not a fixed `float64` -- see the flattening test above. These
+    # heights are exact small decimals and the peak they hide is ~220 against
+    # neighbours at 100, so nothing here needs double precision to be found.
     node_values = jnp.asarray(
-        [heights.get(i, 0.0) for i in range(19)], dtype=jnp.float64
+        [heights.get(i, 0.0) for i in range(19)], dtype=jnp.zeros(()).dtype
     )
     q_peak = float(node_x[17])  # ninth (lowest, height 20) local maximum's node
 

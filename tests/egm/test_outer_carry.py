@@ -77,22 +77,33 @@ def test_adjuster_optimum_matches_the_analytic_envelope() -> None:
         bank=bank,
         config=_CONFIG,
     )
+    # The two quantities have different error orders, so they need different floors.
+    # The *value* at the optimum is second order in the abscissa displacement, leaving
+    # only representation error -- measured at one ULP at float64 and ~13 at float32,
+    # so it scales with epsilon. The *marginal* is the conditional marginal AT the
+    # selected outer action, so its error is the abscissa error itself, and an interior
+    # maximum of a smooth objective is located only to `sqrt(eps)`. Measured: 1.1e-8 at
+    # float64 and 1.3e-3 at float32, both a small multiple of `sqrt(eps)`. Both floors
+    # leave the float64 constants in force, being ~1e-14 and ~2e-7 there.
+    eps = float(np.finfo(jnp.zeros(()).dtype).eps)
+    value_atol = max(1e-6, 64.0 * eps)
     np.testing.assert_allclose(
-        np.asarray(collapse.carry.value), np.asarray(jnp.log1p(_M)), atol=1e-6
+        np.asarray(collapse.carry.value), np.asarray(jnp.log1p(_M)), atol=value_atol
     )
     np.testing.assert_allclose(
         np.asarray(collapse.carry.marginal_utility),
         np.asarray(1.0 / (1.0 + _M)),
-        atol=1e-4,
+        atol=max(1e-4, 16.0 * eps**0.5),
     )
     np.testing.assert_allclose(
-        np.asarray(collapse.V_arr), np.asarray(jnp.log1p(_M)), atol=1e-6
+        np.asarray(collapse.V_arr), np.asarray(jnp.log1p(_M)), atol=value_atol
     )
 
 
 def test_envelope_consistency_fd_of_value_matches_marginal() -> None:
     """Central FD of the collapsed value across the liquid axis reproduces
-    the collapsed marginal to 1e-4 relative error away from the edges."""
+    the collapsed marginal away from the edges, to the tighter of the finite
+    difference's own truncation error and the working precision's floor."""
     bank = _analytic_bank()
     keeper_value = jnp.log1p(_M) - 1.0
     collapse = collapse_continuous_candidate_bank(
@@ -106,7 +117,16 @@ def test_envelope_consistency_fd_of_value_matches_marginal() -> None:
     dm = float(_M[1] - _M[0])
     fd = (value[2:] - value[:-2]) / (2.0 * dm)
     relative_error = np.abs(fd - marginal[1:-1]) / np.abs(marginal[1:-1])
-    assert float(relative_error.max()) < 1e-4
+    # `1e-4` is the float64 bound, and there it is a *truncation* bound: with
+    # `dm = 0.01` the central difference of `log1p` is off by ~3.3e-5, which is indeed
+    # the measured float64 maximum. Rounding contributes nothing at that precision
+    # (~1e-14). At float32 the binding term is neither of those but the collapsed
+    # marginal, which carries the outer optimum's abscissa error -- `sqrt(eps)`, so
+    # 3.4e-4 -- against a marginal as small as 0.5. Hence a `sqrt(eps)` floor, inactive
+    # at float64 (4.8e-7) and wide enough at float32 to leave the truncation and
+    # rounding terms it also has to cover.
+    eps = float(np.finfo(jnp.zeros(()).dtype).eps)
+    assert float(relative_error.max()) < max(1e-4, 32.0 * eps**0.5)
 
 
 def test_keeper_wins_where_better_and_on_exact_ties() -> None:

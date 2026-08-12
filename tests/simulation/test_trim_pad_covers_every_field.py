@@ -41,7 +41,13 @@ def _column(field: dataclasses.Field, n_rows: int):
         return jnp.arange(n_rows) % 2 == 0
     if "Int" in annotation:
         return jnp.arange(n_rows, dtype=jnp.int32)
-    return jnp.arange(n_rows, dtype=jnp.float64)
+    # The suite's working float, not a fixed `float64`. Under `--precision=32` a
+    # `float64` request is truncated and JAX says so with a warning the suite raises
+    # as an error, so hard-coding the dtype fails the fp32 leg on the request rather
+    # than on anything these tests are about. Which float it is does not matter here:
+    # the annotation only asks for a float, and the test is about which fields get
+    # trimmed.
+    return jnp.arange(n_rows, dtype=jnp.zeros(()).dtype)
 
 
 def _period_data(n_rows: int) -> PeriodRegimeSimulationData:
