@@ -75,8 +75,8 @@ def pytest_addoption(parser):
         action="store_true",
         help=(
             "Drop JAX's in-memory compiled-program cache whenever the test "
-            "module changes, and periodically within a long module, bounding a "
-            "worker's resident memory and its mapping count."
+            "module changes, and again whenever a worker has grown a gibibyte "
+            "since its last release, bounding its resident memory."
         ),
     )
 
@@ -174,30 +174,17 @@ def pytest_collection_modifyitems(items):
     _apply_backend_skips(items=items)
 
 
-# Tests run within one module before compiled programs are released anyway.
-#
-# A module boundary is not a tight enough bound once a single module is large:
-# a module of more tests than this releases never while it runs, and retention
-# across one has reached tens of GB of anon-RSS even where every test in it uses
-# a handful of grid points. The same retention exhausts `vm.max_map_count` on
-# hosts that set it low, because LLVM holds an `mmap` per compiled program -- so
-# one accumulation shows up as bytes on one machine and as an abort inside
-# `releaseMappedMemory` on another.
-#
-# 64 is a compromise: small enough that a large module releases several times
-# instead of never, large enough that an ordinary module still releases only at
-# its boundary and pays nothing extra. What it bounds is the mapping count; the
-# byte allowance below is what bounds memory, for the reason recorded there.
-_TESTS_BETWEEN_RELEASES = 64
-
 # How far a worker may grow past its last release before the next one, in MiB.
 #
-# A test count cannot bound memory, because what a test costs is the programs it
-# builds and that is not a property of it being one test: the certified query
-# battery is 52 tests -- under the count above, so it would release *never* --
-# and a single one of them adds 1278 MiB. Growth is therefore also measured
-# directly, which needs no per-module tuning and cannot be invalidated by a new
-# module the way a count is.
+# What a test costs is the programs it builds, which is not a property of it
+# being one test: a module of a few dozen tests can add over a gibibyte in a
+# single one of them, while a module of hundreds may never grow that far. So
+# growth is measured rather than counted. That needs no per-module tuning and
+# cannot be invalidated by a new module the way a count is -- and it is the only
+# trigger needed inside a module, because a compiled program costs both resident
+# bytes and an LLVM `mmap`, so bounding the bytes bounds the mappings that would
+# otherwise abort in `releaseMappedMemory` on a host with a low
+# `vm.max_map_count`.
 #
 # A worker's peak is then roughly its post-release size plus this allowance plus
 # the largest single test, so 1 GiB leaves the two CI workers well inside a 16 GB
@@ -260,12 +247,8 @@ def pytest_runtest_teardown(item, nextitem):
     a program compiled again is a lookup rather than a fresh compile.
 
     Within a LARGE module that bound is still too loose, so a release also
-    happens whenever either of two allowances runs out, whether or not the module
-    is about to change:
-
-    - `_TESTS_BETWEEN_RELEASES`, which bounds the mapping count.
-    - `_MIB_BETWEEN_RELEASES`, which bounds the resident memory. This is the one
-      that binds for a module of few but expensive tests.
+    happens once a worker has grown `_MIB_BETWEEN_RELEASES` past its last one,
+    whether or not the module is about to change.
 
     Releasing takes two steps, and neither is worth much alone. Dropping the
     cache marks the memory free but frees nothing the operating system can see;
@@ -281,7 +264,6 @@ def pytest_runtest_teardown(item, nextitem):
     if not item.config.getoption("--release-compiled-programs"):
         return
     session = item.session
-    seen = getattr(session, "_lcm_tests_since_release", 0) + 1
     resident = resident_mebibytes()
     if resident is not None and getattr(session, "_lcm_mib_at_last_release", 0) == 0:
         session._lcm_mib_at_last_release = resident
@@ -289,15 +271,8 @@ def pytest_runtest_teardown(item, nextitem):
     grown = resident is not None and resident - since >= _MIB_BETWEEN_RELEASES
     current = getattr(item, "module", None)
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
-    if (
-        upcoming is not None
-        and upcoming is current
-        and seen < _TESTS_BETWEEN_RELEASES
-        and not grown
-    ):
-        session._lcm_tests_since_release = seen
+    if upcoming is not None and upcoming is current and not grown:
         return
-    session._lcm_tests_since_release = 0
     jax.clear_caches()
     return_free_heap_to_os()
     # Measured after the release, so a module whose memory is held by something a
