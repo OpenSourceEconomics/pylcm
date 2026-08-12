@@ -176,18 +176,18 @@ def pytest_collection_modifyitems(items):
 
 # Tests run within one module before compiled programs are released anyway.
 #
-# A module boundary is not a tight enough bound once a single module is large.
-# `tests/solution/test_envelope_query.py` is 349 tests, so releasing only at its
-# edges means releasing never while it runs: one process reached 62.65 GB
-# anon-RSS by 82% of that file and was OOM-killed, though every test in it uses a
-# handful of grid points. The same retention exhausts `vm.max_map_count` on hosts
-# that set it low, because LLVM holds an `mmap` per compiled program -- so one
-# accumulation shows up as bytes on one machine and as an abort inside
+# A module boundary is not a tight enough bound once a single module is large:
+# a module of more tests than this releases never while it runs, and retention
+# across one has reached tens of GB of anon-RSS even where every test in it uses
+# a handful of grid points. The same retention exhausts `vm.max_map_count` on
+# hosts that set it low, because LLVM holds an `mmap` per compiled program -- so
+# one accumulation shows up as bytes on one machine and as an abort inside
 # `releaseMappedMemory` on another.
 #
-# 64 is a compromise: small enough that the envelope file releases five times
+# 64 is a compromise: small enough that a large module releases several times
 # instead of never, large enough that an ordinary module still releases only at
-# its boundary and pays nothing extra.
+# its boundary and pays nothing extra. What it bounds is the mapping count; the
+# byte allowance below is what bounds memory, for the reason recorded there.
 _TESTS_BETWEEN_RELEASES = 64
 
 # How far a worker may grow past its last release before the next one, in MiB.

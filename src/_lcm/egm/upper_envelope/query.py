@@ -278,6 +278,14 @@ def _comparable_lines(
       is left exactly as it is, because nothing rests on it: each of the two
       nodes also reaches the envelope as its own self-bracket, and the higher of
       them wins there, so the imposed line settles nothing it should not.
+
+    One boundary is known and deliberately not repaired: a flat line in the
+    format's *topmost* binade is refused, where an ordinary two-node link at the
+    same magnitude is decided. Every binade below it is decided. Resource grids
+    are hundreds of orders of magnitude away, so no model reaches it — but the
+    suite exercises the format's edge on purpose, so a witness built one binade
+    higher than the existing ones would meet it. It is this boundary rather than
+    a new defect.
     - a dead or non-finite entry is replaced by a fixed placeholder line. This is
       the case that would otherwise do damage: a NaN abscissa makes every
       comparison against it `UNRESOLVED`, which is the loud failure signal, so a
