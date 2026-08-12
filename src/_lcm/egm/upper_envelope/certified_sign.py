@@ -571,28 +571,39 @@ def _on_its_own_scale(
     comparison that the same three distances decide easily when left further from
     one.
 
-    Scaling by a power of two is exact only while the result stays normal, so a
-    round trip establishes it for every component; the reported flag says whether
-    it held. Where it did not, the distances come back as they were, because the
-    alternative to a scaling that lost something is not a different scaling.
+    Scaling by a power of two is exact only while the result stays normal, and
+    the two halves of a distance do not reach that limit together: the low half
+    trails the high one by the format's precision, so a scaling that lands the
+    high half near the bottom of the normal range flushes the low half on a
+    backend that flushes at all. Refusing on that would refuse the comparison
+    over a term the certificate already knows how to carry — a tail below the
+    smallest normal is bounded by it, which is what the error bound is for, and
+    the same statement `_bounded_product` makes about an underflowing product.
+    So only the leading half has to survive, and the flag reports that; a tail
+    that does not survive is dropped and its magnitude added to the bound.
     """
     exponent = _shared_exponent(*(term[0] for term in distances))
-    rescaled: tuple[DoubleDouble, ...] = tuple(
-        (
-            scale_by_power_of_two(high, -exponent),
-            scale_by_power_of_two(low, -exponent),
-            scale_by_power_of_two(dropped, -exponent),
+    tiny = jnp.finfo(distances[0][0].dtype).tiny
+    rescaled: list[DoubleDouble] = []
+    leading_survived: list[BoolND] = []
+    for high, low, dropped in distances:
+        scaled_high = scale_by_power_of_two(high, -exponent)
+        scaled_low = scale_by_power_of_two(low, -exponent)
+        scaled_dropped = scale_by_power_of_two(dropped, -exponent)
+        leading_survived.append(scale_by_power_of_two(scaled_high, exponent) == high)
+        tail_survived = (scale_by_power_of_two(scaled_low, exponent) == low) & (
+            scale_by_power_of_two(scaled_dropped, exponent) == dropped
         )
-        for high, low, dropped in distances
-    )
-    exact = reduce(
-        operator.and_,
-        (
-            _round_trips(scaled, source, exponent)
-            for scaled, source in zip(rescaled, distances, strict=True)
-        ),
-    )
-    return rescaled, exact
+        rescaled.append(
+            (
+                scaled_high,
+                jnp.where(tail_survived, scaled_low, jnp.zeros_like(scaled_low)),
+                jnp.where(
+                    tail_survived, scaled_dropped, jnp.maximum(scaled_dropped, tiny)
+                ),
+            )
+        )
+    return tuple(rescaled), reduce(operator.and_, leading_survived)
 
 
 def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
