@@ -41,8 +41,9 @@ def _step_bits(
 ) -> np.floating:
     """Move `value` by `steps` representable places using its bit pattern.
 
-    The arithmetic is done on a Python integer rather than on the unsigned view,
-    because a negative step cast to `uint` raises rather than walking downward.
+    A negative step is what walks the query below the link, and `uint(steps)`
+    cannot represent one. The arithmetic therefore runs on a Python integer,
+    which is unbounded and so cannot wrap at either end of the unsigned range.
     """
     uint = _uint_view(dtype)
     bits = int(np.asarray(dtype(value)).view(uint)) + steps
