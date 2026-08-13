@@ -143,6 +143,44 @@ def test_non_finite_input_is_unresolved_rather_than_a_silent_sign():
     assert _sign_at(dead, F3_B, 9.75) == UNRESOLVED_SIGN
 
 
+def _flushed_distance_witness() -> tuple[
+    tuple[float, float, float, float], tuple[float, float, float, float], float
+]:
+    """Return two strictly ordered links whose margin rests on a flushed distance.
+
+    `A` runs from the bottom of the range to its top binade. Measured on its own
+    scale, the query sits so close to its lower endpoint that the distance
+    between them flushes, so the link is read as though the query were on the
+    endpoint. Reading it against a top-binade value multiplies that discarded
+    amount up to the size of the margin separating the two links, which leaves
+    the arithmetic's own estimate of the margin pointing the wrong way.
+
+    The exponents come from the active format, so the same geometry is posed at
+    either precision rather than one precision's literals being reused at the
+    other.
+    """
+    dtype = jnp.zeros(()).dtype
+    top = int(jnp.finfo(dtype).maxexp) - 1
+    a = (
+        1.0,
+        float(jnp.ldexp(jnp.asarray(1.0), top - 7)),
+        1.0,
+        float(jnp.ldexp(jnp.asarray(1.0), top)),
+    )
+    b = (0.0, 2.0, float(jnp.finfo(dtype).smallest_normal), 2.0)
+    query = float(jnp.nextafter(jnp.asarray(1.0), jnp.asarray(jnp.inf)))
+    return a, b, query
+
+
+def test_a_flushed_distance_never_yields_a_strict_sign():
+    """A margin resting on a flushed distance is refused, not decided."""
+    a, b, query = _flushed_distance_witness()
+    # The lines are strictly ordered, so an abstention is the only honest
+    # alternative to the exact sign — a tie would not be one.
+    assert _exact_line_margin(a, b, query) == 1
+    assert _sign_at(a, b, query) == UNRESOLVED_SIGN
+
+
 def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
     """Whenever the primitive certifies a sign it equals the exact rational sign."""
     key = jax.random.key(20260727)
