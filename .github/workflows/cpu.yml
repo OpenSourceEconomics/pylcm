@@ -99,13 +99,27 @@ jobs:
         #   program is recompiled from the persistent on-disk cache.
         # - the phases stay separate, each starting from a fresh process, as a
         #   second line of defence and so coverage can be appended across them.
+        #
+        # `--timeout-method=thread` is not the default and the default cannot do
+        # this job: `signal` delivers `SIGALRM` on schedule, but the handler runs
+        # only at a bytecode boundary, so a test blocked inside one long call —
+        # which is what an XLA compile is — reports its timeout when that call
+        # returns and never bounds anything. Measured on a single LAPACK call
+        # with a 20 s limit: `signal` reported at 91.8 s, `thread` at 20 s with
+        # the frame. Under xdist the thread method takes the worker with it, so
+        # the timing-out test is named, its siblings continue on a restarted
+        # worker, and the run fails instead of being killed by the job ceiling
+        # hours later with nothing to point at.
         run: |
           pixi run -e tests-cpu pytest tests -m "not slow" \
-            --release-compiled-programs --cov=./ --cov-report= -n 4 \
+            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m slow \
-            --release-compiled-programs --cov=./ --cov-append --cov-report= -n 2 \
+            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --cov=./ --cov-append --cov-report= -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
-            --release-compiled-programs --cov=./ --cov-append --cov-report=xml -n 2
+            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -190,11 +204,14 @@ jobs:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
           pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
-            --release-compiled-programs -n 4 \
+            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 -m slow \
-            --release-compiled-programs -n 2 \
+            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            --precision=32 -m slow --release-compiled-programs -n 2
+            --precision=32 -m slow --release-compiled-programs \
+            --timeout=1200 --timeout-method=thread -n 2
       - name: Prune superseded JAX caches for this ref
         if: always()
         continue-on-error: true

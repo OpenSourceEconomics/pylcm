@@ -134,19 +134,19 @@ def build_model(
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     kind_grid = DiscreteGrid(ConsumerKind)
 
-    young_functions = {"utility": utility, "tax": tax, "resources": resources}
+    young_functions = {
+        "utility": utility,
+        "tax": tax,
+        "resources": resources,
+        "savings": savings,
+    }
     young_solver = resolve_solver(
         young_variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         post_decision_function="savings",
     )
-    if young_variant == "nbegm":
-        young_functions = {**young_functions, "savings": savings}
-        young_liquid_law = next_liquid_from_savings
-        young_constraints = {}
-    else:
-        young_liquid_law = next_liquid
-        young_constraints = {"feasible": feasible}
+    young_liquid_law = next_liquid_from_savings
+    young_constraints = {} if young_variant == "nbegm" else {"feasible": feasible}
 
     young = Regime(
         actions={"consumption": consumption_grid},

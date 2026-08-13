@@ -18,8 +18,9 @@ from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -72,11 +73,9 @@ def build_model(
         The assembled `Model`.
 
     """
-    next_liquid_func, feasible_func = next_liquid, feasible
+    savings_func, feasible_func = savings, feasible
     if budget_name != "resources":
-        next_liquid_func = rename_arguments(
-            next_liquid, mapper={"resources": budget_name}
-        )
+        savings_func = rename_arguments(savings, mapper={"resources": budget_name})
         feasible_func = rename_arguments(feasible, mapper={"resources": budget_name})
     return make_alive_dead_model(
         n_periods=n_periods,
@@ -87,8 +86,9 @@ def build_model(
             "utility": utility,
             "tax": tax,
             budget_name: resources,
+            "savings": savings_func,
         },
-        liquid_law=next_liquid_func,
+        liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),

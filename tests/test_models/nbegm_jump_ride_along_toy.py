@@ -26,7 +26,6 @@ from lcm.typing import (
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
     next_liquid_from_savings,
     resolve_solver,
     savings,
@@ -109,13 +108,9 @@ def build_model(
         post_decision_function="savings",
         jump_read=jump_read,
     )
-    if variant == "nbegm":
-        alive_functions = {**alive_functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
-        constraints = {}
-    else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+    alive_functions = {**alive_functions, "savings": savings}
+    liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return make_alive_dead_model(
         n_periods=n_periods,

@@ -13,11 +13,17 @@ point (the kink).
 Inserting the crossing is what separates MSS from LTM: both evaluate the
 envelope at the candidate abscissae, but MSS adds the intersection abscissa as
 its own node, so the kink is placed exactly rather than smeared across the local
-grid spacing. The refined arrays therefore track the FUES envelope tightly. The
-sweep is a single left-to-right scan over the sorted abscissae — `O(N)` emitting
-steps, each evaluating the segment set — in contrast to RFC's per-pair dominance
-test, and unlike FUES it consumes no `jump_thresh` heuristic: the winner switch
-is read directly off the evaluated values.
+grid spacing. The refined arrays therefore track the FUES envelope tightly.
+Unlike FUES it consumes no `jump_thresh` heuristic: the winner switch is read
+directly off the evaluated values.
+
+The rule is stated as a left-to-right sweep, but the executable path evaluates
+it in parallel rather than sequentially: every query abscissa is scored against
+every link at once, as a dense `(n_query, n_link)` bracket-and-interpolate
+block, and the winner is an argmax along the link axis. Each query's answer is
+independent of the others, so nothing about the rule needs the order — what the
+parallel form costs instead is a working set proportional to the product, where
+a true emitting scan would carry one query at a time.
 
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
