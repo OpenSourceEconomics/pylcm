@@ -22,23 +22,9 @@ import pytest
 from _lcm.egm.upper_envelope.certified_sign import (
     BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
-    backend_flushes_subnormals,
     certified_margin_sign,
 )
 from tests.conftest import X64_ENABLED
-
-_FLUSHING_BACKEND = backend_flushes_subnormals(jnp.zeros(()).dtype)
-
-_PRE_GUARD_CONTRACT = pytest.mark.xfail(
-    condition=_FLUSHING_BACKEND,
-    reason=(
-        "Asserts a strict sign across a separation the backend destroys, which the "
-        "certificate now refuses. Whether the assertion or the refusal states the "
-        "contract is an open question; the two are recorded rather than reconciled "
-        "by editing one to match the other."
-    ),
-    strict=False,
-)
 
 _HONEST_VERDICTS = (-1, UNRESOLVED_SIGN)
 
@@ -148,7 +134,6 @@ def test_the_verdict_does_not_depend_on_the_choice_of_units(unit_shift: int) -> 
     )
 
 
-@_PRE_GUARD_CONTRACT
 @pytest.mark.parametrize("swap", [False, True])
 def test_a_value_range_no_scaling_can_hold_is_still_decided(*, swap: bool) -> None:
     """A gap too large to represent is the easiest comparison, not an open one.
@@ -319,7 +304,6 @@ def _adjacent_neighbour_signs(
     )
 
 
-@_PRE_GUARD_CONTRACT
 @pytest.mark.parametrize("narrow_is_above", [True, False])
 def test_endpoints_a_subnormal_step_apart_keep_their_strict_sign(
     *, narrow_is_above: bool

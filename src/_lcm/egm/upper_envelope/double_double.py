@@ -31,7 +31,7 @@ Everything is branch-free and elementwise, so it stays `jax.jit`- and
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND
 
 # A value as `(high, low, dropped)`: estimate `high + low`, tail bound `dropped`.
 type DoubleDouble = tuple[FloatND, FloatND, FloatND]
@@ -97,6 +97,55 @@ def normalizing_exponent(*values: FloatND) -> IntND:
     return exponent
 
 
+def is_stored_zero(value: FloatND) -> BoolND:
+    """Report where a float is a true zero, decided on the stored bits.
+
+    `value == 0.0` cannot answer this on a backend that flushes: a subnormal
+    reads as zero there, so a quantity that is small but present becomes
+    indistinguishable from one that is absent — and every guard keyed on the
+    difference then takes the branch meant for the absent case. Shifting the
+    sign bit off leaves zero exactly for `+0.0` and `-0.0`, and a bitcast is a
+    reinterpretation rather than an operation, so nothing is destroyed reading
+    it. Integers are not flushed.
+    """
+    unsigned = jnp.dtype(f"uint{jnp.finfo(value.dtype).bits}")
+    bits = jax.lax.bitcast_convert_type(value, unsigned)
+    return (bits << bits.dtype.type(1)) == 0
+
+
+def scale_tail_bound(*, bound: FloatND, factor: FloatND) -> FloatND:
+    """Return `bound * |factor|`, floored where that product underflows.
+
+    A tail bound only ever has to be an *upper* bound on what was discarded, and
+    a product that underflows is below the smallest normal exactly when the true
+    amount is — so replacing it with the smallest normal keeps the bound valid
+    while making it something the format can hold. `maximum` cannot underflow,
+    so a bound that reaches here nonzero leaves it nonzero, however many factors
+    below one it still has to pass.
+
+    Without that floor a bound is destroyed by the first small factor and
+    arrives at the comparison as an exact zero, which is the certificate for
+    having discarded nothing — the one reading it must never produce.
+
+    A bound of exactly zero says nothing was discarded, and stays zero: that is
+    what two links lying on one line rely on. Which case it is has to be asked of
+    the stored bits, not of `!= 0.0` — a bound arriving subnormal reads as zero
+    to that comparison, so the floor would be skipped on exactly the operands it
+    exists for. A floored bound is never subnormal afterwards, but the sites that
+    *mint* a bound are upstream of the first floor, so the invariant cannot be
+    assumed by the thing that establishes it.
+
+    The floor holds on both kinds of backend, by different routes: where the
+    product flushes, the exact value was below the smallest normal, which is what
+    made it flush; where it becomes a genuine subnormal instead, the smallest
+    normal still bounds a subnormal.
+    """
+    tiny = jnp.finfo(bound.dtype).tiny
+    scaled = bound * jnp.abs(factor)
+    both_present = ~is_stored_zero(bound) & ~is_stored_zero(factor)
+    return jnp.where(both_present, jnp.maximum(scaled, tiny), scaled)
+
+
 def dd_from_difference(a: FloatND, b: FloatND) -> DoubleDouble:
     """Return the exact difference `a - b` as a double-double."""
     high, low = two_sum(a, -b)
@@ -143,7 +192,11 @@ def dd_mul_float(value: DoubleDouble, factor: FloatND) -> DoubleDouble:
     for term in (error_high, product_low, error_low):
         accumulated = dd_add_float(accumulated, term)
     new_high, new_low, new_dropped = accumulated
-    return new_high, new_low, new_dropped + dropped * jnp.abs(factor)
+    return (
+        new_high,
+        new_low,
+        new_dropped + scale_tail_bound(bound=dropped, factor=factor),
+    )
 
 
 def dd_mul(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
@@ -172,9 +225,9 @@ def dd_mul(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     new_high, new_low, new_dropped = accumulated
     dropped = (
         new_dropped
-        + left_dropped * right_scale
-        + right_dropped * left_scale
-        + left_dropped * right_dropped
+        + scale_tail_bound(bound=left_dropped, factor=right_scale)
+        + scale_tail_bound(bound=right_dropped, factor=left_scale)
+        + scale_tail_bound(bound=left_dropped, factor=right_dropped)
     )
     return new_high, new_low, dropped
 
