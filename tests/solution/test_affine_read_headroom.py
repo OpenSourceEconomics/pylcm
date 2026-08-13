@@ -31,6 +31,16 @@ Three things this test is careful about, each of which cost a real measurement f
   orders reported here against 32.4 measured there, conservative by under two
   exponents, which is the direction a lower bound must err in.
 
+  `frexp` has its own blind spot, and it happens to fall on the safe side here. Given
+  a *subnormal* operand it does not report that operand's exponent: every subnormal
+  returns the format's minimum (-149 at fp32, -1074 at fp64), disagreeing with the
+  host by up to twenty exponents, silently and with a plausible-looking integer. That
+  understates the numerator, which understates the quotient, which understates the
+  headroom -- so it can only make the assertion below fire earlier, never later. The
+  same primitive used to *upper*-bound a magnitude would be unsafe in exactly the way
+  this use is safe, so anywhere else it appears the direction has to be re-argued
+  rather than inherited from here.
+
 - **The precision is pinned, and pinned to the tighter case.** The suite defaults to
   `--precision=64`, where the smallest normal is ~2.2e-308 and this band is far
   further away; fp32 is both the harder test and what an unconfigured user gets.
