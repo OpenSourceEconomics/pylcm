@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
     certified_margin_sign,
 )
@@ -360,10 +361,17 @@ def test_a_link_no_exponent_can_lift_is_refused_rather_than_tied(
     the endpoints where they were and the width between them still has no
     representation as a difference.
 
-    What arrives is then a determinant of exactly zero whose error bound is also
-    exactly zero, since nothing was rounded on the way to losing everything. That
-    is the certificate for an exact tie, and it may not be issued here: the links
-    are ordered, and the caller must fail loud rather than choose between them.
+    What arrives is then a determinant carrying no information about the ordering,
+    and the one verdict it may not draw from that is an exact tie: the links are
+    ordered, and the caller must be told so or told nothing rather than handed a
+    licence to choose between them.
+
+    Which refusal it is depends on the backend and is not the property under test.
+    Where subnormals flush, no determinant is produced at all and the answer is
+    `UNRESOLVED_SIGN`; where they are read, a determinant is produced and sits
+    under its own error bound, which is `BELOW_RESOLUTION_SIGN`. Deciding the
+    ordering correctly is also honest — what is refused is a tie, or a strict
+    verdict against the exact ordering.
     """
     dtype, jax_dtype = _working_dtypes()
     tiny = dtype(np.finfo(dtype).tiny)
@@ -383,4 +391,6 @@ def test_a_link_no_exponent_can_lift_is_refused_rather_than_tied(
             x_query=jnp.asarray(dtype(1.0), dtype=jax_dtype),
         )
     )
-    assert verdict == UNRESOLVED_SIGN
+    exact_sign = 1 if narrow_is_above else -1
+
+    assert verdict in (exact_sign, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)

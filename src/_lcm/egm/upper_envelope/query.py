@@ -71,6 +71,7 @@ from _lcm.egm.upper_envelope.certified_sign import (
     certified_margin_sign,
     certified_quotient_margin,
     is_subnormal,
+    shared_exponent,
 )
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
@@ -78,6 +79,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_from_difference,
     dd_mul,
     dd_quotient,
+    scale_by_power_of_two,
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
@@ -177,6 +179,19 @@ def _value_quotient(
     """
     at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
         query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
+    )
+    # Both terms are homogeneous of degree one in the link's three abscissae, so
+    # scaling all three by one power of two multiplies numerator and divisor
+    # alike and leaves the quotient identical. What it changes is whether the
+    # arithmetic has anything to work with: a link at the bottom of the normal
+    # range has differences among the subnormals, where a product rounds to a
+    # whole ULP and the endpoint values it carries are lost entirely — the
+    # quotient then reads one, for a link of any value. Measuring the link on its
+    # own scale first puts the differences back among ordinary numbers.
+    exponent = shared_exponent(left_grid, divisor_grid, query)
+    left_grid, divisor_grid, query = (
+        scale_by_power_of_two(term, -exponent)
+        for term in (left_grid, divisor_grid, query)
     )
     numerator = dd_add(
         dd_mul(
