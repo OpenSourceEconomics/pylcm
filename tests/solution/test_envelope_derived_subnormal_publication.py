@@ -28,14 +28,6 @@ def _working_case(power: int):
     return dtype, jax_dtype, x0, x1, query, expected
 
 
-@pytest.mark.xfail(
-    reason=(
-        "A backend that flushes subnormals hands back finite zero, and the query "
-        "publishes it in all three channels instead of the represented value or NaN. "
-        "Expected to pass on a backend that reads the subnormal band, such as CUDA."
-    ),
-    strict=False,
-)
 @pytest.mark.parametrize("segment_block_size", [0, 1])
 @pytest.mark.parametrize("power_selector", ["largest", "smallest"])
 def test_derived_subnormal_is_published_or_refused(segment_block_size, power_selector):
