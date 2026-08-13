@@ -97,7 +97,6 @@ def get_model(
         n_points=income_n_points,
         gauss_hermite=False,
         mu=0.0,
-        sigma=max(sigma_low, sigma_high),  # the FIXED common node grid (widest regime)
         n_std=3.0,
         state_conditioned=StateConditioned(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
