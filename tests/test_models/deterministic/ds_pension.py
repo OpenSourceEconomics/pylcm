@@ -163,14 +163,18 @@ def next_pension_working(
     return (1.0 + return_pension) * _pension_post_decision(pension, deposit, match_rate)
 
 
+def savings_retired(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    """Retired end-of-period balance the liquid law is written through."""
+    return liquid - consumption
+
+
 def next_liquid_retired(
-    liquid: ContinuousState,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: float,
     retirement_income: float,
 ) -> ContinuousState:
     """Liquid law of motion within retirement (1-D consumption--saving)."""
-    return (1.0 + return_liquid) * (liquid - consumption) + retirement_income
+    return (1.0 + return_liquid) * savings + retirement_income
 
 
 def feasible_working(
@@ -336,6 +340,7 @@ def get_model(
         },
         functions={
             "utility": utility_retired,
+            "savings": savings_retired,
             **_euler_inversion_functions(
                 solver=retired_solver, analytic=analytic_inverse_marginal_utility
             ),

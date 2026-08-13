@@ -73,23 +73,26 @@ def bequest(estate: ContinuousState, crra: float) -> FloatND:
     return estate ** (1.0 - crra) / (1.0 - crra)
 
 
+def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    """The end-of-period balance both laws below are written through."""
+    return wealth - consumption
+
+
 def next_wealth(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: float,
     retirement_income: float,
 ) -> ContinuousState:
-    return (1.0 + return_liquid) * (wealth - consumption) + retirement_income
+    return (1.0 + return_liquid) * savings + retirement_income
 
 
 def next_estate(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
+    savings: FloatND,
     return_liquid: float,
     retirement_income: float,
 ) -> ContinuousState:
     """The entry law into the terminal regime, keyed on that regime's name."""
-    return (1.0 + return_liquid) * (wealth - consumption) + retirement_income
+    return (1.0 + return_liquid) * savings + retirement_income
 
 
 def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
@@ -122,7 +125,7 @@ def _model(*, solver, n_consumption=14):
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
-        functions={"utility": utility},
+        functions={"utility": utility, "savings": savings},
         active=lambda age: age < _LAST_AGE,
         solver=solver,
     )
@@ -160,7 +163,9 @@ def test_egm_accepts_a_target_that_names_the_euler_state_differently():
     into which is fully determined. Only a missing or ambiguous handoff is a
     reason to refuse.
     """
-    model = _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+    model = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    )
     assert model.user_regimes["gone"].states.keys() == {"estate"}
 
 
@@ -174,9 +179,9 @@ def test_egm_matches_dense_grid_search_across_a_renamed_terminal_state(period):
     beyond this bound.
     """
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
-    )
+    egm = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    ).solve(params=params, log_level="debug")
     brute = _model(solver=GridSearch(), n_consumption=600).solve(
         params=params, log_level="debug"
     )

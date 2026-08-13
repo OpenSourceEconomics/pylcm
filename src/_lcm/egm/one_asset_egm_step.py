@@ -5,12 +5,15 @@ single continuous state `liquid`, a single continuous action `consumption`, and 
 discrete choice. With one continuous state the endogenous grid method needs no upper
 envelope — invert the consumption Euler equation
 
-$$u'(c) = \\beta (1+r) V'_{\\text{next}}\\big((1+r)(\\text{liquid}-c)+y\\big)$$
+$$u'(c) = \\beta\\, g'(s)\\, V'_{\\text{next}}\\big(g(s)\\big)$$
 
-on a post-decision savings grid $s = \\text{liquid} - c \\ge 0$, read the next-period
-value and its marginal off the prior arrays, and map the resulting endogenous liquid
-back onto the regular liquid grid. Below the natural borrowing limit the constraint
-binds and the agent consumes all liquid.
+on a post-decision savings grid $s = \\text{liquid} - c$, read the next-period value and
+its marginal off the prior arrays, and map the resulting endogenous liquid back onto the
+regular liquid grid. Here $g$ is the regime's own law of motion, taken as the two
+readings `next_liquid` and `marginal_return` rather than assumed; for the conventional
+law $g(s) = (1+r)s + y$ it is the gross return that discounts the continuation marginal.
+At the savings grid's lower bound the borrowing constraint binds and the agent consumes
+everything above it.
 
 The step carries the **marginal value of liquid** $V'(\\text{liquid})$ between periods
 rather than finite-differencing the value array: by the envelope theorem
@@ -23,6 +26,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.egm.euler import invert_euler
 from _lcm.egm.preferences import Preferences
 from lcm.typing import Float1D, ScalarFloat
 
@@ -47,8 +51,8 @@ def egm_one_asset_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    return_liquid: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
 ) -> RetiredEGMResult:
     """Solve one period of the 1-D consumption--saving problem by EGM.
 
@@ -67,26 +71,32 @@ def egm_one_asset_step(
         liquid_grid: Regular liquid-state grid for this period (ascending).
         next_liquid_grid: The same state's grid in the *next* period (ascending);
             the abscissae of `next_value` and `next_marginal`.
-        savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending,
-            starting at 0), shape `(n_savings,)`.
+        savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending),
+            shape `(n_savings,)`. Its lower bound is the borrowing limit: zero for a
+            household that cannot borrow, minus the limit for one that can.
         discount_factor: Discount factor `beta`.
         preferences: The regime's felicity `u`, its marginal `u'`, and its
             inverse marginal `(u')^-1`, bound to this solve's parameters.
-        return_liquid: Liquid net return `r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node, shape `(n_savings,)`. Where a given level of savings lands
+            next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is the
+            factor the Euler equation discounts the continuation marginal by.
+            For the conventional law this is the gross return at every node.
 
     Returns:
         This period's value, marginal value of liquid, and consumption policy on
         `liquid_grid`.
 
     """
-    gross_return = 1.0 + return_liquid
-    next_liquid = gross_return * savings_grid + income
     value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
-    consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+    consumption = invert_euler(
+        expected_marginal_continuation=marginal_return * marginal_next,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=preferences.inverse_marginal_utility,
     )
     liquid_endog = consumption + savings_grid
     value_endog = preferences.utility(consumption) + discount_factor * value_next
@@ -95,14 +105,22 @@ def egm_one_asset_step(
     interior_value = jnp.interp(liquid_grid, liquid_endog, value_endog)
     interior_consumption = jnp.interp(liquid_grid, liquid_endog, consumption)
 
-    # Constrained: below the smallest endogenous liquid the borrowing constraint binds,
-    # so the agent consumes all liquid and saves nothing (`next_liquid = income`).
+    # Constrained: below the smallest endogenous liquid the household would want savings
+    # the grid's lower bound forbids, so it takes that bound and consumes everything
+    # above it. The bound is where the borrowing limit lives — zero for a household that
+    # cannot borrow, negative for one that can — so both the corner consumption and the
+    # landing point it reaches are read off the grid and the law rather than assumed.
+    min_savings = savings_grid[0]
     constrained = liquid_grid < liquid_endog[0]
-    value_at_zero_savings = jnp.interp(income, next_liquid_grid, next_value)
+    constrained_consumption = liquid_grid - min_savings
+    value_at_min_savings = jnp.interp(next_liquid[0], next_liquid_grid, next_value)
     constrained_value = (
-        preferences.utility(liquid_grid) + discount_factor * value_at_zero_savings
+        preferences.utility(constrained_consumption)
+        + discount_factor * value_at_min_savings
     )
-    consumption_on_grid = jnp.where(constrained, liquid_grid, interior_consumption)
+    consumption_on_grid = jnp.where(
+        constrained, constrained_consumption, interior_consumption
+    )
     value = jnp.where(constrained, constrained_value, interior_value)
     # Envelope theorem: the marginal value of liquid is the marginal utility of the
     # optimal consumption.

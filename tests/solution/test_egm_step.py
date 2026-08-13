@@ -19,11 +19,15 @@ from tests.test_models.deterministic.ds_pension import get_model, get_params
 _CRRA = 2.0
 _LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
 _SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
+_RETURN_LIQUID = 0.02
+_INCOME = 0.50
 _P: dict[str, Any] = {
     "discount_factor": 0.98,
     "preferences": crra_preferences(_CRRA),
-    "return_liquid": 0.02,
-    "income": 0.50,
+    # The step takes the law's readings rather than a return and an income: where
+    # each savings level lands next period, and how that landing point moves.
+    "next_liquid": (1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,
+    "marginal_return": jnp.full_like(_SAVINGS_GRID, 1.0 + _RETURN_LIQUID),
 }
 # The two lowest liquid points sit in the borrowing-constrained boundary layer, where
 # the value has a kink and a coarse linear grid cannot resolve the steep low-wealth

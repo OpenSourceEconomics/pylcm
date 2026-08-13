@@ -48,6 +48,61 @@ _FLOAT32_MANTISSA_BITS = 23
 _FLOAT64_MANTISSA_BITS = 52
 
 
+def log_of_nonnegative(values: FloatND) -> FloatND:
+    """Return ``log(values)`` without reading a subnormal as floating data.
+
+    Some XLA backends preserve a subnormal's IEEE representation through a
+    gather or bitcast but flush it when a transcendental primitive consumes it.
+    A direct ``log`` therefore reports ``-inf`` for a strictly positive number.
+    Decompose every finite positive value from its bit pattern instead: its
+    significand is rebuilt as a normal number in ``[1, 2)`` and its unbiased
+    base-two exponent is carried as an ordinary integer.  Only the normal
+    significand is passed to ``log``.
+
+    Zero, infinities, NaNs, and negative inputs retain the ordinary logarithm
+    conventions.  The custom tangent is the mathematical ``dx / x``; the bit
+    decomposition is only a representation device for the primal.
+
+    Args:
+        values: Nonnegative floating values.
+
+    Returns:
+        Elementwise natural logarithms.
+
+    """
+    return _log_of_nonnegative_with_tangent(jnp.asarray(values))
+
+
+def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
+    """Evaluate the nonnegative logarithm from significand and exponent bits."""
+    arr = jnp.asarray(values)
+    represented_zero = is_represented_zero(arr)
+    subnormal = is_below_smallest_normal(arr) & ~represented_zero
+    significand = _significand_in_unit_range(arr)
+    exponent = _unbiased_exponent(arr).astype(arr.dtype)
+    subnormal_log = jnp.log(significand) + exponent * jnp.log(
+        jnp.asarray(2.0, dtype=arr.dtype)
+    )
+    # Keep the ordinary backend implementation for every normal or special
+    # value.  Besides preserving its rounding, replacing subnormal inputs by
+    # one prevents a dead direct-log branch from ever consuming the value.
+    direct_log = jnp.log(jnp.where(subnormal, jnp.ones_like(arr), arr))
+    return jnp.where(subnormal, subnormal_log, direct_log)
+
+
+def _log_of_nonnegative_jvp(
+    primals: tuple[FloatND], tangents: tuple[FloatND]
+) -> tuple[FloatND, FloatND]:
+    """Differentiate the representation-aware logarithm as ``dx / x``."""
+    (values,) = primals
+    (values_dot,) = tangents
+    return _log_of_nonnegative_with_tangent(values), values_dot / values
+
+
+_log_of_nonnegative_with_tangent = jax.custom_jvp(_log_of_nonnegative_bits)
+_log_of_nonnegative_with_tangent.defjvp(_log_of_nonnegative_jvp)
+
+
 def is_represented_zero(values: FloatND) -> BoolND:
     """Whether each entry is `+0` or `-0`, read from its bits.
 

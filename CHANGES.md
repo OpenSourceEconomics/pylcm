@@ -43,6 +43,35 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   two-asset solver — the retirement boundary target. The errors name the
   regime's own state names and the field that fixes them.
 
+### `EGM` solves the law the regime declares
+
+- `EGM` reads the two quantities the Euler inversion needs — where a level of
+  savings lands next period, and how that landing point moves when savings move
+  — off the regime's own transition, composed through the post-decision node
+  and differentiated there. It previously rebuilt `(1 + r) * savings + income`
+  from two parameters resolved by name, so every term the modeller declared
+  outside that form was silently discarded and the solver published a policy
+  for a model its user had not written. A per-period fixed cost, a means test,
+  or a balance-dependent return now reaches the inversion like any other term.
+
+- **Breaking:** `return_param` and `income_param` are gone. `EGM` takes
+  `post_decision_function=` in their place, naming the function in
+  `Regime.functions` that computes the end-of-period balance the liquid state's
+  transition is written through. A model that renames every parameter in its
+  laws now solves with no solver-side declaration at all.
+
+- **Breaking:** the borrowing corner is the savings grid's lower bound rather
+  than zero, so a household allowed to borrow is no longer solved as one that
+  is not. A grid starting at zero reproduces the previous arithmetic exactly.
+
+- Two laws are now refused instead of solved wrongly. A law reaching a state or
+  action other than through the post-decision node is not a function of savings,
+  so neither reading exists; it is named at model build rather than failing deep
+  inside `dags`. A law whose landing points do not ascend strictly with savings
+  breaks the interpolation back onto the regular grid, which returns quietly
+  wrong numbers rather than raising — a falling law is now told it falls, a flat
+  one that it is flat.
+
 ### Solver naming
 
 - The endogenous-grid solvers are named by the problem they solve rather than

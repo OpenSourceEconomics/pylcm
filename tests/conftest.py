@@ -1,3 +1,7 @@
+import ctypes
+import ctypes.util
+import functools
+import pathlib
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 
@@ -71,8 +75,8 @@ def pytest_addoption(parser):
         action="store_true",
         help=(
             "Drop JAX's in-memory compiled-program cache whenever the test "
-            "module changes, and periodically within a long module, bounding a "
-            "worker's resident memory and its mapping count."
+            "module changes, and again whenever a worker has grown a gibibyte "
+            "since its last release, bounding its resident memory."
         ),
     )
 
@@ -167,22 +171,69 @@ def pytest_collection_modifyitems(items):
         if "solution" in item.path.parts:
             item.add_marker(slow)
 
+    _apply_backend_skips(items=items)
 
-# Tests run within one module before compiled programs are released anyway.
+
+# How far a worker may grow past its last release before the next one, in MiB.
 #
-# A module boundary is not a tight enough bound once a single module is large.
-# `tests/solution/test_envelope_query.py` is 349 tests, so releasing only at its
-# edges means releasing never while it runs: one process reached 62.65 GB
-# anon-RSS by 82% of that file and was OOM-killed, though every test in it uses a
-# handful of grid points. The same retention exhausts `vm.max_map_count` on hosts
-# that set it low, because LLVM holds an `mmap` per compiled program -- so one
-# accumulation shows up as bytes on one machine and as an abort inside
-# `releaseMappedMemory` on another.
+# What a test costs is the programs it builds, which is not a property of it
+# being one test: a module of a few dozen tests can add over a gibibyte in a
+# single one of them, while a module of hundreds may never grow that far. So
+# growth is measured rather than counted. That needs no per-module tuning and
+# cannot be invalidated by a new module the way a count is -- and it is the only
+# trigger needed inside a module, because a compiled program costs both resident
+# bytes and an LLVM `mmap`, so bounding the bytes bounds the mappings that would
+# otherwise abort in `releaseMappedMemory` on a host with a low
+# `vm.max_map_count`.
 #
-# 64 is a compromise: small enough that the envelope file releases five times
-# instead of never, large enough that an ordinary module still releases only at
-# its boundary and pays nothing extra.
-_TESTS_BETWEEN_RELEASES = 64
+# A worker's peak is then roughly its post-release size plus this allowance plus
+# the largest single test, so 1 GiB leaves the two CI workers well inside a 16 GB
+# runner while an ordinary module, which never grows this far between module
+# boundaries, keeps releasing exactly where it did before and pays nothing.
+_MIB_BETWEEN_RELEASES = 1024.0
+
+_STATUS_PATH = pathlib.Path("/proc/self/status")
+
+
+def resident_mebibytes() -> float | None:
+    """This process's resident set size in MiB, or `None` where it is unavailable.
+
+    Read straight from the kernel rather than from a high-water mark, so a
+    release that returns memory is visible as a fall.
+    """
+    try:
+        status = _STATUS_PATH.read_text()
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            return int(line.split()[1]) / 1024.0
+    return None
+
+
+@functools.cache
+def _malloc_trim():
+    """The C library's arena-trimming entry point, or `None` if it has none."""
+    name = ctypes.util.find_library("c")
+    if name is None:
+        return None
+    try:
+        return ctypes.CDLL(name).malloc_trim
+    except OSError, AttributeError:
+        return None
+
+
+def return_free_heap_to_os() -> bool:
+    """Hand every arena's free heap back to the operating system.
+
+    Report whether the allocator offers the operation at all; a platform without
+    it simply keeps whatever it keeps.
+    """
+    trim = _malloc_trim()
+    if trim is None:
+        return False
+    trim(0)
+    return True
 
 
 def pytest_runtest_teardown(item, nextitem):
@@ -195,21 +246,39 @@ def pytest_runtest_teardown(item, nextitem):
     module's programs. The persistent on-disk cache absorbs most of the cost:
     a program compiled again is a lookup rather than a fresh compile.
 
-    Within a LARGE module that bound is still too loose -- see
-    `_TESTS_BETWEEN_RELEASES` -- so the cache is released every so many tests as
-    well, whether or not the module is about to change.
+    Within a LARGE module that bound is still too loose, so a release also
+    happens once a worker has grown `_MIB_BETWEEN_RELEASES` past its last one,
+    whether or not the module is about to change.
+
+    Releasing takes two steps, and neither is worth much alone. Dropping the
+    cache marks the memory free but frees nothing the operating system can see;
+    XLA:CPU builds each program through LLVM, whose intermediate representation
+    is ordinary heap, and a C allocator holds a freed block in its arena rather
+    than returning it. Compilation is multi-threaded and an arena belongs to a
+    thread, so the next program allocates fresh instead of reusing what the last
+    one left, and resident memory tracks the sum of every program ever built
+    rather than the largest one live at a time. Measured on the certified query
+    battery, a worker at 9304 MiB fell to 1472 MiB on dropping the cache and
+    trimming, having given back under 60 MiB for a trim without a drop.
     """
     if not item.config.getoption("--release-compiled-programs"):
         return
     session = item.session
-    seen = getattr(session, "_lcm_tests_since_release", 0) + 1
+    resident = resident_mebibytes()
+    if resident is not None and getattr(session, "_lcm_mib_at_last_release", 0) == 0:
+        session._lcm_mib_at_last_release = resident
+    since = getattr(session, "_lcm_mib_at_last_release", 0)
+    grown = resident is not None and resident - since >= _MIB_BETWEEN_RELEASES
     current = getattr(item, "module", None)
     upcoming = getattr(nextitem, "module", None) if nextitem is not None else None
-    if upcoming is not None and upcoming is current and seen < _TESTS_BETWEEN_RELEASES:
-        session._lcm_tests_since_release = seen
+    if upcoming is not None and upcoming is current and not grown:
         return
-    session._lcm_tests_since_release = 0
     jax.clear_caches()
+    return_free_heap_to_os()
+    # Measured after the release, so a module whose memory is held by something a
+    # release cannot reach -- a session fixture, say -- settles at its own level
+    # instead of releasing on every test from then on.
+    session._lcm_mib_at_last_release = resident_mebibytes() or 0
 
 
 def build_prepared_structure(
@@ -260,3 +329,53 @@ def _fixture_x64_enabled() -> Iterator[None]:
         yield
     finally:
         jax_config.update("jax_enable_x64", val=previous)
+
+
+def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
+    """Apply the backend-keyed skip markers, both of which mean "not on CPU".
+
+    Which backend a run gets is never passed to the tests: CI picks a pixi
+    environment (`tests-cpu` or `tests-cuda*`), that decides which jaxlib is
+    installed, and `jax.default_backend()` reads the consequence. A skip keyed
+    on it is therefore correct in every CI leg with no change to any CI
+    command, which a `-m` selector would not be — `-m` replaces the configured
+    expression rather than intersecting it, so every invocation would have to
+    restate it and any that forgot would silently include the test.
+
+    This runs at collection rather than as an autouse fixture, because a
+    higher-scoped fixture is instantiated before a function-scoped one: a
+    module-scoped fixture that solves a GPU-scale model would run — and exhaust
+    the box — before a fixture-based skip could fire.
+
+    The two markers say different things and are kept apart on purpose:
+
+    - `gpu` — the test *needs* a GPU. A permanent property of the test: it is
+      too large for a CPU-only box, or its expected values were generated on
+      one. Pass `reason=` for anything more specific than "requires GPU".
+    - `skipif_cpu` — the test would run fine on CPU, but XLA:CPU's LLVM does
+      not finish compiling the program. A defect in a dependency, not a
+      property of the test, so it is expected to be retired: re-run the marked
+      tests on CPU at both precisions, and if they complete, delete the marker
+      instead of letting it decay into a permanent skip.
+    """
+    if jax.default_backend() != "cpu":
+        return
+
+    for item in items:
+        requires_gpu = item.get_closest_marker("gpu")
+        if requires_gpu:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=requires_gpu.kwargs.get("reason", "requires GPU")
+                )
+            )
+        elif item.get_closest_marker("skipif_cpu"):
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=(
+                        "XLA:CPU does not finish compiling this program; it "
+                        "compiles on GPU. Re-run the marked tests on CPU to "
+                        "check whether this still holds."
+                    )
+                )
+            )

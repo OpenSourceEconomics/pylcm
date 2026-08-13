@@ -33,7 +33,7 @@ flowchart TD
     q0 -->|"1"| qbp{"Declared institutional breakpoints? (asset tests, brackets, notches, floors)"}
     q0 -->|"2"| q2d{"Genuinely coupled 2-D first-order-condition system?"}
 
-    q2d -->|"Yes"| twodim["Not in pylcm — published with its paper"]
+    q2d -->|"Yes"| twodim["GridSearch"]
     q2d -->|"No — clean inner nest (liquid + durable/illiquid)"| qnest{"Declared breakpoints on the liquid margin?"}
 
     qnest -->|"Yes"| nnbegm["NNBEGM"]
@@ -45,6 +45,14 @@ flowchart TD
     qdc -->|"Yes"| dcegm["DCEGM (or NBEGM — see hardware tree)"]
     qdc -->|"No — smooth and concave"| egm["EGM or GridSearch"]
 ```
+
+A genuinely coupled 2-D first-order-condition system has no EGM route in pylcm — the
+specialised method for it is published with its own paper — but `GridSearch` solves it,
+because brute force never forms a first-order condition at all. The cost is what argues
+against it: a 2-D action space means the product of two action grids at every state
+node, so the candidate count grows multiplicatively in the two grid sizes rather than
+additively. That is the reason to look for a structure-specific solver, and it is a
+reason about run time rather than about correctness.
 
 Under the 2-continuous-state nest, `NEGM` and `NNBEGM` differ only in the inner solver:
 `NEGM` nests a `DCEGM` solve, `NNBEGM` an `NBEGM` one, so declared liquid kinks, jumps,

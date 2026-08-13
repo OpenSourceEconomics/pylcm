@@ -1,22 +1,26 @@
-"""The fixed economic forms NB-EGM's single-liquid kernels solve.
+"""The conventional accounting forms of a one-asset consumption-saving regime.
 
-Those kernels do not call a regime's declared budget: they apply one hardcoded
-affine law and one hardcoded cash-on-hand, reading the coefficients under fixed
-qualified parameter names. A regime taking that route therefore has to declare
-the same forms, and the only way to establish that is to hand it the very
-functions the kernels implement — sampling an arbitrary callable at finitely many
-points cannot do it, because a global rescaling agrees at every sample and still
-moves every state's value.
+`cash_on_hand_with_subsidy` is a declaration rather than a description of one.
+NB-EGM's case-piece kernels do not call a regime's budget node: they form
+`liquid + subsidy` themselves, and the only way to establish that an arbitrary
+callable computes the same thing is to hand it the very function the kernels
+implement — sampling at finitely many points cannot do it, because a global
+rescaling agrees at every sample and still moves every state's value. So a
+regime on that route names this one, the solver accepts it by identity, and the
+question never arises. A budget those kernels cannot form belongs on a
+`lcm.piecewise_affine` schedule with a `post_decision_function`, which composes
+it from the DAG, or under `GridSearch`.
 
-So these are the declarations, not descriptions of them. A model on the
-single-liquid route names one of the laws below; the solver accepts it by
-identity, and the question of whether the declared budget equals the solved one
-never arises. They are ordinary functions and stay executable, so the same model
-solves identically under `GridSearch` and the agreement tests keep their meaning.
+The two liquid laws carry no such restriction: NB-EGM reads whatever law a
+regime declares, and these are exported for the ordinary case rather than
+required. `liquid_law_from_savings` states the law through a post-decision
+savings node, which is what NB-EGM inverts the Euler equation against;
+`liquid_law_from_resources` states the same arithmetic as a displacement of
+cash-on-hand, for a `GridSearch` regime that declares no savings node.
 
-A regime whose budget these forms cannot express does not belong on this route.
-Declare a `lcm.piecewise_affine` schedule with a `post_decision_function`, which
-composes the budget from the DAG, or solve the regime with `GridSearch`.
+All three are ordinary functions and stay executable, so a model declaring them
+solves identically under either solver and the agreement tests keep their
+meaning.
 """
 
 from types import FunctionType

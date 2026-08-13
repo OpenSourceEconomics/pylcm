@@ -2,10 +2,12 @@
 
 A solver's accuracy can be read off the Euler error: at an interior
 (unconstrained) consumption--saving optimum the Euler equation
-`u'(c) = beta*(1+r)*u'(c_next)` holds exactly, so the relative gap between the chosen
-consumption and the consumption the equation implies measures how well a method nulls
-the first-order condition — independent of any reference solve. It is reported as the
-base-10 logarithm of the relative consumption error, so `-3` reads as a 0.1% error.
+`u'(c) = beta*g'(A)*u'(c_next)` holds exactly, where `g` is the regime's own law of
+motion and `A = liquid - c` the savings it is evaluated at. The relative gap between
+the chosen consumption and the consumption the equation implies measures how well a
+method nulls the first-order condition — independent of any reference solve. It is
+reported as the base-10 logarithm of the relative consumption error, so `-3` reads as
+a 0.1% error.
 
 The metric is meaningful only on the unconstrained interior: where the borrowing
 constraint binds the Euler equation holds with a positive multiplier, and the residual
@@ -25,38 +27,48 @@ def consumption_euler_error_log10(
     next_consumption: Float1D,
     discount_factor: float,
     preferences: Preferences,
-    return_liquid: float,
-    income: float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
 ) -> Float1D:
     """Compute the log10 unit-free consumption Euler error at each liquid grid point.
 
-    For chosen consumption `c` the next-period liquid state is
-    `(1 + r)*(liquid - c) + income`, and the Euler equation implies
-    `c_euler = (u')^-1(beta*(1+r)*u'(c_next))`, with `c_next` the next-period
-    consumption policy interpolated at the next-period liquid state. The error is
+    For chosen consumption `c` the Euler equation implies
+    `c_euler = (u')^-1(beta*g'(A)*u'(c_next))`, with `c_next` the next-period
+    consumption policy interpolated at the landing point `g(A)` the regime's own law
+    of motion gives for the savings `A = liquid - c`. The error is
     `log10(|c_euler / c - 1|)`.
 
+    Both readings of the law are taken as arguments rather than rebuilt here from an
+    assumed functional form: a metric that rebuilds `(1 + r)*A + income` reports the
+    accuracy of a model the regime does not declare whenever the law carries anything
+    else, and the departure cannot register as an error anywhere.
+
     Args:
-        liquid_grid: Regular liquid-state grid (ascending) the policy is defined on.
+        liquid_grid: Regular liquid-state grid (ascending); the abscissae
+            `next_consumption` is read at.
         consumption: Chosen consumption policy on `liquid_grid`.
         next_consumption: Next period's consumption policy on `liquid_grid`. Pass the
             identity `liquid_grid` for a terminal bequest (all wealth consumed).
         discount_factor: Discount factor `beta`.
         preferences: The regime's felicity `u`, its marginal `u'`, and its
             inverse marginal `(u')^-1`, bound to this solve's parameters.
-        return_liquid: Liquid net return `r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each point's savings
+            `liquid_grid - consumption`, same shape. Where that saving lands next
+            period.
+        marginal_return: That law's derivative with respect to savings, same shape.
+            How the landing point moves when savings move, which is the factor the
+            Euler equation discounts the continuation marginal by. For the
+            conventional law this is the gross return at every point.
 
     Returns:
         The base-10 log relative consumption error at each liquid grid point, shape
         `(len(liquid_grid),)`.
 
     """
-    next_liquid = (1.0 + return_liquid) * (liquid_grid - consumption) + income
     consumption_next = jnp.interp(next_liquid, liquid_grid, next_consumption)
     marginal_next = preferences.marginal_utility(consumption_next)
     consumption_euler = preferences.inverse_marginal_utility(
-        discount_factor * (1.0 + return_liquid) * marginal_next
+        discount_factor * marginal_return * marginal_next
     )
     relative_error = jnp.abs(consumption_euler / consumption - 1.0)
     return jnp.log10(relative_error)

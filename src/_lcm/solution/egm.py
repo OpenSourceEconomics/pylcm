@@ -47,6 +47,7 @@ from lcm.typing import (
     ActionName,
     Float1D,
     FloatND,
+    FunctionName,
     StateName,
 )
 
@@ -68,18 +69,21 @@ class EGM(Solver):
     """
 
     savings_grid: ContinuousGrid
-    """Exogenous post-decision savings grid `s = liquid - consumption` (>= 0)."""
+    """Exogenous post-decision savings grid; its lower bound is the borrowing limit.
 
-    return_param: str = "return_liquid"
-    """Name of the law's gross-return parameter.
-
-    The Euler inversion needs the return on the liquid balance, but which of
-    the law's parameters carries it is the modeller's choice, exactly as which
-    state fills the liquid role is. The default is the conventional spelling.
+    Zero for a household that cannot borrow, minus the limit for one that can.
+    The corner is read off this bound rather than assumed to be zero savings.
     """
 
-    income_param: str = "retirement_income"
-    """Name of the law's additive income parameter."""
+    post_decision_function: FunctionName
+    """Name of the post-decision function in `Regime.functions`.
+
+    The end-of-period balance (e.g. savings) the liquid state's transition is
+    written through. The Euler inversion needs where a level of savings lands
+    next period and how that landing point moves when savings move; both are
+    read off the declared law as a function of this node, so the law must
+    consume it and must reach the continuous action only through it.
+    """
 
     @property
     def requires_continuation(self) -> bool:
@@ -96,8 +100,11 @@ class EGM(Solver):
         Every message reports the regimes' own state names, never the solver's
         internal role vocabulary.
 
-        The regime must also keep the default Koopmans aggregator: the Euler
-        inversion the step runs is the one that aggregator implies.
+        The regime must also carry no discrete action and keep the default
+        Koopmans aggregator: a discrete choice folds the candidate value
+        correspondence, which is the case the envelope-free step does not
+        cover, and the Euler inversion the step runs is the one that
+        aggregator implies.
         """
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_custom_koopmans_aggregator,
@@ -108,6 +115,16 @@ class EGM(Solver):
             user_regime=context.user_regimes[context.regime_name],
             solver_name="EGM",
         )
+        discrete_actions = tuple(context.state_action_space.discrete_actions)
+        if discrete_actions:
+            msg = (
+                f"EGM regime '{context.regime_name}' has discrete actions "
+                f"{sorted(discrete_actions)}. A discrete choice makes the "
+                f"candidate value correspondence multi-valued, which the "
+                f"envelope-free one-asset step does not solve. Use DCEGM, "
+                f"which refines the candidates to their upper envelope."
+            )
+            raise RegimeInitializationError(msg)
         continuous = tuple(
             context.regime_to_v_interpolation_info[
                 context.regime_name
@@ -157,8 +174,16 @@ class EGM(Solver):
         # the regime's felicity, its marginal, and its inverse are functions of.
         consumption_action = next(iter(context.state_action_space.continuous_actions))
 
+        from _lcm.egm.declared_law import build_declared_liquid_law  # noqa: PLC0415
+
+        variable_names = (
+            frozenset(context.state_action_space.states)
+            | frozenset(context.state_action_space.continuous_actions)
+            | frozenset(context.state_action_space.discrete_actions)
+        )
         period_to_target = _period_to_continuation_target(context=context)
         cores: dict[RegimeName, Callable] = {}
+        laws: dict[RegimeName, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         # The target's own name for its single continuous state. It is read off
         # that regime: the value grid it is tabulated on and the namespace its
@@ -175,10 +200,6 @@ class EGM(Solver):
             if target not in cores:
                 core = _build_egm_core(
                     savings_grid=savings_grid,
-                    target=target,
-                    target_state=target_state,
-                    return_param=self.return_param,
-                    income_param=self.income_param,
                     functions=context.functions,
                     koopmans_aggregator=cast(
                         "EconFunction", context.koopmans_aggregator
@@ -186,8 +207,18 @@ class EGM(Solver):
                     consumption_action=consumption_action,
                 )
                 cores[target] = jax.jit(core) if context.enable_jit else core
+                laws[target] = build_declared_liquid_law(
+                    transitions=context.transitions,
+                    functions=context.functions,
+                    post_decision_name=self.post_decision_function,
+                    target=target,
+                    target_state=target_state,
+                    variable_names=variable_names,
+                )
             period_kernels[period] = _EGMPeriodKernel(
                 core=cores[target],
+                declared_law=laws[target],
+                savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
                 liquid_state=liquid_state,
@@ -245,6 +276,43 @@ class _EGMPeriodKernel:
     to this period's own grid unless the liquid state is an `AgeSpecializedGrid`.
     """
 
+    declared_law: Callable[..., tuple[Float1D, Float1D]]
+    """The regime's own law toward the target, as a function of savings."""
+
+    savings_grid: Float1D
+    """The post-decision grid the law is tabulated on."""
+
+    bound_params: Mapping[str, FloatND] = MappingProxyType({})
+    """Fixed params bound into the core, kept so the law can read them too."""
+
+    def _law_readings(self, *, flat_params: FlatParams) -> tuple[Float1D, Float1D]:
+        """Read the declared law on the savings grid and check it can be inverted.
+
+        Evaluated here rather than inside the compiled core: the readings depend
+        on the params alone, and their ordering is a Python-level decision that
+        no traced value can make. The check therefore has to see concrete
+        numbers, which is exactly what this side of the boundary has.
+        """
+        from _lcm.egm.declared_law import (  # noqa: PLC0415
+            fail_if_declared_law_is_not_increasing,
+        )
+
+        next_liquid, marginal_return = self.declared_law(
+            savings_grid=self.savings_grid,
+            **self.bound_params,
+            **_union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+        )
+        fail_if_declared_law_is_not_increasing(
+            next_liquid=next_liquid,
+            regime_name=self.regime_name,
+            target=self.continuation_target,
+        )
+        return next_liquid, marginal_return
+
     def cores(self) -> Mapping[str, Callable]:
         """Return the single EGM-step core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
@@ -258,7 +326,11 @@ class _EGMPeriodKernel:
         )
         if not bound:
             return self
-        return replace(self, core=functools.partial(self.core, **bound))
+        return replace(
+            self,
+            core=functools.partial(self.core, **bound),
+            bound_params=MappingProxyType(dict(bound)),
+        )
 
     def build_lower_args(
         self,
@@ -271,10 +343,13 @@ class _EGMPeriodKernel:
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
     ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: state, continuation, params."""
+        """Build the core's lowering arguments: state, continuation, law, params."""
+        next_liquid, marginal_return = self._law_readings(flat_params=flat_params)
         return {
             "liquid": state_action_space.states[self.liquid_state],
             "next_liquid_grid": self.next_liquid_grid,
+            "next_liquid": next_liquid,
+            "marginal_return": marginal_return,
             "next_value": next_regime_to_V_arr[self.continuation_target],
             "next_marginal": next_regime_to_continuation[
                 self.continuation_target
@@ -298,9 +373,12 @@ class _EGMPeriodKernel:
         ages: AgeGrid,  # noqa: ARG002
     ) -> KernelResult:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
+        next_liquid, marginal_return = self._law_readings(flat_params=flat_params)
         V_arr, carry = compiled_cores["main"](
             liquid=state_action_space.states[self.liquid_state],
             next_liquid_grid=self.next_liquid_grid,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
             next_value=next_regime_to_V_arr[self.continuation_target],
             next_marginal=next_regime_to_continuation[
                 self.continuation_target
@@ -317,10 +395,6 @@ class _EGMPeriodKernel:
 def _build_egm_core(
     *,
     savings_grid: Float1D,
-    target: RegimeName,
-    target_state: StateName,
-    return_param: str,
-    income_param: str,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
@@ -328,19 +402,20 @@ def _build_egm_core(
     """Build the jitted-able 1-D EGM core closing over the savings grid.
 
     The core reads the state grid under the private role keyword `liquid`, the
-    continuation value and marginal, and the regime's scalar params, runs
-    `egm_one_asset_step`, and returns the value array and the marginal-value
-    carry on the liquid grid. The law's params are qualified by the transition
-    into the *target's* name for its continuation state
-    (`{target}__next_{target_state}__...`) — that is the namespace the params
-    template writes them under — so the role keyword stays private and the
-    modeller's vocabulary reaches the template unchanged.
+    continuation value and marginal, the two readings of the declared law of
+    motion (where each savings level lands, and how that landing point moves
+    with savings), and the regime's scalar params. It runs `egm_one_asset_step`
+    and returns the value array and the marginal-value carry on the liquid grid.
+
+    The law's two readings arrive as arrays rather than being composed here:
+    they are properties of the params alone, so the period adapter evaluates
+    them once outside the compiled region — which is also what lets their
+    ordering be checked, a Python-level decision no traced value can make.
 
     Preferences and the discount factor come from the regime itself: the
     felicity trio is bound out of `functions` at each call, and beta is read
     off the aggregator's own signature.
     """
-    liquid_law = f"{target}__next_{target_state}"
     from _lcm.egm.one_asset_egm_step import egm_one_asset_step  # noqa: PLC0415
     from _lcm.egm.preferences import (  # noqa: PLC0415
         NEWTON_ACTION_FLOOR,
@@ -365,6 +440,8 @@ def _build_egm_core(
         next_liquid_grid: Float1D,
         next_value: Float1D,
         next_marginal: Float1D,
+        next_liquid: Float1D,
+        marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         step = egm_one_asset_step(
@@ -375,8 +452,8 @@ def _build_egm_core(
             savings_grid=savings_grid,
             discount_factor=read_discount_factor(params),
             preferences=build_preferences(params),
-            return_liquid=params[f"{liquid_law}__{return_param}"],
-            income=params[f"{liquid_law}__{income_param}"],
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
         )
         carry = EGMCarry(
             endog_grid=liquid,

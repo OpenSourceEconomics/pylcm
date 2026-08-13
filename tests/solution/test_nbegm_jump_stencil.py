@@ -87,6 +87,7 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
     income, gross_return, crra, discount_factor = 1.0, 1.0, 2.0, 0.95
     coh_case_grid = grid + 10.0
     valid = jnp.ones(grid.shape[0], dtype=bool)
+    savings_grid = jnp.linspace(0.0, 9.0, grid.shape[0])
 
     kink = _boundary_targeting_coh(
         liquid_grid=grid,
@@ -95,8 +96,8 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
         next_value=next_value,
         discount_factor=discount_factor,
         preferences=crra_preferences(crra),
-        gross_return=gross_return,
-        income=income,
+        savings_grid=savings_grid,
+        next_liquid=gross_return * savings_grid + income,
         asset_limit=asset_limit,
         prev_limit=2.5,
         next_limit=grid[-1] + 1.0,
