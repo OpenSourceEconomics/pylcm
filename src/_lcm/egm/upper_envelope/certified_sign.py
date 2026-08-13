@@ -505,10 +505,18 @@ def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
     The probe runs on concrete inputs, so it resolves to a Python bool while the
     program is traced and the refusals it gates leave the compiled program
     entirely on a backend that reads the band.
+
+    `ensure_compile_time_eval` is what makes "concrete inputs" true from inside a
+    trace. Without it the halving stages into the enclosing jaxpr and hands back a
+    tracer, and asking a tracer for a Python bool raises. The memo on this function
+    hides that completely whenever an eager call for the same dtype happened to come
+    first, so whether it raises depends on which test a process drew first — a
+    failure that reads as random and is not.
     """
-    smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
-    halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
-    return bool(np.asarray(halved) == 0.0)
+    with jax.ensure_compile_time_eval():
+        smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
+        halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
+        return bool(np.asarray(halved) == 0.0)
 
 
 def is_subnormal(value: FloatND) -> BoolND:
