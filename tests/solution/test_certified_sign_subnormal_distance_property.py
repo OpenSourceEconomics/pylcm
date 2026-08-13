@@ -39,10 +39,14 @@ def _uint_view(dtype: type[np.floating]) -> type[np.unsignedinteger]:
 def _step_bits(
     value: np.floating, *, steps: int, dtype: type[np.floating]
 ) -> np.floating:
-    """Move `value` by `steps` representable places using its bit pattern."""
+    """Move `value` by `steps` representable places using its bit pattern.
+
+    The arithmetic is done on a Python integer rather than on the unsigned view,
+    because a negative step cast to `uint` raises rather than walking downward.
+    """
     uint = _uint_view(dtype)
-    bits = np.asarray(dtype(value)).view(uint)
-    return dtype(np.asarray(bits + uint(steps)).view(dtype)[()])
+    bits = int(np.asarray(dtype(value)).view(uint)) + steps
+    return dtype(np.asarray(uint(bits)).view(dtype)[()])
 
 
 def _is_normal(value: np.floating, *, dtype: type[np.floating]) -> bool:
