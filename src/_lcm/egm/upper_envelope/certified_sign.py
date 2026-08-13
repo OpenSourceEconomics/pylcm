@@ -673,14 +673,15 @@ def _certified_sign_of(
 
     `readable` says whether everything the determinant was built from — the
     operands themselves, and the distances the subtractions between them
-    produced — was something the arithmetic could see. Where it was not, only a
-    *strict* verdict survives: the margin then exceeds the tolerance by more than
-    a flushed term could have contributed, since a flushed term is below the
-    smallest normal while the margin is not. What
-    does not survive is the near-zero end, where the whole difference is of the
-    order of what went missing — and that is the end where the collapse is
-    total, leaving an estimate of exactly zero with an error bound of exactly
-    zero, because nothing was rounded on the way to losing everything.
+    produced — was something the arithmetic could see. Where it was not, no
+    verdict survives, strict ones included. A flushed term is below the smallest
+    normal only where it was discarded; the determinant is bilinear in the two
+    links' distances, so whatever went missing is multiplied by the other link's
+    width on the way here. Against a width near the top of the range that
+    amplifies the missing amount past the tolerance the estimate is then
+    compared to, and the resulting margin is strict, sizeable, and pointing the
+    wrong way. Both ends of the range therefore report the same thing, which is
+    that this comparison was never posed to the arithmetic.
     """
     high, low, dropped = value
     estimate = high + low
@@ -690,14 +691,13 @@ def _certified_sign_of(
     exactly_zero = (dropped == 0.0) & (estimate == 0.0)
     unresolved = jnp.asarray(UNRESOLVED_SIGN, dtype=jnp.int32)
     below_resolution = jnp.asarray(BELOW_RESOLUTION_SIGN, dtype=jnp.int32)
-    undecided = jnp.where(
-        readable,
-        jnp.where(exactly_zero, jnp.int32(0), below_resolution),
-        unresolved,
-    )
     sign = jnp.where(
         estimate > tolerance,
         jnp.int32(1),
-        jnp.where(estimate < -tolerance, jnp.int32(-1), undecided),
+        jnp.where(
+            estimate < -tolerance,
+            jnp.int32(-1),
+            jnp.where(exactly_zero, jnp.int32(0), below_resolution),
+        ),
     )
-    return jnp.where(finite, sign, unresolved).astype(jnp.int32)
+    return jnp.where(finite & readable, sign, unresolved).astype(jnp.int32)
