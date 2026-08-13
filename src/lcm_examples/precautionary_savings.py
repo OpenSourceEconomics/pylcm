@@ -125,14 +125,17 @@ def get_model(
             n_points=wealth_n_points,
         )
 
+    shock_grid_cls = _SHOCK_GRID_CLASSES[shock_type]
+    income_grid = shock_grid_cls(  # ty: ignore[no-matching-overload]
+        n_points=income_n_points,
+        **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
+    )
+
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": wealth_grid,
-            "income": _SHOCK_GRID_CLASSES[shock_type](
-                n_points=income_n_points,
-                **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
-            ),
+            "income": income_grid,
         },
         state_transitions={
             "wealth": next_wealth,

@@ -1,20 +1,22 @@
-"""Direct-CDF transition rows for state-conditioned shock parameters (v1).
+"""Direct-CDF transition rows for state-conditioned shock parameters.
 
-The transition kernel of a continuous stochastic process is discretized on a set of
-**fixed common nodes** (built once from ``grid_sigma``), while the regime-dependent
-``sigma`` enters only the transition *CDF*. The row is evaluated **directly at the
-actual from-value** — never by interpolating precomputed node rows, which is O(1) wrong
-for a low ``sigma`` on wide cells (pro-comp-method audit 2026-07-14, finding F1).
+The transition kernel is discretized on fixed common nodes, built once from the
+process's own scalar `sigma`, while the per-category `sigma` enters only the transition
+CDF. Each row is evaluated directly at the actual time-$t$ value.
 
-Supported families in v1: CDF-binned IID normal and Tauchen AR(1) (``sigma`` sits in
-their transition CDF). Rouwenhorst is intentionally excluded: its transition depends on
-``rho`` only, so fixing the nodes removes the sole ``sigma`` channel (audit F2).
+Interpolating precomputed node rows instead is wrong by an amount that does not shrink
+as the grid refines: for a `sigma` small relative to the cell width, essentially all of
+the conditional mass sits inside a single cell, and a row read off the neighbouring
+nodes and blended puts mass where the true kernel has none.
 
-These builders reduce exactly to ``NormalIIDProcess(gauss_hermite=False)`` /
-``TauchenAR1Process`` rows when evaluated at a node with ``sigma == grid_sigma``.
+Supported families are the CDF-binned IID normal and Tauchen AR(1), whose transition
+CDFs carry `sigma`. Rouwenhorst is excluded: its transition depends on `rho` only, so
+fixing the nodes removes the sole `sigma` channel.
+
+Evaluated at a node with the per-category `sigma` equal to the node-placing one, these
+builders reproduce the `NormalIIDProcess(gauss_hermite=False)` and `TauchenAR1Process`
+rows exactly.
 """
-
-from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Literal
@@ -38,19 +40,20 @@ __all__ = [
 
 _Scalar = float | int | ScalarFloat
 
-# Process families whose transition CDF carries `sigma` (v1-supported). Rouwenhorst is
-# intentionally absent: its transition is `rho`-only, so a fixed node grid leaves no
-# channel for a state-conditioned `sigma` (audit F2).
+# Process families whose transition CDF carries `sigma`. Rouwenhorst is absent: its
+# transition is `rho`-only, so a fixed node grid leaves no channel for a
+# state-conditioned `sigma`.
 Family = Literal["iid_normal", "tauchen"]
 
 
 def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
     """Order the per-category `sigma` values by the categorical's integer **code**.
 
-    Stacking by `Mapping` insertion order silently permutes regimes when the code order
-    differs (audit F5/RT5); indexing the returned array by the conditioning state's code
-    is therefore correct by construction. `by` must name exactly the categories of
-    `cond_grid` — an extra key is a typo or a stale category, never a no-op.
+    Stacking by `Mapping` insertion order silently permutes categories whenever the code
+    order differs from the insertion order; indexing the returned array by the
+    conditioning state's code is therefore correct by construction. `by` must name
+    exactly the categories of `cond_grid` — an extra key is a typo or a stale category,
+    never a no-op.
     """
     cats, codes = cond_grid.categories, cond_grid.codes
     missing = set(cats) - set(by)
@@ -82,10 +85,10 @@ def conditioned_row(
 ) -> Float1D:
     """Dispatch to the direct-CDF row builder for the given process `family`.
 
-    `nodes` are the FIXED common nodes (from `grid_sigma`); `sigma` is the current
-    regime's innovation std (already gathered by code). `mu` is the process's fixed
-    location (IID mean / AR(1) intercept) — dropping it misplaces the entire row
-    (code-review F2). `rho` is required for Tauchen.
+    `nodes` are the fixed common nodes, placed by the process's own scalar `sigma`;
+    `sigma` here is the innovation std the conditioning state selects, already gathered
+    by code. `mu` is the process's fixed location (IID mean, AR(1) intercept) —
+    dropping it misplaces the entire row. `rho` is required for Tauchen.
     """
     if family == "iid_normal":
         return iid_normal_row(nodes, mu=mu, sigma=sigma)
@@ -99,12 +102,12 @@ def conditioned_row(
 
 
 def gather_sigma(sigma_by_code: Float1D, code: int | ScalarInt) -> ScalarFloat:
-    """Select the current regime's `sigma` from the code-ordered array (audit F5)."""
+    """Select the `sigma` the time-$t$ conditioning state selects, by its code."""
     return sigma_by_code[code]
 
 
 def _row_from_edge_cdf(cdf_at_edges: Float1D) -> Float1D:
-    """Assemble an ``(n,)`` probability row from CDF values at the ``(n-1)`` bin edges.
+    """Assemble an `(n,)` probability row from CDF values at the `(n-1)` bin edges.
 
     First bin is the lower tail, last bin the upper tail, interior bins the CDF diffs —
     the same binning pylcm uses, so the row sums to one by construction.
@@ -116,10 +119,10 @@ def _row_from_edge_cdf(cdf_at_edges: Float1D) -> Float1D:
 
 
 def iid_normal_row(nodes: Float1D, mu: _Scalar, sigma: _Scalar) -> Float1D:
-    """CDF-binned ``N(mu, sigma**2)`` on FIXED ``nodes``.
+    r"""CDF-binned $N(\mu, \sigma_{s_t}^2)$ on the fixed `nodes`.
 
-    IID: the row does not depend on the current value. Binning on the midpoints of the
-    fixed common nodes (never on moving ``sigma``-specific nodes — audit F6/RT6).
+    IID: the row does not depend on the time-$t$ value. Binned on the midpoints of the
+    fixed common nodes, never on nodes that move with the selected `sigma`.
     """
     edges = (nodes[:-1] + nodes[1:]) / 2.0
     return _row_from_edge_cdf(cdf((edges - mu) / sigma))
@@ -132,17 +135,18 @@ def tauchen_row(
     from_value: _Scalar,
     mu: _Scalar = 0.0,
 ) -> Float1D:
-    """Conditional AR(1) row for ``y' = mu + rho*y + eps``, ``eps ~ N(0, sigma**2)``.
+    r"""Conditional AR(1) row for $y_{t+1} = \mu + \rho y_t + \varepsilon_{t+1}$.
 
-    Evaluated DIRECTLY at ``from_value`` (audit F1) rather than by interpolating node
-    rows. The denominator is the innovation ``sigma`` (conditional std of ``y' | y``),
-    matching ``TauchenAR1Process.compute_transition_probs``.
+    With $\varepsilon_{t+1} \sim N(0, \sigma_{s_t}^2)$, evaluated directly at
+    `from_value` — the time-$t$ value — rather than by interpolating node rows. The
+    denominator is the innovation `sigma`, the conditional std of $y_{t+1} \mid y_t$,
+    matching `TauchenAR1Process.compute_transition_probs`.
 
-    ``nodes`` and ``from_value`` are in PHYSICAL units — i.e. the axis
-    ``TauchenAR1Process.compute_gridpoints`` returns, centred on ``mu/(1-rho)`` —
-    so the conditional mean is ``mu + rho*from_value``. Stock pylcm builds the same
-    row in demeaned coordinates, where the intercept vanishes; here it does not, and
-    omitting it misplaces every row unless ``mu == 0`` (code-review F2).
+    `nodes` and `from_value` are in physical units: the axis
+    `TauchenAR1Process.compute_gridpoints` returns, centred on $\mu/(1-\rho)$, so the
+    conditional mean is $\mu + \rho y_t$. Stock pylcm builds the same row in demeaned
+    coordinates, where the intercept vanishes. Here it does not, and dropping it
+    misplaces every row unless $\mu = 0$.
     """
     edges = (nodes[:-1] + nodes[1:]) / 2.0
     return _row_from_edge_cdf(cdf((edges - mu - rho * from_value) / sigma))

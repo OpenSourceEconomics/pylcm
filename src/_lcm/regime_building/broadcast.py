@@ -29,7 +29,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
     normalize_regime_phases,
 )
-from _lcm.typing import RegimeName, StateOrActionName
+from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
@@ -315,16 +315,16 @@ def _state_conditioned_names(
     user_regimes: Mapping[RegimeName, UserRegime],
     candidates: frozenset[StateOrActionName],
     grown_here: frozenset[StateOrActionName],
-) -> set[str]:
+) -> frozenset[StateName]:
     """Collect the conditioning states this regime's Q reads through a process.
 
-    A state-conditioned process reads ``state_conditioned.on``: the generated solve
-    weights and simulation draw both take it as an argument. But it is declared as
+    A state-conditioned process reads `state_conditioned.on`: the generated solve
+    weights and simulation draw both take it as an argument. It is declared as
     *metadata* on the grid rather than in a user function, so `_needed_names`'s
-    callable-DAG ancestry cannot see it, and a conditioning state declared at model
-    level (a broadcast candidate, reaching nothing else) was pruned here before the
-    feature could ask for it — leaving a misleading "must name a DiscreteGrid state in
-    the same regime" error at build time (code-review round 2, F1).
+    callable-DAG ancestry cannot see it. Naming it here is what keeps a conditioning
+    state declared at model level — a broadcast candidate reaching nothing else — from
+    being pruned before the process can ask for it, which would otherwise surface as a
+    misleading "must name a DiscreteGrid state in the same regime" build error.
 
     Two sources contribute:
 
@@ -335,12 +335,12 @@ def _state_conditioned_names(
     - **reachable-target processes** — a conditioned process in a regime this one can
       transition into has its transition weight built into *this* regime's Q, evaluated
       at *this* regime's ``on`` state. So the conditioner is needed in the source too,
-      not only the process's own regime (round-3 review F1).
+      not only the process's own regime.
 
     Keeping the state also keeps its law of motion, which the caller filters by the
     same pruned-set.
     """
-    names: set[str] = set()
+    names: set[StateName] = set()
     for name, grid in user_regime.states.items():
         if not isinstance(grid, _ContinuousStochasticProcess):
             continue
@@ -356,7 +356,7 @@ def _state_conditioned_names(
                 and grid.state_conditioned is not None
             ):
                 names.add(grid.state_conditioned.on)
-    return names
+    return frozenset(names)
 
 
 def _resolved_at_representative_age(
