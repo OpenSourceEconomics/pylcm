@@ -137,6 +137,7 @@ pytest = "*"
 pytest-cov = "*"
 pytest-timeout = "*"
 pytest-xdist = "*"
+py-spy = ">=0.4.2,<0.5"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
