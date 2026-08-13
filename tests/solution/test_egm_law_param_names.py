@@ -1,15 +1,16 @@
-"""The EGM kernels read law parameters the modeller names, not names they pick.
+"""The EGM kernel never has to be told what a law's parameters are called.
 
 A kernel that inverts an Euler equation needs specific economic quantities out
-of a law of motion — a gross return, a labour income, a pension match. Which
-*parameter* carries each is the modeller's choice, exactly as which state fills
-the liquid role is. Both are declared on the solver.
+of a law of motion — a gross return, a labour income, a pension match. It gets
+them by composing and differentiating the law the regime declared, so the names
+the modeller chose are never consulted and never have to be declared.
 
 Renaming a parameter is a relabelling: it cannot move the solution. Each case
 below solves one model twice, once under the default spellings and once under
-deliberately different ones, and requires the two to be identical. Equality, not
-a tolerance — the two runs execute the same arithmetic on the same nodes, so any
-difference at all would mean a parameter reached the wrong slot.
+deliberately different ones, with the *same* solver declaration in both. The two
+must be identical — equality, not a tolerance, since the two runs execute the
+same arithmetic on the same nodes, so any difference at all would mean a name
+reached a slot it should never have reached.
 """
 
 import numpy as np
@@ -23,7 +24,7 @@ from tests.solution.test_egm_continuation_grid_provenance import (
 from tests.test_models.deterministic import ds_pension as ds
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
-# The modeller's spellings, deliberately unlike the kernel's role names.
+# The modeller's spellings, deliberately unlike anything the kernel could guess.
 _RENAMED = {
     "return_liquid": "gross_return",
     "return_pension": "fund_return",
@@ -61,35 +62,27 @@ def _rename_params(params):
     }
 
 
-def _default_solvers():
-    return {"retired": EGM(savings_grid=_SAVINGS_GRID)}
-
-
-def _renamed_solvers():
-    """The same solvers, told which parameter fills each of their roles."""
+def _solvers():
+    """One declaration, used for both spellings — it names no parameter."""
     return {
-        "retired": EGM(
-            savings_grid=_SAVINGS_GRID,
-            return_param=_RENAMED["return_liquid"],
-            income_param=_RENAMED["retirement_income"],
-        )
+        "retired": EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
     }
 
 
 def _solve_default():
-    return get_model(n_periods=_N_PERIODS, solvers=_default_solvers()).solve(
+    return get_model(n_periods=_N_PERIODS, solvers=_solvers()).solve(
         params=get_params(), log_level="debug"
     )
 
 
 def _solve_renamed():
     return get_model(
-        n_periods=_N_PERIODS, solvers=_renamed_solvers(), laws=_renamed_laws()
+        n_periods=_N_PERIODS, solvers=_solvers(), laws=_renamed_laws()
     ).solve(params=_rename_params(get_params()), log_level="debug")
 
 
 def test_renaming_every_law_parameter_leaves_the_solution_unchanged():
-    """The EGM solver reads its roles out of the declared parameter names."""
+    """The solution is invariant to what the law's parameters are called."""
     regime = "retired"
     default = _solve_default()
     renamed = _solve_renamed()
@@ -106,9 +99,7 @@ def test_renaming_every_law_parameter_leaves_the_solution_unchanged():
 
 def test_the_params_template_asks_for_the_modellers_names():
     """The template names the modeller's parameters, never the kernel's roles."""
-    model = get_model(
-        n_periods=_N_PERIODS, solvers=_renamed_solvers(), laws=_renamed_laws()
-    )
+    model = get_model(n_periods=_N_PERIODS, solvers=_solvers(), laws=_renamed_laws())
     leaves = set()
 
     def walk(node):

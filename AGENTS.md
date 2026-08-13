@@ -438,13 +438,17 @@ resources = lcm.cash_on_hand_with_subsidy
   declares no discrete action and no taste shocks. Kinks, floors, and every other
   bracket shape go through `lcm.piecewise_affine` instead — see
   `docs/user_guide/nbegm.md`.
-- The single-liquid kernels apply a hardcoded budget rather than calling the regime's,
-  so the route accepts pylcm's own declarations of those forms by identity:
-  `lcm.cash_on_hand_with_subsidy` as the budget node, and `lcm.liquid_law_from_savings`
-  (or `lcm.liquid_law_from_resources` in displacement form) as the liquid law. They stay
-  ordinary executable functions, so the same model solves identically under
-  `GridSearch`. A budget they cannot express goes through a `lcm.piecewise_affine`
-  schedule with a `post_decision_function`, or `GridSearch`.
+- The case-piece kernels form cash-on-hand themselves rather than calling the regime's
+  budget node, so the route accepts pylcm's own declaration of that form by identity:
+  `lcm.cash_on_hand_with_subsidy`. A budget they cannot form goes through a
+  `lcm.piecewise_affine` schedule with a `post_decision_function`, or `GridSearch`.
+- The liquid law is read, not assumed: NBEGM takes the landing points the declared law
+  reaches on the savings grid and their derivative, so any term the modeller writes is
+  solved. The law states them as a function of a post-decision savings node — named
+  `savings` by default, otherwise named to `NBEGM(post_decision_function=...)` — and a
+  law in displacement form (`next_liquid(resources, consumption, ...)`) is refused at
+  build. `lcm.liquid_law_from_savings` is the conventional form and stays an ordinary
+  executable function, so the same model solves identically under `GridSearch`.
 - The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
   nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
   mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to

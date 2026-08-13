@@ -118,6 +118,28 @@ def test_numeric_inverse_clamps_unbracketed_target_with_zero_gradient():
     assert float(jax.grad(invert)(jnp.asarray(100.0))) == 0.0
 
 
+@pytest.mark.parametrize(
+    ("target", "bound"),
+    [(100.0, 0.5), (0.01, 2.0)],
+    ids=["root_below_bracket", "root_above_bracket"],
+)
+def test_an_unbracketed_target_returns_the_bound_itself(target, bound):
+    """An unbracketed target returns a bracket bound exactly, never a point outside.
+
+    The bracket states which actions are feasible — `c_upper` comes from the
+    resources upper bound — so an action outside it is not a slightly imprecise
+    answer but an infeasible one. Whether the returned action is admissible is a
+    decision the bracket already made, not a quantity a tolerance may absorb.
+    """
+    got = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(target),
+        marginal_utility=_crra_marginal(2.0),
+        c_lower=jnp.asarray(0.5),
+        c_upper=jnp.asarray(2.0),
+    )
+    assert float(got) == bound
+
+
 @pytest.mark.parametrize("crra", [1.5, 2.0, 3.0])
 def test_numeric_inverse_converges_in_few_iterations_on_a_wide_bracket(crra):
     """A handful of safeguarded-Newton steps suffice where bisection cannot.

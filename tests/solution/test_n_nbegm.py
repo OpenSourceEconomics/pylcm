@@ -80,6 +80,7 @@ def test_rejects_inner_without_explicit_continuous_state() -> None:
         )
 
 
+@pytest.mark.skipif_cpu
 def test_two_period_toy_agrees_with_nested_dcegm() -> None:
     """On the two-period smooth toy, `NNBEGM` tracks `NEGM(inner=DCEGM)`.
 

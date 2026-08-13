@@ -5034,6 +5034,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.2.0-h934c35e_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.3-hca6bf5a_0.conda
@@ -5049,6 +5050,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prek-0.4.4-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.14.5-habeac84_100_cp314.conda
@@ -5154,6 +5156,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -5304,6 +5307,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-16.1.0-hef695bb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-ng-16.1.0-hdbbeba8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libthrift-0.22.0-ha522d1d_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libuuid-2.42.2-h1022ec0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libxml2-16-2.15.3-h79dcc73_0.conda
@@ -5319,6 +5323,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prek-0.4.11-h069e38c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prometheus-cpp-1.3.0-h7938499_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/psutil-7.2.2-py314h2e8dab5_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-core-25.0.0-py314hd18eac9_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/python-3.14.6-hc679e19_101_cp314.conda
@@ -5425,6 +5430,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.5.0-pyhcf101f3_0.conda
@@ -5584,6 +5590,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -5710,6 +5717,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/prek-0.4.4-h6fdd925_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/prometheus-cpp-1.3.0-h0967b3e_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/psutil-7.2.2-py314ha14b1ff_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/py-spy-0.4.2-h748bcf4_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyarrow-24.0.0-py314he55896b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyarrow-core-24.0.0-py314h109bba2_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyobjc-core-12.1-py314h3a4d195_0.conda
@@ -5840,6 +5848,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.2.0-h934c35e_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.3-hca6bf5a_0.conda
@@ -5855,6 +5864,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prek-0.4.4-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.14.5-habeac84_100_cp314.conda
@@ -5960,6 +5970,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -6109,6 +6120,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.2.0-h934c35e_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.3-hca6bf5a_0.conda
@@ -6124,6 +6136,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prek-0.4.4-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.14.5-habeac84_100_cp314.conda
@@ -6229,6 +6242,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -6379,6 +6393,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-16.1.0-hef695bb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-ng-16.1.0-hdbbeba8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libthrift-0.22.0-ha522d1d_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libuuid-2.42.2-h1022ec0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libxml2-16-2.15.3-h79dcc73_0.conda
@@ -6394,6 +6409,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prek-0.4.11-h069e38c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prometheus-cpp-1.3.0-h7938499_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/psutil-7.2.2-py314h2e8dab5_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-core-25.0.0-py314hd18eac9_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/python-3.14.6-hc679e19_101_cp314.conda
@@ -6500,6 +6516,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.5.0-pyhcf101f3_0.conda
@@ -6656,6 +6673,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyh09c184e_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -6775,6 +6793,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/prek-0.4.4-h18a1a76_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/prometheus-cpp-1.3.0-hcea2f5d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/psutil-7.2.2-py314hc5dbbe4_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/py-spy-0.4.2-h77a83cd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pyarrow-24.0.0-py314h86ab7b2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pyarrow-core-24.0.0-py314h159fc0c_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/python-3.14.5-h4b44e0e_100_cp314.conda
@@ -6935,6 +6954,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.2.0-h934c35e_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.3-hca6bf5a_0.conda
@@ -6950,6 +6970,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prek-0.4.4-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h57703d4_0_cuda.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.14.5-habeac84_100_cp314.conda
@@ -7068,6 +7089,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -7257,6 +7279,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.2.0-h934c35e_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.3-hca6bf5a_0.conda
@@ -7272,6 +7295,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prek-0.4.4-hb17b654_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h57703d4_0_cuda.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.14.5-habeac84_100_cp314.conda
@@ -7390,6 +7414,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -7576,6 +7601,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-16.1.0-hef695bb_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-ng-16.1.0-hdbbeba8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libthrift-0.22.0-ha522d1d_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libuuid-2.42.2-h1022ec0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libxml2-16-2.15.3-h79dcc73_0.conda
@@ -7591,6 +7617,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prek-0.4.11-h069e38c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prometheus-cpp-1.3.0-h7938499_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/psutil-7.2.2-py314h2e8dab5_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-core-25.0.0-py314hd18eac9_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/python-3.14.6-hc679e19_101_cp314.conda
@@ -7711,6 +7738,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.5.0-pyhcf101f3_0.conda
@@ -7921,6 +7949,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libtiff-4.7.1-h9d88235_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libvulkan-loader-1.4.341.0-h5279c79_0.conda
@@ -7950,6 +7979,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyside6-6.11.1-py314h3987850_1.conda
@@ -8098,6 +8128,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -8292,6 +8323,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-ng-16.1.0-hdbbeba8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libthrift-0.22.0-ha522d1d_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libtiff-4.7.2-hdb009f0_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libuuid-2.42.2-h1022ec0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libvulkan-loader-1.4.357.0-h8b8848b_0.conda
@@ -8321,6 +8353,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prometheus-cpp-1.3.0-h7938499_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/psutil-7.2.2-py314h2e8dab5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pthread-stubs-0.4-h86ecc28_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-core-25.0.0-py314hd18eac9_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyside6-6.11.1-py314ha37eecc_1.conda
@@ -8470,6 +8503,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.5.0-pyhcf101f3_0.conda
@@ -8639,6 +8673,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -8787,6 +8822,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/prometheus-cpp-1.3.0-h0967b3e_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/psutil-7.2.2-py314ha14b1ff_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pthread-stubs-0.4-hd74edd7_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/py-spy-0.4.2-h748bcf4_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyarrow-24.0.0-py314he55896b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyarrow-core-24.0.0-py314h109bba2_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyobjc-core-12.1-py314h3a4d195_0.conda
@@ -8959,6 +8995,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libtiff-4.7.1-h9d88235_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libvulkan-loader-1.4.341.0-h5279c79_0.conda
@@ -8988,6 +9025,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyside6-6.11.1-py314h3987850_1.conda
@@ -9136,6 +9174,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -9324,6 +9363,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-ng-15.2.0-hdf11a46_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libthrift-0.22.0-h7d032f7_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libtiff-4.7.1-h9d88235_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libuuid-2.42.1-h5347b49_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libvulkan-loader-1.4.341.0-h5279c79_0.conda
@@ -9353,6 +9393,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/prometheus-cpp-1.3.0-ha5d0236_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/psutil-7.2.2-py314h0f05182_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-hb9d3cd8_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-core-24.0.0-py314h969be7f_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pyside6-6.11.1-py314h3987850_1.conda
@@ -9501,6 +9542,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -9695,6 +9737,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-ng-16.1.0-hdbbeba8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libthrift-0.22.0-ha522d1d_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libtiff-4.7.2-hdb009f0_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libuuid-2.42.2-h1022ec0_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libvulkan-loader-1.4.357.0-h8b8848b_0.conda
@@ -9724,6 +9767,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/prometheus-cpp-1.3.0-h7938499_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/psutil-7.2.2-py314h2e8dab5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pthread-stubs-0.4-h86ecc28_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-core-25.0.0-py314hd18eac9_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyside6-6.11.1-py314ha37eecc_1.conda
@@ -9873,6 +9917,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyha55dd90_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.5.0-pyhcf101f3_0.conda
@@ -10045,6 +10090,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/pysocks-1.7.1-pyh09c184e_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.3-pyhc364b38_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-discovery-1.4.0-pyhcf101f3_0.conda
@@ -10201,6 +10247,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/prometheus-cpp-1.3.0-hcea2f5d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/psutil-7.2.2-py314hc5dbbe4_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pthread-stubs-0.4-h0e40799_1002.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/py-spy-0.4.2-h77a83cd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pyarrow-24.0.0-py314h86ab7b2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pyarrow-core-24.0.0-py314h159fc0c_0_cpu.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/pyside6-6.11.1-py314h447aaf0_1.conda
@@ -12463,6 +12510,21 @@ packages:
   purls: []
   size: 435273
   timestamp: 1762022005702
+- conda: https://conda.anaconda.org/conda-forge/linux-64/libunwind-1.8.3-h65a8314_0.conda
+  sha256: 71c8b9d5c72473752a0bb6e91b01dd209a03916cb71f36cc6a564e3a2a132d7a
+  md5: e179a69edd30d75c0144d7a380b88f28
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports:
+    weak:
+    - libunwind >=1.8.3,<1.9.0a0
+  size: 75995
+  timestamp: 1757032240102
 - conda: https://conda.anaconda.org/conda-forge/linux-64/libutf8proc-2.11.3-hfe17d71_0.conda
   sha256: ecbf4b7520296ed580498dc66a72508b8a79da5126e1d6dc650a7087171288f9
   md5: 1247168fe4a0b8912e3336bccdbf98a5
@@ -12924,6 +12986,22 @@ packages:
   purls: []
   size: 8252
   timestamp: 1726802366959
+- conda: https://conda.anaconda.org/conda-forge/linux-64/py-spy-0.4.2-he182f42_0.conda
+  sha256: d34f652dc0e7889dfa17a6c1bafccfd47d73892631fe012ac5537ae1e8ac73f8
+  md5: 54de7eab65f85f265c469bff1c0845a7
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - liblzma >=5.8.3,<6.0a0
+  - libunwind >=1.8.3,<1.9.0a0
+  constrains:
+  - __glibc >=2.17
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 1759386
+  timestamp: 1777312019188
 - conda: https://conda.anaconda.org/conda-forge/linux-64/pyarrow-24.0.0-py314hdafbbf9_0.conda
   sha256: 03c421256cc31c4487b225f6a560d25fbf6102fc304b4d31fe955168ef14f630
   md5: 6629041b133a9d65d68c4f2269432378
@@ -15829,6 +15907,20 @@ packages:
     - libtiff >=4.7.2,<4.8.0a0
   size: 508982
   timestamp: 1783084925965
+- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libunwind-1.8.3-h6470e1d_0.conda
+  sha256: 86c013d522975b76e16a74341bfcb22f6ec2e9b8b87ec3e15380f46c435eaa7b
+  md5: 5d8191a950e492a06dc29b491dd5f7c5
+  depends:
+  - libgcc >=14
+  - libstdcxx >=14
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports:
+    weak:
+    - libunwind >=1.8.3,<1.9.0a0
+  size: 94555
+  timestamp: 1757032278900
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libutf8proc-2.11.3-hec6f9f7_0.conda
   sha256: a67e1c2355f98befb280bc91990504500ba28a82d5441c9fb9e10015abfd3b14
   md5: afc02d5958046be06b176058e9d630d7
@@ -16339,6 +16431,21 @@ packages:
   run_exports: {}
   size: 8342
   timestamp: 1726803319942
+- conda: https://conda.anaconda.org/conda-forge/linux-aarch64/py-spy-0.4.2-h55577c5_0.conda
+  sha256: d0bb0d2e7ab5347e6dba33b241e8cf1fb3e217ed71ec2ff1a9aa867fad0460ca
+  md5: e6059532f8d391eaee107f3507213fb1
+  depends:
+  - libgcc >=14
+  - liblzma >=5.8.3,<6.0a0
+  - libunwind >=1.8.3,<1.9.0a0
+  constrains:
+  - __glibc >=2.17
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 1284657
+  timestamp: 1777312036743
 - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/pyarrow-25.0.0-py314ha42fa4b_0.conda
   sha256: 6368b7f2bb99b93604d938a523d6217210109ebead764d0c4eb50047d5bd67c9
   md5: 31fed820704db122afc801d4511094a0
@@ -19713,7 +19820,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/pytest?source=compressed-mapping
+  - pkg:pypi/pytest?source=hash-mapping
   run_exports: {}
   size: 306724
   timestamp: 1782127176429
@@ -19733,6 +19840,19 @@ packages:
   run_exports: {}
   size: 29559
   timestamp: 1774139250481
+- conda: https://conda.anaconda.org/conda-forge/noarch/pytest-timeout-2.4.0-pyhd8ed1ab_0.conda
+  sha256: 25afa7d9387f2aa151b45eb6adf05f9e9e3f58c8de2bc09be7e85c114118eeb9
+  md5: 52a50ca8ea1b3496fbd3261bea8c5722
+  depends:
+  - pytest >=7.0.0
+  - python >=3.9
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pytest-timeout?source=hash-mapping
+  run_exports: {}
+  size: 20137
+  timestamp: 1746533140824
 - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-xdist-3.8.0-pyhd8ed1ab_0.conda
   sha256: b7b58a5be090883198411337b99afb6404127809c3d1c9f96e99b59f36177a96
   md5: 8375cfbda7c57fbceeda18229be10417
@@ -20272,7 +20392,7 @@ packages:
   - python
   license: Apache-2.0 AND MIT
   purls:
-  - pkg:pypi/types-pytz?source=compressed-mapping
+  - pkg:pypi/types-pytz?source=hash-mapping
   run_exports: {}
   size: 20618
   timestamp: 1785136222524
@@ -22048,6 +22168,19 @@ packages:
   purls: []
   size: 8381
   timestamp: 1726802424786
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/py-spy-0.4.2-h748bcf4_0.conda
+  sha256: b86f3e02e56896089435f20d71e69f6d3af240433b29aaee32f27a8686c90fd3
+  md5: ca10471ac18327cbdf8d8ee46f7bcfc3
+  depends:
+  - __osx >=11.0
+  constrains:
+  - __osx >=11.0
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 1176168
+  timestamp: 1777313031417
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyarrow-24.0.0-py314he55896b_0.conda
   sha256: af8d6775f7ba3642cbc6bd13fcd5964269d4f36ffe00ee6b54161471aeea27f8
   md5: be8e7739464185154f706560c30ced52
@@ -24150,6 +24283,19 @@ packages:
   purls: []
   size: 9389
   timestamp: 1726802555076
+- conda: https://conda.anaconda.org/conda-forge/win-64/py-spy-0.4.2-h77a83cd_0.conda
+  sha256: 3c5a70a59e497c19d01e0f48fcf15f4daa9bc8ec0258634ab0248176ad574a29
+  md5: 8438b45aaf3171c84663752d2609dd30
+  depends:
+  - ucrt >=10.0.20348.0
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 1439183
+  timestamp: 1777312207648
 - conda: https://conda.anaconda.org/conda-forge/win-64/pyarrow-24.0.0-py314h86ab7b2_0.conda
   sha256: fdf414b7269ed3474c381689344ad71a626541c1354967f9d595398a3d384198
   md5: 152580a594ef1924366fe6a934dac602

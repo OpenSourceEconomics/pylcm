@@ -30,10 +30,11 @@ from tests.test_models.nbegm_common import (
     bequest,  # noqa: F401
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     prob_die,  # noqa: F401
     prob_stay_alive,  # noqa: F401
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -116,8 +117,9 @@ def build_model(
             "subsidy_private": subsidy_private,
             "subsidy": subsidy,
             "resources": resources,
+            "savings": savings,
         },
-        liquid_law=next_liquid,
+        liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),

@@ -1,18 +1,18 @@
-"""A margin that cannot be certified is published as NaN, in either backend.
+"""A branch dominating by many orders of magnitude is the one published.
 
-Two things can stop the envelope naming an owner, and they are not the same. Two
-branches within a rounding of each other are *known* to be that close, and either
-may be taken: no state between them is demonstrably better, and the tie-break
-picks one deterministically. A comparison that left the range where the error-free
-transforms are exact is the opposite situation — nothing at all was established,
-and the branches may be arbitrarily far apart.
+Dekker's split reaches its halves by scaling its operand, and that scaling leaves
+the format's range well below the point where the product it serves would. A
+comparison whose operands sit in that band is still an ordinary comparison — the
+margin is enormous and its sign is never in doubt — so the envelope owes it an
+owner rather than an abstention.
 
-Treating the second as though it were the first is a fail-open: it is precisely
-the case where a large true margin can be reported as no margin, so the branch
-that is dominated by many orders of magnitude can be handed the query. The
-envelope publishes NaN there instead, and does so identically however the segment
-axis is blocked — a query whose answer depends on the partition would be a second
-defect on top of the first.
+Getting this wrong has a direction that matters. Publishing the *ordinary* branch
+would be a fail-open: the case where a large true margin is read as no margin is
+exactly the case where a branch dominated by many orders of magnitude can be
+handed the query. Publishing NaN would be the opposite failure, an abstention on
+a decision that was in fact established. This file rules out both, and does so
+identically however the segment axis is blocked — a query whose answer depended
+on the partition would be a defect on top of whichever it hid.
 """
 
 import jax.numpy as jnp
@@ -29,17 +29,24 @@ _DOMINANT_POLICY = 2.0
 _ORDINARY_POLICY = 0.5
 
 
-def _beyond_the_transform_domain() -> float:
-    """A finite value whose affine numerator, times a width, overflows the format."""
-    largest = float(jnp.finfo(jnp.zeros(1).dtype).max)
-    # The determinant is a numerator (value times width) times a width, so a value
-    # this size is finite while the product it enters is not.
-    return largest / 1_000.0
+def _beyond_the_split_scaling() -> float:
+    """A value whose split intermediate overflows while its own product does not.
+
+    The split scales by roughly the square root of the format's precision, so an
+    operand this size sends that intermediate out of range even though the
+    determinant it serves stays an ordinary finite number.
+
+    The result is returned in the working dtype, so that the level the setup
+    feeds in and the level the assertions expect back are the same number.
+    """
+    dtype = jnp.zeros(1).dtype
+    largest = float(jnp.finfo(dtype).max)
+    return float(jnp.asarray(largest / 1_000.0, dtype))
 
 
 def _published(*, block_size: int) -> tuple[float, float, float]:
     """Value, policy, and marginal at a query one huge branch dominates."""
-    dominant = _beyond_the_transform_domain()
+    dominant = _beyond_the_split_scaling()
     grid = jnp.asarray([_X0, _X1, _X0, _X1])
     value = jnp.asarray([dominant, dominant, 1.0, 1.0])
     policy = jnp.asarray(
@@ -66,24 +73,25 @@ def _published(*, block_size: int) -> tuple[float, float, float]:
 
 
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
-def test_an_uncertifiable_margin_publishes_no_policy(block_size: int):
-    """No branch supplies a policy where the comparison established nothing."""
+def test_the_dominant_branch_supplies_the_policy(block_size: int):
+    """The winner's policy is published, not the branch it dominates."""
     _value, policy, _marginal = _published(block_size=block_size)
 
-    assert np.isnan(policy)
+    assert policy == _DOMINANT_POLICY
 
 
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
-def test_an_uncertifiable_margin_publishes_no_value(block_size: int):
-    """The value channel fails with the policy rather than reporting a rival's."""
+def test_the_dominant_branch_supplies_the_value(block_size: int):
+    """The value channel reports the winner's own level, finite and unpoisoned."""
     value, _policy, _marginal = _published(block_size=block_size)
 
-    assert np.isnan(value)
+    assert value == _beyond_the_split_scaling()
 
 
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
-def test_an_uncertifiable_margin_publishes_no_marginal(block_size: int):
-    """The marginal channel fails with the other two."""
+def test_the_marginal_channel_survives_the_split_scaling(block_size: int):
+    """A NaN tail from the split would surface here first."""
     _value, _policy, marginal = _published(block_size=block_size)
 
-    assert np.isnan(marginal)
+    assert not np.isnan(marginal)
+    assert marginal == 0.0

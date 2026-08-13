@@ -67,13 +67,29 @@ class DCEGM(Solver):
     and an `inverse_marginal_utility` regime function — which is validated at
     `Model` construction time.
 
-    Forward simulation works but is *grid-restricted*: `simulate` recomputes
-    the argmax over the regime's gridded continuous action against the
-    stored value function, rather than interpolating the exact EGM policy.
-    Simulated continuous actions therefore live on the action grid, and with
-    taste shocks the simulated choice frequencies follow the grid-restricted
-    choice-specific values, not exactly the solve's choice probabilities.
-    The budget constraint the solve enforces intrinsically
+    That validation covers the structural contract, not the kernel's coverage.
+    A regime can satisfy the contract and still use a feature the kernel does
+    not implement yet; such a regime builds a `Model` successfully and raises
+    `NotImplementedError` naming the feature when it is solved. The deferred
+    checks are the ones needing per-period build context the model-time
+    validators do not have (see `_lcm.egm.kernel_scope`).
+
+    A solve publishes the off-grid EGM policy alongside the value functions.
+    Where the regime qualifies, forward simulation interpolates that policy at
+    the subject's resources, so the simulated continuous action is not confined
+    to the action grid; the qualifying conditions are stated in
+    `_lcm.egm.published_policy`, which lists what keeps a regime on the
+    grid-argmax path (a `Phased` declaration, an envelope backend that does not
+    certify every crossing, a passive or process continuous state, the
+    asset-row form, taste shocks).
+
+    Otherwise — and whenever `simulate` is handed user-supplied value arrays,
+    which carry no policy — `simulate` recomputes the argmax over the regime's
+    gridded continuous action against the stored value function. Simulated
+    continuous actions then live on the action grid, and with taste shocks the
+    simulated choice frequencies follow the grid-restricted choice-specific
+    values rather than exactly the solve's choice probabilities. On both paths
+    the budget constraint the solve enforces intrinsically
     (`continuous_action <= resources - savings_grid lower bound`) is applied
     as a feasibility mask during simulation.
 

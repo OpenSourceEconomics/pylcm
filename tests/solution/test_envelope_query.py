@@ -93,6 +93,7 @@ def test_query_envelope_matches_oracle(endog_grid, policy, value, segment_id, x_
     np.testing.assert_allclose(np.asarray(got_policy), oracle_policy, atol=1e-9)
 
 
+@pytest.mark.skipif_cpu
 @pytest.mark.parametrize("block_size", [1, 2, 3, 4])
 def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
     """`segment_block_size` is a memory knob: same value, policy, marginal.

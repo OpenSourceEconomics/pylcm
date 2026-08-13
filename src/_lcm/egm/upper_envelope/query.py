@@ -33,17 +33,18 @@ An interval, by contrast, cannot order anything it overlaps. Deciding among
 candidates whose error bounds overlap would promote "not separated" to "equal",
 and the tie-break — which prefers the larger value-slope — would then hand the
 query to whichever strict loser happens to be steeper. So overlap is not a tie:
-only a sign certified *exactly zero*, or a difference certified below the
-arithmetic's own resolution, reaches the documented right-continuous tie-break,
-which chooses among genuine ties deterministically. Value, policy, and marginal
-are all published from the one segment it names.
+only a sign certified *exactly zero* reaches the documented right-continuous
+tie-break, which chooses among genuine ties deterministically. Value, policy,
+and marginal are all published from the one segment it names.
 
-Failing to *separate* two segments is therefore an ordinary outcome with a
-defined answer. Failing to *compute* the comparison at all is not: where a
-product leaves the range in which the error-free transforms are exact, nothing
-follows about the geometry and the segments may be far apart. Only that second
-case abstains, publishing NaN in all three channels rather than a guess,
-identically in both backends below.
+Two segments the arithmetic cannot separate are therefore not level, and the
+query abstains. That case and the one where no comparison could be computed at
+all — a product leaving the range in which the error-free transforms are exact,
+so that nothing follows about the geometry and the segments may be far apart —
+both publish NaN in all three channels rather than a guess, identically in both
+backends below. Between "these two are equally good" and "which of these two is
+better is beyond this arithmetic" only the first has an answer to publish, and
+a query is answered only when every segment bracketing it was decided.
 
 By default the evaluation is a fixed-shape `(n_query, n_segment)`
 bracket-and-reduce: no sequential scan, no NaN-padded refined row,
@@ -70,6 +71,7 @@ from _lcm.egm.upper_envelope.certified_sign import (
     affine_numerator,
     certified_margin_sign,
     certified_quotient_margin,
+    is_subnormal,
 )
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
@@ -77,6 +79,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_from_difference,
     dd_mul,
     dd_quotient,
+    scale_by_power_of_two,
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
@@ -177,6 +180,9 @@ def _value_quotient(
     at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
         query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
     )
+    left_grid, divisor_grid, query = _on_the_links_own_scale(
+        left_grid=left_grid, divisor_grid=divisor_grid, query=query
+    )
     numerator = dd_add(
         dd_mul(
             dd_from_difference(divisor_grid, query), dd_from_difference(left, level)
@@ -192,6 +198,63 @@ def _value_quotient(
         ),
         _select_double_double(at_endpoint, unit, divisor),
     )
+
+
+def _on_the_links_own_scale(
+    *, left_grid: FloatND, divisor_grid: FloatND, query: FloatND
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Return the link's three abscissae scaled to where its differences are readable.
+
+    A link read is a ratio of quantities built from the differences between these
+    three, and it is homogeneous of degree one in them: scaling all three by one
+    power of two multiplies numerator and divisor alike and leaves the ratio
+    identical. Scaling by a power of two is itself exact, so nothing is traded
+    for it.
+
+    What it buys is an arithmetic that can represent what it is handed. A link at
+    the bottom of the normal range has differences among the subnormals, where a
+    product rounds to a whole ULP — the endpoint values it was carrying are gone,
+    and the ratio reads one for a link of any value. Measuring the link on its own
+    scale first puts those differences back among ordinary numbers.
+
+    The scale is anchored on the *smallest* of the three, not the largest. What
+    ruins a read is a difference falling under the smallest normal, and it is the
+    smallest abscissa that a difference sits closest to; normalizing the largest
+    instead would push the small end down and manufacture the same loss on a link
+    whose endpoints span a wide range. The anchor is then backed off far enough to
+    keep the largest of the three finite, since a link spanning the whole range
+    cannot have both.
+    """
+    terms = (left_grid, divisor_grid, query)
+    _mantissa, largest = jnp.frexp(
+        jnp.maximum(
+            jnp.maximum(jnp.abs(terms[0]), jnp.abs(terms[1])), jnp.abs(terms[2])
+        )
+    )
+    smallest = _smallest_finite_exponent(*terms)
+    # Scaling the smallest term to the binade around one costs the largest term
+    # `smallest` binades of headroom; back the exponent off by whatever that
+    # overruns the top of the range.
+    headroom = jnp.asarray(jnp.finfo(left_grid.dtype).maxexp - 1, dtype=largest.dtype)
+    exponent = jnp.maximum(smallest, largest - headroom)
+    scaled = tuple(scale_by_power_of_two(term, -exponent) for term in terms)
+    return scaled[0], scaled[1], scaled[2]
+
+
+def _smallest_finite_exponent(*terms: FloatND) -> IntND:
+    """Return the `frexp` exponent of the smallest finite nonzero term.
+
+    Zero and non-finite terms carry no scale of their own and are ignored; a group
+    holding nothing else scales by `2**0`, which leaves it alone.
+    """
+    magnitude = jnp.full_like(terms[0], jnp.inf)
+    for term in terms:
+        usable = jnp.isfinite(term) & (term != 0.0)
+        magnitude = jnp.minimum(magnitude, jnp.where(usable, jnp.abs(term), jnp.inf))
+    _mantissa, exponent = jnp.frexp(
+        jnp.where(jnp.isfinite(magnitude), magnitude, 1.0),
+    )
+    return exponent
 
 
 def _select_double_double(
@@ -259,10 +322,32 @@ def _comparable_lines(
 
     - a link stored right-to-left is swapped. An affine line is the same line
       read either way, so this is exact and changes no answer.
-    - a *live* lone candidate is a zero-width self-bracket. The flat line through
-      its own point reads exactly its own value at the one abscissa it brackets,
-      and `nextafter` is the narrowest positive width the format has, so no other
-      query can reach it.
+    - a *live* lone candidate is a zero-width self-bracket, and so is a link
+      between two coincident nodes. Both are given a flat line one representable
+      step wide. A flat line takes its endpoint value at every abscissa, so that
+      width changes no reading, and it cannot widen the link's reach either:
+      which queries a link brackets is settled from the stored abscissae, never
+      from this line, so a self-bracket brackets its own abscissa and nothing
+      else. At abscissa zero, though, one step is the smallest subnormal, and a
+      subnormal operand is refused outright — which would abstain on a query
+      whose candidates are separated by orders of magnitude. So a line that is
+      flat *as a matter of fact*, both endpoints carrying one stored value, is
+      given unit width there instead. The reading is unchanged and the decision
+      does not depend on which width it was: rivals spanning nine orders of
+      magnitude either side of it are decided alike.
+    - where two coincident nodes disagree, the flat line is imposed rather than
+      factual — it reports the lower-stored endpoint and drops the other. That
+      is left exactly as it is, because nothing rests on it: each of the two
+      nodes also reaches the envelope as its own self-bracket, and the higher of
+      them wins there, so the imposed line settles nothing it should not.
+
+    One boundary is known and deliberately not repaired: a flat line in the
+    format's *topmost* binade is refused, where an ordinary two-node link at the
+    same magnitude is decided. Every binade below it is decided. Resource grids
+    are hundreds of orders of magnitude away, so no model reaches it — but the
+    suite exercises the format's edge on purpose, so a witness built one binade
+    higher than the existing ones would meet it. It is this boundary rather than
+    a new defect.
     - a dead or non-finite entry is replaced by a fixed placeholder line. This is
       the case that would otherwise do damage: a NaN abscissa makes every
       comparison against it `UNRESOLVED`, which is the loud failure signal, so a
@@ -285,9 +370,18 @@ def _comparable_lines(
     v1 = jnp.where(stored_descending, at_lower, at_upper)
 
     degenerate = x1 <= x0
+    step = jnp.nextafter(x0, jnp.inf)
+    # One representable step is a readable width at every abscissa but zero,
+    # where it is the smallest subnormal — and a subnormal operand is refused
+    # outright, so the comparison would abstain on a query whose candidates are
+    # separated by orders of magnitude. A flat line takes its endpoint value at
+    # every abscissa, so replacing that width changes no reading; it is only
+    # widened where the line is flat as a matter of fact rather than by
+    # imposition, which is what `v1 == v0` asks.
+    flat_at_zero = degenerate & (v1 == v0) & (x0 == 0.0)
     return _ComparableLines(
         x0=x0,
-        x1=jnp.where(degenerate, jnp.nextafter(x0, jnp.inf), x1),
+        x1=jnp.where(flat_at_zero, jnp.ones_like(x0), jnp.where(degenerate, step, x1)),
         v0=v0,
         v1=jnp.where(degenerate, v0, v1),
     )
@@ -355,21 +449,40 @@ def _certified_owner(
     lines: _ComparableLines,
     reference: _ComparableLines,
     contending: BoolND,
+    bracketing: BoolND,
     query: FloatND,
     value: FloatND,
     right_available: BoolND,
-    slope: FloatND,
+    slope_high: FloatND,
+    slope_low: FloatND,
 ) -> _CertifiedOwner:
     """Settle ownership among the contenders by certified sign.
 
     A candidate certified strictly above the reference replaces it, up to
     `_PROMOTION_ROUNDS` times; the round after that is a validation the winner has
-    to survive against every remaining contender. Candidates certified level with
-    the winner — exactly equal, or apart by less than the arithmetic can resolve —
-    are the ones the right-continuous tie-break chooses among. The winner is
-    always among them, provided the reference is itself a contender: a line
-    compared with the candidate it was taken from yields its own sign, which is
-    never strict, so no separate record of which candidate it was needs carrying.
+    to survive against every remaining contender. Only candidates certified
+    *exactly* level with the winner reach the right-continuous tie-break. The
+    winner is always among them, provided the reference is itself a contender: a
+    line compared with the candidate it was taken from yields its own sign, which
+    is exactly zero, so no separate record of which candidate it was needs
+    carrying.
+
+    A difference certified below the arithmetic's own resolution is not one of
+    them. That outcome says the comparison was not settled, not that the two
+    lines are level, and the distinction is the whole content of the certificate:
+    a strictly better candidate whose margin the format cannot resolve is still
+    strictly better, and handing it to a tie-break lets a deterministic
+    preference answer a question the geometry has already answered. So it leaves
+    the query unsettled, and the query publishes NaN.
+
+    The winner is validated against every candidate that *brackets* the query,
+    not only those still contending. Both tests are sound, but they are complete
+    in different regimes, so a candidate dismissed by one may be undecidable by
+    the other — and which of the two dismissed it depends on the pivot the bounds
+    were taken around, which is chosen by a reduction over reads that a genuine
+    near-tie leaves equal. Validating against the wider set is what keeps the
+    published owner a property of the lines rather than of the order they arrived
+    in.
     """
     lines = _ComparableLines(
         *(jnp.broadcast_to(field, contending.shape) for field in lines)
@@ -389,16 +502,19 @@ def _certified_owner(
         )
 
     sign = _sign_against_reference(lines=lines, reference=reference, query=query)
-    level_with = contending & ((sign == 0) | (sign == BELOW_RESOLUTION_SIGN))
+    level_with = contending & (sign == 0)
     return _CertifiedOwner(
-        index=jnp.argmax(
-            _right_continuous_rank(
-                near_max=level_with, right_available=right_available, slope=slope
-            ),
-            axis=1,
-        )[:, None].astype(jnp.int32),
-        settled=~jnp.any(contending & (sign == 1), axis=1)
-        & ~jnp.any(contending & (sign == UNRESOLVED_SIGN), axis=1),
+        index=_lexicographic_argmax(
+            _tie_break_key(
+                level_with=level_with,
+                right_available=right_available,
+                slope_high=slope_high,
+                slope_low=slope_low,
+            )
+        ),
+        settled=~jnp.any(bracketing & (sign == 1), axis=1)
+        & ~jnp.any(bracketing & (sign == UNRESOLVED_SIGN), axis=1)
+        & ~jnp.any(bracketing & (sign == BELOW_RESOLUTION_SIGN), axis=1),
     )
 
 
@@ -433,9 +549,17 @@ def _link_terms(
     left_grid: FloatND,
     right_grid: FloatND,
 ) -> tuple[DoubleDouble, DoubleDouble, FloatND, BoolND]:
-    """Split a link read into its exact endpoint case and its affine quotient."""
+    """Split a link read into its exact endpoint case and its affine quotient.
+
+    The quotient is homogeneous of degree one in the link's three abscissae, so
+    the link is measured on its own scale first; see `_value_quotient`, which
+    carries the same argument for the margin.
+    """
     at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
         query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
+    )
+    left_grid, divisor_grid, query = _on_the_links_own_scale(
+        left_grid=left_grid, divisor_grid=divisor_grid, query=query
     )
     numerator = affine_numerator(
         x0=left_grid, x1=divisor_grid, v0=left, v1=right, x_query=query
@@ -555,11 +679,48 @@ def envelope_at_query(
     n_segment = links.left_grid.shape[0]
     if 0 < segment_block_size < n_segment:
         _fail_if_blocked_scan_cannot_serve(arithmetic=arithmetic)
-        return _envelope_blocked(
+        published = _envelope_blocked(
             links=links, query=query, block_size=segment_block_size
         ).published
+    else:
+        published = _envelope_dense(
+            links=links, query=query, arithmetic=arithmetic
+        ).published
 
-    return _envelope_dense(links=links, query=query, arithmetic=arithmetic).published
+    unreadable = _subnormal_operand_present(
+        row=(endog_grid, value, policy, marginal), query=query
+    )
+    readable_value, readable_policy, readable_marginal = (
+        jnp.where(unreadable, jnp.nan, channel) for channel in published
+    )
+    return readable_value, readable_policy, readable_marginal
+
+
+def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> BoolND:
+    """Report, per query, whether an operand the backend cannot read is in play.
+
+    XLA flushes subnormals to zero, in both directions and in both precisions: a
+    subnormal operand compares equal to zero and every arithmetic operation on
+    it yields zero. Its magnitude is therefore not merely rounded on the way
+    through the affine read — it is gone before the read begins, and no
+    rearrangement of the arithmetic downstream can recover it. A link from `0` to
+    the smallest normal, read at a subnormal query, has an exact affine value of
+    `2**-23` at float32 and `2**-52` at float64; the compiled program publishes
+    zero, and a rival at half the exact value then wins a comparison it loses.
+
+    Only the bit pattern survives, so that is what is inspected. A query carrying
+    one is refused on its own; one anywhere in the row refuses every query,
+    because which segment a query ends up owned by is not known here and the
+    affected link may be any of them.
+
+    Refusing is not the repair. The repair is an arithmetic that reads operands
+    through their significands and exponents rather than as floats, which is a
+    representation change this predicate does not attempt. What it does is make
+    the failure loud, so a wrong number is never published in place of one the
+    format holds perfectly well.
+    """
+    in_row = jnp.any(jnp.stack([jnp.any(is_subnormal(term)) for term in row]))
+    return in_row | is_subnormal(query)
 
 
 def _fail_if_blocked_scan_cannot_serve(*, arithmetic: ComparisonArithmetic) -> None:
@@ -602,8 +763,6 @@ def _envelope_dense(
     upper = jnp.maximum(left_grid, right_grid)[None, :]
     brackets = segment_live[None, :] & (flat >= lower) & (flat <= upper)
 
-    width = (right_grid - left_grid)[None, :]
-    safe_width = jnp.where(width == 0.0, 1.0, width)
     abscissae = {
         "query": flat,
         "left_grid": left_grid[None, :],
@@ -634,10 +793,14 @@ def _envelope_dense(
     # that extends strictly to the right of the query (so "larger value-slope is
     # higher just to the right" is meaningful), and among those the larger slope.
     # Only at the global upper endpoint, where nothing continues right, fall back
-    # to the largest slope. `_right_continuous_rank` folds both keys into one
-    # comparable scalar so this dense reduction and the blocked scan select the
-    # same winner.
-    slope = (right_value - left_value)[None, :] / safe_width
+    # to the largest slope. The fields stay separate and are compared in order, so
+    # this dense reduction and the blocked scan select the same winner.
+    slope_high, slope_low = _slope_words(
+        left_value=left_value[None, :],
+        right_value=right_value[None, :],
+        left_grid=left_grid[None, :],
+        right_grid=right_grid[None, :],
+    )
     right_available = flat < upper
     if arithmetic == "ordinary":
         # No certificate, so nothing to order by but the reads themselves: the
@@ -646,14 +809,14 @@ def _envelope_dense(
         best_read = jnp.max(
             jnp.where(brackets, value_interp, -jnp.inf), axis=1, keepdims=True
         )
-        best = jnp.argmax(
-            _right_continuous_rank(
-                near_max=brackets & (value_interp >= best_read),
+        best = _lexicographic_argmax(
+            _tie_break_key(
+                level_with=brackets & (value_interp >= best_read),
                 right_available=right_available,
-                slope=slope,
-            ),
-            axis=1,
-        )[:, None]
+                slope_high=slope_high,
+                slope_low=slope_low,
+            )
+        )
         decided = any_bracket
     else:
         pivot = _pivot_index(brackets=brackets, value=value_interp)
@@ -696,10 +859,12 @@ def _envelope_dense(
                 )
             ),
             contending=contending,
+            bracketing=brackets,
             query=flat,
             value=value_interp,
             right_available=right_available,
-            slope=slope,
+            slope_high=slope_high,
+            slope_low=slope_low,
         )
         best = owner.index
         decided = any_bracket & owner.settled
@@ -718,22 +883,103 @@ def _envelope_dense(
     )
 
 
-def _right_continuous_rank(
-    *, near_max: BoolND, right_available: BoolND, slope: FloatND
-) -> FloatND:
-    """Return one comparable scalar per segment for the right-continuous tie-break.
+class _TieBreakKey(NamedTuple):
+    """The right-continuous tie-break's fields, most significant first.
 
-    Ranks a right-extending near-max segment above one that ends at the query, and
-    among equally-eligible segments the larger value-slope. `arctan` bounds the slope
-    into `(-pi/2, pi/2)`, so the integer right-extends bit dominates it; non-near-max
-    segments get `-inf`. `argmax` over this key reproduces "prefer a right-extending
-    near-max segment, else the largest near-max slope" with no global reduction, so
-    the dense path and the blocked scan (which compares this scalar across blocks)
-    select the same winner.
+    Kept apart rather than folded into one number. Any single scalar has to
+    bound the slope to leave room for the right-extension bit above it, and a
+    bounded reparametrisation flattens as it saturates: slopes hundreds of
+    representable steps apart map onto one key exactly where EGM candidates are
+    steepest, and the tie-break is then handed a collision it can only settle by
+    array position. Comparing the fields in order costs one more reduction and
+    settles the same question without ever inventing a tie.
     """
-    bounded_slope = jnp.arctan(slope) / jnp.pi + 0.5
-    rank = right_available.astype(bounded_slope.dtype) + bounded_slope
-    return jnp.where(near_max, rank, -jnp.inf)
+
+    right_available: FloatND
+    """`1` where the segment extends strictly right of the query, else `0`."""
+    slope_high: FloatND
+    """Leading word of the value-slope."""
+    slope_low: FloatND
+    """Trailing word of the value-slope, which orders slopes the leading word ties."""
+
+
+def _slope_words(
+    *,
+    left_value: FloatND,
+    right_value: FloatND,
+    left_grid: FloatND,
+    right_grid: FloatND,
+) -> tuple[FloatND, FloatND]:
+    """Return the value-slope as two words, from exact endpoint differences.
+
+    Both differences are formed by `two_sum` and so are exact; only the division
+    rounds, and it rounds into a pair rather than a single float. Two slopes are
+    then ordered whenever the working precision separates them twice over, where
+    one rounded float stops separating them once the slope is steep.
+
+    A zero-width link has no slope. Its divisor is displaced to keep the
+    quotient finite; the tie-break only ever reads it against another
+    zero-width link, which the right-extension field has already ordered.
+    """
+    width = dd_from_difference(right_grid, left_grid)
+    safe_width = (
+        jnp.where(width[0] == 0.0, jnp.ones_like(width[0]), width[0]),
+        jnp.where(width[0] == 0.0, jnp.zeros_like(width[1]), width[1]),
+        width[2],
+    )
+    return dd_quotient(dd_from_difference(right_value, left_value), safe_width)
+
+
+def _tie_break_key(
+    *,
+    level_with: BoolND,
+    right_available: BoolND,
+    slope_high: FloatND,
+    slope_low: FloatND,
+) -> _TieBreakKey:
+    """Return the ordered fields the tie-break compares, per segment.
+
+    A segment not level with the winner is given `-inf` in every field, so it
+    loses on the first comparison and never reaches the later ones.
+    """
+    excluded = jnp.full_like(slope_high, -jnp.inf)
+    return _TieBreakKey(
+        right_available=jnp.where(
+            level_with, right_available.astype(slope_high.dtype), excluded
+        ),
+        slope_high=jnp.where(level_with, slope_high, excluded),
+        slope_low=jnp.where(level_with, slope_low, excluded),
+    )
+
+
+def _lexicographic_argmax(key: _TieBreakKey) -> IntND:
+    """Return the column winning the ordered comparison, per query.
+
+    Each field narrows the field of candidates still tied on every field before
+    it. Segments excluded by `_tie_break_key` carry `-inf` throughout, so they
+    survive only where nothing else does at all.
+    """
+    still_tied = jnp.ones_like(key.right_available, dtype=bool)
+    for field in key:
+        best = jnp.max(jnp.where(still_tied, field, -jnp.inf), axis=1, keepdims=True)
+        still_tied = still_tied & (field == best)
+    return jnp.argmax(still_tied, axis=1)[:, None].astype(jnp.int32)
+
+
+def _outranks(*, challenger: _TieBreakKey, held: _TieBreakKey) -> BoolND:
+    """Whether one segment's fields beat another's in order.
+
+    The blocked scan carries the standing winner's fields across blocks, so the
+    same ordering has to be expressible between two single segments rather than
+    across a row. Comparing in order is the same rule the dense reduction
+    applies, so both paths name the same winner.
+    """
+    decided = jnp.zeros_like(challenger[0], dtype=bool)
+    beaten = jnp.zeros_like(challenger[0], dtype=bool)
+    for challenging, standing in zip(challenger, held, strict=True):
+        beaten = beaten | (~decided & (challenging > standing))
+        decided = decided | (challenging != standing)
+    return beaten
 
 
 class _BlockTerms(NamedTuple):
@@ -747,8 +993,10 @@ class _BlockTerms(NamedTuple):
     """Policy read along the link at the query."""
     marginal: FloatND
     """Marginal read along the link at the query."""
-    slope: FloatND
-    """Value-slope of the link, for the right-continuous tie-break."""
+    slope_high: FloatND
+    """Leading word of the link's value-slope, for the right-continuous tie-break."""
+    slope_low: FloatND
+    """Trailing word of the same slope, which orders what the leading word ties."""
     upper: FloatND
     """Upper endpoint of the link, for the same tie-break."""
 
@@ -771,8 +1019,6 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
     upper = jnp.maximum(left_grid, right_grid)[None, :]
     brackets = live[None, :] & (q >= lower) & (q <= upper)
 
-    width = (right_grid - left_grid)[None, :]
-    safe_width = jnp.where(width == 0.0, 1.0, width)
     spread_left_grid = left_grid[None, :]
     spread_right_grid = right_grid[None, :]
     value_interp = _along_link(
@@ -796,13 +1042,19 @@ def _block_query_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Block
         left_grid=spread_left_grid,
         right_grid=spread_right_grid,
     )
-    slope = (right_value - left_value)[None, :] / safe_width
+    slope_high, slope_low = _slope_words(
+        left_value=left_value[None, :],
+        right_value=right_value[None, :],
+        left_grid=spread_left_grid,
+        right_grid=spread_right_grid,
+    )
     return _BlockTerms(
         brackets=brackets,
         value=value_interp,
         policy=policy_interp,
         marginal=marginal_interp,
-        slope=slope,
+        slope_high=slope_high,
+        slope_low=slope_low,
         upper=upper,
     )
 
@@ -898,12 +1150,13 @@ def _envelope_blocked(
       above the reference is a property of the two alone, so a block can answer it
       without seeing any other block — which is why the reference travels as a
       *line* rather than as a segment index the blocks would have to resolve.
-    - The final pass re-scans once more and, among segments certified level with
-      the reference, keeps the winner of the right-continuous rank
-      (`_right_continuous_rank`: a right-extending segment over one ending at the
-      query, then larger value-slope) — the dense path's tie-break. The strict
-      cross-block `>` keeps the earliest such winner, matching the dense `argmax`,
-      and value, policy, and marginal are all published from it. The same pass
+    - The final pass re-scans once more and, among segments certified exactly
+      level with the reference, keeps the winner of the right-continuous
+      tie-break (`_tie_break_key`: a right-extending segment over one ending at
+      the query, then larger value-slope) — the dense path's tie-break. Comparing
+      the fields in order across blocks keeps the earliest such winner, matching
+      the dense selection, and value, policy, and marginal are all published from
+      it. The same pass
       accumulates whether any bracketing link still beats the reference, and
       whether any bracketing comparison could not be computed at all; either
       leaves the query undecided.
@@ -1041,10 +1294,10 @@ def _envelope_blocked(
         )
 
     def winner_step(
-        carry: tuple[FloatND, FloatND, FloatND, FloatND, BoolND, BoolND],
+        carry: tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
-    ) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND, BoolND, BoolND], None]:
-        best_rank, best_value, best_policy, best_marginal, any_bracket, settled = carry
+    ) -> tuple[tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND], None]:
+        best_key, best_value, best_policy, best_marginal, any_bracket, settled = carry
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
         lines = _block_lines(block=block, live=block_live)
@@ -1052,34 +1305,42 @@ def _envelope_blocked(
         sign = _sign_against_reference(
             lines=lines, reference=reference, query=flat[:, None]
         )
-        rank = _right_continuous_rank(
-            near_max=contending & ((sign == 0) | (sign == BELOW_RESOLUTION_SIGN)),
+        key = _tie_break_key(
+            level_with=contending & (sign == 0),
             right_available=flat[:, None] < terms.upper,
-            slope=terms.slope,
+            slope_high=terms.slope_high,
+            slope_low=terms.slope_low,
         )
-        winner = jnp.argmax(rank, axis=1)[:, None]
+        winner = _lexicographic_argmax(key)
 
         def _take(channel: FloatND) -> FloatND:
             return jnp.take_along_axis(channel, winner, axis=1)[:, 0]
 
-        block_rank = _take(rank)
-        take = block_rank > best_rank
+        block_key = _TieBreakKey(*(_take(field) for field in key))
+        take = _outranks(challenger=block_key, held=best_key)
         return (
-            jnp.where(take, block_rank, best_rank),
+            _TieBreakKey(
+                *(
+                    jnp.where(take, challenging, standing)
+                    for challenging, standing in zip(block_key, best_key, strict=True)
+                )
+            ),
             jnp.where(take, _take(terms.value), best_value),
             jnp.where(take, _take(terms.policy), best_policy),
             jnp.where(take, _take(terms.marginal), best_marginal),
             any_bracket | jnp.any(terms.brackets, axis=1),
             settled
-            & ~jnp.any(contending & (sign == 1), axis=1)
-            & ~jnp.any(contending & (sign == UNRESOLVED_SIGN), axis=1),
+            & ~jnp.any(terms.brackets & (sign == 1), axis=1)
+            & ~jnp.any(terms.brackets & (sign == UNRESOLVED_SIGN), axis=1)
+            & ~jnp.any(terms.brackets & (sign == BELOW_RESOLUTION_SIGN), axis=1),
         ), None
 
     empty = jnp.full((n_query,), jnp.nan, dtype=dtype)
+    nothing_yet = jnp.full((n_query,), -jnp.inf, dtype=dtype)
     (_, env_value, env_policy, env_marginal, any_bracket, settled), _ = jax.lax.scan(
         winner_step,
         (
-            jnp.full((n_query,), -jnp.inf, dtype=dtype),
+            _TieBreakKey(nothing_yet, nothing_yet, nothing_yet),
             empty,
             empty,
             empty,

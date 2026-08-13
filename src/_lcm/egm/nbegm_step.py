@@ -97,8 +97,8 @@ def nbegm_multi_interval_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -146,8 +146,12 @@ def nbegm_multi_interval_step(
         discount_factor: Discount factor.
         preferences: The regime's felicity, its marginal, and its inverse
             marginal, each a callable of one array.
-        gross_return: Gross liquid return `1 + r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is the
+            factor the Euler equation discounts the continuation marginal by.
+            For the conventional law this is the gross return at every node.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -170,12 +174,11 @@ def nbegm_multi_interval_step(
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
 
-    next_liquid = gross_return * savings_grid + income
     value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
     consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+        discount_factor * marginal_return * marginal_next
     )
     coh_endog = consumption + savings_grid
     # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
@@ -209,8 +212,8 @@ def nbegm_multi_interval_step(
             next_value=next_value,
             discount_factor=discount_factor,
             preferences=preferences,
-            gross_return=gross_return,
-            income=income,
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
         )
         in_flat = endog_interval == i
         liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
@@ -244,15 +247,16 @@ def nbegm_multi_interval_step(
     segment_parts: list[Float1D] = [interior_segment]
 
     # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
-    # land next-period liquid at `income`. A candidate over the whole grid, since the
-    # constraint binds wherever the no-save corner beats the Euler path.
-    value_at_income = jnp.interp(jnp.asarray(income), next_liquid_grid, next_value)
+    # and land wherever the declared law sends the savings grid's lowest node. A
+    # candidate over the whole grid, since the constraint binds wherever the no-save
+    # corner beats the Euler path.
+    value_at_corner = jnp.interp(next_liquid[0], next_liquid_grid, next_value)
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
         coh=coh_grid,
         preferences=preferences,
         discount_factor=discount_factor,
-        continuation=value_at_income,
+        continuation=value_at_corner,
         coh_slope=coh_slopes[interval_of_grid],
     )
     endog_parts.append(s0[0])
@@ -377,6 +381,32 @@ def _invert_coh_with_linear_extension(
         below,
         jnp.where(coh_endog > coh_case_grid[-1], above, inner),
     )
+
+
+def _law_at_savings(
+    *, savings: FloatND, savings_grid: Float1D, next_liquid: Float1D
+) -> FloatND:
+    """Read the declared law of motion at savings off the tabulation's own nodes.
+
+    The law reaches the kernels as its landing points on `savings_grid`, which is
+    what the Euler inversion consumes. A corner search evaluates it at savings the
+    grid does not carry, so it is read back from that tabulation by interpolation:
+    exact for a law affine in savings, and accurate to the savings grid otherwise.
+    """
+    return jnp.interp(savings, savings_grid, next_liquid)
+
+
+def _savings_reaching(
+    *, target: FloatND, savings_grid: Float1D, next_liquid: Float1D
+) -> FloatND:
+    """Return the savings level whose landing point is `target`.
+
+    Boundary targeting needs the savings that lands exactly on a jump breakpoint,
+    which is the law read backwards. The solver accepts only laws strictly
+    increasing in savings, so the tabulation is invertible and interpolating it
+    with the roles of the two axes swapped is well posed.
+    """
+    return jnp.interp(target, next_liquid, savings_grid)
 
 
 def _invert_euler_over_savings(
@@ -1316,8 +1346,8 @@ def _floor_optimum(
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
     n_dense: int = 512,
 ) -> tuple[ScalarFloat, ScalarFloat]:
     """Find the value and policy at a fixed floor cash-on-hand by a dense search.
@@ -1325,13 +1355,18 @@ def _floor_optimum(
     Where the floor binds, cash-on-hand equals `floor_coh` for every liquid, so the
     value is the single-point Bellman max over consumption. A dense consumption
     search evaluates it directly — convention-free and robust to a recurring flat
-    continuation, where the Euler inversion is degenerate.
+    continuation, where the Euler inversion is degenerate. The search saves what it
+    does not consume, so it reads the regime's own law at those savings levels.
     """
     fractions = jnp.linspace(1e-4, 1.0, n_dense)
     consumption = fractions * floor_coh
-    next_liquid = gross_return * (floor_coh - consumption) + income
+    landing = _law_at_savings(
+        savings=floor_coh - consumption,
+        savings_grid=savings_grid,
+        next_liquid=next_liquid,
+    )
     value = preferences.utility(consumption) + discount_factor * jnp.interp(
-        next_liquid, next_liquid_grid, next_value
+        landing, next_liquid_grid, next_value
     )
     best = jnp.argmax(value)
     return value[best], consumption[best]
@@ -1346,8 +1381,8 @@ def nbegm_discrete_envelope_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     choices: tuple[Mapping[str, Float1D], ...],
     taste_shock_scale: float = 0.0,
     arithmetic: ComparisonArithmetic = "certified",
@@ -1380,8 +1415,12 @@ def nbegm_discrete_envelope_step(
         discount_factor: Discount factor.
         preferences: The regime's felicity, its marginal, and its inverse
             marginal, each a callable of one array.
-        gross_return: Gross liquid return `1 + r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
         choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
             `coh_intercepts`, and `breakpoints` for `nbegm_multi_interval_step`.
         taste_shock_scale: EV1 taste-shock scale; `0` is the hard maximum.
@@ -1409,8 +1448,8 @@ def nbegm_discrete_envelope_step(
             savings_grid=savings_grid,
             discount_factor=discount_factor,
             preferences=preferences,
-            gross_return=gross_return,
-            income=income,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
             coh_slopes=choice["coh_slopes"],
             coh_intercepts=choice["coh_intercepts"],
             breakpoints=choice["breakpoints"],
@@ -1453,8 +1492,8 @@ def nbegm_unified_step(  # noqa: PLR0915
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     coh_slopes: Float1D,
     coh_intercepts: Float1D,
     breakpoints: Float1D,
@@ -1489,8 +1528,12 @@ def nbegm_unified_step(  # noqa: PLR0915
         discount_factor: Discount factor.
         preferences: The regime's felicity, its marginal, and its inverse
             marginal, each a callable of one array.
-        gross_return: Gross liquid return `1 + r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
         coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
@@ -1520,7 +1563,6 @@ def nbegm_unified_step(  # noqa: PLR0915
     case_ends = (*jump_positions, last_interval)
     case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
-    next_liquid = gross_return * savings_grid + income
     value_next = _jump_aware_interp(
         next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
     )
@@ -1528,13 +1570,13 @@ def nbegm_unified_step(  # noqa: PLR0915
         next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+        discount_factor * marginal_return * marginal_next
     )
     degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
     coh_endog = consumption + savings_grid
     interp_value = preferences.utility(consumption) + discount_factor * value_next
     value_at_income = _jump_aware_interp(
-        jnp.asarray(income),
+        next_liquid[0],
         next_liquid_grid,
         next_value,
         jump_breakpoints,
@@ -1624,8 +1666,8 @@ def nbegm_unified_step(  # noqa: PLR0915
                     next_value=next_value,
                     discount_factor=discount_factor,
                     preferences=preferences,
-                    gross_return=gross_return,
-                    income=income,
+                    savings_grid=savings_grid,
+                    next_liquid=next_liquid,
                     asset_limit=cliff,
                     prev_limit=prev_limit,
                     next_limit=next_limit,
@@ -1670,8 +1712,8 @@ def _boundary_targeting_coh(
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
     asset_limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
     next_limit: ScalarFloat | float,
@@ -1726,7 +1768,9 @@ def _boundary_targeting_coh(
             n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
-    s_kink = (target - income) / gross_return
+    s_kink = _savings_reaching(
+        target=target, savings_grid=savings_grid, next_liquid=next_liquid
+    )
     kink_consumption = coh_case_grid - s_kink
     kink_value = (
         preferences.utility(kink_consumption) + discount_factor * value_at_target
@@ -1755,8 +1799,8 @@ def nbegm_recurring_jump_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     subsidy_levels: Float1D,
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner = "otherwise",
@@ -1786,8 +1830,12 @@ def nbegm_recurring_jump_step(
         discount_factor: Discount factor.
         preferences: The regime's felicity, its marginal, and its inverse
             marginal, each a callable of one array.
-        gross_return: Gross liquid return `1 + r`.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
         subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
         jump_breakpoints: Sorted ascending liquid cliffs, length N.
         equality_owner: Side owning each exact cliff point (`when` or `otherwise`).
@@ -1827,8 +1875,8 @@ def nbegm_recurring_jump_step(
                 savings_grid=savings_grid,
                 discount_factor=discount_factor,
                 preferences=preferences,
-                gross_return=gross_return,
-                income=income,
+                next_liquid=next_liquid,
+                marginal_return=marginal_return,
                 subsidy=subsidy_levels[k],
                 jump_breakpoints=jump_breakpoints,
                 equality_owner=equality_owner,
@@ -1869,8 +1917,8 @@ def _recurring_jump_case(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     subsidy: ScalarFloat | float,
     jump_breakpoints: Float1D,
     equality_owner: EqualityOwner,
@@ -1883,7 +1931,6 @@ def _recurring_jump_case(
     contributes, beyond the Euler path, a boundary-targeting candidate on each side
     of every cliff and the hard borrowing corner, all over the liquid grid.
     """
-    next_liquid = gross_return * savings_grid + income
     value_next = _jump_aware_interp(
         next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
     )
@@ -1891,7 +1938,7 @@ def _recurring_jump_case(
         next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
     )
     consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+        discount_factor * marginal_return * marginal_next
     )
     liquid_endog = jnp.where(
         _degenerate_inversion(marginal=marginal_next, consumption=consumption),
@@ -1924,8 +1971,8 @@ def _recurring_jump_case(
                 next_value=next_value,
                 discount_factor=discount_factor,
                 preferences=preferences,
-                gross_return=gross_return,
-                income=income,
+                savings_grid=savings_grid,
+                next_liquid=next_liquid,
                 subsidy=subsidy,
                 asset_limit=cliff,
                 prev_limit=prev_cliff,
@@ -1947,7 +1994,7 @@ def _recurring_jump_case(
             n_boundary_branches += 1
 
     value_at_income = _jump_aware_interp(
-        jnp.asarray(income),
+        next_liquid[0],
         next_liquid_grid,
         next_value,
         jump_breakpoints,
@@ -2038,8 +2085,8 @@ def nbegm_one_asset_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    return_liquid: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     subsidy_when: ScalarFloat | float,
     subsidy_otherwise: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
@@ -2061,8 +2108,12 @@ def nbegm_one_asset_step(
         discount_factor: Discount factor.
         preferences: The regime's felicity, its marginal, and its inverse
             marginal, each a callable of one array.
-        return_liquid: Liquid net return.
-        income: Deterministic income added to next-period liquid.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
         subsidy_when: Subsidy into cash-on-hand where the predicate holds.
         subsidy_otherwise: Subsidy where the predicate fails.
         asset_limit: Medicaid asset limit; the predicate is `liquid < asset_limit`.
@@ -2087,8 +2138,8 @@ def nbegm_one_asset_step(
         savings_grid=savings_grid,
         discount_factor=discount_factor,
         preferences=preferences,
-        return_liquid=return_liquid,
-        income=income,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
         subsidy=subsidy_when,
         asset_limit=asset_limit,
         equality_owner=equality_owner,
@@ -2102,8 +2153,8 @@ def nbegm_one_asset_step(
         savings_grid=savings_grid,
         discount_factor=discount_factor,
         preferences=preferences,
-        return_liquid=return_liquid,
-        income=income,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
         subsidy=subsidy_otherwise,
         asset_limit=asset_limit,
         equality_owner=equality_owner,
@@ -2166,8 +2217,8 @@ def _case_step(
     savings_grid: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    return_liquid: ScalarFloat | float,
-    income: ScalarFloat | float,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     equality_owner: EqualityOwner,
@@ -2190,8 +2241,6 @@ def _case_step(
     The continuation is read kink-aware at `asset_limit`: a query landing in the
     boundary cell reads the equality-owning side rather than a bridged average.
     """
-    gross_return = 1.0 + return_liquid
-    next_liquid = gross_return * savings_grid + income
     value_next = _kink_aware_interp(
         next_liquid, next_liquid_grid, next_value, asset_limit, equality_owner
     )
@@ -2200,7 +2249,7 @@ def _case_step(
     )
 
     consumption = preferences.inverse_marginal_utility(
-        discount_factor * gross_return * marginal_next
+        discount_factor * marginal_return * marginal_next
     )
     liquid_endog = jnp.where(
         _degenerate_inversion(marginal=marginal_next, consumption=consumption),
@@ -2222,8 +2271,8 @@ def _case_step(
             next_value=next_value,
             discount_factor=discount_factor,
             preferences=preferences,
-            gross_return=gross_return,
-            income=income,
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
             subsidy=subsidy,
             asset_limit=asset_limit,
             prev_limit=next_liquid_grid[0] - 1.0,
@@ -2248,12 +2297,13 @@ def _case_step(
     )
 
     # Hard borrowing corner: saving nothing consumes all cash-on-hand and lands
-    # next-period liquid at `income`. Because a jumped continuation is nonconcave,
+    # next-period liquid where the law sends the savings grid's lowest node.
+    # Because a jumped continuation is nonconcave,
     # this corner can dominate the Euler path even where an Euler segment brackets
     # the query, so it is an envelope candidate over the whole grid — not only the
     # below-grid constrained tail a concave EGM shortcut would assume.
     value_at_income = _kink_aware_interp(
-        jnp.asarray(income), next_liquid_grid, next_value, asset_limit, equality_owner
+        next_liquid[0], next_liquid_grid, next_value, asset_limit, equality_owner
     )
     s0_grid, s0_value, s0_consumption, s0_marginal = _no_save_corner(
         endog_grid=liquid_grid,
@@ -2291,8 +2341,8 @@ def _boundary_targeting_branch(
     next_value: Float1D,
     discount_factor: ScalarFloat | float,
     preferences: Preferences,
-    gross_return: ScalarFloat | float,
-    income: ScalarFloat | float,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
     subsidy: ScalarFloat | float,
     asset_limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
@@ -2350,7 +2400,9 @@ def _boundary_targeting_branch(
             n=next_liquid_grid.shape[0],
             owns_limit_node=owns_limit,
         )
-    s_kink = (target - income) / gross_return
+    s_kink = _savings_reaching(
+        target=target, savings_grid=savings_grid, next_liquid=next_liquid
+    )
     kink_consumption = liquid_grid + subsidy - s_kink
     kink_value = (
         preferences.utility(kink_consumption) + discount_factor * value_at_target

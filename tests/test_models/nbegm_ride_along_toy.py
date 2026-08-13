@@ -28,7 +28,6 @@ from tests.test_models.nbegm_common import (
     crra_utility,
     feasible,
     make_alive_dead_model,
-    next_liquid,
     next_liquid_from_savings,
     resolve_solver,
     savings,
@@ -140,16 +139,12 @@ def build_model(
         post_decision_function="savings",
         **(dict(nbegm_overrides) if nbegm_overrides else {}),
     )
-    if variant == "nbegm":
-        # The case-piece path inverts the Euler equation against the
-        # post-decision savings node, so the liquid law is in savings form and
-        # the budget exposes the `savings` slot the continuation reader consumes.
-        alive_functions = {**alive_functions, "savings": savings}
-        liquid_law = next_liquid_from_savings
-        constraints = {}
-    else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+    # The liquid law is stated as a function of the post-decision savings node,
+    # which is what NBEGM inverts the Euler equation against. `GridSearch` reads
+    # the same law through the same node, so both variants solve one model.
+    alive_functions = {**alive_functions, "savings": savings}
+    liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return make_alive_dead_model(
         n_periods=n_periods,

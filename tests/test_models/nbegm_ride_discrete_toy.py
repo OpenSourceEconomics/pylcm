@@ -158,38 +158,6 @@ def resources_with_surcharge(
     return liquid + base_income - tax - surcharge - premium * buy_private
 
 
-def next_liquid(
-    resources: FloatND,
-    consumption: ContinuousAction,
-    income: ContinuousState,
-    return_liquid: float,
-) -> ContinuousState:
-    """Liquid law: saved cash earns the return, plus the realized income draw."""
-    return (1.0 + return_liquid) * (resources - consumption) + INCOME_SCALE * jnp.exp(
-        income
-    )
-
-
-def next_liquid_with_oop(
-    resources: FloatND,
-    consumption: ContinuousAction,
-    income: ContinuousState,
-    return_liquid: float,
-    oop: FloatND,
-) -> ContinuousState:
-    """Liquid law with an off-budget out-of-pocket cost on next assets.
-
-    The brute-force twin of `next_liquid_from_savings_with_oop` (`savings` is the
-    post-decision `resources - consumption`), so both solvers model the same
-    economics.
-    """
-    return (
-        (1.0 + return_liquid) * (resources - consumption)
-        + INCOME_SCALE * jnp.exp(income)
-        - oop
-    )
-
-
 def next_liquid_from_savings(
     savings: FloatND,
     income: ContinuousState,
@@ -344,7 +312,7 @@ def utility_with_action(
     return crra_utility(consumption, crra) + LEISURE_UTILITY * buy_private
 
 
-def build_model(  # noqa: C901, PLR0912, PLR0915
+def build_model(  # noqa: C901, PLR0912
     *,
     variant: str = "brute",
     n_periods: int = 4,
@@ -448,21 +416,13 @@ def build_model(  # noqa: C901, PLR0912, PLR0915
         post_decision_function="savings",
         **solver_kwargs,
     )
-    if variant == "nbegm":
-        alive_functions = {**alive_functions, "savings": savings}
-        if action_in_liquid_law:
-            alive_functions = {**alive_functions, "oop": oop}
-            liquid_law = next_liquid_from_savings_with_oop
-        else:
-            liquid_law = next_liquid_from_savings
-        constraints = {}
-    elif action_in_liquid_law:
+    alive_functions = {**alive_functions, "savings": savings}
+    if action_in_liquid_law:
         alive_functions = {**alive_functions, "oop": oop}
-        liquid_law = next_liquid_with_oop
-        constraints = {"feasible": feasible}
+        liquid_law = next_liquid_from_savings_with_oop
     else:
-        liquid_law = next_liquid
-        constraints = {"feasible": feasible}
+        liquid_law = next_liquid_from_savings
+    constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     if action_in_regime_transition:
         survival_transition = {

@@ -22,9 +22,11 @@ import jax.numpy as jnp
 from _lcm.probability import (
     is_live,
     is_negative,
+    log_of_nonnegative,
     rescaled_lottery_weights,
     rescaled_weight_pair,
 )
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
 # Deviation ratio at which `weighted_power_mean` switches from the `log1p`
@@ -122,7 +124,7 @@ def weighted_power_mean(
     # reverse mode the masked cotangent would still be `0 * inf`. Replacing
     # the value itself keeps both directions finite, and leaves the result
     # unchanged because the node's normalized weight is exactly zero.
-    log_v = jnp.log(jnp.where(live, values, 1.0))
+    log_v = log_of_nonnegative(jnp.where(live, values, 1.0))
     # The `exponent == 0` power branch must not divide by zero.
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
     # Anchored form: with `a` the extremal log value on the side that
@@ -255,7 +257,14 @@ def weighted_power_mean(
     # is `log c` times a normalized mass that is only approximately one, so it
     # loses the payoff twice over — once to the mass and once to the round trip.
     deviation_power = log_moment / safe_exponent
-    deviation_geometric = jnp.sum(normalized * centered, axis=-1)
+    deviation_geometric = jnp.sum(
+        zero_safe_weighted_term(
+            weight=normalized,
+            value=centered,
+            subnormal_is_accounted_for=True,
+        ),
+        axis=-1,
+    )
     deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
     return _applied_to_anchor(payoff=anchor_payoff, deviation=deviation)
 
@@ -389,8 +398,8 @@ def weighted_power_mean_of_pair(
     second_weight = jnp.where(is_negative(second_weight), jnp.nan, second_weight)
     first_live = is_live(first_weight)
     second_live = is_live(second_weight)
-    log_first = jnp.log(jnp.where(first_live, first, 1.0))
-    log_second = jnp.log(jnp.where(second_live, second, 1.0))
+    log_first = log_of_nonnegative(jnp.where(first_live, first, 1.0))
+    log_second = log_of_nonnegative(jnp.where(second_live, second, 1.0))
     safe_exponent = jnp.where(exponent == 0.0, 1.0, exponent)
 
     first_anchorable = first_live & jnp.isfinite(log_first)
@@ -482,8 +491,16 @@ def weighted_power_mean_of_pair(
     # for the same reason.
     deviation_power = log_moment / safe_exponent
     deviation_geometric = (
-        masked_first_weight * jnp.where(first_live, log_first - anchor, 0.0)
-        + masked_second_weight * jnp.where(second_live, log_second - anchor, 0.0)
+        zero_safe_weighted_term(
+            weight=masked_first_weight,
+            value=jnp.where(first_live, log_first - anchor, 0.0),
+            subnormal_is_accounted_for=True,
+        )
+        + zero_safe_weighted_term(
+            weight=masked_second_weight,
+            value=jnp.where(second_live, log_second - anchor, 0.0),
+            subnormal_is_accounted_for=True,
+        )
     ) / safe_weight
     deviation = jnp.where(exponent == 0.0, deviation_geometric, deviation_power)
     return _applied_to_anchor(payoff=anchor_payoff, deviation=deviation)

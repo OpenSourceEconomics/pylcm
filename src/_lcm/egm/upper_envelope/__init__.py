@@ -6,26 +6,30 @@ dominated candidates. The EGM step obtains its backend through
 `get_upper_envelope`, so additional algorithms slot in without touching the
 step itself. Currently implemented:
 
-- the Fast Upper-Envelope Scan (`_lcm.egm.upper_envelope.fues`), a sequential
-  scan that inserts crossing points between the segments its jump-threshold
-  heuristic identifies,
-- the Rooftop-Cut algorithm (`_lcm.egm.upper_envelope.rfc`), a parallel
-  dominance test that only deletes points (no crossing insertion) and
-  generalizes to multidimensional endogenous grids, and
-- the local-upper-bound brute method (`_lcm.egm.upper_envelope.ltm`), an
-  $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
+- `"exact"` (`_lcm.egm.upper_envelope.segment_envelope`), the default: a
+  cell-driven construction that settles ownership by certified comparison, so
+  it recovers a branch owning an interior subinterval even where that branch
+  wins at no candidate abscissa,
+- `"fues"` (`_lcm.egm.upper_envelope.fues`), the Fast Upper-Envelope Scan — a
+  sequential scan that inserts crossing points between the segments its
+  jump-threshold heuristic identifies,
+- `"rfc"` (`_lcm.egm.upper_envelope.rfc`), the Rooftop-Cut algorithm — a
+  parallel dominance test that only deletes points (no crossing insertion) and
+  generalizes to multidimensional endogenous grids,
+- `"ltm"` (`_lcm.egm.upper_envelope.ltm`), the local-upper-bound brute method —
+  an $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
   abscissa (the quadratic baseline of Dobrescu & Shanker 2024), and
-- HARK's EGM upper envelope (`_lcm.egm.upper_envelope.mss`), a left-to-right
-  sweep that keeps the max-value branch at every abscissa *and* inserts the
-  exact segment-crossing point (the `MSS` method of Dobrescu & Shanker 2024).
+- `"mss"` (`_lcm.egm.upper_envelope.mss`), HARK's EGM upper envelope — a
+  left-to-right sweep that keeps the max-value branch at every abscissa *and*
+  inserts the exact segment-crossing point (the `MSS` method of Dobrescu &
+  Shanker 2024).
 
 All backends share one signature: they consume the candidate
 `(endog_grid, policy, value)` rows plus the candidate supgradient
 `marginal_utility` ($\\mu = \\partial v / \\partial R$, exact by the envelope
 theorem) and return a NaN-padded weakly-ascending refined `(grid, policy,
-value)` triple plus the kept-point count. FUES, LTM, and MSS ignore the
-supgradient (they recover slopes from the segments); RFC uses it to build each
-point's tangent.
+value)` triple plus the kept-point count. Only RFC consumes the supgradient, to
+build each point's tangent; the others recover slopes from the segments.
 """
 
 from collections.abc import Callable

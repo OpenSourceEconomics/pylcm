@@ -151,13 +151,15 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
     def bequest(wealth: ContinuousState, crra: float) -> FloatND:
         return wealth ** (1.0 - crra) / (1.0 - crra)
 
+    def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+        return wealth - consumption
+
     def next_wealth(
-        wealth: ContinuousState,
-        consumption: ContinuousAction,
+        savings: FloatND,
         return_liquid: float,
         retirement_income: float,
     ) -> ContinuousState:
-        return (1.0 + return_liquid) * (wealth - consumption) + retirement_income
+        return (1.0 + return_liquid) * savings + retirement_income
 
     def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
         return consumption <= wealth
@@ -181,7 +183,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
-        functions={"utility": utility},
+        functions={"utility": utility, "savings": savings},
         active=lambda age: age < 3,
         solver=solver,
     )
@@ -221,9 +223,9 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
     kernel's internal liquid role may surface as a requirement on the state's
     name.
     """
-    egm = _renamed_one_asset_model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=_renamed_one_asset_params(), log_level="debug"
-    )
+    egm = _renamed_one_asset_model(
+        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
+    ).solve(params=_renamed_one_asset_params(), log_level="debug")
     brute = _renamed_one_asset_model(solver=GridSearch(), n_consumption=200).solve(
         params=_renamed_one_asset_params(), log_level="debug"
     )

@@ -534,12 +534,13 @@ class Model:
 
             return_simulation_policy: When `True`, also return the per-period
                 simulation-policy artifacts published by the configured
-                solvers, as `(value_functions, policies)`. A policy is the
-                artifact a future off-grid `simulate` will interpolate; the
-                current `simulate` is grid-restricted and consumes only the
-                value functions, so it does not yet take the policies back.
-                Regimes whose solver publishes no policy have no entry in the
-                policy mapping. Defaults to `False` (value functions only).
+                solvers, as `(value_functions, policies)`. A policy is what
+                `simulate` interpolates at a subject's resources where the
+                regime qualifies for the off-grid read; a fresh `simulate`
+                publishes and consumes it internally, so returning it here is
+                for inspection rather than for handing back. Regimes whose
+                solver publishes no policy have no entry in the policy
+                mapping. Defaults to `False` (value functions only).
             return_dissolution_flags: When `True`, also return the per-period,
                 per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
                 cells whose action mask is empty; empty inner mappings for

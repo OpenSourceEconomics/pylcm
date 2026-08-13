@@ -25,8 +25,9 @@ from lcm.typing import (
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -108,7 +109,12 @@ def build_model(
     save-to-cliff candidate must scale its marginal by the bracket case's slope.
     """
     tax_func = tax_mixed if mixed_schedule else tax_cliff
-    alive_functions = {"utility": utility, "tax": tax_func, "resources": resources}
+    alive_functions = {
+        "utility": utility,
+        "tax": tax_func,
+        "resources": resources,
+        "savings": savings,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -121,7 +127,7 @@ def build_model(
         liquid_max=liquid_max,
         n_consumption=n_consumption,
         alive_functions=alive_functions,
-        liquid_law=next_liquid,
+        liquid_law=next_liquid_from_savings,
         alive_solver=alive_solver,
         constraints={"feasible": feasible},
         extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
