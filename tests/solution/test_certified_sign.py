@@ -215,6 +215,39 @@ def test_a_margin_carried_by_a_flushed_product_is_not_certified_as_a_tie():
     assert _sign_at(a, b, query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
 
 
+def _crossing_links_read_beside_their_crossing() -> tuple[
+    tuple[float, float, float, float], tuple[float, float, float, float], float
+]:
+    """Return two links that cross inside their span, queried beside the crossing.
+
+    Both lines pass through the origin, which is interior to their common span,
+    and the query sits just above it. Each link's two endpoint contributions
+    then cancel to nearly nothing, so the two products the determinant
+    subtracts are ordinary numbers separated by less than the smallest normal.
+
+    This is the ordinary shape of an upper envelope, not a constructed corner:
+    two segments crossing, read near where they cross, is a kink.
+    """
+    dtype = jnp.zeros(()).dtype
+    a = (-1.0, 1.0, -1.0, 1.0)
+    b = (-1.0, 1.0, -1.5, 1.5)
+    query = float(jnp.ldexp(jnp.asarray(1.0), int(jnp.finfo(dtype).minexp) + 3))
+    return a, b, query
+
+
+def test_links_whose_products_differ_below_resolution_are_not_certified_equal():
+    """A determinant lost to underflow is refused rather than read as a tie.
+
+    Where the two products the determinant subtracts are distinct but separated
+    by less than the smallest normal, the difference is destroyed and arrives as
+    an exact zero carrying an exact-zero bound — the certificate for an exact
+    tie. Strictly ordered links must not be given it.
+    """
+    a, b, query = _crossing_links_read_beside_their_crossing()
+    assert _exact_line_margin(a, b, query) == -1
+    assert _sign_at(a, b, query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+
+
 def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
     """Whenever the primitive certifies a sign it equals the exact rational sign."""
     key = jax.random.key(20260727)

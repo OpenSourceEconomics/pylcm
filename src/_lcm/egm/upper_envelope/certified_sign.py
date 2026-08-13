@@ -298,6 +298,27 @@ def certified_margin_sign(
     product_b = _bounded_product(numerator_b, width_a)
     determinant = dd_add(product_a, dd_negate(product_b))
 
+    # The two products may each be ordinary while their difference is not: two
+    # links crossing inside their own span, read beside the crossing, leave
+    # products separated by less than the smallest normal. That difference is
+    # destroyed rather than rounded, so `dropped` is honestly zero — the
+    # transform discarded nothing, the backend removed the result underneath it —
+    # and an exact zero carrying an exact-zero bound is the certificate for a tie.
+    #
+    # The test is an equality, not a magnitude. Any expression of how far apart
+    # the products are is the same subtraction that just vanished, so it would be
+    # handed the zero it is meant to detect; float equality needs no subtraction
+    # and cannot underflow. Products that are identical vanish for the honest
+    # reason and keep their tie, which is what two links on one line rely on.
+    products_identical = reduce(
+        operator.and_,
+        (left == right for left, right in zip(product_a, product_b, strict=True)),
+    )
+    determinant_vanished = ((determinant[0] + determinant[1]) == 0.0) & (
+        determinant[2] == 0.0
+    )
+    difference_read = products_identical | ~determinant_vanished
+
     # A product that leaves the top of the range says nothing about the determinant
     # it was meant to contribute to, so it stays unresolved. The bottom of the range
     # is not symmetric with it and is handled inside `_bounded_product`.
@@ -306,7 +327,11 @@ def certified_margin_sign(
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable & a_distances_read & b_distances_read & products_read,
+        readable=readable
+        & a_distances_read
+        & b_distances_read
+        & products_read
+        & difference_read,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
