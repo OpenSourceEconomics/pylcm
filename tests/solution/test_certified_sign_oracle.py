@@ -150,9 +150,10 @@ def _disagreements():
     reason="a group spanning more of the exponent range than one scaling can "
     "serve loses a link's whole contribution, and the difference of what "
     "survives is published as a certified exact tie. Every case found so far "
-    "separates the two lines by far less than the format's own resolution at "
-    "that magnitude, so what is wrong is the verdict code rather than the "
-    "level: `query.py`'s `level_with` routes the pair into the slope tie-break, "
+    "has the two readings round to the *same* float64 value, so what is wrong "
+    "is the verdict code rather than the level: a caller cannot act on a "
+    "difference the format does not hold. `query.py`'s `level_with` still "
+    "routes the pair into the slope tie-break, "
     "deciding by slope a contest the exact arithmetic settles, while "
     "`cell_hull` absorbs the same code without escaping",
 )
@@ -170,9 +171,10 @@ def test_no_tie_is_certified_where_exact_arithmetic_finds_a_strict_sign():
     strict=True,
     reason="the same scaling failure can leave the surviving terms ordered the "
     "wrong way round, so the certificate publishes the opposite strict sign. "
-    "Every case found so far separates the two lines by one unit in the last "
-    "place, so the published *level* is right to within an ulp — what moves is "
-    "which link owns the query, and with it its policy and marginal. Both "
+    "The two readings are distinct float64 values one representable step apart, "
+    "so the format holds them apart and the certificate names the smaller as "
+    "the larger. The published *level* is right to within that step; what moves "
+    "is which link owns the query, and with it its policy and marginal. Both "
     "consumers act on that: `query.py`'s `beats` selects the losing link, and "
     "an exact `+1` published as `-1` additionally suppresses the escape at "
     "`cell_hull.py`, the one detector written for this case",
