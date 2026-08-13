@@ -41,9 +41,10 @@ are reported apart:
   state between them is demonstrably better and a caller may choose either,
   provided it chooses deterministically.
 - `UNRESOLVED_SIGN` — no determinant worth reading was produced at all: an input
-  was non-finite, a product overflowed, or an operand did not survive the shared
-  scaling intact. Nothing follows about the geometry, which may be far apart, so
-  a caller must fail loud rather than choose.
+  was non-finite, a product overflowed, an operand did not survive the scaling
+  intact, or a distance between two distinct abscissae was destroyed by the
+  subtraction that forms it. Nothing follows about the geometry, which may be far
+  apart, so a caller must fail loud rather than choose.
 
 A product that underflows is *not* one of those cases. It has a known magnitude
 bound — below the smallest normal — which the error bound carries, so a group
@@ -81,8 +82,9 @@ from _lcm.egm.upper_envelope.double_double import (
 from lcm.typing import BoolND, FloatND, IntND
 
 # Returned where no usable determinant was produced — a non-finite input, an
-# overflowing product, or a positive width the shared scaling flattened. Nothing
-# is known about the geometry; callers must fail loud.
+# overflowing product, an operand the scaling flattened, or a positive distance
+# the subtraction that forms it flushed to zero. Nothing is known about the
+# geometry; callers must fail loud.
 UNRESOLVED_SIGN: int = 2
 
 # Returned where the determinant is real but smaller than its own error bound:
@@ -223,13 +225,11 @@ def certified_margin_sign(
     # the binade around one is what keeps the products out of the range where the
     # error-free transforms stop being error-free: a determinant that would
     # underflow to zero in the caller's units is an ordinary number in these.
-    abscissa_exponent = _shared_exponent(a_x0, a_x1, b_x0, b_x1, x_query)
+    # The four values share one exponent because they enter the determinant only
+    # as stored magnitudes; the abscissae are handled per link, below, because
+    # what enters from them is a difference.
     value_exponent = _shared_exponent(a_v0, a_v1, b_v0, b_v1)
-    source_abscissae = (a_x0, a_x1, b_x0, b_x1, x_query)
     source_values = (a_v0, a_v1, b_v0, b_v1)
-    scaled_abscissae = tuple(
-        scale_by_power_of_two(term, -abscissa_exponent) for term in source_abscissae
-    )
     scaled_values = tuple(
         scale_by_power_of_two(term, -value_exponent) for term in source_values
     )
@@ -239,53 +239,34 @@ def certified_margin_sign(
     # largest one ordinarily survives — but a backend that reads subnormals as zero
     # can still flatten one, and a group spanning more than the whole exponent range
     # leaves no exponent that suits every term. What follows from a flattened
-    # operand is a true statement about geometry the caller never supplied — a
-    # narrow link whose endpoints have rounded onto the same number, most
-    # emphatically a certified tie licensing either link. Scaling back is exact
-    # whenever the scaling was, so the round trip tests that premise itself rather
-    # than any one way of breaking it.
-    scaling_exact = _round_trips(
-        scaled_abscissae, source_abscissae, abscissa_exponent
-    ) & _round_trips(scaled_values, source_values, value_exponent)
+    # operand is a true statement about values the caller never supplied. Scaling
+    # back is exact whenever the scaling was, so the round trip tests that premise
+    # itself rather than any one way of breaking it.
+    scaling_exact = _round_trips(scaled_values, source_values, value_exponent)
 
-    a_x0, a_x1, b_x0, b_x1, x_query = scaled_abscissae
     a_v0, a_v1, b_v0, b_v1 = scaled_values
 
-    # One shared abscissa exponent keeps the whole group normal, but it cannot
-    # put two links of very different widths in the same part of the range: the
-    # narrow one keeps its width and lands wherever that is. Everything the
-    # determinant reads from a link — both distances to the query, and the width
-    # — carries that link's own scale, so each link's contribution can sit far
-    # below one while every operand remains an ordinary number, and what cancels
-    # between the two contributions is smaller again by the ratio between them.
-    # The subtraction then falls under the smallest normal.
-    #
-    # Nothing else sees that. The operands are readable, each product stays
-    # inside the domain where the transforms are exact, and the transforms
-    # discard nothing on the way — so a backend that flushes the difference
-    # returns an estimate of exactly zero carrying an error bound of exactly
+    # The abscissae are not scaled as one group, because no single exponent
+    # serves two links at different places in the range: landing the widest
+    # operand near one leaves a link at the bottom of the range where it was,
+    # and there the spacing between neighbouring floats is itself subnormal, so
+    # the link's endpoints stay readable while every difference between them
+    # flushes. That is the worst shape the certificate can be handed — the
+    # transforms discard nothing when subtracting two equal-looking numbers, so
+    # a determinant of exactly zero arrives carrying an error bound of exactly
     # zero, which is the certificate for an exact tie, for links that are
-    # strictly ordered.
+    # strictly ordered by an ordinary margin.
     #
     # `D` is bilinear in the two links' distances: every term it is built from
     # multiplies one distance taken from `A` by one taken from `B`. So each link
     # may be measured on its own scale — the two factors multiply `D` by a
-    # positive constant and leave its sign alone — and normalizing them
-    # separately is what puts the cancellation where the format has precision to
-    # hold it.
-    distances_a, a_on_scale = _on_its_own_scale(
-        (
-            dd_from_difference(a_x1, x_query),
-            dd_from_difference(x_query, a_x0),
-            dd_from_difference(a_x1, a_x0),
-        )
+    # positive constant and leave its sign alone. The query enters only inside
+    # one link's distances at a time, so it too may be scaled per link.
+    distances_a, a_on_scale, a_distances_read = _link_distances(
+        x0=a_x0, x1=a_x1, x_query=x_query
     )
-    distances_b, b_on_scale = _on_its_own_scale(
-        (
-            dd_from_difference(b_x1, x_query),
-            dd_from_difference(x_query, b_x0),
-            dd_from_difference(b_x1, b_x0),
-        )
+    distances_b, b_on_scale, b_distances_read = _link_distances(
+        x0=b_x0, x1=b_x1, x_query=x_query
     )
     numerator_a = dd_add(
         dd_mul_float(distances_a[0], a_v0), dd_mul_float(distances_a[1], a_v1)
@@ -307,7 +288,7 @@ def certified_margin_sign(
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable,
+        readable=readable & a_distances_read & b_distances_read,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
@@ -553,6 +534,71 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     )
 
 
+def _link_distances(
+    *, x0: FloatND, x1: FloatND, x_query: FloatND
+) -> tuple[tuple[DoubleDouble, ...], BoolND, BoolND]:
+    """Return one link's three distances, whether they scaled, and whether they read.
+
+    A link enters the determinant only through the two distances from the query
+    to its endpoints and the width between them, and every term of `D` pairs one
+    of those with one of the other link's. So the whole triple may be measured on
+    this link's own scale, and the positive factor that introduces cancels out of
+    the sign.
+
+    That is done twice, because the two scalings answer different failures:
+
+    - The abscissae are scaled before the differences are taken. A link sitting
+      at the bottom of the normal range has readable endpoints separated by a
+      subnormal step, so the subtraction — not the storage — is what destroys it,
+      and no later rescaling can recover a bit the subtraction did not produce.
+    - The distances are scaled after. A link whose endpoints are ordinary
+      neighbours has differences far below its own abscissae, and it is the
+      cancellation *between* the two links' contributions that then underflows.
+
+    A link that still cannot be lifted clear — a query far outside a narrow link
+    pins the exponent on the query, and a link whose own endpoints span the
+    format has no exponent at all — is left with a difference of exactly zero
+    between operands that are not equal. That zero is the flush itself, and
+    downstream it is indistinguishable from a link the caller supplied as a
+    point, which is the shape that licenses a certified tie.
+
+    Reporting it as *unreadable* is what keeps the determinant honest, and it is
+    the same statement an unreadable operand already makes: a strict verdict
+    still stands, because a margin that clears its tolerance does so by more than
+    a flushed distance could contribute, while the near-zero end — where the
+    whole determinant is of the order of what went missing — is refused.
+
+    A magnitude bound is the wrong instrument here even though the magnitude is
+    known. Carrying it means recording a discarded tail just below the smallest
+    normal, and every later multiplication by a factor below one drives that tail
+    under the same threshold and flushes it in turn, so the bound is gone by the
+    time the determinant reads it. The flag cannot underflow.
+    """
+    source = (x1, x_query, x0)
+    exponent = _shared_exponent(x0, x1, x_query)
+    scaled = tuple(scale_by_power_of_two(term, -exponent) for term in source)
+    scaled_x1, scaled_query, scaled_x0 = scaled
+    pairs = (
+        (scaled_x1, scaled_query),
+        (scaled_query, scaled_x0),
+        (scaled_x1, scaled_x0),
+    )
+    distances = tuple(dd_from_difference(left, right) for left, right in pairs)
+    nothing_flushed = reduce(
+        operator.and_,
+        (
+            (distance[0] != 0.0) | (left == right)
+            for distance, (left, right) in zip(distances, pairs, strict=True)
+        ),
+    )
+    rescaled, on_scale = _on_its_own_scale(distances)
+    return (
+        rescaled,
+        on_scale & _round_trips(scaled, source, exponent),
+        nothing_flushed,
+    )
+
+
 def _on_its_own_scale(
     distances: tuple[DoubleDouble, ...],
 ) -> tuple[tuple[DoubleDouble, ...], BoolND]:
@@ -625,10 +671,12 @@ def _certified_sign_of(
 ) -> IntND:
     """Turn a double-double with an error bound into a certified sign.
 
-    `readable` says whether every operand was one the arithmetic could see. Where
-    it was not, only a *strict* verdict survives: the margin then exceeds the
-    tolerance by more than a flushed operand could have contributed, since a
-    flushed operand is below the smallest normal while the margin is not. What
+    `readable` says whether everything the determinant was built from — the
+    operands themselves, and the distances the subtractions between them
+    produced — was something the arithmetic could see. Where it was not, only a
+    *strict* verdict survives: the margin then exceeds the tolerance by more than
+    a flushed term could have contributed, since a flushed term is below the
+    smallest normal while the margin is not. What
     does not survive is the near-zero end, where the whole difference is of the
     order of what went missing — and that is the end where the collapse is
     total, leaving an estimate of exactly zero with an error bound of exactly
