@@ -717,33 +717,59 @@ def test_continuation_marginal_is_finite_for_gamma_below_one_extreme_ratio() -> 
     np.testing.assert_allclose(float(dnu_ds), expected_dnu_ds, rtol=1e-10)
 
 
-def test_continuation_is_graceful_when_a_child_value_flushes_to_zero() -> None:
-    """A zero (flushed-subnormal) child value never turns `dnu/ds` into NaN.
+def _zero_child_reference(
+    *,
+    values: tuple[float, float],
+    marginals: tuple[float, float],
+    weight: float,
+    gamma: float,
+) -> tuple[float, float]:
+    """Return `(nu, dnu/ds)` for a two-node lottery, evaluated on the host.
 
-    Accelerator float32 flushes subnormal inputs to zero; the transform
-    marginal must then drop that node exactly (its marginal is zero) rather
-    than form `inf * 0`. The float32 result equals the float64 computation on
-    the same effective inputs.
+    The power mean `nu = (E[V^(1-gamma)])^(1/(1-gamma))` and its derivative
+    `dnu/ds = nu^gamma * E[V^(-gamma) dV/ds]`, written straight from the
+    definitions in host float64. A node of value zero contributes nothing to
+    either sum: it carries no mass in the mean, and the product of its zero
+    marginal with the derivative weight is zero rather than `inf * 0`.
     """
-    values_32 = jnp.array([1e-38, 1.0], dtype=jnp.float32)
-    marginals_32 = jnp.array([1e-38, 1.0], dtype=jnp.float32)
-    weights_32 = jnp.array([0.5, 0.5], dtype=jnp.float32)
-    nu_32, dnu_ds_32 = ez_continuation(
-        child_values=values_32,
-        child_marginals=marginals_32,
-        weights=weights_32,
-        risk_aversion=0.99,
+    mean = sum(weight * value ** (1.0 - gamma) for value in values if value != 0.0)
+    nu = mean ** (1.0 / (1.0 - gamma))
+    derivative = sum(
+        weight * value ** (-gamma) * marginal
+        for value, marginal in zip(values, marginals, strict=True)
+        if value != 0.0
     )
-    nu_64, dnu_ds_64 = ez_continuation(
-        child_values=values_32.astype(jnp.float64),
-        child_marginals=marginals_32.astype(jnp.float64),
-        weights=weights_32.astype(jnp.float64),
-        risk_aversion=0.99,
-    )
+    return nu, nu**gamma * derivative
 
-    assert bool(jnp.isfinite(dnu_ds_32))
-    np.testing.assert_allclose(float(nu_32), float(nu_64), rtol=1e-3)
-    np.testing.assert_allclose(float(dnu_ds_32), float(dnu_ds_64), rtol=1e-3)
+
+def test_a_zero_child_value_is_dropped_rather_than_multiplied_as_infinity() -> None:
+    """A child of value zero contributes nothing instead of turning `dnu/ds` into NaN.
+
+    Its derivative weight `V^(-gamma)` is infinite, so a node carried through
+    the sum would form `inf * 0`. Dropping it is what keeps the pair finite, and
+    a backend that flushes subnormal child values to zero is the ordinary way
+    such a node arises.
+
+    The reference is the two defining formulae evaluated on the host, so it
+    shares no branch with the kernel. Nothing is promoted: both the kernel and
+    the comparison run on the values as the kernel's own format holds them.
+    """
+    gamma = 0.99
+    values = jnp.array([0.0, 1.0], dtype=jnp.float32)
+    marginals = jnp.array([0.0, 1.0], dtype=jnp.float32)
+    weights = jnp.array([0.5, 0.5], dtype=jnp.float32)
+    nu, dnu_ds = ez_continuation(
+        child_values=values,
+        child_marginals=marginals,
+        weights=weights,
+        risk_aversion=gamma,
+    )
+    expected_nu, expected_dnu_ds = _zero_child_reference(
+        values=(0.0, 1.0), marginals=(0.0, 1.0), weight=0.5, gamma=gamma
+    )
+    assert bool(jnp.isfinite(dnu_ds))
+    np.testing.assert_allclose(float(nu), expected_nu, rtol=1e-5)
+    np.testing.assert_allclose(float(dnu_ds), expected_dnu_ds, rtol=1e-5)
 
 
 def test_period_value_is_computed_in_the_log_domain() -> None:
