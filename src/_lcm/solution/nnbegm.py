@@ -250,8 +250,9 @@ class NNBEGM(Solver):
 
         - the *adjuster* strips the outer post-decision transition and admits
           the outer value as a flat param bound per outer-grid node;
-        - the *keeper* injects $s_t^\textit{post-dec} = keep(\textit{durable}_t)$ into the
-          so the durable becomes a genuine passive ride-along state.
+        - the *keeper* injects $s_t^\textit{post-dec} = keep(\textit{durable}_t)$
+          into the econ functions, so the durable becomes a genuine passive
+          ride-along state.
         """
         # The adjuster's outer post-decision arrives per outer-grid node as a
         # bound param, so the function declaring the chosen stock leaves the
@@ -262,8 +263,9 @@ class NNBEGM(Solver):
         # The durable's own law of motion stays exactly as the regime declares
         # it. It reads the post-decision, which is that bound leaf here, so it
         # is decision-independent without being replaced — and a declared
-        # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore the stock
-        # continuation is read at, not the raw node the outer search picked.
+        # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore
+        # the stock the continuation is read at, not the raw node the outer
+        # search picked.
         adjuster_context = replace(
             context,
             functions=_without_outer_post_decision(
