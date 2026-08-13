@@ -689,9 +689,7 @@ def envelope_at_query(
 
     unreadable = _subnormal_operand_present(
         row=(endog_grid, value, policy, marginal), query=query
-    ) | _derived_subnormal_possible(
-        endog_grid=endog_grid, channels=(value, policy, marginal), query=query
-    )
+    ) | _derived_subnormal_possible(links=links, query=query)
     readable_value, readable_policy, readable_marginal = (
         jnp.where(unreadable, jnp.nan, channel) for channel in published
     )
@@ -725,54 +723,139 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     return in_row | is_subnormal(query)
 
 
-def _derived_subnormal_possible(
-    *, endog_grid: Float1D, channels: tuple[Float1D, ...], query: FloatND
-) -> BoolND:
-    """Report, per query, whether the affine read itself can land below the range.
+def _derived_subnormal_possible(*, links: _SegmentLinks, query: FloatND) -> BoolND:
+    """Report, per query, where the read's own result lands below the range.
 
-    Every stored operand can be normal and the exact result still be a subnormal
-    the format holds perfectly well: a link from `0` to a value near the top of
-    the range, read close to its lower endpoint, weights that endpoint's value by
-    a ratio small enough to carry the product out of the normal range. The
-    backend flushes it, and what is published is a finite zero — neither the
-    represented value nor an abstention, which is the one outcome the contract
-    forbids in all three channels at once.
+    Every stored operand can be normal and the exact result still be a positive
+    subnormal: a link from `0` to a value near the top of the range, read close
+    to its zero endpoint, weights the far value by a ratio small enough to carry
+    the product out of the normal range. A backend that flushes hands back a
+    finite zero — neither the represented value nor an abstention, which is the
+    one outcome the contract forbids in all three channels at once.
 
-    The read is `v0*(x1 - q)/(x1 - x0) + v1*(q - x0)/(x1 - x0)`, so each term is
-    an endpoint value times a ratio no larger than one. A term can therefore
-    leave the range only if some nonzero endpoint value, times some ratio the
-    geometry can realize, falls under the smallest normal. Bounding the ratio
-    from below by the smallest nonzero distance from the query to any candidate
-    over the widest span in the row gives a magnitude no term can go under.
+    The predicate is on the **result**, not on the terms that build it. A term of
+    the read is routinely subnormal while the result is an ordinary number the
+    format holds exactly: reading a link whose two values agree weights one of
+    them by a vanishing ratio, and the other by a ratio of essentially one, so
+    the sum is that second value. Refusing there would withhold an answer the
+    arithmetic reached correctly, and no bound over the terms can tell the two
+    situations apart, because in both of them a term is subnormal.
 
-    The bound is deliberately loose in the safe direction: it may refuse a row
-    whose winning link would have read cleanly, and it can never pass one whose
-    winning link would flush. Refusing costs an answer, publishing a flushed zero
-    costs correctness, and only one of those is recoverable by the caller.
+    Two facts make the result's magnitude cheap to decide exactly:
 
-    This says nothing about which segment owns the query, matching
-    `_subnormal_operand_present`: ownership is not known here, and the affected
-    link may be any of them.
+    - The two ratios sum to one, so the endpoint nearer the query carries a ratio
+      of at least a half and contributes at least half its own value. The result
+      can therefore be subnormal only where that near value is exactly zero, and
+      then the result *is* the far term.
+    - `_subnormal_operand_present` has already refused every row carrying a
+      subnormal stored operand, so each endpoint value reaching here is zero or
+      normal — there is no third case for "exactly zero" to hide.
+
+    So the question reduces to whether `|far| * |query - near| / |span|` is
+    subnormal, which is settled from the three exponents rather than by forming
+    the quantity: on a backend that flushes, forming it is precisely what
+    destroys the answer being asked for.
+
+    Evaluated per link, over every live link that brackets the query. Ownership
+    is not consulted and does not need to be: a link whose near value is nonzero
+    publishes a normal result whether or not it wins.
+
+    A link whose span, distance or far value is not finite is left alone. The
+    result there is not a flushed magnitude but an ordinary infinity or NaN,
+    which the caller can already see.
     """
-    if not backend_flushes_subnormals(endog_grid.dtype):
-        return jnp.zeros_like(jnp.asarray(query), dtype=bool)
+    dtype = links.left_grid.dtype
+    query_arr = jnp.asarray(query)
+    if not backend_flushes_subnormals(dtype):
+        return jnp.zeros_like(query_arr, dtype=bool)
 
-    tiny = jnp.finfo(endog_grid.dtype).tiny
-    finite_grid = jnp.where(jnp.isfinite(endog_grid), endog_grid, jnp.nan)
-    span = jnp.nanmax(finite_grid) - jnp.nanmin(finite_grid)
+    flat = query_arr.reshape(-1, 1)
+    left_grid = links.left_grid.reshape(1, -1)
+    right_grid = links.right_grid.reshape(1, -1)
+    span = right_grid - left_grid
 
-    magnitudes = jnp.concatenate([jnp.abs(channel).ravel() for channel in channels])
-    smallest_value = jnp.min(jnp.where(magnitudes > 0.0, magnitudes, jnp.inf))
+    to_left = jnp.abs(flat - left_grid)
+    to_right = jnp.abs(right_grid - flat)
+    left_is_near = to_left <= to_right
+    distance_to_near = jnp.minimum(to_left, to_right)
 
-    # A query sitting exactly on a candidate reads that candidate's stored value,
-    # so a zero distance is not a small one and does not enter the bound.
-    distances = jnp.abs(jnp.asarray(query).reshape(-1, 1) - finite_grid.reshape(1, -1))
-    smallest_distance = jnp.min(
-        jnp.where(distances > 0.0, distances, jnp.inf), axis=-1
-    ).reshape(jnp.asarray(query).shape)
+    brackets = (
+        links.live.reshape(1, -1)
+        & (span != 0.0)
+        & (jnp.minimum(left_grid, right_grid) <= flat)
+        & (flat <= jnp.maximum(left_grid, right_grid))
+    )
+    readable = (
+        jnp.isfinite(span) & jnp.isfinite(distance_to_near) & (distance_to_near > 0.0)
+    )
 
-    bound = smallest_value * smallest_distance / span
-    return jnp.isfinite(bound) & (bound < tiny)
+    channels = (
+        (links.left_value, links.right_value),
+        (links.left_policy, links.right_policy),
+        (links.left_marginal, links.right_marginal),
+    )
+    refused = jnp.zeros_like(brackets)
+    for left_channel, right_channel in channels:
+        left_c = left_channel.reshape(1, -1)
+        right_c = right_channel.reshape(1, -1)
+        near = jnp.where(left_is_near, left_c, right_c)
+        far = jnp.where(left_is_near, right_c, left_c)
+        refused = refused | (
+            brackets
+            & readable
+            & (near == 0.0)
+            & (far != 0.0)
+            & jnp.isfinite(far)
+            & _quotient_is_subnormal(factors=(far, distance_to_near), divisor=span)
+        )
+    return jnp.any(refused, axis=-1).reshape(query_arr.shape)
+
+
+def _quotient_is_subnormal(
+    *, factors: tuple[FloatND, FloatND], divisor: FloatND
+) -> BoolND:
+    """Report where `|f0| * |f1| / |divisor|` is a nonzero subnormal.
+
+    Decided from the exponents, because the product and the quotient are exactly
+    the intermediates a flushing backend destroys — forming either of them would
+    answer with the zero the caller is trying to detect.
+
+    `frexp` writes each magnitude as `mantissa * 2**exponent` with the mantissa in
+    `[0.5, 1)`, so the quotient's mantissa lies in `(0.25, 2)` and one halving or
+    one doubling returns it to `[0.5, 1)`. Both mantissa and exponent are then
+    directly comparable with the same decomposition of the smallest normal, and
+    neither carries a magnitude that can leave the range on the way.
+    """
+    mantissa = jnp.ones_like(divisor)
+    exponent = jnp.zeros_like(divisor, dtype=jnp.int32)
+    for factor in factors:
+        factor_mantissa, factor_exponent = jnp.frexp(jnp.abs(factor))
+        mantissa = mantissa * factor_mantissa
+        exponent = exponent + factor_exponent
+    divisor_mantissa, divisor_exponent = jnp.frexp(jnp.abs(divisor))
+    mantissa = mantissa / divisor_mantissa
+    exponent = exponent - divisor_exponent
+
+    # `frexp` writes a magnitude as `mantissa * 2**exponent` with the mantissa in
+    # `[mantissa_floor, 1)`. The quotient of three such mantissas lies in
+    # `(mantissa_floor / 2, 2)`, so one halving or one doubling restores the
+    # normalization and makes exponent and mantissa comparable term by term.
+    mantissa_floor = 0.5
+    mantissa, exponent = (
+        jnp.where(mantissa >= 1.0, mantissa * mantissa_floor, mantissa),
+        jnp.where(mantissa >= 1.0, exponent + 1, exponent),
+    )
+    mantissa, exponent = (
+        jnp.where(mantissa < mantissa_floor, mantissa / mantissa_floor, mantissa),
+        jnp.where(mantissa < mantissa_floor, exponent - 1, exponent),
+    )
+
+    tiny_mantissa, tiny_exponent = jnp.frexp(
+        jnp.asarray(jnp.finfo(divisor.dtype).tiny, dtype=divisor.dtype)
+    )
+    return (exponent < tiny_exponent) | (
+        (exponent == tiny_exponent) & (mantissa < tiny_mantissa)
+    )
 
 
 def _fail_if_blocked_scan_cannot_serve(*, arithmetic: ComparisonArithmetic) -> None:
