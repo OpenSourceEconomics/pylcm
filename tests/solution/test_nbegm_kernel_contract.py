@@ -1,14 +1,17 @@
-"""The single-liquid NB-EGM kernels state their fixed naming contract up front.
+"""The single-liquid NB-EGM kernels state their structural contract up front.
 
-The budget is not DAG-composed: the kernels read the liquid axis under the name
-`liquid` and the gross return and income under fixed qualified parameter names.
-A regime that names them otherwise is refused at build with the offending name,
-instead of dying inside a traced kernel with a missing-argument or
-missing-parameter error.
+The felicity and the accounting are the regime's own: the kernels evaluate the
+declared `utility` target and read the declared liquid law, so what a regime
+calls its curvature parameter, its return parameter, or its budget node is its
+own business.
 
-The felicity carries no such contract — it is the regime's own `utility` target,
-solved as declared — so what a regime calls its curvature parameter is its own
-business.
+Two structural requirements remain, and a regime breaking either is refused at
+build with the offending name rather than dying inside a traced kernel:
+
+- the liquid law is stated as a function of a post-decision savings node, which
+  is the axis the Euler inversion runs on;
+- the case-piece route's budget node is `lcm.cash_on_hand_with_subsidy`, because
+  those kernels form `liquid + subsidy` themselves instead of calling it.
 """
 
 import copy
@@ -22,6 +25,7 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import nbegm_tax_toy as tax_toy
 from tests.test_models.nbegm_common import (
     crra_utility,
+    feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
     resolve_solver,
@@ -107,12 +111,13 @@ def test_a_utility_naming_its_coefficient_gamma_solves_the_same_problem() -> Non
 
 
 def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -> None:
-    """Renaming cash-on-hand renames it in the liquid law too, and that is fine.
+    """Renaming cash-on-hand renames it in the savings node too, and that is fine.
 
-    The law states savings as the budget node minus consumption, so a model
-    naming that node `cash_on_hand` writes a law reading `cash_on_hand`. The
-    contract is about the budget the law computes, not the words it computes it
-    from, so the renamed model solves to the same value function as the default.
+    Post-decision savings are the budget node net of consumption, so a model
+    naming that node `cash_on_hand` writes a savings function reading
+    `cash_on_hand`. What the Euler axis is called upstream is invisible to the
+    kernels, so the renamed model solves to the same value function as the
+    default.
     """
 
     def solve(budget_name: str):
@@ -140,31 +145,80 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
 def _hand_written_liquid_law(
     savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
-    """A user's own spelling of the fixed law, computing exactly the same value."""
+    """A user's own spelling of the conventional law, computing the same value."""
     return (1.0 + return_liquid) * savings + income
 
 
-def _rescaled_liquid_law(
-    savings: FloatND, return_liquid: float, income: float
-) -> ContinuousState:
-    """The fixed law scaled by `1 + 9e-6`, a difference no probe set separates."""
-    return (1.0 + 9e-6) * ((1.0 + return_liquid) * savings + income)
+def test_a_hand_written_liquid_law_solves_the_same_problem() -> None:
+    """A user's own spelling of the conventional law gives one value function.
 
-
-@pytest.mark.parametrize("law", [_hand_written_liquid_law, _rescaled_liquid_law])
-def test_a_hand_written_liquid_law_is_refused_by_the_single_liquid_route(law) -> None:
-    """The single-liquid route takes pylcm's own law object, not a user callable.
-
-    The kernels apply a fixed budget rather than calling the declared law, and no
-    finite check establishes that an arbitrary callable computes it — a global
-    rescaling agrees at every sampled point and still moves every state's value.
-    So the route accepts the law pylcm supplies, whose identity settles the
-    question by construction, and refuses everything else with somewhere to go.
+    The kernels read the law the regime declares, so a law is accepted for the
+    landing points it produces rather than for being the object pylcm supplies.
     """
-    with pytest.raises(RegimeInitializationError, match="liquid_law_from_savings"):
+    hand_written = _build(
+        alive_functions={"utility": utility, **_PIECES},
+        liquid_law=_hand_written_liquid_law,
+    ).solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
+    supplied = _build(
+        alive_functions={"utility": utility, **_PIECES},
+        liquid_law=next_liquid_from_savings,
+    ).solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
+
+    np.testing.assert_allclose(
+        np.asarray(hand_written[0]["alive"]), np.asarray(supplied[0]["alive"])
+    )
+
+
+def _liquid_law_from_resources(
+    resources: FloatND, consumption: ContinuousAction, return_liquid: float
+) -> ContinuousState:
+    """The conventional law written as a displacement of cash-on-hand."""
+    return (1.0 + return_liquid) * (resources - consumption)
+
+
+def test_a_liquid_law_in_displacement_form_is_refused_by_the_single_liquid_route() -> (
+    None
+):
+    """The liquid law states where a level of post-decision savings lands.
+
+    The Euler inversion runs on a grid of savings and reads the continuation off
+    the landing points that grid reaches, so a law whose landing point still
+    moves with cash-on-hand at fixed savings has no single continuation to read
+    — even when it happens to depend on the difference alone.
+    """
+    with pytest.raises(RegimeInitializationError, match="savings"):
         _build(
             alive_functions={"utility": utility, **_PIECES},
-            liquid_law=law,
+            liquid_law=_liquid_law_from_resources,
+        )
+
+
+def test_a_regime_without_a_post_decision_savings_node_is_refused() -> None:
+    """The regime declares the function computing post-decision savings.
+
+    That node is what the liquid law is read against, so its absence is named at
+    build rather than surfacing as a missing DAG input inside a traced kernel.
+    """
+    without_savings = {
+        name: func for name, func in _PIECES.items() if name != "savings"
+    }
+    with pytest.raises(RegimeInitializationError, match="savings"):
+        make_alive_dead_model(
+            n_periods=3,
+            n_liquid=20,
+            liquid_max=20.0,
+            n_consumption=20,
+            alive_functions={"utility": utility, **without_savings},
+            liquid_law=next_liquid_from_savings,
+            alive_solver=resolve_solver(
+                "nbegm",
+                savings_grid=SAVINGS_GRID,
+                post_decision_function="savings",
+            ),
+            # The budget node reaches the liquid state only through `savings`, so
+            # the constraint is what keeps `liquid` live long enough for the
+            # solver to speak; without it the model reports an unused state first.
+            constraints={"feasible": feasible},
         )
 
 
@@ -202,12 +256,29 @@ def test_a_hand_written_budget_node_is_refused_by_the_case_piece_route(
         )
 
 
-def test_a_liquid_law_without_a_return_liquid_parameter_is_named_at_build() -> None:
-    """The kernels read `next_liquid__return_liquid`, so `interest` is refused."""
-    with pytest.raises(
-        RegimeInitializationError, match=r"'next_liquid'.*return_liquid"
-    ):
-        _build(
-            alive_functions={"utility": utility, **_PIECES},
-            liquid_law=next_liquid_with_interest,
-        )
+def test_a_liquid_law_naming_its_return_interest_solves_the_same_problem() -> None:
+    """Two spellings of one gross-return parameter give one value function.
+
+    The kernels evaluate the law the regime declares, so the name its return
+    parameter carries is invisible to them.
+    """
+    return_liquid_params = copy.deepcopy(_TOY_PARAMS)
+    interest_params = copy.deepcopy(_TOY_PARAMS)
+    budget = interest_params["alive"]["alive"]["next_liquid"]
+    renamed_budget = {"interest": budget["return_liquid"], "income": budget["income"]}
+    for target in ("alive", "dead"):
+        interest_params["alive"][target]["next_liquid"] = renamed_budget
+
+    named_interest = _build(
+        alive_functions={"utility": utility, **_PIECES},
+        liquid_law=next_liquid_with_interest,
+    ).solve(params=interest_params, log_level="debug")
+    named_return_liquid = _build(
+        alive_functions={"utility": utility, **_PIECES},
+        liquid_law=next_liquid_from_savings,
+    ).solve(params=return_liquid_params, log_level="debug")
+
+    np.testing.assert_allclose(
+        np.asarray(named_interest[0]["alive"]),
+        np.asarray(named_return_liquid[0]["alive"]),
+    )

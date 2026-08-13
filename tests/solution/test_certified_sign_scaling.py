@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
     certified_margin_sign,
 )
@@ -182,3 +183,214 @@ def test_ordinary_width_ratios_still_resolve_strictly() -> None:
     """
     dtype, jax_dtype = _working_dtypes()
     assert _sign_for_exponents(dtype, jax_dtype, 3, -17) == -1
+
+
+def _flat_gap_signs(
+    dtype,
+    jax_dtype,
+    half_widths: np.ndarray,
+    *,
+    wide_exponent: int,
+    wide_is_above: bool,
+) -> np.ndarray:
+    """Certified signs of `A - B` for a wide flat link against a narrow flat one.
+
+    Both links straddle the query and both are flat, so each takes its own stored
+    value there whatever the ratio between their widths, and the exact sign is the
+    comparison of those two values. `wide_is_above` picks which one is raised.
+    """
+    raised = dtype(0.75)
+    for _ in range(64):
+        raised = np.nextafter(raised, dtype(np.inf), dtype=dtype)
+    wide, narrow = (raised, dtype(0.75)) if wide_is_above else (dtype(0.75), raised)
+    ones = np.ones_like(half_widths)
+    wide_half = dtype(np.ldexp(1.0, wide_exponent))
+    return np.asarray(
+        certified_margin_sign(
+            a_x0=jnp.asarray(-wide_half * ones, dtype=jax_dtype),
+            a_x1=jnp.asarray(wide_half * ones, dtype=jax_dtype),
+            a_v0=jnp.asarray(wide * ones, dtype=jax_dtype),
+            a_v1=jnp.asarray(wide * ones, dtype=jax_dtype),
+            b_x0=jnp.asarray(-half_widths, dtype=jax_dtype),
+            b_x1=jnp.asarray(half_widths, dtype=jax_dtype),
+            b_v0=jnp.asarray(narrow * ones, dtype=jax_dtype),
+            b_v1=jnp.asarray(narrow * ones, dtype=jax_dtype),
+            x_query=jnp.asarray(dtype(0.0) * ones, dtype=jax_dtype),
+        )
+    )
+
+
+@pytest.mark.parametrize("wide_exponent", [-40, 0, 40])
+@pytest.mark.parametrize("wide_is_above", [True, False])
+def test_a_flat_gap_keeps_its_strict_sign_at_every_width_ratio(
+    wide_exponent: int, *, wide_is_above: bool
+) -> None:
+    """Two flat links a fixed gap apart stay strictly ordered however narrow one is.
+
+    Each link enters the determinant only through its own distances — to the query
+    and between its endpoints — so a link far narrower than its rival contributes
+    terms far below one while every operand is still an ordinary number. What
+    cancels between the two contributions is smaller again by the ratio between
+    them, and it can fall under the smallest normal.
+
+    Nothing upstream sees that. The operands are readable, the products stay inside
+    the domain where the transforms are exact, and the transforms discard nothing
+    on the way, so what arrives is an estimate of exactly zero carrying an error
+    bound of exactly zero — the certificate for an exact tie — for links that are
+    demonstrably ordered. Where instead it is the narrow link's own numerator that
+    collapses, its contribution vanishes entirely and the wide link is certified
+    the winner outright, which is the worse failure: a tie at least tells the
+    caller the contest was indecisive.
+
+    The whole class is swept rather than one witness — every width ratio down to
+    the narrowest link the format represents as a normal number, at three scales
+    for the wide link, in both orientations. The second orientation is what
+    separates a decision from a collapse, since a vanished contribution hands the
+    verdict to whichever link survives and that is right half the time.
+    """
+    dtype, jax_dtype = _working_dtypes()
+    exponents = np.arange(1, -int(np.finfo(dtype).minexp) + 1)
+    half_widths = np.ldexp(np.ones(exponents.shape), -exponents).astype(dtype)
+    signs = _flat_gap_signs(
+        dtype,
+        jax_dtype,
+        half_widths,
+        wide_exponent=wide_exponent,
+        wide_is_above=wide_is_above,
+    )
+    expected = 1 if wide_is_above else -1
+    assert sorted(set(map(int, exponents[signs != expected]))) == []
+
+
+def _adjacent_neighbour_signs(
+    dtype,
+    jax_dtype,
+    *,
+    separations: np.ndarray,
+    offsets: np.ndarray,
+    narrow_is_above: bool,
+) -> np.ndarray:
+    """Certified signs where the narrow link's endpoints are neighbours near `tiny`.
+
+    Both links are flat and straddle the query, so the exact sign is the comparison
+    of their two stored values. The narrow link sits at the bottom of the normal
+    range with its endpoints a few representable steps apart, while the wide link
+    spans the unit interval; `separations` and `offsets` count those steps.
+    """
+    tiny = dtype(np.finfo(dtype).tiny)
+    steps = np.arange(int(max(separations.max(), offsets.max())) + 1)
+    ladder = np.empty(steps.shape, dtype=dtype)
+    ladder[0] = tiny
+    for step in steps[1:]:
+        ladder[step] = np.nextafter(ladder[step - 1], dtype(np.inf), dtype=dtype)
+
+    raised = dtype(0.75)
+    for _ in range(64):
+        raised = np.nextafter(raised, dtype(np.inf), dtype=dtype)
+    narrow, wide = (raised, dtype(0.75)) if narrow_is_above else (dtype(0.75), raised)
+    ones = np.ones(separations.shape, dtype=dtype)
+    return np.asarray(
+        certified_margin_sign(
+            a_x0=jnp.asarray(ladder[0] * ones, dtype=jax_dtype),
+            a_x1=jnp.asarray(ladder[separations], dtype=jax_dtype),
+            a_v0=jnp.asarray(narrow * ones, dtype=jax_dtype),
+            a_v1=jnp.asarray(narrow * ones, dtype=jax_dtype),
+            b_x0=jnp.asarray(dtype(0.0) * ones, dtype=jax_dtype),
+            b_x1=jnp.asarray(dtype(1.0) * ones, dtype=jax_dtype),
+            b_v0=jnp.asarray(wide * ones, dtype=jax_dtype),
+            b_v1=jnp.asarray(wide * ones, dtype=jax_dtype),
+            x_query=jnp.asarray(ladder[offsets], dtype=jax_dtype),
+        )
+    )
+
+
+@pytest.mark.parametrize("narrow_is_above", [True, False])
+def test_endpoints_a_subnormal_step_apart_keep_their_strict_sign(
+    *, narrow_is_above: bool
+) -> None:
+    """Two links stay ordered when one link's endpoints are adjacent floats.
+
+    At the bottom of the normal range the spacing between neighbouring floats is
+    itself subnormal, so a link whose endpoints are a few representable steps
+    apart has readable endpoints and an unreadable width. That link's three
+    distances are exact positive rationals the format can hold — the endpoints
+    are ordinary numbers — but the subtraction that forms them underflows, and a
+    backend that flushes returns all three as zero.
+
+    Nothing distinguishes that from a link the caller supplied as a point: the
+    error-free transforms discarded nothing, so the determinant arrives as an
+    estimate of exactly zero carrying an error bound of exactly zero. That is the
+    certificate for an exact tie, issued for two flat links separated by 64 ULPs
+    of value.
+
+    Both orientations are swept, because a collapse hands the verdict to whichever
+    link survives and that is right half the time.
+    """
+    dtype, jax_dtype = _working_dtypes()
+    separations, offsets = (
+        np.asarray(pair)
+        for pair in zip(
+            *[
+                (separation, offset)
+                for separation in range(2, 42, 2)
+                for offset in range(1, separation)
+            ],
+            strict=True,
+        )
+    )
+    signs = _adjacent_neighbour_signs(
+        dtype,
+        jax_dtype,
+        separations=separations,
+        offsets=offsets,
+        narrow_is_above=narrow_is_above,
+    )
+    expected = 1 if narrow_is_above else -1
+    assert sorted(set(map(int, signs[signs != expected]))) == []
+
+
+@pytest.mark.parametrize("narrow_is_above", [True, False])
+def test_a_link_no_exponent_can_lift_is_refused_rather_than_tied(
+    *, narrow_is_above: bool
+) -> None:
+    """A link whose width no scaling recovers is unresolved, never an exact tie.
+
+    Measuring a link on its own scale recovers its width only when its own three
+    abscissae sit together. A query far outside a link at the bottom of the
+    normal range puts an ordinary number in that triple, so normalizing it leaves
+    the endpoints where they were and the width between them still has no
+    representation as a difference.
+
+    What arrives is then a determinant carrying no information about the ordering,
+    and the one verdict it may not draw from that is an exact tie: the links are
+    ordered, and the caller must be told so or told nothing rather than handed a
+    licence to choose between them.
+
+    Which refusal it is depends on the backend and is not the property under test.
+    Where subnormals flush, no determinant is produced at all and the answer is
+    `UNRESOLVED_SIGN`; where they are read, a determinant is produced and sits
+    under its own error bound, which is `BELOW_RESOLUTION_SIGN`. Deciding the
+    ordering correctly is also honest — what is refused is a tie, or a strict
+    verdict against the exact ordering.
+    """
+    dtype, jax_dtype = _working_dtypes()
+    tiny = dtype(np.finfo(dtype).tiny)
+    narrow_x1 = np.nextafter(tiny, dtype(np.inf), dtype=dtype)
+    near, far = dtype(0.9), dtype(0.1)
+    narrow, wide = (near, far) if narrow_is_above else (far, near)
+    verdict = int(
+        certified_margin_sign(
+            a_x0=jnp.asarray(tiny, dtype=jax_dtype),
+            a_x1=jnp.asarray(narrow_x1, dtype=jax_dtype),
+            a_v0=jnp.asarray(narrow, dtype=jax_dtype),
+            a_v1=jnp.asarray(narrow, dtype=jax_dtype),
+            b_x0=jnp.asarray(dtype(0.0), dtype=jax_dtype),
+            b_x1=jnp.asarray(dtype(256.0), dtype=jax_dtype),
+            b_v0=jnp.asarray(wide, dtype=jax_dtype),
+            b_v1=jnp.asarray(wide, dtype=jax_dtype),
+            x_query=jnp.asarray(dtype(1.0), dtype=jax_dtype),
+        )
+    )
+    exact_sign = 1 if narrow_is_above else -1
+
+    assert verdict in (exact_sign, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)

@@ -14,8 +14,9 @@ from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -60,7 +61,12 @@ def build_model(
     savings_max: float = 28.0,
 ) -> Model:
     """Create the two-regime (alive, dead) two-cliff one-asset toy."""
-    alive_functions = {"utility": utility, "subsidy": subsidy, "resources": resources}
+    alive_functions = {
+        "utility": utility,
+        "subsidy": subsidy,
+        "resources": resources,
+        "savings": savings,
+    }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -72,7 +78,7 @@ def build_model(
         liquid_max=liquid_max,
         n_consumption=n_consumption,
         alive_functions=alive_functions,
-        liquid_law=next_liquid,
+        liquid_law=next_liquid_from_savings,
         alive_solver=alive_solver,
         constraints={"feasible": feasible},
     )

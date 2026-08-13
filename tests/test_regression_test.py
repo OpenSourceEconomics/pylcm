@@ -1,6 +1,5 @@
 from collections.abc import Mapping
 
-import jax
 import numpy as np
 import pandas as pd
 import pytest
@@ -25,9 +24,6 @@ from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 _PRECISION_DIR = TEST_DATA / "regression_tests" / ("f64" if X64_ENABLED else "f32")
-
-_HAS_GPU = jax.devices()[0].platform == "gpu"
-_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="requires GPU")
 
 
 def test_regression_test():
@@ -79,7 +75,6 @@ def test_regression_test():
 
 
 @pytest.mark.gpu
-@_skip_no_gpu
 def test_regression_precautionary_savings():
     """Test that precautionary savings benchmark model output does not change."""
     expected = pd.read_pickle(_PRECISION_DIR / "precautionary_savings_simulation.pkl")
@@ -117,7 +112,6 @@ def test_regression_precautionary_savings():
 
 
 @pytest.mark.gpu
-@_skip_no_gpu
 def test_regression_mortality():
     """Test that mortality benchmark model output does not change."""
     expected = pd.read_pickle(_PRECISION_DIR / "mortality_simulation.pkl")

@@ -12,16 +12,19 @@ from collections.abc import Callable
 
 import jax.numpy as jnp
 
-from lcm.typing import ScalarFloat
+from lcm.typing import FloatND, ScalarFloat
 
 
 def invert_euler(
     *,
-    expected_marginal_continuation: ScalarFloat,
-    discount_factor: ScalarFloat,
-    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat],
-) -> ScalarFloat:
-    """Invert the Euler equation at one savings node.
+    expected_marginal_continuation: FloatND,
+    discount_factor: ScalarFloat | float,
+    inverse_marginal_utility: Callable[[FloatND], FloatND],
+) -> FloatND:
+    """Invert the Euler equation on the savings grid.
+
+    The inversion is elementwise, so the same call serves a per-node scalar
+    solve and a whole savings row.
 
     The discounted expected marginal continuation is clamped at a small
     positive epsilon *before* inversion (the degenerate-inversion guard): an
@@ -40,15 +43,15 @@ def invert_euler(
     epsilon* is also clamped, so the returned action is $(u')^{-1}(eps)$ rather
     than the mathematical inverse at that tiny value. Such a candidate lies far
     to the right (a near-zero marginal implies near-total consumption) and is
-    normally dominated or outside the queried resources range — but it is a
-    numerical artifact the upper envelope discards, not a genuine interior
-    optimum.
+    normally dominated or outside the queried resources range — a numerical
+    artifact that the upper envelope drops where there is one, and that the
+    closed-form constrained candidate covers where there is not.
 
     Args:
         expected_marginal_continuation: Probability- and shock-weighted
             expected marginal continuation value
             $\\mathbb{E}[\\partial V'/\\partial R' \\cdot \\partial R'/\\partial A]$
-            at the savings node.
+            at each savings node.
         discount_factor: Discount factor $\\beta$ of the Bellman aggregator.
         inverse_marginal_utility: The regime's inverse-marginal-utility
             function, reduced to a unary map of the marginal continuation with
@@ -56,7 +59,7 @@ def invert_euler(
             its parameter name is its own business.
 
     Returns:
-        The optimal continuous action at the savings node.
+        The optimal continuous action at each savings node.
 
     """
     discounted = discount_factor * expected_marginal_continuation

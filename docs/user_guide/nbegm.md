@@ -66,9 +66,8 @@ The case-piece kernels solve a single means-tested cliff on the liquid margin, s
 - declare its boundary with `equality="otherwise"` and `kind="jump"`, on the liquid
   state itself;
 - give each piece a signature of flat params only — no state, no action;
-- declare `lcm.cash_on_hand_with_subsidy` as its budget node and one of
-  `lcm.liquid_law_from_savings` / `lcm.liquid_law_from_resources` as the liquid law (see
-  "Fixed forms" below);
+- declare `lcm.cash_on_hand_with_subsidy` as its budget node, and state its liquid law
+  through a post-decision savings node (see "The budget node and the liquid law" below);
 - declare no discrete action and no taste shocks (the kernels maximize over consumption
   alone and take a hard maximum).
 
@@ -115,32 +114,52 @@ def subsidy_private(subsidy_low: float) -> FloatND:
 The Medicaid-eligible subsidy exceeds the private one, so market resources — and hence
 the value function — jump down as liquid wealth crosses the limit upward.
 
-### Fixed forms — the budget the single-liquid kernels solve
+### The budget node and the liquid law
 
-The case-piece kernels do not call the regime's budget node or its liquid law. They
-apply one hardcoded cash-on-hand and one hardcoded affine law of motion, reading the
-coefficients under fixed qualified parameter names. A regime taking that route therefore
-has to declare the same forms, and no finite check establishes that an arbitrary
-callable computes them: a global rescaling agrees at every sampled point and still moves
-every state's value.
-
-So pylcm exports the declarations themselves, and the route accepts them by identity:
+The case-piece kernels do not call the regime's budget node: they form cash-on-hand as
+`liquid + subsidy` themselves. No finite check establishes that an arbitrary callable
+computes that same thing — a global rescaling agrees at every sampled point and still
+moves every state's value — so pylcm exports the declaration itself and the route
+accepts it by identity:
 
 - `lcm.cash_on_hand_with_subsidy(liquid, subsidy)` — the budget node,
   `liquid + subsidy`.
-- `lcm.liquid_law_from_savings(savings, return_liquid, income)` — the law of motion for
-  a regime declaring a `post_decision_function`.
-- `lcm.liquid_law_from_resources(resources, consumption, return_liquid, income)` — the
-  same law in displacement form, for a regime that reaches savings through its budget
-  and consumption.
 
-They are ordinary functions and stay executable, so the same model solves identically
-under `GridSearch` and the agreement tests keep their meaning.
-
-A budget these forms cannot express does not belong on the case-piece route. Declare a
-`lcm.piecewise_affine` schedule with a `post_decision_function` — which composes the
+A budget node those kernels cannot form does not belong on the case-piece route. Declare
+a `lcm.piecewise_affine` schedule with a `post_decision_function` — which composes the
 budget from the DAG and reads whatever it declares — or solve the regime with
 `GridSearch`.
+
+The liquid law carries no such restriction. `NBEGM` reads the law the regime declares —
+where each level of savings lands next period, and how that landing point moves when
+savings move — so a per-period fixed cost, a rescaled income, or a return compounded
+over sub-periods is part of the problem solved rather than structure dropped from it.
+
+What the law may not do is depend on the consumption choice by any route other than
+post-decision savings. The Euler inversion runs on a grid of savings and reads the
+continuation off the landing points that grid reaches, so a law stated as
+`next_liquid(resources, consumption, …)` has no single continuation to read and is
+refused at build — even when it happens to depend on the difference alone. The regime
+therefore declares the node the law reads, named `savings` by default and otherwise
+named to `NBEGM(post_decision_function=…)`:
+
+```python
+from lcm.typing import ContinuousAction, FloatND
+
+
+def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    """Post-decision savings: cash-on-hand net of consumption."""
+    return resources - consumption
+```
+
+pylcm exports the conventional affine law in both forms, as ordinary executable
+functions; a regime is free to write its own instead:
+
+- `lcm.liquid_law_from_savings(savings, return_liquid, income)` — the savings form,
+  which `NBEGM` and `GridSearch` both solve.
+- `lcm.liquid_law_from_resources(resources, consumption, return_liquid, income)` — the
+  same law in displacement form, for a `GridSearch` regime that declares no savings
+  node.
 
 ### Piecewise-affine schedules — brackets, tapers, and floors
 
