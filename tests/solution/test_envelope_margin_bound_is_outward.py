@@ -121,3 +121,45 @@ def test_a_link_compared_with_itself_certifies_an_exact_zero():
     margin = _certified(left=link, right=link, query=434.0, level=0.0)
 
     assert (float(margin.value), float(margin.bound)) == (0.0, 0.0)
+
+
+def _underflowing_cross_product_operands() -> dict:
+    """Return numerator/divisor pairs whose cross product cannot be represented.
+
+    One numerator sits at the bottom of the normal range and is multiplied by the
+    other link's divisor, which is below one — so their product falls among the
+    subnormals and is discarded whole. The divisor product is arranged well above
+    one, which is what the bound is finally divided by.
+
+    Every operand is an ordinary normal number, so nothing here is refused for
+    being unreadable in itself. The exponents come from the active format.
+    """
+    dtype = jnp.zeros(()).dtype
+    tiny = float(jnp.finfo(dtype).smallest_normal)
+    shift = abs(int(jnp.finfo(dtype).minexp)) // 8
+
+    def dd(value: float):
+        high = jnp.asarray(value)
+        return (high, jnp.zeros_like(high), jnp.zeros_like(high))
+
+    near_divisor = float(jnp.ldexp(jnp.asarray(1.0), -shift))
+    far_divisor = float(jnp.ldexp(jnp.asarray(1.0), 2 * shift))
+    return {
+        "left_numerator": dd(tiny),
+        "left_divisor": dd(far_divisor),
+        "right_numerator": dd(-tiny),
+        "right_divisor": dd(near_divisor),
+    }
+
+
+def test_a_margin_whose_cross_product_underflowed_is_not_published_as_exact():
+    """A margin built from a discarded product never claims a bound of zero.
+
+    A bound of zero with `trustworthy` set is the strongest statement the type
+    makes — the margin is that number exactly. A cross product that fell among
+    the subnormals was discarded whole, so no such statement is available, and
+    the margin has to declare itself uncertifiable instead.
+    """
+    margin = certified_quotient_margin(**_underflowing_cross_product_operands())
+
+    assert not (float(margin.bound) == 0.0 and bool(margin.trustworthy))

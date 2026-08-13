@@ -366,6 +366,16 @@ def certified_quotient_margin(
         _bounded_product(left_numerator, right_divisor),
         dd_negate(_bounded_product(right_numerator, left_divisor)),
     )
+    # `_bounded_product` answers an underflowing product with the magnitude bound
+    # the underflow establishes, and that bound is the smallest normal — it has no
+    # headroom beneath it. The bound below is divided by the divisor product, so
+    # any divisor product above one returns it to the band it was meant to escape
+    # and it arrives as exactly zero: the certificate for an exact margin, resting
+    # on a product that was discarded whole. The fact that a product was lost is
+    # therefore carried as a fact rather than as a magnitude.
+    cross_products_read = _product_survived(
+        value=left_numerator, factor=right_divisor[0]
+    ) & _product_survived(value=right_numerator, factor=left_divisor[0])
     divisor_product = dd_mul(left_divisor, right_divisor)
     high, low = dd_quotient(determinant, divisor_product)
     value = high + low
@@ -406,6 +416,7 @@ def certified_quotient_margin(
         value=value,
         bound=bound,
         trustworthy=in_domain
+        & cross_products_read
         & jnp.isfinite(value)
         & jnp.isfinite(bound)
         & (divisor_floor > 0.0),
