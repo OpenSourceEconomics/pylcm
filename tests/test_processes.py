@@ -278,7 +278,7 @@ def test_gauss_hermite_and_n_std_mutual_exclusion(grid_cls):
 def test_gauss_hermite_required():
     """Normal(n_points=5) without gauss_hermite raises TypeError."""
     with pytest.raises(TypeError):
-        NormalIIDProcess(n_points=5)  # ty: ignore[missing-argument]
+        NormalIIDProcess(n_points=5)  # ty: ignore[no-matching-overload]
 
 
 def test_normal_gauss_hermite_weights_sum_to_one():

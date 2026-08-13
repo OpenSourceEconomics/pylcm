@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, overload
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +10,7 @@ from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import (
+    StateConditioned,
     _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -129,7 +130,44 @@ class NormalIIDProcess(_IIDProcess):
     n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
 
+    if TYPE_CHECKING:
+        # A scalar `sigma` and `state_conditioned` are alternatives: a conditioned
+        # process derives `sigma` from `state_conditioned.by`, so passing both is a
+        # contradiction the type checker rejects before the constructor does.
+        # For the type checker only — the dataclass generates the real `__init__`, and
+        # defining one in the class body would suppress it.
+        @overload
+        def __init__(
+            self,
+            *,
+            n_points: int,
+            gauss_hermite: bool,
+            sigma: float | None = ...,
+            mu: float | None = ...,
+            n_std: float | None = ...,
+            batch_size: int = ...,
+            distributed: bool = ...,
+            fold: bool = ...,
+        ) -> None: ...
+
+        @overload
+        def __init__(
+            self,
+            *,
+            n_points: int,
+            gauss_hermite: bool,
+            state_conditioned: StateConditioned,
+            mu: float | None = ...,
+            n_std: float | None = ...,
+            batch_size: int = ...,
+            distributed: bool = ...,
+            fold: bool = ...,
+        ) -> None: ...
+
+        def __init__(self, **kwargs: object) -> None: ...
+
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
         )
@@ -198,6 +236,7 @@ class LogNormalIIDProcess(_IIDProcess):
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
         )

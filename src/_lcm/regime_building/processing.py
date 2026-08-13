@@ -1611,7 +1611,16 @@ def _state_handoff_errors(
                     # process, whose next draw does depend on a previous value
                     # the source would have to supply -- has no next-period
                     # value here.
-                    if isinstance(target_grid, _IIDProcess):
+                    #
+                    # A state-conditioned process is in the second group despite
+                    # being IID: its row depends on the time-t conditioning
+                    # state, so it has no unconditional law to be entered at.
+                    # The test is what the row reads, not which family it
+                    # belongs to.
+                    if (
+                        isinstance(target_grid, _IIDProcess)
+                        and target_grid.state_conditioned is None
+                    ):
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
@@ -3315,10 +3324,13 @@ def _process_regime_core(
         for key, grid in target_process_grids.items()
         if key not in explicit_entry_process_grids
     }
-    # Only an IID process can be entered without a handoff, which
-    # `_state_handoff_errors` has already enforced.
+    # Only a process whose row depends on no current value can be entered
+    # without a handoff, which `_state_handoff_errors` has already enforced --
+    # an unconditioned IID process and nothing else. An AR(1) reads the previous
+    # value and a state-conditioned process reads the time-t conditioner, so
+    # both are refused there and never reach this point.
     #
-    # Two conditions bound this and both must be added here as they become
+    # One condition still bounds this and must be added as it becomes
     # expressible, because entry builds a next-state and a weight function and
     # so commits to both an axis and a distribution:
     #
@@ -3326,11 +3338,6 @@ def _process_regime_core(
     #   stored on one must be excluded, or entry reintroduces exactly the axis
     #   its treatment removes -- it needs no entry law for the same reason it
     #   needs no handoff.
-    # - **conditioning.** The entry weights below are the unconditional row,
-    #   which is the whole distribution only for a process whose law depends on
-    #   nothing. A process conditioned on another state must not be entered at
-    #   that row: the conditioner is a live state of the target, and entry has
-    #   no reason to ignore it.
     entered_process_grids = {
         key: grid
         for key, grid in target_process_grids.items()
@@ -4035,17 +4042,17 @@ def _get_stochastic_next_function_for_process(
 
 
 def _process_family(grid: _ContinuousStochasticProcess) -> Family:
-    """Map a supported process to its state-conditioned family (audit F2).
+    """Map a supported process to its state-conditioned family.
 
-    Only families whose transition CDF carries ``sigma`` can express a fixed-node,
-    state-conditioned ``sigma``: CDF-binned ``NormalIIDProcess`` and
-    ``TauchenAR1Process``. Gauss-Hermite IID (nodes scale with ``sigma``) and
-    Rouwenhorst (``rho``-only transition) are rejected at construction.
+    Only families whose transition CDF carries `sigma` can express a fixed-node,
+    state-conditioned `sigma`: CDF-binned `NormalIIDProcess` and `TauchenAR1Process`.
+    Gauss-Hermite IID (nodes scale with `sigma`) and Rouwenhorst (`rho`-only
+    transition) are rejected at construction.
     """
     if isinstance(grid, NormalIIDProcess | TauchenAR1Process) and grid.gauss_hermite:
-        # Blanket rejection, per the stated v1 scope (code-review F6). GH-placed nodes
-        # are derived from the *grid* sigma, so a state-conditioned sigma would bin a
-        # different law on a quadrature rule chosen for another one; untested here.
+        # Gauss-Hermite nodes are placed from the process's own scalar sigma, so a
+        # state-conditioned sigma would bin a different law on a quadrature rule chosen
+        # for another one.
         msg = (
             "state-conditioned sigma is not supported for Gauss-Hermite node placement "
             "(the nodes are built from the grid sigma); use gauss_hermite=False "
@@ -4058,30 +4065,27 @@ def _process_family(grid: _ContinuousStochasticProcess) -> Family:
         return "tauchen"
     msg = (
         "state-conditioned sigma is only supported for CDF-binned NormalIIDProcess "
-        f"and TauchenAR1Process (audit F2); got {type(grid).__name__}."
+        f"and TauchenAR1Process; got {type(grid).__name__}."
     )
     raise ModelInitializationError(msg)
 
 
 def _validate_conditioning_codes_agree_across_regimes(
     *,
-    on: str,
+    on: StateName,
     all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
 ) -> None:
-    """Every regime carrying the conditioning state must map categories to codes alike.
+    """Require one category-to-code map for the conditioning state, model-wide.
 
     The sigma array is ordered by the *target* regime's grid, but the code gathering
-    it is the *current* (source) state's. Those agree only if the category-to-code maps
-    do; a regime that relabels `{low: 0, high: 1}` to `{high: 0, low: 1}` would silently
-    swap the two volatilities (code-review F4). Rather than thread the source grid
-    through every seam, v1 requires one shared map and rejects otherwise.
+    it is the time-$t$ (source) state's. Those agree only if the category-to-code maps
+    do; a regime that relabels `{low: 0, high: 1}` as `{high: 0, low: 1}` would silently
+    swap the two volatilities.
 
-    Round-2 review F3 noted this global scan is not edge-precise (it fails a
-    state-less reachable source late rather than at the guard, and over-rejects
-    disconnected components reusing the name), but established **no silent policy
-    error**. Kept deliberately for v1: the conservative rule is safe, and the
-    per-edge alternative would need source-reachability plumbing that could itself
-    introduce the sigma-swap this prevents. Accepted limitation, not an oversight.
+    The rule is deliberately global rather than per edge. It over-rejects — disconnected
+    components reusing a category name — and reports the clash at model build rather
+    than at the offending handoff. The per-edge alternative needs source-reachability
+    plumbing that could itself introduce the swap this prevents.
     """
     maps = {
         regime: dict(zip(grid.categories, grid.codes, strict=True))
@@ -4101,8 +4105,8 @@ def _validate_conditioning_codes_agree_across_regimes(
 def _validate_conditioned_sigmas(by: Mapping[str, float]) -> None:
     """Every per-category sigma must be a finite, strictly positive number.
 
-    ``None``, ``NaN`` and ``inf`` all sail through a bare ``v <= 0`` test and then
-    poison every transition row silently (code-review F3).
+    `None`, `NaN` and `inf` all sail through a bare `v <= 0` test and then poison every
+    transition row silently.
     """
     bad = {
         k: v
@@ -4119,19 +4123,19 @@ _MIN_CONDITIONED_NODES = 2
 
 
 def _validate_conditioned_grid_is_fixed(
-    *, name: str, grid: _ContinuousStochasticProcess
+    *, name: ProcessName, grid: _ContinuousStochasticProcess
 ) -> None:
     """A state-conditioned process must have every grid parameter fixed at build time.
 
     The conditioned branch is chosen *before* the runtime-parameter mechanism, so a
-    parameter left for runtime is never bound: ``get_gridpoints()`` returns all-NaN and
-    the closure captures those nodes permanently (code-review F3). Reject instead.
+    parameter left for runtime is never bound: `get_gridpoints()` returns all-NaN and
+    the closure captures those nodes permanently. Reject instead.
     """
     if not grid.is_fully_specified:
         missing = ", ".join(sorted(grid.params_to_pass_at_runtime))
         msg = (
             f"state-conditioned process '{name}' requires every grid parameter fixed "
-            f"at construction (v1); {missing} would be passed at runtime. Pass them to "
+            f"at construction; {missing} would be passed at runtime. Pass them to "
             f"{type(grid).__name__}(...), or drop state_conditioned."
         )
         raise ModelInitializationError(msg)
@@ -4143,7 +4147,7 @@ def _validate_conditioned_grid_is_fixed(
         raise ModelInitializationError(msg)
     # Finiteness is not enough. The direct-CDF row bins on the MIDPOINTS of these nodes,
     # so a strictly increasing axis of >= 2 points is what makes the CDF differences
-    # probabilities at all (code-review round 2, F2). All of this is reachable from the
+    # probabilities at all. All of this is reachable from the
     # public API: `sigma=-0.3` or `n_std=-3.0` yields a DESCENDING axis (pylcm does not
     # require a positive sigma), `sigma=0.0` collapses every node, and a large `mu` in
     # float32 rounds them together. The descending case is the dangerous one — the row
@@ -4200,7 +4204,7 @@ def _validate_all_conditioned_processes(
 
 def _validate_conditioned_process(
     *,
-    name: str,
+    name: ProcessName,
     grid: _ContinuousStochasticProcess,
     sc: StateConditioned,
     grids: Mapping[StateOrActionName, Grid],
@@ -4231,16 +4235,17 @@ def _validate_conditioned_process(
 
 def _get_conditioned_weights_func(
     *,
-    name: str,
+    name: ProcessName,
     grid: _ContinuousStochasticProcess,
     sc: StateConditioned,
     grids: Mapping[StateOrActionName, Grid],
 ) -> UserFunction:
-    """Weights function for a state-conditioned process (direct-CDF, audit F1/F5/F6).
+    """Build the direct-CDF weights function for a state-conditioned process.
 
-    The transition row is computed DIRECTLY at the from-value on the FIXED common nodes
-    (from the scalar ``sigma``), with the per-regime ``sigma`` gathered by the
-    conditioning state's integer code. No precomputed-row interpolation (F1).
+    The transition row is computed directly at the time-$t$ value on the fixed common
+    nodes, which the process's own scalar `sigma` places, with the per-category `sigma`
+    gathered by the conditioning state's integer code. No precomputed row is
+    interpolated.
     """
     conditioning_grid, family = _validate_conditioned_process(
         name=name, grid=grid, sc=sc, grids=grids

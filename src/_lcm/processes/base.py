@@ -1,3 +1,4 @@
+import math
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -11,25 +12,62 @@ from jax.scipy.stats.norm import cdf
 from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
 class StateConditioned:
-    """A process parameter (v1: ``sigma``) conditioned on a discrete regime state.
+    r"""A shock parameter conditioned on a discrete state of the same regime.
 
-    ``on`` names a ``DiscreteGrid`` state in the *same* regime (current-regime
-    conditioning only — pro-comp-method audit S4/F4). ``by`` maps each of that state's
-    category names to a concrete parameter value, baked at build time (v1). The scalar
-    ``sigma`` on the process then defines the FIXED common node grid; the per-category
-    values in ``by`` enter only the transition CDF (directly at the from-value).
+    Use this when the size of a shock depends on where the subject currently is — the
+    variance of the earnings innovation differing by employment status, with
+    $\sigma_\text{employed} < \sigma_\text{unemployed}$:
 
-    Defined here (a leaf module) so the process base class can annotate the field
-    without an import cycle; re-exported from ``_lcm.processes.state_conditioned``.
+        NormalIIDProcess(
+            n_points=7,
+            gauss_hermite=False,
+            mu=0.0,
+            n_std=3.0,
+            state_conditioned=StateConditioned(
+                on="employment_status",
+                by={"employed": 0.2, "unemployed": 0.5},
+            ),
+        )
+
+    Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an
+    AR(1) process transitions as
+
+    ```{math}
+    y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
+    ```
+
+    an IID process dropping the $\rho y_t$ term. The row is binned on one set of nodes,
+    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$. The
+    process therefore derives its scalar `sigma` and takes none of its own; passing both
+    is rejected.
+
+    The conditioning value is dated $t$, so the variance of the innovation realized
+    between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
+    against is the *target* regime's declaration, so a process declared with different
+    values in the source and target regimes takes the target's.
+
+    `on` must name a `DiscreteGrid` state the regime carries. Build that grid from the
+    same `@categorical` class in every regime that carries it: the per-category value is
+    selected by the category's integer code, so regimes that encode the same categories
+    in a different order would draw each other's values.
+
+    All of it is fixed at build time. Neither `by` nor the process's own parameters
+    reach the params template, so none of them can be estimated.
+
+    Defined in this leaf module so the process base class can annotate the field without
+    an import cycle; re-exported from `_lcm.processes.state_conditioned`.
     """
 
-    on: str
+    on: StateName
+    """Name of the `DiscreteGrid` state whose time-$t$ value selects the parameter."""
+
     by: Mapping[str, float]
+    """Mapping of that state's category names to the value used for each."""
 
 
 def _gauss_hermite_normal(
@@ -64,12 +102,15 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """The number of points for the discretization of the process."""
 
     state_conditioned: StateConditioned | None = None
-    """If set, the process's ``sigma`` is conditioned on a discrete regime state (v1).
+    """If set, the process's `sigma` is conditioned on a discrete state of the regime.
 
-    The scalar ``sigma`` field then defines the FIXED common node grid; the per-category
-    innovation stds live in ``state_conditioned.by`` and enter only the transition CDF.
-    The weights builder takes a direct-CDF branch for such processes. Supported for
-    CDF-binned IID normal and Tauchen AR(1) only.
+    The fixed common nodes are then placed from the widest value in
+    `state_conditioned.by`, and the per-category innovation stds enter only the
+    transition CDF, evaluated directly at the time-$t$ value. The `sigma` field is
+    derived rather than supplied — passing one alongside `state_conditioned` is
+    rejected. Available for the CDF-binned IID normal and Tauchen
+    AR(1) processes, whose transition CDFs carry `sigma`. A Rouwenhorst transition
+    depends on `rho` alone, so fixing the nodes would leave `sigma` no channel at all.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -80,6 +121,40 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     Subclasses extend this via `cls._NON_PARAM_FIELDS | {...}` when they
     introduce further non-parameter fields (e.g. `gauss_hermite`).
     """
+
+    def __post_init__(self) -> None:
+        self._derive_conditioned_sigma()
+
+    def _derive_conditioned_sigma(self) -> None:
+        """Place the nodes from the widest per-category value when `sigma` is omitted.
+
+        A state-conditioned process has one node axis, shared by every category, so the
+        scalar `sigma` placing it is not free information — the widest category is what
+        the axis has to cover. Deriving it is what keeps the two from disagreeing.
+
+        A `by` carrying an unusable value is left alone rather than guessed at, so the
+        model build reports the offending entry instead of a missing `sigma`.
+        """
+        sc = self.state_conditioned
+        if sc is None or "sigma" not in {f.name for f in fields(self)}:
+            return
+        if getattr(self, "sigma", None) is not None:
+            msg = (
+                "a state-conditioned process places the nodes from the widest value "
+                "in `state_conditioned.by`, so it takes no scalar `sigma` of its "
+                "own; drop one of the two."
+            )
+            raise GridInitializationError(msg)
+        values = tuple(sc.by.values())
+        usable = values and all(
+            isinstance(value, float | int)
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value > 0.0
+            for value in values
+        )
+        if usable:
+            object.__setattr__(self, "sigma", max(values))
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
