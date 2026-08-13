@@ -48,6 +48,7 @@ from _lcm.typing import (
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages
@@ -335,7 +336,7 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
 
 def _model_wide_conditioning_names(
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> set[str]:
+) -> frozenset[StateName]:
     """Every conditioning state read by any state-conditioned process in the model.
 
     `state_conditioned.on` is a real dependency of the generated weights/draw functions,
@@ -343,18 +344,18 @@ def _model_wide_conditioning_names(
     misses it. A conditioned process's transition weight is also built into the Q of
     every *source* regime that can reach the process's regime, evaluated at that
     source's current `on` state — so the dependency is not local to the process's regime
-    (round-3 review F1). We collect the conditioners model-wide and, at the call site,
+    We collect the conditioners model-wide and, at the call site,
     credit each regime for those it actually carries: a conservative over-approximation
     of reachability whose only cost is not flagging a genuinely unused state, never a
     wrong policy.
     """
-    return {
+    return frozenset(
         grid.state_conditioned.on
         for user_regime in user_regimes.values()
         for grid in user_regime.states.values()
         if isinstance(grid, _ContinuousStochasticProcess)
         and grid.state_conditioned is not None
-    }
+    )
 
 
 def _validate_all_variables_used(
@@ -456,7 +457,7 @@ def _validate_all_variables_used(
         # above cannot see it. A process conditioned in one regime is also drawn into a
         # *source* regime's Q when that source can reach it, evaluated at the source's
         # own `on` state — so a conditioner is credited to every regime that carries it,
-        # not only the process's own regime (round-2 review F1 / round-3 review F1).
+        # not only the process's own regime.
         reachable = set(reachable) | (conditioning_names & variable_names)
         unused_variables = sorted(variable_names - reachable)
 

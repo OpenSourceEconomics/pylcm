@@ -1,9 +1,8 @@
-"""Tests for the state-conditioned-shock direct-CDF row builders (v1 core).
+"""Tests for the state-conditioned-shock direct-CDF row builders.
 
-Pins the load-bearing correctness the pro-comp-method audit (2026-07-14) demanded:
-reduction to pylcm's own transition math at the nodes, F1-safety (direct-CDF, not row
-interpolation), F2-safety (sigma genuinely moves the kernel on fixed nodes), and
-analytic conditional moments. The DAG plumbing is a later increment; this is the kernel.
+Pins the load-bearing correctness of the kernel: reduction to pylcm's own transition
+math at the nodes, rows built directly at the time-t value rather than interpolated,
+sigma genuinely moving the kernel on fixed nodes, and analytic conditional moments.
 """
 
 import jax.numpy as jnp
@@ -19,6 +18,7 @@ from _lcm.processes.state_conditioned import (
     tauchen_row,
 )
 from lcm import DiscreteGrid, NormalIIDProcess, TauchenAR1Process, categorical
+from lcm.exceptions import GridInitializationError
 from lcm.typing import ScalarInt
 from tests.conftest import X64_ENABLED
 
@@ -58,11 +58,11 @@ def test_iid_row_reduces_to_pylcm():
 
 @pytest.mark.parametrize("mu", [0.2, -0.5])
 def test_tauchen_row_reduces_to_pylcm_at_nodes_with_nonzero_mu(mu):
-    """F2 regression: the AR(1) intercept must survive into the row.
+    """The AR(1) intercept survives into the row at a non-zero mu.
 
     Stock pylcm builds its Tauchen rows in demeaned coordinates, where the intercept
-    drops out; here the nodes and the from-value are PHYSICAL (centred on mu/(1-rho)),
-    so the conditional mean is `mu + rho*y` and dropping `mu` misplaces every row.
+    drops out. Here the nodes and the time-t value are physical (centred on mu/(1-rho)),
+    so the conditional mean is `mu + rho*y_t` and dropping `mu` misplaces every row.
     """
     p = TauchenAR1Process(
         n_points=7, gauss_hermite=False, rho=0.9, sigma=0.2, mu=mu, n_std=3.0
@@ -76,7 +76,7 @@ def test_tauchen_row_reduces_to_pylcm_at_nodes_with_nonzero_mu(mu):
 
 @pytest.mark.parametrize("mu", [1.0, -0.3])
 def test_iid_row_reduces_to_pylcm_with_nonzero_mu(mu):
-    """F2 regression: a non-zero IID mean must survive into the row."""
+    """A non-zero IID mean survives into the row."""
     p = NormalIIDProcess(n_points=7, gauss_hermite=False, mu=mu, sigma=0.2, n_std=3.0)
     nodes = p.get_gridpoints()
     P = p.get_transition_probs()
@@ -153,8 +153,11 @@ def test_iid_conditional_variance_matches_sigma_on_fine_grid():
 
 
 def test_sigma_array_ordered_by_code_not_insertion():
-    """F5/RT5: sigma is ordered by the categorical's integer code, so indexing by the
-    conditioning state's code is correct even when `by` is given in another order."""
+    """Sigma is ordered by the categorical's integer code, not by `by` insertion order.
+
+    Indexing by the conditioning state's code is therefore correct whatever order the
+    mapping is written in.
+    """
     grid = DiscreteGrid(Uncertainty)  # codes: low=0, high=1
     by = {"high": 1.0, "low": 0.2}  # deliberately reverse insertion order
     arr = np.asarray(sigma_array_by_code(grid, by))
@@ -194,3 +197,53 @@ def test_conditioned_row_tauchen_requires_rho():
         conditioned_row(
             family="tauchen", nodes=nodes, sigma=0.5, from_value=0.0, mu=0.0
         )
+
+
+def test_conditioned_sigma_defaults_to_the_widest_category():
+    """Omitting `sigma` places the nodes from the widest per-category value."""
+    derived = NormalIIDProcess(
+        n_points=7,
+        gauss_hermite=False,
+        mu=0.0,
+        n_std=3.0,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": 0.2, "high": 0.5}
+        ),
+    )
+    explicit = NormalIIDProcess(
+        n_points=7, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=3.0
+    )
+    assert derived.sigma == pytest.approx(0.5)
+    np.testing.assert_allclose(
+        np.asarray(derived.get_gridpoints()), np.asarray(explicit.get_gridpoints())
+    )
+
+
+def test_conditioned_sigma_conflicts_with_an_explicit_sigma():
+    """Giving both a scalar `sigma` and `state_conditioned` is rejected."""
+    with pytest.raises(GridInitializationError, match="places the nodes"):
+        NormalIIDProcess(  # ty: ignore[no-matching-overload]
+            n_points=7,
+            gauss_hermite=False,
+            mu=0.0,
+            sigma=0.5,
+            n_std=3.0,
+            state_conditioned=StateConditioned(
+                on="uncertainty", by={"low": 0.2, "high": 0.5}
+            ),
+        )
+
+
+def test_conditioned_sigma_derives_for_tauchen_too():
+    """The derivation is not specific to the IID family."""
+    p = TauchenAR1Process(
+        n_points=7,
+        gauss_hermite=False,
+        rho=0.9,
+        mu=0.0,
+        n_std=3.0,
+        state_conditioned=StateConditioned(
+            on="uncertainty", by={"low": 0.1, "high": 0.4}
+        ),
+    )
+    assert p.sigma == pytest.approx(0.4)

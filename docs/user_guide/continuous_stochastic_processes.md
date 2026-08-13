@@ -180,6 +180,9 @@ working = Regime(
    `None`).
 1. Runtime params follow the same hierarchy as other params (see
    [Parameters](parameters.md)).
+1. A shock whose size depends on a discrete state is declared with `StateConditioned`,
+   and is then fixed at build time (see
+   [State-Conditioned Shock Size](#state-conditioned-shock-size)).
 
 ## Runtime Parameters
 
@@ -203,6 +206,107 @@ params = {
 
 `n_points` and `gauss_hermite` are structural, not distribution parameters — they must
 always be given at construction.
+
+(state-conditioned-shock-size)=
+
+## State-Conditioned Shock Size
+
+The size of a shock often depends on where the subject currently is: earnings
+innovations are more variable out of work than in it, returns more variable in a
+high-volatility regime. Declare that with `StateConditioned` on the process.
+
+```python
+from lcm import DiscreteGrid, NormalIIDProcess, StateConditioned, categorical
+from lcm.typing import ScalarInt
+
+
+@categorical(ordered=False)
+class EmploymentStatus:
+    employed: ScalarInt
+    unemployed: ScalarInt
+
+
+income_shock = NormalIIDProcess(
+    n_points=7,
+    gauss_hermite=False,
+    mu=0.0,
+    n_std=3.0,
+    state_conditioned=StateConditioned(
+        on="employment_status",
+        by={"employed": 0.2, "unemployed": 0.5},
+    ),
+)
+```
+
+`on` names a `DiscreteGrid` state the regime carries, and `by` gives the innovation
+standard deviation for each of its categories. The regime declares both:
+
+```python
+working = Regime(
+    transition=next_regime,
+    states={
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
+        "employment_status": DiscreteGrid(EmploymentStatus),
+        "income_shock": income_shock,
+    },
+    state_transitions={
+        "wealth": next_wealth,
+        "employment_status": MarkovTransition(next_employment_status),
+    },
+    actions={...},
+    functions={...},
+)
+```
+
+### Note there is no `sigma`
+
+A discretized process has one axis in the value function, so every category has to share
+one set of nodes. Those nodes are placed from the widest value in `by`, which is the
+narrowest axis covering every category — so the process derives its scalar `sigma`
+rather than taking one. Passing both is a contradiction and is rejected, by the type
+checker and again at construction.
+
+The per-category values never move the nodes; they enter only the transition
+probabilities. To widen the axis beyond the default, raise `n_std`.
+
+### The conditioning value is dated t
+
+Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an AR(1)
+process transitions as
+
+```{math}
+y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
+```
+
+with an IID process dropping the $\rho y_t$ term. The variance of the innovation
+realized between $t$ and $t+1$ is therefore set by where the subject is at $t$ — the
+employment status they are leaving, not the one they arrive in.
+
+When a process is declared in more than one regime, the values in force are the ones
+declared by the regime being *entered*, selected by the conditioning state at $t$. Two
+regimes may declare different values on purpose; build the conditioning `DiscreteGrid`
+from the same `@categorical` class in each of them, so the categories line up.
+
+### Everything is fixed at build time
+
+A state-conditioned process cannot defer any parameter to runtime, and the values in
+`by` never appear in the params template. Both are rejected or absent by design, so
+**these values cannot be estimated** — they are part of the model's structure, not its
+parameters. Give every parameter at construction.
+
+### Which processes support it
+
+Conditioning rides in the transition CDF, so it is available exactly where `sigma` sits
+there:
+
+| Process                                  | Supported                                 |
+| ---------------------------------------- | ----------------------------------------- |
+| `NormalIIDProcess(gauss_hermite=False)`  | yes                                       |
+| `TauchenAR1Process(gauss_hermite=False)` | yes                                       |
+| Either with `gauss_hermite=True`         | no — the nodes scale with `sigma`         |
+| `RouwenhorstAR1Process`                  | no — its transition depends on `rho` only |
+
+Anything else raises at model build.
 
 ## See Also
 

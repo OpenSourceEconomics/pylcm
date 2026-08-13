@@ -373,9 +373,10 @@ def _create_continuous_stochastic_next_func(
     grid: _ContinuousStochasticProcess = all_grids[target_regime_name][state_name]  # ty: ignore [invalid-assignment]
     qname = qname_from_tree_path((target_regime_name, next_state_name))
 
-    # A state-conditioned process must DRAW with the current regime's sigma, not the
-    # scalar common-grid sigma — otherwise solve and simulate run different laws
-    # (code-review F1).
+    # A state-conditioned process draws with the sigma its conditioning state selects,
+    # not the scalar `sigma` that places the nodes, so the simulated law is the one the
+    # solution was computed under. The conditioning value is dated t; the declaration it
+    # is read against is the target regime's.
     conditioned = _resolve_conditioned_sigma(
         grid=grid, grids=all_grids[target_regime_name]
     )
@@ -401,7 +402,7 @@ def _resolve_conditioned_sigma(
     """Resolve the code-ordered sigma array of a state-conditioned process, else None.
 
     Reuses `sigma_array_by_code` so simulation gathers sigma under exactly the
-    category-code ordering the solve-side transition rows use (code-review F1).
+    category-code ordering the solve-side transition rows use.
     """
     sc = grid.state_conditioned
     if sc is None:
@@ -494,10 +495,10 @@ def _conditioned_sigma(
     conditioned: tuple[StateConditioned, Float1D] | None,
     kwargs: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    """`{"sigma": <current regime's sigma>}` for a conditioned process, else `{}`.
+    """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
 
-    Overrides the scalar common-grid sigma the draw would otherwise use, which is what
-    makes the simulated law match the solved one (code-review F1).
+    Overrides the scalar `sigma` that places the nodes, so the draw uses the same
+    per-category value the solve-side transition row was built from.
     """
     if conditioned is None:
         return {}

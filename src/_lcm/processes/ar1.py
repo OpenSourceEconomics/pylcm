@@ -2,6 +2,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, fields
 from math import comb
 from types import MappingProxyType
+from typing import TYPE_CHECKING, overload
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +11,7 @@ from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import (
+    StateConditioned,
     _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -65,7 +67,44 @@ class TauchenAR1Process(_AR1Process):
     n_std: float | int | None = None
     """Number of standard deviations for the grid boundary."""
 
+    if TYPE_CHECKING:
+        # A scalar `sigma` and `state_conditioned` are alternatives: a conditioned
+        # process derives `sigma` from `state_conditioned.by`, so passing both is a
+        # contradiction the type checker rejects before the constructor does.
+        # For the type checker only — the dataclass generates the real `__init__`, and
+        # defining one in the class body would suppress it.
+        @overload
+        def __init__(
+            self,
+            *,
+            n_points: int,
+            gauss_hermite: bool,
+            sigma: float | None = ...,
+            rho: float | None = ...,
+            mu: float | None = ...,
+            n_std: float | None = ...,
+            batch_size: int = ...,
+            distributed: bool = ...,
+        ) -> None: ...
+
+        @overload
+        def __init__(
+            self,
+            *,
+            n_points: int,
+            gauss_hermite: bool,
+            state_conditioned: StateConditioned,
+            rho: float | None = ...,
+            mu: float | None = ...,
+            n_std: float | None = ...,
+            batch_size: int = ...,
+            distributed: bool = ...,
+        ) -> None: ...
+
+        def __init__(self, **kwargs: object) -> None: ...
+
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
@@ -111,7 +150,7 @@ class TauchenAR1Process(_AR1Process):
 
         # CDF at midpoints for each source state: (n_points, n_points - 1)
         # Denominator is sigma (innovation std), not std_y (unconditional std),
-        # because the conditional distribution y'|y has variance sigma^2.
+        # because the conditional distribution y_{t+1} | y_t has variance sigma^2.
         cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
         first_col = cdf_vals[:, :1]
         last_col = 1 - cdf_vals[:, -1:]
