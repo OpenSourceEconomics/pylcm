@@ -154,16 +154,14 @@ def test_phase_invariant_constraint_still_builds():
 
 
 def test_constraint_reaching_phased_helper_through_age_specialized_marker_is_rejected():
-    """R12 F1: an age-specialized helper hides a `Phased` helper from the guard.
+    """A phase-varying helper is caught behind an age-specialized one.
 
-    The bare constraint `capacity` reads the `AgeSpecializedFunction` helper
-    `policy_target`, whose concrete per-age function reads the `Phased` helper
-    `threshold` (solve resolves to `stay`, simulate to `switch`). The solve and
-    simulate feasible sets therefore differ. But the marker exposes only a generic
-    `(*args, **kwargs)` wrapper signature, so a raw-graph ancestry walk stops at the
-    marker and never sees `threshold`. `_validate_constraint_phase_invariance` must
-    resolve the marker at a representative active age before walking ancestry (as
-    `_validate_all_variables_used` already does) and reject the model.
+    The constraint `capacity` reads the age-specialized helper `policy_target`,
+    whose per-age function reads the `Phased` helper `threshold` (`stay` when
+    solving, `switch` when simulating), so the two feasible sets differ. An
+    age-specialized function exposes only a generic `(*args, **kwargs)` signature
+    until it is resolved, so the model is rejected only if the ancestry is walked
+    on the resolved graph.
     """
 
     def threshold_solve() -> ScalarInt:
@@ -196,12 +194,12 @@ def test_constraint_reaching_phased_helper_through_age_specialized_marker_is_rej
 
 
 def test_per_target_phased_next_state_is_rejected():
-    """F1: an outer `Phased` PER-TARGET state law is keyed as `next_stock__<target>`,
-    but the constraint reads the unqualified `next_stock`. One common belief law
-    across all targets and a different common truth law across all targets dodges
-    the target-conflict guard, yet the feasible set is still phase-specific. The
-    validator must alias the qualified phase-varying names to `next_stock` and
-    reject it -- otherwise the round-4 spelling escapes the whole check.
+    """A per-target law that varies by phase is rejected under its plain name.
+
+    A per-target state law is keyed `next_stock__<target>`, while the constraint
+    reads the unqualified `next_stock`. Declaring one belief law for every target
+    and one truth law for every target keeps the target sets identical, but the
+    feasible set still differs by phase, so the model must be rejected.
     """
 
     def capacity(next_stock: FloatND) -> FloatND:
@@ -221,15 +219,16 @@ def test_per_target_phased_next_state_is_rejected():
 
 
 def test_constraint_reading_a_fixed_current_state_still_builds():
-    """F4: `fixed_transition` rebuilds a fresh `_IdentityTransition` per collection,
-    so the solve and simulate resolutions are distinct objects -- but they are the
-    same phase-invariant identity law, and a constraint reading the state it fixes
-    must build rather than be falsely rejected as phase-varying.
+    """A constraint reading a state held fixed by `fixed_transition` still builds.
 
-    The constraint reads the CURRENT `stock`, not `next_stock`: a `next_` name is
-    reserved for a transition's output and rejected outside one (see
-    `test_next_prefix_is_reserved.py`). For a fixed state the two values are equal
-    anyway, so the phase-invariance question this pins is unchanged.
+    `fixed_transition` rebuilds its identity law on every collection, so the two
+    phases hold distinct objects standing for the same phase-invariant law. That
+    must not be mistaken for phase variance.
+
+    The constraint reads the current `stock`, not `next_stock`, because a `next_`
+    name is reserved for a transition's output (see
+    `test_next_prefix_is_reserved.py`). For a fixed state the two values are equal,
+    so the question this pins down is unchanged.
     """
 
     def utility(stock: DiscreteState, move: DiscreteAction) -> FloatND:

@@ -1,11 +1,11 @@
 """A state law may be stochastic in one phase and deterministic in the other.
 
-The earlier coherence rule required both phases to agree on stochasticity; it was
-deleted because a deterministic law is a degenerate kernel, not a different kind of
-state. This regression pins both mixed directions:
-`Phased(solve=MarkovTransition(...), simulate=<deterministic>)` and the reverse must
-build, solve, and simulate with the right belief/truth split -- Q priced under the
-BELIEF, the draw following the TRUTH.
+The two phases need not agree on whether a state's law is stochastic: a deterministic
+law is a degenerate kernel, not a different kind of state. An agent may perceive risk
+where there is none, or believe a transition certain that in fact is not. Both
+directions — `Phased(solve=MarkovTransition(...), simulate=<deterministic>)` and its
+reverse — build, solve, and simulate with the belief/truth split intact: Q is priced
+under the belief, the draw follows the truth.
 """
 
 from typing import Any

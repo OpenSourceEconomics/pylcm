@@ -454,13 +454,13 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
 
 
 def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
-    """F5: a carried state is imputed in solve, so its next value has no solve-phase
-    producer -- the canonical solve slice omits the carried law of motion. A
-    constraint reading `next_<carried>` would leave the solve feasibility DAG with an
-    unsupplied argument and fail with a cryptic missing-argument error deep in the
-    solve build. It must be rejected early at model construction, clearly naming the
-    carried next-state. (Reading the CURRENT carried value stays valid -- covered by
-    `test_initial_feasibility_checks_seeded_carried_value`.)
+    """A constraint reading a carried state's next value is rejected at model build.
+
+    The solve phase imputes a carried state, so its next value has no producer
+    there and the solve feasibility DAG would be left with an unsupplied argument.
+    The model is rejected at construction, naming the carried next-state. Reading
+    the current carried value stays valid — see
+    `test_initial_feasibility_checks_seeded_carried_value`.
     """
 
     def _cap_on_next_pension(next_pension_wealth: float) -> bool:

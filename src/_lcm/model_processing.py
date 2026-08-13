@@ -494,14 +494,12 @@ def _validate_all_variables_used(
 def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
     """Whether a name's `solve` and `simulate` resolutions are different laws.
 
-    Object identity is the base test: `get_all_functions` returns raw user
-    callables, so a bare law is the same object in both phases and a `Phased`
-    yields its two genuinely-distinct variants. The one exception is
-    `fixed_transition`: its `_IdentityTransition` is rebuilt fresh on every
-    collection (`_make_identity_fn`), so the two phases hold distinct objects that
-    are nonetheless the same phase-invariant identity law. Treat them as equal when
-    both are the auto-identity law for the same state, else a constraint reading a
-    fixed `next_<state>` would be falsely rejected.
+    Object identity is the test: `get_all_functions` returns the raw user
+    callables, so a phase-invariant value is one object in both phases while a
+    `Phased` yields two distinct ones. `fixed_transition` is the exception — its
+    identity law is rebuilt on every collection, so the two phases hold distinct
+    objects standing for the same law. Treating those as different would falsely
+    reject a constraint that reads a fixed `next_<state>`.
     """
     if solve_obj is sim_obj:
         return False
@@ -522,32 +520,30 @@ def _validate_constraint_phase_invariance(
 ) -> list[str]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
 
-    `Regime.constraints` are contractually phase-invariant: a *direct* `Phased`
-    constraint is rejected at regime init (`_callable_mapping_errors`), because a
-    phase-specific feasible set would let the simulated argmax range over actions
-    the value function was never computed for. But that check only inspects the
-    top-level constraint object. A *bare* constraint can reach a `Phased` helper
-    or a `Phased` `next_<state>` transitively; the solve and simulate feasibility
-    DAGs then resolve that dependency from different phase pools, so the feasible
-    set is phase-specific anyway -- silently reintroducing exactly the hazard the
-    direct ban forbids. This walks each constraint's dependency ancestry and
-    closes the gap.
+    The feasible set is a primitive of the model the agent solved, so it may not
+    differ across phases: a phase-specific feasible set would let the simulated
+    agent choose actions its value function was never computed for. A `Phased`
+    constraint is already rejected when the regime is built, but a plain constraint
+    can reach a `Phased` helper or law of motion further up its dependency chain
+    and become phase-specific that way. This walks the whole chain.
 
-    A name is phase-varying iff its `solve` and `simulate` resolutions are
-    different laws (`_law_phase_varies`): object identity is the base test because
-    `get_all_functions` returns raw user callables (a `Phased` yields its two
-    genuinely-distinct variants; a bare value is the same object in both phases),
-    with `fixed_transition`'s freshly-rebuilt identity law treated as equal. A
-    per-target state law is keyed under `next_<state>__<target>`, so its
-    phase-varying entries are aliased to the unqualified `next_<state>` a
-    constraint actually reads. Carried-only states are *not* phase-varying: their
-    imputation resolves to the same `solve` variant in both phases, so a
-    constraint reading a carried state has the same feasible set in both --
-    consistent with the decision using the imputation (policy-consistency), not
-    the realized carried value.
+    A name is phase-varying when its solve and simulate resolutions are different
+    laws (`_law_phase_varies`). Two cases need care:
+
+    - A per-target law is keyed `next_<state>__<target>`, while a constraint reads
+      the unqualified `next_<state>`. If any target's law varies by phase, so does
+      the unqualified name, so the qualified entries are aliased onto it.
+    - A carried state is not phase-varying: both phases read the same solve-phase
+      imputation, which is also the value its decision is taken at. Reading such a
+      state's *next* value is a different matter — the solve phase has no producer
+      for it — and is rejected separately.
 
     Args:
         user_regimes: Mapping of finalized regime names to `Regime` instances.
+        ages: The model's age grid, or `None` when no age-specialized function
+            needs resolving before the ancestry is walked.
+        active_periods_by_regime: Immutable mapping of regime names to their
+            active periods, as prepared by `compute_active_periods_by_regime`.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -562,25 +558,17 @@ def _validate_constraint_phase_invariance(
             for name in solve_funcs
             if _law_phase_varies(solve_funcs[name], sim_funcs.get(name))
         )
-        # A per-target state (or regime) law is keyed as `next_<state>__<target>`,
-        # one entry per target regime, but a constraint reads the unqualified
-        # decision-DAG name `next_<state>`: the compiled per-target bundle resolves
-        # that name to the current target's law. So if ANY target's law is
-        # phase-varying, a constraint reading the unqualified name still sees a
-        # phase-specific feasible set. Alias each phase-varying qualified transition
-        # to its unqualified name so the unqualified ancestry read is caught.
+        # Alias each phase-varying per-target law onto the unqualified
+        # `next_<state>` a constraint actually reads.
         phase_varying = phase_varying | frozenset(
             name.rsplit(QNAME_DELIMITER, 1)[0]
             for name in phase_varying
             if QNAME_DELIMITER in name
         )
-        # A carried state (`Phased(solve=callable, simulate=Grid)`) is imputed in
-        # the solve phase, so its *next* value has no solve-phase producer: the
-        # canonical solve slice omits the carried law of motion. A constraint that
-        # reads `next_<carried>` would leave the solve feasibility DAG with an
-        # unsupplied argument -- a cryptic missing-argument failure deep in the
-        # solve build. Reject it early and clearly. (Reading the carried state's
-        # CURRENT value is fine: it resolves to the solve imputation.)
+        # The solve phase imputes a carried state, so its *next* value has no
+        # producer there. A constraint reading `next_<carried>` would fail deep in
+        # the solve build with an unsupplied argument; reject it here instead.
+        # Reading the carried state's current value is fine.
         carried_next = frozenset(
             f"next_{name}"
             for name, spec in user_regime.states.items()
@@ -588,14 +576,12 @@ def _validate_constraint_phase_invariance(
         )
         if not phase_varying and not carried_next:
             continue
-        # Resolve any `AgeSpecializedFunction` marker in the solve graph to its
-        # concrete per-age function before walking constraint ancestry, so
-        # `get_ancestors` sees the real argument dependencies *below* the marker
-        # (mirrors `_validate_all_variables_used`). A marker exposes only a generic
-        # `(*args, **kwargs)` wrapper signature, so an unresolved graph stops the
-        # ancestry at the marker and hides a transitively-reached `Phased` helper --
-        # letting a phase-specific feasible set slip past this guard (round-12 F1).
-        # The dependency structure is age-invariant, so any active age serves.
+        # Resolve every age-specialized function to a concrete per-age function
+        # before walking constraint ancestry (as `_validate_all_variables_used`
+        # does). Unresolved, such a function exposes only a generic
+        # `(*args, **kwargs)` signature, so the ancestry stops there and a
+        # phase-varying helper reached below it would escape this check. The
+        # dependency structure is age-invariant, so any active age serves.
         ancestry_funcs = solve_funcs
         if ages is not None:
             # Read the PREPARED active periods rather than recomputing them:
@@ -626,13 +612,11 @@ def _validate_constraint_phase_invariance(
                     f"Constraint '{constraint_name}' in regime '{regime_name}' "
                     f"depends on phase-varying function(s) {offending}. "
                     f"Constraints must be phase-invariant through their whole "
-                    f"dependency ancestry: a phase-specific feasible set would "
-                    f"let the simulated argmax range over actions the value "
-                    f"function was never computed for. The direct `Phased` "
-                    f"constraint ban is bypassed when a bare constraint reaches a "
-                    f"`Phased` helper or `Phased` `next_<state>` transitively. "
-                    f"Make the constraint's dependencies phase-invariant, or keep "
-                    f"the phase variance out of the feasibility path."
+                    f"dependency chain: a phase-specific feasible set would let "
+                    f"the simulated agent choose actions its value function was "
+                    f"never computed for. Make the constraint's dependencies "
+                    f"phase-invariant, or keep the phase variance out of the "
+                    f"feasibility path."
                 )
             offending_carried = sorted(ancestors & carried_next)
             if offending_carried:
