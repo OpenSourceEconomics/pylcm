@@ -57,7 +57,7 @@ from lcm.typing import (
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NEGM(Solver):
-    """Nested-EGM solver: an outer grid search over a durable/illiquid margin.
+    r"""Nested-EGM solver: an outer grid search over a durable/illiquid margin.
 
     NEGM solves a model with one continuous margin the Euler equation cleanly
     inverts on (liquid consumption-savings) plus a second continuous margin
@@ -69,7 +69,8 @@ class NEGM(Solver):
       `DCEGM` kernel, with the outer margin entering inner resources and utility
       as a constant and indexing the child durable state);
     - an *outer* deterministic `max` over a grid of the outer post-decision
-      margin plus mandatory kink candidates (the no-adjustment point `s' = s`,
+      margin plus mandatory kink candidates (the no-adjustment point
+      $s_t^\textit{post-dec} = s_t$,
       the floor corner).
 
     The outer step is a search, not a second inverse-Euler: the outer value is
@@ -113,17 +114,19 @@ class NEGM(Solver):
     """
 
     outer_post_decision: FunctionName
-    """The outer post-decision function `s'` in `Regime.functions`.
+    r"""The outer post-decision function $s_t^\textit{post-dec}$ in
+    `Regime.functions`.
 
     The inner `resources` and the child-state index both read its value as a
     constant. Forbidden as the inner DC-EGM post-decision function.
     """
 
     outer_grid: ContinuousGrid
-    """Exogenous grid over the outer post-decision margin `s'`."""
+    r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
     outer_no_adjustment_candidate: FunctionName | None = None
-    """State-specific kink candidate (the no-adjustment point `s' = s`).
+    r"""State-specific kink candidate (the no-adjustment point
+    $s_t^\textit{post-dec} = s_t$).
 
     Inserted per node because a fixed exogenous outer grid misses
     state-specific kinks. `None` only when the model provably has no adjustment
@@ -217,7 +220,7 @@ class NEGM(Solver):
         # The durable's own law of motion stays exactly as the regime declares
         # it. It reads the post-decision, which is that bound leaf here, so it
         # is decision-independent without being replaced — and a declared
-        # `next_<durable> = (1 - delta) s'` is therefore the stock the
+        # `next_<durable> = (1 - delta) * s_t^post-dec` is therefore the stock the
         # continuation is read at, not the raw node the outer search picked.
         adjuster_context = replace(
             context,
@@ -229,8 +232,8 @@ class NEGM(Solver):
         )
         adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
-        # at its no-adjustment level (`s' = keep(<durable>)`), so the durable
-        # becomes a genuine decision-independent passive state and
+        # at its no-adjustment level (`s_t^post-dec = keep(<durable>_t)`), so the
+        # durable becomes a genuine decision-independent passive state and
         # `credited(<durable>, keep(<durable>)) = 0` makes keeping free. The
         # keeper map is injected into the econ functions, so the inner resources
         # DAG computes the post-decision from the durable leaf rather than
@@ -410,7 +413,7 @@ class _NEGMPeriodKernel:
     """Name of the regime whose flat params the outer node binds into."""
 
     outer_grid_values: Float1D
-    """Exogenous grid over the outer post-decision margin `s'`."""
+    r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
     durable_state: StateName
     """Name of the durable state the outer margin moves.
@@ -550,13 +553,14 @@ class _NEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Run keeper and adjuster sweep, collapse by `max`, assemble the result.
+        r"""Run keeper and adjuster sweep, collapse by `max`, assemble the result.
 
         The keeper runs the passive DC-EGM once, yielding the value of leaving the
         durable stock unchanged at every durable state. For each exogenous
-        outer-grid node `s'_j`, the adjuster runs with `outer_post_decision` bound
-        to `s'_j`, yielding `W_j`, the inner value over the liquid endogenous grid
-        at durable `s'_j`. The outer axis is collapsed into the value array by
+        outer-grid node $s_{t,j}^\textit{post-dec}$, the adjuster runs with
+        `outer_post_decision` bound to $s_{t,j}^\textit{post-dec}$, yielding `W_j`,
+        the inner value over the liquid endogenous grid at durable
+        $s_{t,j}^\textit{post-dec}$. The outer axis is collapsed into the value array by
         `V = max(V_keeper, max_j W_j)`, and every candidate carry is retained in
         the published continuation so the parent read can take the exact
         `max_j V_j(q)` at its own query. The published simulation policy is the
@@ -641,9 +645,11 @@ class _NEGMPeriodKernel:
         )
 
     def _outer_nodes(self) -> list[ScalarFloat]:
-        """Return the exogenous outer post-decision nodes, each a scalar `s'_j`.
+        r"""Return the exogenous outer post-decision nodes, each a scalar
+        $s_{t,j}^\textit{post-dec}$.
 
-        The state-specific no-adjustment kink `s' = s` a fixed exogenous grid
+        The state-specific no-adjustment kink $s_t^\textit{post-dec} = s_t$ a fixed
+        exogenous grid
         would miss is covered by the keeper, not appended here.
         """
         return [
