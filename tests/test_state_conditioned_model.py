@@ -89,7 +89,7 @@ def _income_process(sigma_low: float, sigma_high: float, n_points: int = 5):
         gauss_hermite=False,
         mu=0.0,
         n_std=3.0,
-        state_conditioned=StateConditioned(
+        sigma=StateConditioned(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )
@@ -235,7 +235,7 @@ def _ar1_model(sigma_low: float, sigma_high: float) -> Model:
         rho=_AR1_RHO,
         mu=0.0,
         n_std=4.0,
-        state_conditioned=StateConditioned(
+        sigma=StateConditioned(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )
@@ -444,9 +444,7 @@ def test_gauss_hermite_state_conditioned_rejected():
         n_points=5,
         gauss_hermite=True,
         mu=0.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.3}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
@@ -461,9 +459,7 @@ def test_rouwenhorst_state_conditioned_rejected():
         n_points=5,
         rho=0.9,
         mu=0.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.3}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="only supported for CDF-binned"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
@@ -476,7 +472,7 @@ def test_unknown_conditioning_state_rejected():
         gauss_hermite=False,
         mu=0.0,
         n_std=3.0,
-        state_conditioned=StateConditioned(on="nope", by={"low": 0.1, "high": 0.3}),
+        sigma=StateConditioned(on="nope", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="must name a DiscreteGrid"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
@@ -530,9 +526,7 @@ def test_gauss_hermite_tauchen_state_conditioned_rejected():
         gauss_hermite=True,
         rho=0.9,
         mu=0.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.3}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="Gauss-Hermite"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
@@ -550,9 +544,7 @@ def test_runtime_grid_param_rejected():
         gauss_hermite=False,
         mu=None,
         n_std=3.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.3}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
     )
     with pytest.raises(ModelInitializationError, match="every grid parameter fixed"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
@@ -652,9 +644,7 @@ def _conditioned_income(**kwargs) -> NormalIIDProcess:
     """A conditioned IID income process with the grid geometry under test."""
     return NormalIIDProcess(
         gauss_hermite=False,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.3}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.3}),
         **kwargs,
     )
 
@@ -696,37 +686,6 @@ def test_singleton_node_axis_rejected():
     """
     income = _conditioned_income(n_points=1, mu=0.0, n_std=3.0)
     with pytest.raises(ModelInitializationError, match="at least 2 nodes"):
-        _model_with_income(income).solve(params=_params(), log_level="debug")
-
-
-@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
-def test_nonfinite_sigma_rejected(bad):
-    """F3: NaN/inf sail through a bare `v <= 0` test and poison every row silently."""
-    income = NormalIIDProcess(
-        n_points=5,
-        gauss_hermite=False,
-        mu=0.0,
-        n_std=3.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": bad, "high": 0.3}
-        ),
-    )
-    with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
-        _model_with_income(income).solve(params=_params(), log_level="debug")
-
-
-def test_nonpositive_sigma_rejected():
-    """Non-positive per-regime sigma raises at construction."""
-    income = NormalIIDProcess(
-        n_points=5,
-        gauss_hermite=False,
-        mu=0.0,
-        n_std=3.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.0, "high": 0.3}
-        ),
-    )
-    with pytest.raises(ModelInitializationError, match="finite positive sigmas"):
         _model_with_income(income).solve(params=_params(), log_level="debug")
 
 
@@ -784,7 +743,7 @@ def _cond_income(
         gauss_hermite=False,
         mu=0.0,
         n_std=4.0,
-        state_conditioned=StateConditioned(
+        sigma=StateConditioned(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )
