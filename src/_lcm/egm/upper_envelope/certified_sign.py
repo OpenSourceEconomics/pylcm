@@ -62,11 +62,13 @@ few hundred flops. The evaluation is branch-free and elementwise, so it stays
 """
 
 import operator
-from functools import reduce
+from functools import cache, reduce
 from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from numpy.typing import DTypeLike
 
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
@@ -324,14 +326,22 @@ def certified_margin_sign(
     # is not symmetric with it and is handled inside `_bounded_product`.
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
+    # Every clause above reports a quantity the *backend* destroyed, not one the
+    # format cannot hold. Where subnormals survive, nothing was destroyed: the
+    # operands are readable, the distances between them are readable, and the
+    # products are the numbers they claim to be. Consulting the clauses there
+    # would refuse comparisons the arithmetic can settle exactly — the mirror of
+    # the defect they exist to prevent, and one a battery run only where the
+    # flush happens cannot see.
+    everything_read = (
+        readable & a_distances_read & b_distances_read & products_read & difference_read
+        if backend_flushes_subnormals(a_x0.dtype)
+        else jnp.ones_like(finite)
+    )
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable
-        & a_distances_read
-        & b_distances_read
-        & products_read
-        & difference_read,
+        readable=everything_read,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
@@ -441,7 +451,7 @@ def certified_quotient_margin(
         value=value,
         bound=bound,
         trustworthy=in_domain
-        & cross_products_read
+        & (cross_products_read if backend_flushes_subnormals(value.dtype) else True)
         & jnp.isfinite(value)
         & jnp.isfinite(bound)
         & (divisor_floor > 0.0),
@@ -475,6 +485,30 @@ def _same_bits(left: FloatND, right: FloatND) -> BoolND:
     return jax.lax.bitcast_convert_type(left, jnp.dtype(unsigned)) == (
         jax.lax.bitcast_convert_type(right, jnp.dtype(unsigned))
     )
+
+
+@cache
+def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
+    """Report whether this backend destroys a subnormal rather than reading it.
+
+    The answer belongs to the compiled backend, not to the format: XLA:CPU
+    flushes, CUDA reads the whole band. So it is measured by asking the backend
+    to halve the smallest normal and seeing whether what comes back is the
+    subnormal that step lands on.
+
+    Every refusal built on "the arithmetic could not see this" is a claim about a
+    backend that cannot represent it. Where the backend can, the same refusal
+    withholds a verdict the arithmetic reached correctly — the mirror of the
+    defect the refusals exist to prevent, and invisible to a battery run only
+    where the flush happens.
+
+    The probe runs on concrete inputs, so it resolves to a Python bool while the
+    program is traced and the refusals it gates leave the compiled program
+    entirely on a backend that reads the band.
+    """
+    smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
+    halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
+    return bool(np.asarray(halved) == 0.0)
 
 
 def is_subnormal(value: FloatND) -> BoolND:

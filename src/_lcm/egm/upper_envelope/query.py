@@ -58,19 +58,17 @@ of `(n_query, n_segment)` and returns the identical result.
 """
 
 from collections.abc import Callable
-from functools import cache
 from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-from numpy.typing import DTypeLike
 
 from _lcm.egm.upper_envelope.certified_sign import (
     BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
     QuotientMargin,
     affine_numerator,
+    backend_flushes_subnormals,
     certified_margin_sign,
     certified_quotient_margin,
     is_subnormal,
@@ -727,28 +725,6 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     return in_row | is_subnormal(query)
 
 
-@cache
-def _backend_flushes_subnormals(dtype: DTypeLike) -> bool:
-    """Report whether this backend destroys a subnormal rather than reading it.
-
-    The answer is a property of the compiled backend, not of the format: XLA:CPU
-    flushes, CUDA reads the whole band. So it is measured here rather than
-    assumed, by asking the backend to halve the smallest normal and seeing
-    whether what comes back is the subnormal that step lands on.
-
-    Measuring it matters because every guard built on "this result would be
-    subnormal" is a guard against a backend that cannot represent it. Where the
-    backend can, the same guard refuses a value the arithmetic had in hand — the
-    mirror of the defect it exists to prevent, and invisible to a battery that
-    only ever runs where the flush happens. The probe runs on concrete inputs, so
-    it stays a Python bool and the guard it gates disappears from the compiled
-    program entirely on a backend that reads the band.
-    """
-    smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
-    halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
-    return bool(np.asarray(halved) == 0.0)
-
-
 def _derived_subnormal_possible(
     *, endog_grid: Float1D, channels: tuple[Float1D, ...], query: FloatND
 ) -> BoolND:
@@ -778,7 +754,7 @@ def _derived_subnormal_possible(
     `_subnormal_operand_present`: ownership is not known here, and the affected
     link may be any of them.
     """
-    if not _backend_flushes_subnormals(endog_grid.dtype):
+    if not backend_flushes_subnormals(endog_grid.dtype):
         return jnp.zeros_like(jnp.asarray(query), dtype=bool)
 
     tiny = jnp.finfo(endog_grid.dtype).tiny
