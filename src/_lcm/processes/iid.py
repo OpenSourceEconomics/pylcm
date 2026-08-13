@@ -1,7 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, overload
 
 import jax
 import jax.numpy as jnp
@@ -85,45 +84,16 @@ class NormalIIDProcess(_IIDProcess):
     mu: float | int | None = None
     """Mean of the distribution."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the distribution."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the distribution.
+
+    A `StateConditioned` here conditions the innovation scale on a discrete state
+    of the same regime; `__post_init__` then leaves this holding the scalar that
+    places the nodes.
+    """
 
     n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
-
-    if TYPE_CHECKING:
-        # A scalar `sigma` and `state_conditioned` are alternatives: a conditioned
-        # process derives `sigma` from `state_conditioned.by`, so passing both is a
-        # contradiction the type checker rejects before the constructor does.
-        # For the type checker only — the dataclass generates the real `__init__`, and
-        # defining one in the class body would suppress it.
-        @overload
-        def __init__(
-            self,
-            *,
-            n_points: int,
-            gauss_hermite: bool,
-            sigma: float | None = ...,
-            mu: float | None = ...,
-            n_std: float | None = ...,
-            batch_size: int = ...,
-            distributed: bool = ...,
-        ) -> None: ...
-
-        @overload
-        def __init__(
-            self,
-            *,
-            n_points: int,
-            gauss_hermite: bool,
-            state_conditioned: StateConditioned,
-            mu: float | None = ...,
-            n_std: float | None = ...,
-            batch_size: int = ...,
-            distributed: bool = ...,
-        ) -> None: ...
-
-        def __init__(self, **kwargs: object) -> None: ...
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -188,8 +158,12 @@ class LogNormalIIDProcess(_IIDProcess):
     mu: float | int | None = None
     """Mean of the underlying normal distribution ($E[\\ln X]$)."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the underlying normal distribution."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the underlying normal distribution.
+
+    A `StateConditioned` is accepted so that declaring one is refused with an
+    explanation when the model is built, rather than by the type checker alone.
+    """
 
     n_std: float | int | None = None
     """Number of standard deviations in log-space for the grid boundary."""

@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import ClassVar
 
@@ -19,8 +19,9 @@ from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
 class StateConditioned:
     r"""A shock parameter conditioned on a discrete state of the same regime.
 
-    Use this when the size of a shock depends on where the subject currently is — the
-    variance of the earnings innovation differing by employment status, with
+    Write it in place of the parameter it conditions. Use it when the size of a shock
+    depends on where the subject currently is — the variance of the earnings innovation
+    differing by employment status, with
     $\sigma_\text{employed} < \sigma_\text{unemployed}$:
 
         NormalIIDProcess(
@@ -28,7 +29,7 @@ class StateConditioned:
             gauss_hermite=False,
             mu=0.0,
             n_std=3.0,
-            state_conditioned=StateConditioned(
+            sigma=StateConditioned(
                 on="employment_status",
                 by={"employed": 0.2, "unemployed": 0.5},
             ),
@@ -42,9 +43,9 @@ class StateConditioned:
     ```
 
     an IID process dropping the $\rho y_t$ term. The row is binned on one set of nodes,
-    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$. The
-    process therefore derives its scalar `sigma` and takes none of its own; passing both
-    is rejected.
+    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$.
+    Standing where the scalar would go, it says which parameter is conditioned and
+    leaves no way to give that parameter twice.
 
     The conditioning value is dated $t$, so the variance of the innovation realized
     between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
@@ -101,16 +102,19 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     n_points: int
     """The number of points for the discretization of the process."""
 
-    state_conditioned: StateConditioned | None = None
-    """If set, the process's `sigma` is conditioned on a discrete state of the regime.
+    state_conditioned: StateConditioned | None = field(init=False, default=None)
+    """The conditioning declaration, when `sigma` was given as one.
 
-    The fixed common nodes are then placed from the widest value in
-    `state_conditioned.by`, and the per-category innovation stds enter only the
-    transition CDF, evaluated directly at the time-$t$ value. The `sigma` field is
-    derived rather than supplied — passing one alongside `state_conditioned` is
-    rejected. Available for the CDF-binned IID normal and Tauchen
-    AR(1) processes, whose transition CDFs carry `sigma`. A Rouwenhorst transition
-    depends on `rho` alone, so fixing the nodes would leave `sigma` no channel at all.
+    Not an argument of its own: conditioning is expressed on the parameter it
+    applies to, as `sigma=StateConditioned(...)`, which is what makes a scalar and
+    a conditioned `sigma` mutually exclusive by construction. `__post_init__` moves
+    the declaration here and leaves `sigma` holding the scalar that places the
+    nodes.
+
+    The per-category values enter only the transition CDF, evaluated directly at
+    the time-$t$ value. Available for the CDF-binned IID normal and Tauchen AR(1)
+    processes, whose transition CDFs carry `sigma`. A Rouwenhorst transition depends
+    on `rho` alone, so fixing the nodes would leave `sigma` no channel at all.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -123,38 +127,35 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     def __post_init__(self) -> None:
-        self._derive_conditioned_sigma()
+        self._resolve_conditioned_sigma()
 
-    def _derive_conditioned_sigma(self) -> None:
-        """Place the nodes from the widest per-category value when `sigma` is omitted.
+    def _resolve_conditioned_sigma(self) -> None:
+        """Split a conditioned `sigma` into its declaration and its node-placing value.
 
-        A state-conditioned process has one node axis, shared by every category, so the
-        scalar `sigma` placing it is not free information — the widest category is what
-        the axis has to cover. Deriving it is what keeps the two from disagreeing.
-
-        A `by` carrying an unusable value is left alone rather than guessed at, so the
-        model build reports the offending entry instead of a missing `sigma`.
+        A conditioned process bins every category on one set of nodes, so the axis has
+        to cover the widest of them. That value is not free information, which is why
+        it is read off `by` rather than asked for separately.
         """
-        sc = self.state_conditioned
-        if sc is None or "sigma" not in {f.name for f in fields(self)}:
+        declaration = getattr(self, "sigma", None)
+        if not isinstance(declaration, StateConditioned):
             return
-        if getattr(self, "sigma", None) is not None:
+        values = tuple(declaration.by.values())
+        unusable = {
+            category: value
+            for category, value in declaration.by.items()
+            if not isinstance(value, float | int)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or value <= 0.0
+        }
+        if not values or unusable:
             msg = (
-                "a state-conditioned process places the nodes from the widest value "
-                "in `state_conditioned.by`, so it takes no scalar `sigma` of its "
-                "own; drop one of the two."
+                f"a conditioned `sigma` needs finite positive values for every "
+                f"category, but got {unusable or declaration.by}."
             )
             raise GridInitializationError(msg)
-        values = tuple(sc.by.values())
-        usable = values and all(
-            isinstance(value, float | int)
-            and not isinstance(value, bool)
-            and math.isfinite(value)
-            and value > 0.0
-            for value in values
-        )
-        if usable:
-            object.__setattr__(self, "sigma", max(values))
+        object.__setattr__(self, "state_conditioned", declaration)
+        object.__setattr__(self, "sigma", max(values))
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:

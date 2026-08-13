@@ -1,6 +1,5 @@
 import functools
 import inspect
-import math
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
@@ -2811,26 +2810,10 @@ def _validate_conditioning_codes_agree_across_regimes(
     distinct = {tuple(sorted(m.items())) for m in maps.values()}
     if len(distinct) > 1:
         msg = (
-            f"state_conditioned.on='{on}' must map categories to the same integer "
+            f"The conditioning state '{on}' must map categories to the same integer "
             f"codes in every regime that carries it, because the per-category sigma is "
             f"indexed by that code; got {maps}."
         )
-        raise ModelInitializationError(msg)
-
-
-def _validate_conditioned_sigmas(by: Mapping[str, float]) -> None:
-    """Every per-category sigma must be a finite, strictly positive number.
-
-    `None`, `NaN` and `inf` all sail through a bare `v <= 0` test and then poison every
-    transition row silently.
-    """
-    bad = {
-        k: v
-        for k, v in by.items()
-        if v is None or not math.isfinite(float(v)) or float(v) <= 0.0
-    }
-    if bad:
-        msg = f"state_conditioned.by values must be finite positive sigmas; got {bad}"
         raise ModelInitializationError(msg)
 
 
@@ -2852,7 +2835,7 @@ def _validate_conditioned_grid_is_fixed(
         msg = (
             f"state-conditioned process '{name}' requires every grid parameter fixed "
             f"at construction; {missing} would be passed at runtime. Pass them to "
-            f"{type(grid).__name__}(...), or drop state_conditioned."
+            f"{type(grid).__name__}(...), or give it a scalar `sigma`."
         )
         raise ModelInitializationError(msg)
     nodes = grid.get_gridpoints()
@@ -2939,11 +2922,10 @@ def _validate_conditioned_process(
     conditioning_grid = grids.get(sc.on)
     if not isinstance(conditioning_grid, DiscreteGrid):
         msg = (
-            f"state_conditioned.on='{sc.on}' must name a DiscreteGrid state in the "
+            f"The conditioning state '{sc.on}' must name a DiscreteGrid state in the "
             f"same regime as the process."
         )
         raise ModelInitializationError(msg)
-    _validate_conditioned_sigmas(sc.by)
     family = _process_family(grid)
     _validate_conditioned_grid_is_fixed(name=name, grid=grid)
     return conditioning_grid, family
