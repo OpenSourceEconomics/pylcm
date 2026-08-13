@@ -40,12 +40,11 @@ def collect_stochastic_state_transitions(
     suffixed with `@{phase}`. Returns an empty mapping for regimes with
     no stochastic state transitions (incl. terminal regimes).
 
-    Known limitation (pre-dates phase variance, and applies to bare laws just as
-    much): the runtime numerical checks call the law with arguments drawn from
-    grids and params, so a law that reads a named DAG *helper* cannot be invoked
-    and is skipped with a warning by `validate_state_transitions_all_periods`.
-    Closing that needs the validator to evaluate the compiled sub-DAG rather than
-    the raw function.
+    Known limitation, and not specific to `Phased` laws: the runtime numerical
+    checks call a law with arguments drawn from grids and params, so a law that
+    reads a named helper cannot be invoked and is skipped with a warning by
+    `validate_state_transitions_all_periods`. Closing that needs the validator to
+    evaluate the compiled sub-DAG rather than the raw function.
 
     Args:
         user_regime: User-facing regime to inspect.
@@ -67,11 +66,8 @@ def collect_stochastic_state_transitions(
     entries: dict[TransitionFunctionName, _StochasticStateTransition] = {}
 
     for state_name, entry in user_regime.state_transitions.items():
-        # A `Phased` entry holds two laws for one state. Each is collected under its
-        # OWN key: they are different functions, and a malformed perceived law is as
-        # fatal as a malformed true one. Sharing one key would keep only whichever was
-        # inserted last, so the belief law would reach the solver unchecked. Walking the
-        # raw entry (ignoring `Phased`) would leave it with no metadata at all.
+        # Each variant gets its own key: a malformed perceived law is as fatal as a
+        # malformed realized one, and one shared key would keep only the last.
         for raw, phase in _phase_variants(entry):
             if isinstance(raw, MarkovTransition):
                 _add_stochastic_entry(
@@ -110,11 +106,10 @@ def collect_stochastic_state_transitions(
 def _phase_key(
     base: str, phase: Literal["solve", "simulate"] | None
 ) -> TransitionFunctionName:
-    """Key for one law's metadata, disambiguated by phase for `Phased` entries.
+    """Key for one law's metadata, suffixed by phase for a `Phased` entry.
 
-    A bare law keeps the plain `next_<state>` key, so nothing about phase-invariant
-    models changes. The keys are internal to validation — no consumer resolves a
-    transition function through this mapping.
+    A phase-invariant law keeps the plain `next_<state>` key. These keys are
+    internal to validation; no consumer resolves a transition through this mapping.
     """
     return base if phase is None else f"{base}@{phase}"
 
@@ -124,8 +119,8 @@ def _phase_variants(
 ) -> tuple[tuple[object, Literal["solve", "simulate"] | None], ...]:
     """The laws carried by one `state_transitions` entry, tagged by phase.
 
-    A bare entry is phase-invariant and yields itself with no phase; a `Phased` entry
-    yields its solve and simulate variants, so each is validated on its own.
+    A phase-invariant entry yields itself untagged; a `Phased` entry yields both
+    variants, so each is validated on its own.
     """
     if isinstance(entry, Phased):
         return ((entry.solve, "solve"), (entry.simulate, "simulate"))

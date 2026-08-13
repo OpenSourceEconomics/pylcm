@@ -165,28 +165,42 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Perceived versus realized transitions in simulation
 
-- Fixes the simulate-phase Q so a simulated agent prices its continuation under
-  its *perceived* law. `Phased` state transitions are now supported for
-  `MarkovTransition` laws, and the simulate-phase Q is assembled from two
-  phase-closed halves: the current flow (utility, feasibility, `H`) from the
-  simulate transitions and simulate function pool, the continuation (state laws,
-  stochastic weights, and every helper they read) from the solve ones. The
-  realized draw is unchanged and still follows the simulate laws.
+- A simulated agent prices its continuation under the law it *believes*, while
+  the world it moves through follows the law that is *true*. `Phased` state
+  transitions accept `MarkovTransition` laws, so perceived mortality, perceived
+  health or income risk, and misread policy rules are expressible: give the
+  `solve` variant the agent's beliefs and the `simulate` variant the
+  data-generating process. See the phase-grammar explanation in the docs.
 
-  **Behaviour change.** A model is numerically unchanged unless a *phase-varying*
-  (`Phased`) function lies in the dependency ancestry of a continuation
-  transition or of a `next_<state>` read by within-period utility or
-  feasibility — the solve phase is untouched, and for every non-`Phased` name
-  both pools hold the same object. Models that do have such a dependency change,
-  by design: they previously resolved that helper from the simulate pool in the
-  continuation (and the solve law with simulate helpers in the flow), which is
-  the bug being fixed. This pattern was reachable before this release via a
-  `Phased` helper under a bare law, so the correction can move results for
-  existing models.
+  The simulated state-action value is assembled from two halves. Today's payoff
+  and feasible set — period utility, constraints, the Koopmans aggregator — come
+  from the simulate phase, because they are known when the action is chosen. The
+  continuation — next-period kernels, regime-transition probabilities, and every
+  helper they read — comes from the solve phase, because the future is only
+  perceived and the value function was solved under those beliefs. The realized
+  draw is unchanged and still follows the simulate laws.
 
-  Two variants of a `Phased` stochastic law are validated separately; previously
-  only one of them was checked numerically. A per-target dict inside `Phased`
-  must be per-target in both phases and cover the same targets.
+  The two phases need not agree on whether a law is stochastic: a deterministic
+  law is a degenerate kernel, so an agent may perceive risk where there is none,
+  or treat as certain a transition that is not.
+
+  Constraints must be phase-invariant through their whole dependency chain. A
+  constraint that reaches a `Phased` helper or law of motion is rejected when the
+  model is built, because a phase-specific feasible set would let the simulated
+  agent choose actions its value function was never computed for.
+
+  **Behaviour change.** A model's numbers are unchanged unless a `Phased`
+  function lies in the dependency ancestry of a continuation transition, or of a
+  `next_<state>` read by period utility or feasibility. The solve phase is
+  untouched, and for every phase-invariant name both phases hold the same
+  function. Models that do have such a dependency change by design: the helper
+  was resolved from the wrong phase. That pattern was reachable before this
+  release through a `Phased` helper under a phase-invariant law, so the
+  correction can move published results.
+
+  Both variants of a `Phased` stochastic law are validated numerically; before,
+  only one of them was. A per-target dict inside `Phased` must be per-target in
+  both phases and cover the same targets.
 
 ### Discrete-continuous choice: DC-EGM, NEGM, and taste shocks
 

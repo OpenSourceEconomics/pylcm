@@ -1121,42 +1121,30 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
 def _phased_per_target_shape_mismatch(
     *, name: StateName, value: Phased, regime: lcm.regime.Regime
 ) -> list[str]:
-    """Inside `Phased`, constrain per-target/bare combinations of the two variants.
+    """Constrain how the two variants of a `Phased` state law may be shaped.
 
-    `Phased(solve={...}, simulate={...})` is normalized at collection into one entry per
-    target, each holding a `Phased` of that target's two laws — the form the engine
-    actually consumes (`transitions._add_raw_transition`).
+    A `Phased` whose variants are per-target dicts is normalized into one entry per
+    target, each holding that target's two laws. `Phased` is outermost-only, so this
+    is the only spelling for a per-target law that varies by phase.
 
-    Accepted shapes:
+    Accepted:
 
-    - **both bare** — one coarse `next_<state>` node (a plain phased law), including a
-      PARAMETERIZED coarse law: both phases bind the same single node, so its parameter
-      is one shared leaf.
-    - **both per-target** over the SAME targets — paired cell by cell.
-    - **PARAMETER-FREE map-vs-bare** — one side per-target, the other a bare law with no
-      free parameter. The bare law broadcasts over the per-target side's targets (the
-      same meaning a bare state law has outside `Phased`); with no parameter it carries
-      no template leaf, so its broadcast cells merge by object identity and nothing is
-      replicated. The per-phase provenance stamp
-      (`processing._phase_coarse_state_law_names` → `_rename_params_to_qnames`) keys a
-      within-period read's merge/conflict off each phase's OWN declaration shape.
+    - **Both bare** — one coarse law per phase, sharing a single parameter leaf.
+    - **Both per-target over the same targets** — paired cell by cell.
+    - **Per-target on one side, a parameter-free bare law on the other** — the bare
+      law broadcasts over the other side's targets, exactly as a bare state law does
+      outside `Phased`. Carrying no parameter, it contributes no template leaf, so
+      nothing is replicated.
 
-    Rejected shapes:
+    Rejected:
 
-    - **two per-target dicts over DIFFERENT targets** — a target would carry a law in
-      one phase and none in the other, with no single authoritative key set.
-    - **PARAMETERIZED map-vs-bare** — a bare (coarse) side carrying a free parameter
-      opposite a per-target dict. The phase-union params template replicates that
-      parameter into one leaf per target, but the coarse side binds a single law: the
-      build merges its per-target cells and silently DROPS all but the first leaf, so
-      the extra leaves are dead and a user setting them differently is ignored. Rather
-      than expose that trap, require the parameterized coarse law to be spelled as
-      **both-bare** `Phased` (coarse in both phases — one shared leaf) or as an explicit
-      **per-target dict** on this side (one honest leaf per target). Only the bare
-      side's spelling is constrained; the per-target side is unaffected.
-
-    (`Phased` is outermost-only — `_validate_per_target_dict` rejects a `Phased` cell —
-    so the outer form is the only spelling for a per-target law that varies by phase.)
+    - **Two per-target dicts over different targets** — a target would carry a law
+      in one phase and none in the other, with no authoritative key set.
+    - **A parameterized bare law opposite a per-target dict** — the params template
+      would show one leaf per target while the law binds a single node, so all but
+      one leaf is dead and setting them differently is silently ignored. Spell it
+      either as bare in both phases (one shared parameter) or as an explicit
+      per-target dict on that side (one parameter per target).
     """
     solve_per_target = isinstance(value.solve, Mapping)
     simulate_per_target = isinstance(value.simulate, Mapping)
@@ -1229,21 +1217,17 @@ def _state_transition_value_errors(
     """Validate one `state_transitions` entry against the value vocabulary.
 
     Each variant of a `Phased` entry is held to the vocabulary of a bare value —
-    callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant inside
-    `Phased` is supported: the solve variant is the perceived law that prices the
-    continuation in Q, the simulate variant is the true law the next state is drawn
-    from.
+    callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant is
+    allowed: the solve variant is the perceived law that prices the continuation,
+    the simulate variant the true law the next state is drawn from.
 
-    The two variants need NOT agree on whether the law is stochastic. A deterministic
-    law is a degenerate kernel, so the state has the same domain either way, and the two
-    phase cores classify their stochastic names independently — a perceived kernel with
-    a point-valued truth, and the reverse, both build and carry the intended meaning
-    (`tests/regime_building/test_mixed_stochasticity_phases.py`).
+    The two variants need not agree on whether the law is stochastic. A deterministic
+    law is a degenerate kernel, so the state has the same domain either way, and an
+    agent may perceive risk where there is none or believe a transition certain that
+    is not.
 
-    The two variants may be both bare (one coarse node), both per-target dicts over the
-    SAME targets, or a map-vs-bare mix (per-target on one side, a bare law that
-    broadcasts on the other). Only two per-target dicts over DIFFERENT target sets are
-    rejected, as an ambiguous normalization — see `_phased_per_target_shape_mismatch`.
+    Which combinations of bare and per-target shapes are allowed is decided by
+    `_phased_per_target_shape_mismatch`.
 
     `None` is not a law of motion; the error points to `fixed_transition`.
     """

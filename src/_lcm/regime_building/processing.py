@@ -605,10 +605,10 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            # Unresolved (marker-bearing) solve pool so the simulation continuation
-            # resolves AgeSpecializedFunction per period age, not at the representative
-            # age frozen into `solution.functions` (round-11 F1). Falls back to the
-            # published pool when no specialization is present.
+            # The perceived law a simulated agent prices its continuation with.
+            # Age-specialized functions are still unresolved in this pool, so each
+            # period resolves them at its own age rather than inheriting the one
+            # age frozen into `solution.functions`.
             solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
@@ -2084,8 +2084,8 @@ def _build_solution_phase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
-        # Marker-bearing (unresolved) pool for the simulation continuation, resolved
-        # per period's age there rather than frozen at the representative age (F1).
+        # Age-specialized functions are left unresolved here, so the simulation
+        # continuation can resolve each at the age of the period it prices.
         _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
@@ -2437,13 +2437,12 @@ def _build_simulation_phase(  # noqa: PLR0915
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
-        solve_functions: The solve phase's function pool. Q prices the continuation
-            under the agent's perceived law, so the continuation sub-DAG (state laws,
-            stochastic weights, and every helper they read) is resolved against this
-            pool rather than the simulate one. It is also read for the weight laws
-            the decision functions need but the simulation phase does not build —
-            a declared entry law into a process is split into node indices plus
-            weights only where a value function is indexed.
+        solve_functions: The solve phase's function pool — the agent's perceived
+            law. Q prices its continuation against this pool: the state laws, the
+            stochastic weights, and every helper those read. It also supplies the
+            weight laws the decision functions need but the simulation phase does
+            not build, since a declared entry law into a process is split into
+            node indices plus weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
         solve_transition_laws: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
@@ -2611,28 +2610,14 @@ def _build_simulation_phase(  # noqa: PLR0915
         else:
             value_constraints = MappingProxyType({})
             same_period_refs = MappingProxyType({})
-        # The simulated agent acts on its BELIEFS about the FUTURE and lives in the
-        # TRUTH NOW. So Q is built from two phase-closed halves:
+        # Q is built from two phase-closed halves — the agent acts on its beliefs
+        # about the future and lives in the truth now:
         #   flow         = simulate transitions + simulate pool (`functions`)
         #   continuation = solve transitions    + solve pool (`solve_functions`)
-        # Each half needs BOTH its transitions and its function pool: `dags` resolves a
-        # transition's argument names against the pool it is handed, transitively, so
-        # passing `transitions=solve_transitions` alone would still read `Phased`
-        # helpers (and, for `MarkovTransition`, the whole `weight_*` node) from the
-        # simulate phase — and passing the solve transitions into the flow would leave
-        # the flow's `next_<state>` a solve law wearing simulate helpers, a sub-DAG that
-        # is neither phase. The same `next_<state>` name therefore legitimately resolves
-        # to different callables in the two halves. The realized next state stays on the
-        # simulate laws — see `next_state`/`compute_regime_transition_probs` below.
-        #
-        # ONE EXCEPTION to "flow = simulate truth": `functions` here is the
-        # imputation-augmented decision pool built above — for a carried-only state
-        # it carries the solve IMPUTATION, not the realized carried value. So flow
-        # utility/feasibility that reads a carried state decides on the imputation,
-        # by design (the continuation was solved there; policy-consistency). The
-        # realized carried value is used for the forward transition via
-        # `simulate_functions`. See the carried-state comment at the top of this
-        # function and the `Phased` semantics contract in `lcm/phased.py`.
+        # Each half takes its own function pool as well as its own transitions,
+        # because `dags` resolves a law's arguments against the pool it is handed,
+        # transitively. The contract, and its one exception for carried states, is
+        # documented on `lcm.phased.Phased`.
         #
         # fold-round6/round7 simulate parity: a folded-only target's stored V is a
         # scalar with its folded axes integrated out, while its `VInterpolationInfo`
@@ -3825,11 +3810,10 @@ def _rename_params_to_qnames(
     branch: Mapping[str, object] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
         branch = cast("Mapping[str, object]", branch[part])
-    # Scope the rename to THIS cell's OWN parameters. A `Phased` state-transition
-    # cell's template branch is the UNION of both phases' params, so a cell that is
-    # parameter-free (or coarse) in its own phase must not be renamed/stamped merely
-    # because the OTHER phase contributed a param to the union — that is the false
-    # conflict of the map-vs-bare and asymmetric both-per-target cases.
+    # Rename only the parameters this law actually reads. The template branch of a
+    # `Phased` state transition holds the union of both phases' parameters, so a law
+    # that takes none of its own must not be stamped with one the other phase
+    # contributed.
     own_args = get_union_of_args([func])
     param_names = [p for p in branch if p in own_args]
     if not param_names:
@@ -4742,12 +4726,13 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
-    A `Phased` entry is unwrapped: the source grid is the same for both variants, so
-    the only question is whether either variant is a *simple* (broadcast) law. The grid
-    is returned when at least one variant is — that variant is the one that could
-    silently clip — and None only when every variant handles targets explicitly. Left
-    wrapped, a `Phased` of two per-target dicts would be mistaken for one broadcast law
-    and rejected for the very category difference the dicts exist to express.
+    A `Phased` entry is unwrapped before the test. Both variants share one source
+    grid, so the only question is whether either of them is a broadcast law — one
+    written without naming targets, which is the shape that can silently clip
+    categories. The grid is returned if either variant is such a law, and `None`
+    only if both handle their targets explicitly. Left wrapped, a `Phased` is not
+    itself a Mapping, so a pair of per-target dicts would be read as one broadcast
+    law.
 
     """
     if isinstance(raw, Phased):
@@ -5378,11 +5363,10 @@ def _build_Q_and_F_per_period(
         period_to_regime_v_interp=period_to_regime_v_interp,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
-    # `continuation_functions` rides in the key too (round-11 F1): the perceived
-    # (solve) continuation pool is resolved per period at the group's
-    # representative period below, so periods whose pool resolves to different
-    # closures must NOT share a kernel. `None` contributes a constant, which
-    # collapses the grouping exactly as before.
+    # The perceived continuation pool enters the grouping key: it is resolved once
+    # per group below, so two periods may share a compiled kernel only if their
+    # pools resolve alike. `None` contributes a constant and leaves the grouping
+    # unchanged.
     group_key = continuation_group_key(
         phase_reachability=phase_reachability,
         source_regime_name=source_regime_name,
@@ -5485,10 +5469,9 @@ def _build_Q_and_F_per_period(
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
-            # Resolve the perceived continuation pool at THIS group's representative
-            # period (F1) — not a period frozen into the published solve functions.
-            # Valid because the pool's per-period signature is folded into the group
-            # key above, so every period in the group resolves it identically.
+            # Resolve the perceived continuation pool at this group's own period.
+            # Safe because that pool's per-period signature is part of the group key
+            # above, so every period in the group resolves it identically.
             continuation_functions=(
                 cast(
                     "EconFunctionsMapping",

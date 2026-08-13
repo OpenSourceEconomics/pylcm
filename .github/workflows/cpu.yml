@@ -110,16 +110,33 @@ jobs:
         # the timing-out test is named, its siblings continue on a restarted
         # worker, and the run fails instead of being killed by the job ceiling
         # hours later with nothing to point at.
+        #
+        # The ceiling is set from what a healthy test of this battery costs, not
+        # from what the job can absorb, because a worker sits idle until it fires
+        # and every second of that is wall clock — ten stalls on two workers at a
+        # 1200 s ceiling spend 100 minutes of a 168-minute phase waiting rather
+        # than testing, which is most of the phase.
+        #
+        # What a healthy test costs *here* is not yet measured, which is why the
+        # ceiling is not tighter. In isolation the slowest solve test is a
+        # little over a minute, but these phases run two or four ways parallel
+        # against a 16 GB runner, and contention is not a small multiplier on a
+        # test that spends its time in compilation. `--durations` publishes the
+        # per-phase tail so the next run answers this from the configuration
+        # that is actually in doubt; tighten the ceiling once it has.
         run: |
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
-            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --durations=25 \
             --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m "slow and not manual" \
-            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --durations=25 \
             --cov=./ --cov-append --cov-report= -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             -m "slow and not manual" \
-            --release-compiled-programs --timeout=1200 --timeout-method=thread \
+            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --durations=25 \
             --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
@@ -206,14 +223,14 @@ jobs:
         run: |
           pixi run -e tests-cpu pytest tests --precision=32 \
             -m "not slow and not manual" --release-compiled-programs \
-            --timeout=1200 --timeout-method=thread -n 4 \
+            --timeout=600 --timeout-method=thread --durations=25 -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 \
             -m "slow and not manual" --release-compiled-programs \
-            --timeout=1200 --timeout-method=thread -n 2 \
+            --timeout=600 --timeout-method=thread --durations=25 -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision=32 -m "slow and not manual" \
             --release-compiled-programs \
-            --timeout=1200 --timeout-method=thread -n 2
+            --timeout=600 --timeout-method=thread --durations=25 -n 2
       - name: Prune superseded JAX caches for this ref
         if: always()
         continue-on-error: true

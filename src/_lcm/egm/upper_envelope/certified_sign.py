@@ -274,11 +274,50 @@ def certified_margin_sign(
     numerator_b = dd_add(
         dd_mul_float(distances_b[0], b_v0), dd_mul_float(distances_b[1], b_v1)
     )
+    # Each of those four products pairs a distance with an endpoint value, and
+    # either factor may be ordinary while the product is not. A product that
+    # underflows is discarded whole — estimate and discarded tail both exactly
+    # zero — so the term reads as one the caller never supplied, and a
+    # determinant assembled from the survivors is the determinant of a different
+    # pair of links.
+    products_read = reduce(
+        operator.and_,
+        (
+            _product_survived(value=distance, factor=endpoint_value)
+            for distance, endpoint_value in (
+                (distances_a[0], a_v0),
+                (distances_a[1], a_v1),
+                (distances_b[0], b_v0),
+                (distances_b[1], b_v1),
+            )
+        ),
+    )
     width_a, width_b = distances_a[2], distances_b[2]
 
     product_a = _bounded_product(numerator_a, width_b)
     product_b = _bounded_product(numerator_b, width_a)
     determinant = dd_add(product_a, dd_negate(product_b))
+
+    # The two products may each be ordinary while their difference is not: two
+    # links crossing inside their own span, read beside the crossing, leave
+    # products separated by less than the smallest normal. That difference is
+    # destroyed rather than rounded, so `dropped` is honestly zero — the
+    # transform discarded nothing, the backend removed the result underneath it —
+    # and an exact zero carrying an exact-zero bound is the certificate for a tie.
+    #
+    # The test is an equality, not a magnitude. Any expression of how far apart
+    # the products are is the same subtraction that just vanished, so it would be
+    # handed the zero it is meant to detect; float equality needs no subtraction
+    # and cannot underflow. Products that are identical vanish for the honest
+    # reason and keep their tie, which is what two links on one line rely on.
+    products_identical = reduce(
+        operator.and_,
+        (left == right for left, right in zip(product_a, product_b, strict=True)),
+    )
+    determinant_vanished = ((determinant[0] + determinant[1]) == 0.0) & (
+        determinant[2] == 0.0
+    )
+    difference_read = products_identical | ~determinant_vanished
 
     # A product that leaves the top of the range says nothing about the determinant
     # it was meant to contribute to, so it stays unresolved. The bottom of the range
@@ -288,7 +327,11 @@ def certified_margin_sign(
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable & a_distances_read & b_distances_read,
+        readable=readable
+        & a_distances_read
+        & b_distances_read
+        & products_read
+        & difference_read,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
@@ -348,6 +391,16 @@ def certified_quotient_margin(
         _bounded_product(left_numerator, right_divisor),
         dd_negate(_bounded_product(right_numerator, left_divisor)),
     )
+    # `_bounded_product` answers an underflowing product with the magnitude bound
+    # the underflow establishes, and that bound is the smallest normal — it has no
+    # headroom beneath it. The bound below is divided by the divisor product, so
+    # any divisor product above one returns it to the band it was meant to escape
+    # and it arrives as exactly zero: the certificate for an exact margin, resting
+    # on a product that was discarded whole. The fact that a product was lost is
+    # therefore carried as a fact rather than as a magnitude.
+    cross_products_read = _product_survived(
+        value=left_numerator, factor=right_divisor[0]
+    ) & _product_survived(value=right_numerator, factor=left_divisor[0])
     divisor_product = dd_mul(left_divisor, right_divisor)
     high, low = dd_quotient(determinant, divisor_product)
     value = high + low
@@ -388,6 +441,7 @@ def certified_quotient_margin(
         value=value,
         bound=bound,
         trustworthy=in_domain
+        & cross_products_read
         & jnp.isfinite(value)
         & jnp.isfinite(bound)
         & (divisor_floor > 0.0),
@@ -532,6 +586,30 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
         jnp.where(negligible, zero, low),
         jnp.where(negligible, tiny, dropped),
     )
+
+
+def _product_survived(*, value: DoubleDouble, factor: FloatND) -> BoolND:
+    """Report whether a product by a plain float stayed where it can be read.
+
+    A product of two ordinary numbers can still land among the subnormals — a
+    distance below one against an endpoint value near the bottom of the range, or
+    a value of any size against a distance that small — and there the transform
+    keeps nothing. What arrives is an exact zero whose discarded tail also reads
+    as exactly zero, and that pair is the certificate for an exact zero.
+
+    What is reported is a fact about the operands, not about the result, and it
+    is reported as a fact rather than as a magnitude. A bound would have to
+    survive every multiplication still to come, and the smallest bound this
+    underflow establishes is the smallest normal — which the next factor below
+    one sends back into the band it was meant to escape. A flag cannot underflow.
+
+    Two nonzero operands whose product does not fit are the only case this
+    refuses. A term that is genuinely zero loses nothing and keeps its exactness,
+    so two links lying on one line still certify the tie they have earned.
+    """
+    tiny = jnp.finfo(value[0].dtype).tiny
+    both_nonzero = (value[0] != 0.0) & (factor != 0.0)
+    return ~(both_nonzero & (jnp.abs(value[0] * factor) < tiny))
 
 
 def _link_distances(

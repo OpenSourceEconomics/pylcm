@@ -722,13 +722,10 @@ def test_mixed_per_target_dict_phased_law_is_accepted() -> None:
 def test_per_target_dict_with_bare_other_phase_is_accepted() -> None:
     """A per-target dict one side and a bare law the other is ACCEPTED (map-vs-bare).
 
-    The bare law broadcasts over the per-target side's targets — the same meaning a bare
-    state law has outside `Phased`. Per-phase provenance
-    (`processing._phase_coarse_state_law_names` → `_rename_params_to_qnames`) keys a
-    within-period read's merge/conflict off each phase's OWN declaration shape, so the
-    coarse side merges and the per-target side conflicts independently; the phase-union
-    params template no longer decides it. Only two per-target dicts over DIFFERENT
-    targets remain rejected.
+    The bare law broadcasts over the per-target side's targets — the same meaning a
+    bare state law has outside `Phased`. Each phase's declaration shape governs its
+    own side, so the coarse side merges and the per-target side conflicts
+    independently. Only two per-target dicts over different targets are rejected.
     """
     _build_regime(
         state_transitions={
