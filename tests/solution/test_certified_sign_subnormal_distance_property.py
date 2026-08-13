@@ -39,13 +39,15 @@ def _uint_view(dtype: type[np.floating]) -> type[np.unsignedinteger]:
 def _step_bits(
     value: np.floating, *, steps: int, dtype: type[np.floating]
 ) -> np.floating:
-    """Move `value` by `steps` representable places using its bit pattern."""
+    """Move `value` by `steps` representable places using its bit pattern.
+
+    A negative step is what walks the query below the link, and `uint(steps)`
+    cannot represent one. The arithmetic therefore runs on a Python integer,
+    which is unbounded and so cannot wrap at either end of the unsigned range.
+    """
     uint = _uint_view(dtype)
-    bits = np.asarray(dtype(value)).view(uint)
-    # Signed arithmetic before the cast: a negative step is what walks the
-    # query below the link, and `uint(steps)` cannot represent one.
-    moved = np.asarray(bits).astype(np.int64) + np.int64(steps)
-    return dtype(np.asarray(moved.astype(uint)).view(dtype)[()])
+    bits = int(np.asarray(dtype(value)).view(uint)) + steps
+    return dtype(np.asarray(uint(bits)).view(dtype)[()])
 
 
 def _is_normal(value: np.floating, *, dtype: type[np.floating]) -> bool:

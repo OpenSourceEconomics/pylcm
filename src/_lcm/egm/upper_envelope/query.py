@@ -78,6 +78,7 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_from_difference,
     dd_mul,
     dd_quotient,
+    scale_by_power_of_two,
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
 
@@ -178,6 +179,9 @@ def _value_quotient(
     at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
         query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
     )
+    left_grid, divisor_grid, query = _on_the_links_own_scale(
+        left_grid=left_grid, divisor_grid=divisor_grid, query=query
+    )
     numerator = dd_add(
         dd_mul(
             dd_from_difference(divisor_grid, query), dd_from_difference(left, level)
@@ -193,6 +197,63 @@ def _value_quotient(
         ),
         _select_double_double(at_endpoint, unit, divisor),
     )
+
+
+def _on_the_links_own_scale(
+    *, left_grid: FloatND, divisor_grid: FloatND, query: FloatND
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Return the link's three abscissae scaled to where its differences are readable.
+
+    A link read is a ratio of quantities built from the differences between these
+    three, and it is homogeneous of degree one in them: scaling all three by one
+    power of two multiplies numerator and divisor alike and leaves the ratio
+    identical. Scaling by a power of two is itself exact, so nothing is traded
+    for it.
+
+    What it buys is an arithmetic that can represent what it is handed. A link at
+    the bottom of the normal range has differences among the subnormals, where a
+    product rounds to a whole ULP — the endpoint values it was carrying are gone,
+    and the ratio reads one for a link of any value. Measuring the link on its own
+    scale first puts those differences back among ordinary numbers.
+
+    The scale is anchored on the *smallest* of the three, not the largest. What
+    ruins a read is a difference falling under the smallest normal, and it is the
+    smallest abscissa that a difference sits closest to; normalizing the largest
+    instead would push the small end down and manufacture the same loss on a link
+    whose endpoints span a wide range. The anchor is then backed off far enough to
+    keep the largest of the three finite, since a link spanning the whole range
+    cannot have both.
+    """
+    terms = (left_grid, divisor_grid, query)
+    _mantissa, largest = jnp.frexp(
+        jnp.maximum(
+            jnp.maximum(jnp.abs(terms[0]), jnp.abs(terms[1])), jnp.abs(terms[2])
+        )
+    )
+    smallest = _smallest_finite_exponent(*terms)
+    # Scaling the smallest term to the binade around one costs the largest term
+    # `smallest` binades of headroom; back the exponent off by whatever that
+    # overruns the top of the range.
+    headroom = jnp.asarray(jnp.finfo(left_grid.dtype).maxexp - 1, dtype=largest.dtype)
+    exponent = jnp.maximum(smallest, largest - headroom)
+    scaled = tuple(scale_by_power_of_two(term, -exponent) for term in terms)
+    return scaled[0], scaled[1], scaled[2]
+
+
+def _smallest_finite_exponent(*terms: FloatND) -> IntND:
+    """Return the `frexp` exponent of the smallest finite nonzero term.
+
+    Zero and non-finite terms carry no scale of their own and are ignored; a group
+    holding nothing else scales by `2**0`, which leaves it alone.
+    """
+    magnitude = jnp.full_like(terms[0], jnp.inf)
+    for term in terms:
+        usable = jnp.isfinite(term) & (term != 0.0)
+        magnitude = jnp.minimum(magnitude, jnp.where(usable, jnp.abs(term), jnp.inf))
+    _mantissa, exponent = jnp.frexp(
+        jnp.where(jnp.isfinite(magnitude), magnitude, 1.0),
+    )
+    return exponent
 
 
 def _select_double_double(
@@ -487,9 +548,17 @@ def _link_terms(
     left_grid: FloatND,
     right_grid: FloatND,
 ) -> tuple[DoubleDouble, DoubleDouble, FloatND, BoolND]:
-    """Split a link read into its exact endpoint case and its affine quotient."""
+    """Split a link read into its exact endpoint case and its affine quotient.
+
+    The quotient is homogeneous of degree one in the link's three abscissae, so
+    the link is measured on its own scale first; see `_value_quotient`, which
+    carries the same argument for the margin.
+    """
     at_endpoint, endpoint, left_grid, divisor_grid = _link_geometry(
         query=query, left_grid=left_grid, right_grid=right_grid, left=left, right=right
+    )
+    left_grid, divisor_grid, query = _on_the_links_own_scale(
+        left_grid=left_grid, divisor_grid=divisor_grid, query=query
     )
     numerator = affine_numerator(
         x0=left_grid, x1=divisor_grid, v0=left, v1=right, x_query=query
