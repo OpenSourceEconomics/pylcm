@@ -183,7 +183,7 @@ class NNBEGM(Solver):
     """Exogenous candidate grid for the outer post-decision margin."""
 
     outer_no_adjustment_candidate: FunctionName | None = None
-    """State-dependent no-adjustment map `s' = keep(s)` the keeper holds.
+    """State-dependent no-adjustment map `s^post_t = keep(s_t)` the keeper holds.
 
     `None` keeps the durable stock unchanged (identity)."""
 
@@ -250,7 +250,7 @@ class NNBEGM(Solver):
 
         - the *adjuster* strips the outer post-decision transition and admits
           the outer value as a flat param bound per outer-grid node;
-        - the *keeper* injects `s' = keep(<durable>)` into the econ functions,
+        - the *keeper* injects `s^post_t = keep(<durable>_t)` into the econ functions,
           so the durable becomes a genuine passive ride-along state.
         """
         # The adjuster's outer post-decision arrives per outer-grid node as a
@@ -262,7 +262,7 @@ class NNBEGM(Solver):
         # The durable's own law of motion stays exactly as the regime declares
         # it. It reads the post-decision, which is that bound leaf here, so it
         # is decision-independent without being replaced — and a declared
-        # `next_<durable> = (1 - delta) s'` is therefore the stock the
+        # `next_<durable> = (1 - delta) s^post_t` is therefore the stock the
         # continuation is read at, not the raw node the outer search picked.
         adjuster_context = replace(
             context,
@@ -344,7 +344,7 @@ class _NNBEGMPeriodKernel:
     """Name of the regime whose flat params the outer node binds into."""
 
     outer_grid_values: FloatND
-    """Exogenous grid over the outer post-decision margin `s'`."""
+    """Exogenous grid over the outer post-decision margin `s^post_t`."""
 
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
