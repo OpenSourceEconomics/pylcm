@@ -256,9 +256,8 @@ def _f1_make_model(boost: UserFunction) -> Model:
 
 
 def test_simulation_continuation_resolves_age_specialized_helper_per_age():
-    """Round-11 F1: the simulation continuation resolves a solve-side
-    `AgeSpecializedFunction` helper at each period's age, not frozen at the regime's
-    representative (first active) age.
+    """The simulation continuation resolves an age-specialized helper at each
+    period's own age, not at the regime's first active age.
 
     `next_capital = clip(capital + invest*boost, 0, 2)` reads `boost` (0 at age < 30,
     1 at age >= 30). Investing at age 35 raises next capital only under the correct

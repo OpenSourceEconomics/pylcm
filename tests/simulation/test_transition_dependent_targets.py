@@ -14,10 +14,10 @@ simulate variant while only the continuation is priced under the perceived one; 
 target recomputes from that same simulate pool and so reproduces the quantity that
 entered the argmax.
 
-`_decision_only_target_names` still excludes a target whose ancestry reaches a
-phase-split or stochastic TRANSITION, but a regime function may no longer read a
-`next_<state>` at all, and a transition is not itself an available target — so that
-exclusion has no trigger left to fire on and is not covered here.
+`_decision_only_target_names` excludes a target whose ancestry reaches a phase-split
+or stochastic transition. A regime function cannot read a `next_<state>` at all, and
+a transition is not itself an available target, so that exclusion has nothing to fire
+on and is not covered here.
 
 No case may raise a confusing missing-argument failure from deep in the target DAG.
 """

@@ -127,12 +127,12 @@ def test_phased_stochastic_law_is_accepted():
 def test_q_uses_the_solve_law_and_the_draw_uses_the_simulate_law():
     """The agent acts on beliefs and lives in the truth.
 
-    Belief: `stay` -> good. Truth: `stay` -> bad. So a correct build must
-      (a) CHOOSE `stay` in period 0, because that is what the belief law rewards, and
-      (b) REALIZE `bad` in period 1, because that is what the true law delivers.
+    Belief: `stay` leads to good. Truth: `stay` leads to bad. The agent therefore
+      (a) chooses `stay` in period 0, because that is what its belief rewards, and
+      (b) realizes `bad` in period 1, because that is what the true law delivers.
 
-    Before the fix, Q was weighted by the SIMULATE law, so the agent chose `switch` --
-    i.e. it optimized against the truth it was not supposed to know.
+    Weighting Q by the true law instead would have the agent optimize against a
+    truth it is not supposed to know, and it would choose `switch`.
     """
     df = _simulate(
         Phased(
@@ -320,10 +320,10 @@ def test_continuation_helper_resolves_from_the_solve_phase():
 def test_both_phase_variants_get_their_own_metadata_entry():
     """A `Phased` law contributes one entry PER PHASE, keyed apart.
 
-    Both variants used to be inserted under the same `next_good` key, so the simulate
-    record overwrote the solve one and the perceived law reached the solver with no
-    runtime check at all. Asserting the two funcs are *distinct and both present* is
-    what pins that -- a single shared key cannot satisfy it.
+    Each variant is validated on its own, so both must appear under keys of their
+    own. Asserting that the two functions are distinct and both present is what
+    pins this down: one shared key cannot satisfy it, and the variant it dropped
+    would reach the solver unchecked.
     """
     live = Regime(
         transition=_next_regime,

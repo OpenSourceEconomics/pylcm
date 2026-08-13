@@ -20,49 +20,41 @@ class Phased[S, T]:
     Both variants are required keyword arguments. Nesting `Phased` inside
     `Phased` is rejected — phase is a single broadcast dimension.
 
-    Semantics (the information-timing contract)
-    -------------------------------------------
-    The container is value-agnostic, but regime building gives the two phases a
-    fixed meaning: **the agent acts on its beliefs about the future and lives in
-    the truth now.**
+    **What the two phases mean.** The container is value-agnostic, but regime
+    building gives them a fixed economic meaning: *the agent acts on its beliefs
+    about the future and lives in the truth now*. The agent is naive — it does not
+    anticipate that the world will differ from the model it solved.
 
-    - ``solve`` is the **perceived** (belief) variant. It is used ONLY to price
-      the **continuation** — next-period state kernels, regime-transition
-      probabilities, and their helpers. The backward-induction value function
-      the agent optimises against is the one solved under these beliefs.
-    - ``simulate`` is the **truth**. It governs (a) what is actually realised as
-      the simulation walks forward, and (b) the **current-period** flow of the
-      decision: within-period utility, feasibility, the aggregator ``H``, and any
-      chosen deterministic ``next_<state>`` those read.
+    - `solve` is the **perceived** law. It prices the **continuation** and nothing
+      else: the next-period state kernels, the regime-transition probabilities,
+      and every helper those read. The value function the agent optimizes against
+      is the one solved under these beliefs.
+    - `simulate` is the **truth**. It governs what is realized as the simulation
+      moves forward, and it supplies the **current-period** primitives of the
+      decision: period utility, feasibility, the Koopmans aggregator, and any
+      deterministic `next_<state>` those read.
 
-    The load-bearing assumption is one of **information timing**: the simulate-side
-    current consequence, utility technology, feasibility, and ``H`` are known when
-    the action is chosen; only the *future* (the next-period kernels) is perceived.
-    So a within-period utility reading a chosen deterministic ``next_<state>`` (the
-    NEGM service-flow pattern) reads its ``simulate`` variant — the agent knows the
-    true deterministic consequence of *its own action*. Misperception enters only
-    at the continuation boundary. This is *not* implied by the container; it is the
-    contract regime building imposes, and belief-flow (pricing current utility
-    under the perceived law) would be a separate primitive, not a reading of
-    ``Phased``.
+    The split follows the agent's information set at the moment of choice. Today's
+    utility, today's feasible set, and the deterministic consequence of the agent's
+    own action are known when the action is taken; only the future is perceived. So
+    a period utility reading a chosen deterministic `next_<state>` reads its
+    `simulate` variant, and misperception enters only at the continuation boundary.
+    Pricing today's utility under a perceived law would be a separate primitive,
+    not a reading of `Phased`.
 
-    Two consequences of the contract are enforced, not merely documented:
+    Two consequences are enforced rather than merely documented:
 
-    - A within-period utility or feasibility may not read a ``next_<state>`` that
-      is **stochastic** in that phase: its value is not known at choice time.
-    - **Constraints are phase-invariant through their whole dependency ancestry.**
-      A phase-specific feasible set would let the simulated argmax range over
-      actions the value function was never computed for; a direct ``Phased``
-      constraint is rejected, and so is a bare constraint that reaches a ``Phased``
-      helper or ``Phased`` ``next_<state>`` transitively.
+    - Period utility and feasibility may not read a `next_<state>` that is
+      stochastic in that phase — its value is not known when the action is chosen.
+    - Constraints are phase-invariant through their whole dependency chain, so the
+      simulated agent never chooses an action its value function was not computed
+      for.
 
-    One deliberate exception to "current flow is the ``simulate`` truth":
-    a **carried-only** state (present in simulate but not on the solve grid) enters
-    the decision under its solve **imputation**, not its realised carried value,
-    because the continuation was solved at that imputation — the decision stays
-    consistent with the policy it re-optimises (policy-consistency). Its realised
-    value is still used for the forward transition. See
-    ``regime_building/processing.py``.
+    One deliberate exception to "the current period is the `simulate` truth": a
+    carried-only state — one the simulation tracks but the solve grid does not
+    carry — enters the decision at its solve imputation rather than its realized
+    value, because the imputation is what the continuation was solved at. The
+    realized value still drives the forward transition.
 
     """
 

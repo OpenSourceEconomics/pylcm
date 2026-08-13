@@ -320,22 +320,23 @@ class SolutionPhase:
     functions: EconFunctionsMapping
     """Immutable mapping of function names to internal user functions.
 
-    `AgeSpecializedFunction` markers are resolved at the regime's REPRESENTATIVE
-    age here, because this mapping feeds the unresolved-consumption paths
-    (feasibility checks, additional-target display). The SIMULATION continuation
-    must NOT read this pool — it needs per-age resolution; see
-    `_continuation_functions`.
+    An age-specialized function is resolved here at the regime's first active
+    age, which stands in for the regime as a whole. Its consumers — feasibility
+    checks and the additional targets a simulation reports — need only a
+    concrete function, not the one belonging to a particular period. Pricing a
+    continuation does need the period's own age; that reads
+    `continuation_functions` instead.
     """
 
     _continuation_functions: EconFunctionsMapping | None = None
-    """Marker-bearing (unresolved) solve pool for the simulation continuation sub-DAG.
+    """Solve-phase pool with age-specialized functions left unresolved.
 
-    Threaded to `_build_simulation_phase` as `solve_functions`, it lets
-    `_build_Q_and_F_per_period` resolve each `AgeSpecializedFunction` at the
-    CURRENT period's age when pricing the perceived (solve) continuation — rather
-    than reusing `functions`' representative-age closure, which would freeze a
-    later-age belief at the first active age and reverse the simulated argmax
-    (round-11 F1). `None` (mocks / no specialization) falls back to `functions`.
+    A simulated agent prices its continuation under the law it solved with, and
+    an age-specialized belief is a different function at every age. Leaving the
+    functions unresolved here lets each period resolve them at its own age.
+    Resolving them once, at the regime's first active age, would impose one
+    age's belief on the whole regime and can reverse the simulated choice.
+    `None` — the regime has nothing age-specialized — falls back to `functions`.
     """
 
     constraints: ConstraintFunctionsMapping
@@ -424,13 +425,11 @@ class SolutionPhase:
 
     @property
     def continuation_functions(self) -> EconFunctionsMapping:
-        """Marker-bearing solve pool for the simulation continuation sub-DAG.
+        """Solve-phase pool a simulated agent prices its continuation with.
 
-        Falls back to the representative-age `functions` when no per-age
-        specialization was threaded (mocks / no `AgeSpecializedFunction`). Read
-        this instead of `_continuation_functions` so the fallback is applied
-        once, at the single call site that prices the perceived continuation
-        (round-11 F1).
+        Falls back to `functions` when the regime has no age-specialized
+        function to resolve. Read this rather than `_continuation_functions`,
+        so the fallback is applied once.
         """
         return self._continuation_functions or self.functions
 
@@ -690,12 +689,11 @@ class _StochasticStateTransition:
     regime's grid Cartesian product and check that the output has the expected
     outcome-axis size, lies in [0, 1], and has rows summing to 1.
 
-    A `Phased` law contributes one entry PER PHASE. Both must be kept: they are
-    different functions and each is fatal if malformed, but for DIFFERENT reasons —
-    the perceived (solve) law prices every action in backward induction, while the
-    true (simulate) law governs the realized draw and the simulation-side checks.
-    Collapsing them onto one key would silently validate only whichever was
-    inserted last.
+    A `Phased` law contributes one entry per phase, and both are kept. They are
+    different kernels doing different jobs: the perceived one prices every action
+    in backward induction, the realized one governs the draw the simulation
+    takes. Either is fatal if malformed, so keeping one key for both would leave
+    whichever was collected second the only one ever checked.
     """
 
     func: Callable[..., FloatND]
@@ -719,10 +717,10 @@ class _StochasticStateTransition:
     """
 
     phase: Literal["solve", "simulate"] | None = None
-    """Phase this law belongs to; `None` for a bare (phase-invariant) law.
+    """Phase this kernel belongs to; `None` for a phase-invariant law.
 
-    Carried only so failures name the offending phase — a bare law and a `Phased`
-    pair are otherwise validated identically.
+    Carried so that a failure names the offending phase — a phase-invariant law
+    and the two variants of a `Phased` pair are otherwise validated identically.
     """
 
 

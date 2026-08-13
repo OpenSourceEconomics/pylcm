@@ -122,12 +122,12 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
 
 
 def test_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
-    """A `Phased` `new_stock` read by utility resolves to the SIMULATE variant in flow.
+    """A `Phased` `new_stock` read by utility resolves to its simulate variant.
 
-    Before the fix the flow resolved the chosen stock from the SOLVE pool (while its
-    helpers still came from the simulate pool -- a sub-DAG that was neither phase), so
-    the agent chose `stay`: it valued its current service flow under a rule it only
-    believes, rather than the one it lives in.
+    The stock chosen this period is a deterministic consequence of the agent's own
+    action, so it is known when the action is taken. Period utility therefore values
+    the current service flow under the rule the agent lives in, not the one it only
+    believes, and the agent chooses `switch`.
     """
     df = _simulate(
         live_functions={
