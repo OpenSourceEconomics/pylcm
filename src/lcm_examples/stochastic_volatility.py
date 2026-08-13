@@ -98,7 +98,7 @@ def get_model(
         gauss_hermite=False,
         mu=0.0,
         n_std=3.0,
-        state_conditioned=StateConditioned(
+        sigma=StateConditioned(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )

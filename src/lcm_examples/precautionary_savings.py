@@ -126,7 +126,7 @@ def get_model(
         )
 
     shock_grid_cls = _SHOCK_GRID_CLASSES[shock_type]
-    income_grid = shock_grid_cls(  # ty: ignore[no-matching-overload]
+    income_grid = shock_grid_cls(
         n_points=income_n_points,
         **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
     )

@@ -199,51 +199,82 @@ def test_conditioned_row_tauchen_requires_rho():
         )
 
 
-def test_conditioned_sigma_defaults_to_the_widest_category():
-    """Omitting `sigma` places the nodes from the widest per-category value."""
-    derived = NormalIIDProcess(
+def test_conditioned_sigma_places_nodes_from_the_widest_category():
+    """A conditioned `sigma` places the nodes from its widest per-category value."""
+    conditioned = NormalIIDProcess(
         n_points=7,
         gauss_hermite=False,
         mu=0.0,
         n_std=3.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.2, "high": 0.5}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.2, "high": 0.5}),
     )
     explicit = NormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=3.0
     )
-    assert derived.sigma == pytest.approx(0.5)
+    assert conditioned.sigma == pytest.approx(0.5)
     np.testing.assert_allclose(
-        np.asarray(derived.get_gridpoints()), np.asarray(explicit.get_gridpoints())
+        np.asarray(conditioned.get_gridpoints()), np.asarray(explicit.get_gridpoints())
     )
 
 
-def test_conditioned_sigma_conflicts_with_an_explicit_sigma():
-    """Giving both a scalar `sigma` and `state_conditioned` is rejected."""
-    with pytest.raises(GridInitializationError, match="places the nodes"):
-        NormalIIDProcess(  # ty: ignore[no-matching-overload]
+def test_conditioned_sigma_is_readable_as_the_conditioning_declaration():
+    """The declaration stays reachable after the scalar node-placing value is set."""
+    process = NormalIIDProcess(
+        n_points=7,
+        gauss_hermite=False,
+        mu=0.0,
+        n_std=3.0,
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.2, "high": 0.5}),
+    )
+    assert process.state_conditioned == StateConditioned(
+        on="uncertainty", by={"low": 0.2, "high": 0.5}
+    )
+
+
+def test_conditioning_declaration_cannot_be_passed_as_its_own_argument():
+    """Conditioning is expressed on the parameter, so there is no separate slot."""
+    with pytest.raises(TypeError, match="state_conditioned"):
+        NormalIIDProcess(
             n_points=7,
             gauss_hermite=False,
             mu=0.0,
-            sigma=0.5,
             n_std=3.0,
-            state_conditioned=StateConditioned(
+            state_conditioned=StateConditioned(  # ty: ignore[unknown-argument]
                 on="uncertainty", by={"low": 0.2, "high": 0.5}
             ),
         )
 
 
-def test_conditioned_sigma_derives_for_tauchen_too():
-    """The derivation is not specific to the IID family."""
+@pytest.mark.parametrize(
+    "by",
+    [
+        {"low": 0.2, "high": -0.5},
+        {"low": 0.2, "high": 0.0},
+        {"low": 0.2, "high": float("inf")},
+        {"low": 0.2, "high": float("nan")},
+        {},
+    ],
+)
+def test_conditioned_sigma_rejects_an_unusable_category_value(by):
+    """Every per-category value must be a finite positive scale."""
+    with pytest.raises(GridInitializationError, match="finite positive"):
+        NormalIIDProcess(
+            n_points=7,
+            gauss_hermite=False,
+            mu=0.0,
+            n_std=3.0,
+            sigma=StateConditioned(on="uncertainty", by=by),
+        )
+
+
+def test_conditioned_sigma_places_nodes_for_tauchen_too():
+    """Node placement from the widest value is not specific to the IID family."""
     p = TauchenAR1Process(
         n_points=7,
         gauss_hermite=False,
         rho=0.9,
         mu=0.0,
         n_std=3.0,
-        state_conditioned=StateConditioned(
-            on="uncertainty", by={"low": 0.1, "high": 0.4}
-        ),
+        sigma=StateConditioned(on="uncertainty", by={"low": 0.1, "high": 0.4}),
     )
     assert p.sigma == pytest.approx(0.4)

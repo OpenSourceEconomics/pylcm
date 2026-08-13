@@ -231,7 +231,7 @@ income_shock = NormalIIDProcess(
     gauss_hermite=False,
     mu=0.0,
     n_std=3.0,
-    state_conditioned=StateConditioned(
+    sigma=StateConditioned(
         on="employment_status",
         by={"employed": 0.2, "unemployed": 0.5},
     ),
@@ -258,16 +258,21 @@ working = Regime(
 )
 ```
 
-### Note there is no `sigma`
+### The declaration stands where the scalar would
+
+`StateConditioned` is written in place of the parameter it conditions, so which
+parameter varies is explicit and there is no way to give that parameter twice.
 
 A discretized process has one axis in the value function, so every category has to share
-one set of nodes. Those nodes are placed from the widest value in `by`, which is the
-narrowest axis covering every category — so the process derives its scalar `sigma`
-rather than taking one. Passing both is a contradiction and is rejected, by the type
-checker and again at construction.
+one set of nodes. Those nodes are placed from the widest value in `by` — the narrowest
+axis that still covers every category. The per-category values never move the nodes;
+they enter only the transition probabilities. To widen the axis beyond that, raise
+`n_std`.
 
-The per-category values never move the nodes; they enter only the transition
-probabilities. To widen the axis beyond the default, raise `n_std`.
+Only `sigma` can be conditioned today, and only for the processes whose transition
+probabilities carry it: the CDF-binned `NormalIIDProcess` and `TauchenAR1Process`. A
+Rouwenhorst transition depends on `rho` alone, so fixing the nodes would leave a
+conditioned `sigma` no channel at all, and the model refuses to build.
 
 ### The conditioning value is dated t
 
