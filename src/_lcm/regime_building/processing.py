@@ -696,7 +696,16 @@ def _state_handoff_errors(
                     # process, whose next draw does depend on a previous value
                     # the source would have to supply -- has no next-period
                     # value here.
-                    if isinstance(target_grid, _IIDProcess):
+                    #
+                    # A state-conditioned process is in the second group despite
+                    # being IID: its row depends on the time-t conditioning
+                    # state, so it has no unconditional law to be entered at.
+                    # The test is what the row reads, not which family it
+                    # belongs to.
+                    if (
+                        isinstance(target_grid, _IIDProcess)
+                        and target_grid.state_conditioned is None
+                    ):
                         continue
                     status = phase_reachability.edge_status(
                         period=period,
@@ -2027,10 +2036,13 @@ def _process_regime_core(
         for key, grid in target_process_grids.items()
         if key not in explicit_entry_process_grids
     }
-    # Only an IID process can be entered without a handoff, which
-    # `_state_handoff_errors` has already enforced.
+    # Only a process whose row depends on no current value can be entered
+    # without a handoff, which `_state_handoff_errors` has already enforced --
+    # an unconditioned IID process and nothing else. An AR(1) reads the previous
+    # value and a state-conditioned process reads the time-t conditioner, so
+    # both are refused there and never reach this point.
     #
-    # Two conditions bound this and both must be added here as they become
+    # One condition still bounds this and must be added as it becomes
     # expressible, because entry builds a next-state and a weight function and
     # so commits to both an axis and a distribution:
     #
@@ -2038,11 +2050,6 @@ def _process_regime_core(
     #   stored on one must be excluded, or entry reintroduces exactly the axis
     #   its treatment removes -- it needs no entry law for the same reason it
     #   needs no handoff.
-    # - **conditioning.** The entry weights below are the unconditional row,
-    #   which is the whole distribution only for a process whose law depends on
-    #   nothing. A process conditioned on another state must not be entered at
-    #   that row: the conditioner is a live state of the target, and entry has
-    #   no reason to ignore it.
     entered_process_grids = {
         key: grid
         for key, grid in target_process_grids.items()

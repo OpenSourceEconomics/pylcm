@@ -811,6 +811,13 @@ def _cross_regime_alive(active, income_proc, uncertainty_law, *, local_uncertain
     )
 
 
+def next_wealth_no_income(
+    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+) -> FloatND:
+    """Wealth law for a regime that carries no income process."""
+    return (1 + interest_rate) * (wealth - consumption)
+
+
 def _cross_params():
     return {
         "discount_factor": 0.95,
@@ -943,3 +950,89 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
     assert high.size > 100
     assert low.std() == pytest.approx(sigma_low, rel=0.15)
     assert high.std() == pytest.approx(sigma_high, rel=0.15)
+
+
+def test_conditioned_process_the_source_lacks_is_rejected():
+    """A conditioned process cannot be entered at its unconditional law.
+
+    An ordinary IID draw does not depend on any current value, so a source that never
+    carries it can still hand the target its unconditional row. A conditioned draw does
+    depend on one — the time-t conditioning state — exactly as an AR(1) draw depends on
+    the previous value, so entering it at the unconditional row would price every
+    subject on the widest category. The source must carry the process, declare an entry
+    law, or not reach the regime at all.
+    """
+    young = Regime(
+        active=lambda age: age <= 40,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
+            "uncertainty": DiscreteGrid(Uncertainty),
+        },
+        state_transitions={
+            "wealth": next_wealth_no_income,
+            "uncertainty": MarkovTransition(next_uncertainty_phase_absorbing),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_phase,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+    old = _cross_regime_alive(
+        lambda age: (age > 40) & (age <= 60),
+        _cond_income(0.05, 0.60),
+        next_uncertainty_phase_absorbing,
+        local_uncertainty=True,
+    )
+    gone = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    with pytest.raises(ModelInitializationError, match="does not carry 'income'"):
+        Model(
+            regimes={"young": young, "old": old, "gone": gone},
+            regime_id_class=Phase,
+            ages=AgeGrid(start=20, stop=70, step="10Y"),
+            fixed_params={},
+        )
+
+
+def test_conditioned_process_may_be_entered_with_an_explicit_law():
+    """A source that declares where entrants land may still reach the process.
+
+    Refusing the unconditional row does not refuse entry itself: an entry law names the
+    physical value an entrant starts at, which needs no conditioning. From the next
+    period on, the target carries the process and conditions it normally.
+    """
+    young = Regime(
+        active=lambda age: age <= 40,
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
+            "uncertainty": DiscreteGrid(Uncertainty),
+        },
+        state_transitions={
+            "wealth": next_wealth_no_income,
+            "uncertainty": MarkovTransition(next_uncertainty_phase_absorbing),
+            "income": {"old": lambda: jnp.array(0.0)},
+        },
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
+        transition=next_phase,
+        constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
+    )
+    old = _cross_regime_alive(
+        lambda age: (age > 40) & (age <= 60),
+        _cond_income(0.05, 0.60),
+        next_uncertainty_phase_absorbing,
+        local_uncertainty=True,
+    )
+    gone = Regime(
+        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+    )
+    model = Model(
+        regimes={"young": young, "old": old, "gone": gone},
+        regime_id_class=Phase,
+        ages=AgeGrid(start=20, stop=70, step="10Y"),
+        fixed_params={},
+    )
+    V = model.solve(params=_cross_params(), log_level="debug")
+    for leaf in jax.tree_util.tree_leaves(V):
+        assert np.all(np.isfinite(np.asarray(leaf)))
