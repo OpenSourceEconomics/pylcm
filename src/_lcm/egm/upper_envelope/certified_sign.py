@@ -228,7 +228,7 @@ def certified_margin_sign(
     # The four values share one exponent because they enter the determinant only
     # as stored magnitudes; the abscissae are handled per link, below, because
     # what enters from them is a difference.
-    value_exponent = shared_exponent(a_v0, a_v1, b_v0, b_v1)
+    value_exponent = _shared_exponent(a_v0, a_v1, b_v0, b_v1)
     source_values = (a_v0, a_v1, b_v0, b_v1)
     scaled_values = tuple(
         scale_by_power_of_two(term, -value_exponent) for term in source_values
@@ -473,7 +473,7 @@ def _round_trips(
     )
 
 
-def shared_exponent(*terms: FloatND) -> IntND:
+def _shared_exponent(*terms: FloatND) -> IntND:
     """Return the exponent by which a group of operands is scaled.
 
     `normalizing_exponent` lands the largest term near one, which is what keeps
@@ -575,7 +575,7 @@ def _link_distances(
     time the determinant reads it. The flag cannot underflow.
     """
     source = (x1, x_query, x0)
-    exponent = shared_exponent(x0, x1, x_query)
+    exponent = _shared_exponent(x0, x1, x_query)
     scaled = tuple(scale_by_power_of_two(term, -exponent) for term in source)
     scaled_x1, scaled_query, scaled_x0 = scaled
     pairs = (
@@ -628,7 +628,7 @@ def _on_its_own_scale(
     So only the leading half has to survive, and the flag reports that; a tail
     that does not survive is dropped and its magnitude added to the bound.
     """
-    exponent = shared_exponent(*(term[0] for term in distances))
+    exponent = _shared_exponent(*(term[0] for term in distances))
     tiny = jnp.finfo(distances[0][0].dtype).tiny
     rescaled: list[DoubleDouble] = []
     leading_survived: list[BoolND] = []
