@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
     certified_margin_sign,
 )
@@ -179,6 +180,39 @@ def test_a_flushed_distance_never_yields_a_strict_sign():
     # alternative to the exact sign — a tie would not be one.
     assert _exact_line_margin(a, b, query) == 1
     assert _sign_at(a, b, query) == UNRESOLVED_SIGN
+
+
+def _flushed_endpoint_product_witness() -> tuple[
+    tuple[float, float, float, float], tuple[float, float, float, float], float
+]:
+    """Return two ordinary strictly ordered links whose whole margin is one product.
+
+    `A` is the line `V = x` and `B` runs from the smallest normal at the origin to
+    the same height as `A` at `x = 2`, so the two differ everywhere below that
+    node by a fraction of the smallest normal and `A` is the lower of the pair.
+    That difference reaches the determinant through a single product of one of
+    `B`'s distances with its lower endpoint value, and any distance below one
+    carries the product beneath the smallest normal.
+
+    Neither link is extreme: both widths are 2, every abscissa and every value is
+    an ordinary normal number, and the query sits inside both. Only the endpoint
+    value is at the bottom of the range, so nothing here is unreadable on its own
+    and the certificate is entitled to an answer.
+    """
+    dtype = jnp.zeros(()).dtype
+    a = (1.0, 2.0, 1.0, 2.0)
+    b = (0.0, 2.0, float(jnp.finfo(dtype).smallest_normal), 2.0)
+    query = float(jnp.nextafter(jnp.asarray(1.0), jnp.asarray(jnp.inf)))
+    return a, b, query
+
+
+def test_a_margin_carried_by_a_flushed_product_is_not_certified_as_a_tie():
+    """Strictly ordered links whose separating product underflows are refused."""
+    a, b, query = _flushed_endpoint_product_witness()
+    # `A` is strictly below `B` at the query, so a tie is not one of the honest
+    # answers — the certificate either reproduces the sign or declines to.
+    assert _exact_line_margin(a, b, query) == -1
+    assert _sign_at(a, b, query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
 
 
 def test_certified_sign_matches_the_rational_oracle_on_randomized_links():

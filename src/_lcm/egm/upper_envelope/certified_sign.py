@@ -274,6 +274,24 @@ def certified_margin_sign(
     numerator_b = dd_add(
         dd_mul_float(distances_b[0], b_v0), dd_mul_float(distances_b[1], b_v1)
     )
+    # Each of those four products pairs a distance with an endpoint value, and
+    # either factor may be ordinary while the product is not. A product that
+    # underflows is discarded whole — estimate and discarded tail both exactly
+    # zero — so the term reads as one the caller never supplied, and a
+    # determinant assembled from the survivors is the determinant of a different
+    # pair of links.
+    products_read = reduce(
+        operator.and_,
+        (
+            _product_survived(value=distance, factor=endpoint_value)
+            for distance, endpoint_value in (
+                (distances_a[0], a_v0),
+                (distances_a[1], a_v1),
+                (distances_b[0], b_v0),
+                (distances_b[1], b_v1),
+            )
+        ),
+    )
     width_a, width_b = distances_a[2], distances_b[2]
 
     product_a = _bounded_product(numerator_a, width_b)
@@ -288,7 +306,7 @@ def certified_margin_sign(
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable & a_distances_read & b_distances_read,
+        readable=readable & a_distances_read & b_distances_read & products_read,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
@@ -532,6 +550,30 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
         jnp.where(negligible, zero, low),
         jnp.where(negligible, tiny, dropped),
     )
+
+
+def _product_survived(*, value: DoubleDouble, factor: FloatND) -> BoolND:
+    """Report whether a product by a plain float stayed where it can be read.
+
+    A product of two ordinary numbers can still land among the subnormals — a
+    distance below one against an endpoint value near the bottom of the range, or
+    a value of any size against a distance that small — and there the transform
+    keeps nothing. What arrives is an exact zero whose discarded tail also reads
+    as exactly zero, and that pair is the certificate for an exact zero.
+
+    What is reported is a fact about the operands, not about the result, and it
+    is reported as a fact rather than as a magnitude. A bound would have to
+    survive every multiplication still to come, and the smallest bound this
+    underflow establishes is the smallest normal — which the next factor below
+    one sends back into the band it was meant to escape. A flag cannot underflow.
+
+    Two nonzero operands whose product does not fit are the only case this
+    refuses. A term that is genuinely zero loses nothing and keeps its exactness,
+    so two links lying on one line still certify the tie they have earned.
+    """
+    tiny = jnp.finfo(value[0].dtype).tiny
+    both_nonzero = (value[0] != 0.0) & (factor != 0.0)
+    return ~(both_nonzero & (jnp.abs(value[0] * factor) < tiny))
 
 
 def _link_distances(
