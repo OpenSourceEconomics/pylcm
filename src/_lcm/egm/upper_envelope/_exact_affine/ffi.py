@@ -66,6 +66,20 @@ CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
 _REGISTERED: bool = False
 
 
+def kernel_available() -> bool:
+    """Return whether a verdict can be requested in this process.
+
+    Answers rather than raises, so a caller that has something else to do — a
+    test that would otherwise report a platform's missing build as a defect —
+    can branch on it. Asking for a verdict remains the only way to get one.
+    """
+    try:
+        _ensure_registered()
+    except ExactAffineKernelUnavailableError:
+        return False
+    return True
+
+
 def _ensure_registered() -> None:
     """Register the FFI targets with XLA, once per process.
 
