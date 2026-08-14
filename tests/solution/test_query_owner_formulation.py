@@ -27,7 +27,9 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.certified_sign import (
+    BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
+    backend_flushes_subnormals,
     certified_margin_sign,
 )
 from _lcm.egm.upper_envelope.query import (
@@ -361,7 +363,17 @@ def test_a_link_narrower_than_the_format_never_certifies_a_tie(
         x_query=jnp.asarray(query),
     )
 
-    assert int(sign) in {UNRESOLVED_SIGN, -1}
+    # Where the subnormal band is readable the far node is a genuine width
+    # rather than a repeat of the near one, so the determinant is formed and
+    # comes out below what the arithmetic can resolve. That is a different
+    # abstention from the one a flushed width produces, and it is equally not a
+    # tie — which is the property this witness exists to protect.
+    honest = (
+        {UNRESOLVED_SIGN, -1}
+        if backend_flushes_subnormals(jnp.zeros(()).dtype)
+        else {UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN, -1}
+    )
+    assert int(sign) in honest
 
 
 def test_a_lone_candidate_at_zero_owns_its_own_query() -> None:
