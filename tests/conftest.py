@@ -12,6 +12,7 @@ import pytest
 from jax import config as jax_config
 from numpy.typing import ArrayLike
 
+from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_available
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -20,6 +21,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import ScalarInt
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
@@ -74,9 +76,19 @@ def pytest_addoption(parser):
         "--release-compiled-programs",
         action="store_true",
         help=(
-            "Drop JAX's in-memory compiled-program cache whenever the test "
-            "module changes, and again whenever a worker has grown a gibibyte "
-            "since its last release, bounding its resident memory."
+            "Accepted for compatibility and has no effect: releasing is the "
+            "default. Pass --keep-compiled-programs to turn it off."
+        ),
+    )
+    parser.addoption(
+        "--keep-compiled-programs",
+        action="store_true",
+        help=(
+            "Keep JAX's in-memory compiled-program cache for the whole session "
+            "instead of dropping it at module boundaries. Resident memory then "
+            "grows with every distinct program compiled, so pass this only when "
+            "measuring compile behaviour itself, where dropping the cache would "
+            "change what is being measured."
         ),
     )
 
@@ -174,6 +186,48 @@ def pytest_collection_modifyitems(items):
     _apply_backend_skips(items=items)
 
 
+def is_missing_kernel_failure(
+    *, failed: bool, asked_for_kernel: bool, kernel_available: bool
+) -> bool:
+    """Return whether a failure is only this host's missing exact-affine kernel.
+
+    All three must hold: the test failed, it failed asking for an exact verdict,
+    and no kernel can be loaded here. A host that has one reports every failure
+    as the failure it is, so this can never absorb a real defect.
+    """
+    return failed and asked_for_kernel and not kernel_available
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Report a test that needed an unbuilt exact-affine kernel as skipped.
+
+    The certified upper envelope decides ownership in a compiled kernel, which
+    is not built for every platform pylcm otherwise supports. Tests that ask for
+    an exact verdict there cannot pass and are not defects, while their
+    neighbours in the same module — construction, validation, dispatch — are
+    exactly the platform surface those runners exist to cover. Deciding per test
+    rather than per module keeps that coverage instead of skipping a whole file
+    for the few cases inside it that reach the kernel.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    asked_for_kernel = call.excinfo is not None and call.excinfo.errisinstance(
+        ExactAffineKernelUnavailableError
+    )
+    if is_missing_kernel_failure(
+        failed=report.outcome == "failed",
+        asked_for_kernel=asked_for_kernel,
+        kernel_available=kernel_available(),
+    ):
+        report.outcome = "skipped"
+        report.longrepr = (
+            str(item.path),
+            item.location[1],
+            "Skipped: the exact-affine kernel is not built for this platform",
+        )
+
+
 # How far a worker may grow past its last release before the next one, in MiB.
 #
 # What a test costs is the programs it builds, which is not a property of it
@@ -236,6 +290,23 @@ def return_free_heap_to_os() -> bool:
     return True
 
 
+def should_release_compiled_programs(*, config) -> bool:
+    """Return whether a teardown drops JAX's compiled-program cache.
+
+    Releasing is the default, because the unbounded worker is the failure that
+    actually happens and the bounded one costs almost nothing: a program needed
+    again is a lookup in the persistent on-disk cache rather than a fresh
+    compile. Leaving it off by default put the bound behind a flag that only CI
+    passed, so every local run, every ad-hoc battery and every bundle grew
+    without one.
+
+    `--keep-compiled-programs` opts out for the one case that needs it —
+    measuring compile behaviour, where dropping the cache changes the quantity
+    being measured.
+    """
+    return not config.getoption("--keep-compiled-programs")
+
+
 def pytest_runtest_teardown(item, nextitem):
     """Release compiled programs at module boundaries, and periodically within one.
 
@@ -261,7 +332,7 @@ def pytest_runtest_teardown(item, nextitem):
     battery, a worker at 9304 MiB fell to 1472 MiB on dropping the cache and
     trimming, having given back under 60 MiB for a trim without a drop.
     """
-    if not item.config.getoption("--release-compiled-programs"):
+    if not should_release_compiled_programs(config=item.config):
         return
     session = item.session
     resident = resident_mebibytes()

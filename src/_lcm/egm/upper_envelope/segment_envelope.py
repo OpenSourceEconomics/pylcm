@@ -47,6 +47,7 @@ offending cell instead of publishing a guess.
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope._exact_affine import exact_affine_read
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
 from _lcm.egm.upper_envelope.topology import count_linked_runs, monotone_run_ids
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, ScalarInt
@@ -426,26 +427,22 @@ def _emit_envelope(
     high = sub_cells.owner_right_index
     live = jnp.arange(n_slots) < n_live
 
-    own_value = _line_value(
-        low=low, high=high, x_query=left, endog_grid=endog_grid, ordinate=value
-    )
-    own_policy = _line_value(
-        low=low, high=high, x_query=left, endog_grid=endog_grid, ordinate=policy
+    own_value, own_policy = _link_channels(
+        low=low,
+        high=high,
+        x_query=left,
+        endog_grid=endog_grid,
+        value=value,
+        policy=policy,
     )
     previous = jnp.clip(jnp.arange(n_slots) - 1, 0, n_slots - 1)
-    prior_value = _line_value(
+    prior_value, prior_policy = _link_channels(
         low=low[previous],
         high=high[previous],
         x_query=left,
         endog_grid=endog_grid,
-        ordinate=value,
-    )
-    prior_policy = _line_value(
-        low=low[previous],
-        high=high[previous],
-        x_query=left,
-        endog_grid=endog_grid,
-        ordinate=policy,
+        value=value,
+        policy=policy,
     )
 
     is_first = jnp.arange(n_slots) == 0
@@ -464,20 +461,16 @@ def _emit_envelope(
     last = jnp.clip(n_live - 1, 0, n_slots - 1)
     closing_valid = (n_live > 0)[None]
     closing_grid = right[last][None]
-    closing_policy = _line_value(
+    closing_read_value, closing_read_policy = _link_channels(
         low=low[last],
         high=high[last],
         x_query=right[last],
         endog_grid=endog_grid,
-        ordinate=policy,
-    )[None]
-    closing_value = _line_value(
-        low=low[last],
-        high=high[last],
-        x_query=right[last],
-        endog_grid=endog_grid,
-        ordinate=value,
-    )[None]
+        value=value,
+        policy=policy,
+    )
+    closing_policy = closing_read_policy[None]
+    closing_value = closing_read_value[None]
 
     row_valid = jnp.concatenate([row_valid, closing_valid])
     row_grid = jnp.concatenate([row_grid, closing_grid])
@@ -508,14 +501,78 @@ def _line_value(
     endog_grid: Float1D,
     ordinate: Float1D,
 ) -> FloatND:
-    """Read a link's affine interpolant, exactly at its own endpoints."""
+    """Read a link's affine value at `x_query`, correctly rounded.
+
+    Returns NaN where the read is refused; `_line_read` states when that is.
+    """
+    published, status = _line_read(
+        low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=ordinate
+    )
+    return jnp.where(status == 0, published, jnp.asarray(jnp.nan, ordinate.dtype))
+
+
+def _line_read(
+    *,
+    low: IntND,
+    high: IntND,
+    x_query: FloatND,
+    endog_grid: Float1D,
+    ordinate: Float1D,
+) -> tuple[FloatND, IntND]:
+    """Read a link's affine value at `x_query`, with the status of that read.
+
+    The quotient is formed as an exact rational from the four stored endpoint
+    operands and rounded once. Publishing it through a floating interpolant
+    instead loses results the format holds: two nearly opposite normal ordinates
+    have a midpoint in the subnormal band, and the subtraction that forms it
+    cancels the magnitude away before the division can see it.
+
+    A link of zero width has no affine line, so it is not asked for one: it takes
+    the value stored at its own node. That is the only reading available there,
+    and it is exact.
+
+    Returns:
+        Tuple of the rounded value and its status, `0` where the value was
+        published and `UNRESOLVED_STATUS` where the operands admit no answer.
+
+    """
     x0 = endog_grid[low]
     x1 = endog_grid[high]
     y0 = ordinate[low]
     y1 = ordinate[high]
-    width = x1 - x0
-    safe_width = jnp.where(width == 0.0, 1.0, width)
-    interpolated = y0 + (x_query - x0) / safe_width * (y1 - y0)
-    at_low = x_query == x0
-    at_high = x_query == x1
-    return jnp.where(at_low, y0, jnp.where(at_high, y1, interpolated))
+
+    published, status = exact_affine_read(x0=x0, x1=x1, v0=y0, v1=y1, x_query=x_query)
+    degenerate = ~(x1 > x0)
+    return (
+        jnp.where(degenerate, y0, published),
+        jnp.where(degenerate, jnp.int32(0), status),
+    )
+
+
+def _link_channels(
+    *,
+    low: IntND,
+    high: IntND,
+    x_query: FloatND,
+    endog_grid: Float1D,
+    value: Float1D,
+    policy: Float1D,
+) -> tuple[FloatND, FloatND]:
+    """Read one link's value and policy, publishing both channels or neither.
+
+    A row carrying a finite value beside a NaN policy would be read downstream as
+    a real state with an unknown action, which is worse than no row at all. The
+    two channels share their link geometry, so they can only disagree on whether
+    the exact result overflows — and where either does, both are withheld.
+    """
+    read_value, value_status = _line_read(
+        low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=value
+    )
+    read_policy, policy_status = _line_read(
+        low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=policy
+    )
+    readable = (value_status == 0) & (policy_status == 0)
+    return (
+        jnp.where(readable, read_value, jnp.asarray(jnp.nan, value.dtype)),
+        jnp.where(readable, read_policy, jnp.asarray(jnp.nan, policy.dtype)),
+    )
