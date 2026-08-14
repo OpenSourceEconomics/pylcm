@@ -83,7 +83,10 @@ jobs:
             jax-${{ runner.os }}-${{ matrix.python-version }}-
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+        run: >-
+          mkdir -p reports &&
+          pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+          --junitxml=reports/junit-cpu-${{ runner.os }}.xml
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
@@ -125,20 +128,31 @@ jobs:
         # per-phase tail so the next run answers this from the configuration
         # that is actually in doubt; tighten the ceiling once it has.
         run: |
+          mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
             --release-compiled-programs --timeout=600 --timeout-method=thread \
-            --durations=25 \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m "slow and not manual" \
             --release-compiled-programs --timeout=600 --timeout-method=thread \
-            --durations=25 \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-solution-slow.xml \
             --cov=./ --cov-append --cov-report= -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             -m "slow and not manual" \
             --release-compiled-programs --timeout=600 --timeout-method=thread \
-            --durations=25 \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
             --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
+      - name: Upload JUnit reports
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
+          path: reports/junit-*.xml
+          if-no-files-found: warn
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
         uses: codecov/codecov-action@v7.0.0
@@ -221,16 +235,31 @@ jobs:
         env:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
+          mkdir -p reports
           pixi run -e tests-cpu pytest tests --precision=32 \
-            -m "not slow and not manual" --release-compiled-programs \
-            --timeout=600 --timeout-method=thread --durations=25 -n 4 \
+            -m "not slow and not manual" \
+            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
+            -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 \
-            -m "slow and not manual" --release-compiled-programs \
-            --timeout=600 --timeout-method=thread --durations=25 -n 2 \
+            -m "slow and not manual" \
+            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --durations=25 --junitxml=reports/junit-cpu-fp32-solution-slow.xml \
+            -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            --precision=32 -m "slow and not manual" \
-            --release-compiled-programs \
-            --timeout=600 --timeout-method=thread --durations=25 -n 2
+            --precision=32 -m "slow and not manual" --release-compiled-programs \
+            --timeout=600 --timeout-method=thread \
+            --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
+      - name: Upload JUnit reports
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-cpu-fp32
+          path: reports/junit-*.xml
+          if-no-files-found: warn
       - name: Prune superseded JAX caches for this ref
         if: always()
         continue-on-error: true
