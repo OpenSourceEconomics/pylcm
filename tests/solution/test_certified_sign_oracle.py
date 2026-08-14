@@ -145,18 +145,6 @@ def _disagreements():
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a group spanning more of the exponent range than one scaling can "
-    "serve loses a link's whole contribution, and the difference of what "
-    "survives is published as a certified exact tie. Every case found so far "
-    "has the two readings round to the *same* float64 value, so what is wrong "
-    "is the verdict code rather than the level: a caller cannot act on a "
-    "difference the format does not hold. `query.py`'s `level_with` still "
-    "routes the pair into the slope tie-break, "
-    "deciding by slope a contest the exact arithmetic settles, while "
-    "`cell_hull` absorbs the same code without escaping",
-)
 def test_no_tie_is_certified_where_exact_arithmetic_finds_a_strict_sign():
     """A `0` verdict means the two lines meet, and licenses any choice between them."""
     fabricated = [item for item in _disagreements() if item[1] == 0]
