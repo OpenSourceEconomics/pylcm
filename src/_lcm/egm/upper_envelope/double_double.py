@@ -31,7 +31,7 @@ Everything is branch-free and elementwise, so it stays `jax.jit`- and
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND
 
 # A value as `(high, low, dropped)`: estimate `high + low`, tail bound `dropped`.
 type DoubleDouble = tuple[FloatND, FloatND, FloatND]
@@ -46,12 +46,54 @@ def two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
 
 
 def two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Return `(p, e)` with `a * b == p + e` exactly (Dekker)."""
-    p = a * b
-    a_hi, a_lo = _split(a)
-    b_hi, b_lo = _split(b)
+    """Return `(p, e)` with `a * b == p + e` exactly (Dekker).
+
+    An operand within a significand's width of the smallest normal has the lower
+    half of its own split below that threshold, and a subnormal half is read as
+    zero by the very multiplications the error term is assembled from — while its
+    true contribution against a large second operand is an ordinary number. The
+    transform then returns a decomposition that is not the product, reports
+    nothing, and every bound downstream inherits an exactness it does not have.
+
+    The operands are moved apart before splitting, one up by as much as the other
+    goes down. `a * b` is the same real number afterwards, so `p` and `e` are the
+    numbers the caller asked for; only the halves change, and they change into
+    ones the format can multiply. Where both operands are that small the shifts
+    cancel — correctly, since the product is then below the range anyway and its
+    caller bounds it.
+
+    `_split` already borrows range at the top for the same reason. This is the
+    same borrowing at the bottom, and the pair is what makes the transform exact
+    across the whole normal range rather than in its middle.
+    """
+    shift = _shift_clear_of_the_split_floor(a) - _shift_clear_of_the_split_floor(b)
+    lifted, lowered = scale_by_power_of_two(a, shift), scale_by_power_of_two(b, -shift)
+    # Scaling by a power of two is exact only while the result stays normal, and
+    # a pair that cannot be moved keeps the operands it came with rather than a
+    # silently altered product.
+    moved = (scale_by_power_of_two(lifted, -shift) == a) & (
+        scale_by_power_of_two(lowered, shift) == b
+    )
+    left = jnp.where(moved, lifted, a)
+    right = jnp.where(moved, lowered, b)
+
+    p = left * right
+    a_hi, a_lo = _split(left)
+    b_hi, b_lo = _split(right)
     error = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
     return p, error
+
+
+def _shift_clear_of_the_split_floor(value: FloatND) -> IntND:
+    """Return how far `value` must rise for its split's lower half to stay normal.
+
+    The split puts the lower half of the significand a whole precision below the
+    leading bit, so an operand needs that much room above the smallest normal.
+    Zero for anything that already has it, which is every ordinary operand.
+    """
+    info = jnp.finfo(value.dtype)
+    _mantissa, exponent = jnp.frexp(jnp.where(value == 0.0, 1.0, jnp.abs(value)))
+    return jnp.maximum(exponent * 0, info.minexp + 1 + info.nmant - exponent)
 
 
 def scale_by_power_of_two(value: FloatND, exponent: IntND) -> FloatND:
@@ -96,6 +138,55 @@ def normalizing_exponent(*values: FloatND) -> IntND:
     usable = jnp.isfinite(magnitude) & (magnitude > 0.0)
     _mantissa, exponent = jnp.frexp(jnp.where(usable, magnitude, 1.0))
     return jnp.where(usable, exponent, jnp.zeros_like(exponent))
+
+
+def is_stored_zero(value: FloatND) -> BoolND:
+    """Report where a float is a true zero, decided on the stored bits.
+
+    `value == 0.0` cannot answer this on a backend that flushes: a subnormal
+    reads as zero there, so a quantity that is small but present becomes
+    indistinguishable from one that is absent — and every guard keyed on the
+    difference then takes the branch meant for the absent case. Shifting the
+    sign bit off leaves zero exactly for `+0.0` and `-0.0`, and a bitcast is a
+    reinterpretation rather than an operation, so nothing is destroyed reading
+    it. Integers are not flushed.
+    """
+    unsigned = jnp.dtype(f"uint{jnp.finfo(value.dtype).bits}")
+    bits = jax.lax.bitcast_convert_type(value, unsigned)
+    return (bits << bits.dtype.type(1)) == 0
+
+
+def scale_tail_bound(*, bound: FloatND, factor: FloatND) -> FloatND:
+    """Return `bound * |factor|`, floored where that product underflows.
+
+    A tail bound only ever has to be an *upper* bound on what was discarded, and
+    a product that underflows is below the smallest normal exactly when the true
+    amount is — so replacing it with the smallest normal keeps the bound valid
+    while making it something the format can hold. `maximum` cannot underflow,
+    so a bound that reaches here nonzero leaves it nonzero, however many factors
+    below one it still has to pass.
+
+    Without that floor a bound is destroyed by the first small factor and
+    arrives at the comparison as an exact zero, which is the certificate for
+    having discarded nothing — the one reading it must never produce.
+
+    A bound of exactly zero says nothing was discarded, and stays zero: that is
+    what two links lying on one line rely on. Which case it is has to be asked of
+    the stored bits, not of `!= 0.0` — a bound arriving subnormal reads as zero
+    to that comparison, so the floor would be skipped on exactly the operands it
+    exists for. A floored bound is never subnormal afterwards, but the sites that
+    *mint* a bound are upstream of the first floor, so the invariant cannot be
+    assumed by the thing that establishes it.
+
+    The floor holds on both kinds of backend, by different routes: where the
+    product flushes, the exact value was below the smallest normal, which is what
+    made it flush; where it becomes a genuine subnormal instead, the smallest
+    normal still bounds a subnormal.
+    """
+    tiny = jnp.finfo(bound.dtype).tiny
+    scaled = bound * jnp.abs(factor)
+    both_present = ~is_stored_zero(bound) & ~is_stored_zero(factor)
+    return jnp.where(both_present, jnp.maximum(scaled, tiny), scaled)
 
 
 def dd_from_difference(a: FloatND, b: FloatND) -> DoubleDouble:
@@ -144,7 +235,11 @@ def dd_mul_float(value: DoubleDouble, factor: FloatND) -> DoubleDouble:
     for term in (error_high, product_low, error_low):
         accumulated = dd_add_float(accumulated, term)
     new_high, new_low, new_dropped = accumulated
-    return new_high, new_low, new_dropped + dropped * jnp.abs(factor)
+    return (
+        new_high,
+        new_low,
+        new_dropped + scale_tail_bound(bound=dropped, factor=factor),
+    )
 
 
 def dd_mul(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
@@ -173,9 +268,9 @@ def dd_mul(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     new_high, new_low, new_dropped = accumulated
     dropped = (
         new_dropped
-        + left_dropped * right_scale
-        + right_dropped * left_scale
-        + left_dropped * right_dropped
+        + scale_tail_bound(bound=left_dropped, factor=right_scale)
+        + scale_tail_bound(bound=right_dropped, factor=left_scale)
+        + scale_tail_bound(bound=left_dropped, factor=right_dropped)
     )
     return new_high, new_low, dropped
 

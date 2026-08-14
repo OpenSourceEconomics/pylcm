@@ -71,8 +71,10 @@ jobs:
         # executable whose scratch arena (half the state-action product) exceeds
         # device memory. A fresh process pins the fused compile.
         run: >-
+          mkdir -p reports &&
           pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py
           --precision=32 -n0
+          --junitxml=reports/junit-gpu-fp32-mahler.xml
       - name: Run pytest on GPU
         shell: bash {0}
         # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
@@ -86,8 +88,20 @@ jobs:
         # above divides that growth without bounding it. A released program is
         # recompiled from the persistent on-disk cache rather than from cold.
         run: >-
+          mkdir -p reports &&
           pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
           --precision=32 -n0 --release-compiled-programs
+          --junitxml=reports/junit-gpu-fp32-${{ matrix.suite }}.xml
+      - name: Upload JUnit reports
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-gpu-fp32-${{ matrix.suite }}
+          path: reports/junit-*.xml
+          if-no-files-found: warn
   # One context for both suite legs, so branch protection names `gpu32` rather
   # than each leg — adding a suite would otherwise silently drop out of the
   # required set until someone remembered to add it there too.
