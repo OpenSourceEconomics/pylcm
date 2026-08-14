@@ -155,18 +155,6 @@ def test_no_tie_is_certified_where_exact_arithmetic_finds_a_strict_sign():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the same scaling failure can leave the surviving terms ordered the "
-    "wrong way round, so the certificate publishes the opposite strict sign. "
-    "The two readings are distinct float64 values one representable step apart, "
-    "so the format holds them apart and the certificate names the smaller as "
-    "the larger. The published *level* is right to within that step; what moves "
-    "is which link owns the query, and with it its policy and marginal. Both "
-    "consumers act on that: `query.py`'s `beats` selects the losing link, and "
-    "an exact `+1` published as `-1` additionally suppresses the escape at "
-    "`cell_hull.py`, the one detector written for this case",
-)
 def test_no_strict_verdict_is_the_opposite_of_the_exact_one():
     """A published `+1` or `-1` states which line is higher, and must be right.
 
