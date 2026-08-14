@@ -74,9 +74,19 @@ def pytest_addoption(parser):
         "--release-compiled-programs",
         action="store_true",
         help=(
-            "Drop JAX's in-memory compiled-program cache whenever the test "
-            "module changes, and again whenever a worker has grown a gibibyte "
-            "since its last release, bounding its resident memory."
+            "Accepted for compatibility and has no effect: releasing is the "
+            "default. Pass --keep-compiled-programs to turn it off."
+        ),
+    )
+    parser.addoption(
+        "--keep-compiled-programs",
+        action="store_true",
+        help=(
+            "Keep JAX's in-memory compiled-program cache for the whole session "
+            "instead of dropping it at module boundaries. Resident memory then "
+            "grows with every distinct program compiled, so pass this only when "
+            "measuring compile behaviour itself, where dropping the cache would "
+            "change what is being measured."
         ),
     )
 
@@ -236,6 +246,23 @@ def return_free_heap_to_os() -> bool:
     return True
 
 
+def should_release_compiled_programs(*, config) -> bool:
+    """Return whether a teardown drops JAX's compiled-program cache.
+
+    Releasing is the default, because the unbounded worker is the failure that
+    actually happens and the bounded one costs almost nothing: a program needed
+    again is a lookup in the persistent on-disk cache rather than a fresh
+    compile. Leaving it off by default put the bound behind a flag that only CI
+    passed, so every local run, every ad-hoc battery and every bundle grew
+    without one.
+
+    `--keep-compiled-programs` opts out for the one case that needs it —
+    measuring compile behaviour, where dropping the cache changes the quantity
+    being measured.
+    """
+    return not config.getoption("--keep-compiled-programs")
+
+
 def pytest_runtest_teardown(item, nextitem):
     """Release compiled programs at module boundaries, and periodically within one.
 
@@ -261,7 +288,7 @@ def pytest_runtest_teardown(item, nextitem):
     battery, a worker at 9304 MiB fell to 1472 MiB on dropping the cache and
     trimming, having given back under 60 MiB for a trim without a drop.
     """
-    if not item.config.getoption("--release-compiled-programs"):
+    if not should_release_compiled_programs(config=item.config):
         return
     session = item.session
     resident = resident_mebibytes()
