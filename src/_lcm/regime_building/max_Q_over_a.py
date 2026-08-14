@@ -193,10 +193,10 @@ def get_max_Q_over_a(
                 **states_actions_params,
             )
             if stakeholders is not None:
-                # COLLECTIVE-REGIMES (E1 + E2): Q_arr carries a trailing
+                # Q_arr carries a trailing
                 # stakeholder axis (the action product-map keeps it last);
-                # F_arr does not — for an E2 regime it already includes the
-                # value constraints, which Q_and_F ANDed in AFTER computing
+                # F_arr does not — where the regime declares value constraints
+                # F_arr already includes them, ANDed in by Q_and_F AFTER computing
                 # Q^s. Split Q_arr per stakeholder, take the household argmax
                 # of the scalarization over the masked action axes, and read
                 # off each stakeholder's OWN value at that shared argmax. The
@@ -359,8 +359,8 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
     `jnp.average` rounds once, and the two can differ by ~1 ULP (see
     `zero_safe.zero_safe_average`). On an axis whose weights are ALL strictly
     positive the guard protects against nothing, yet still costs that extra
-    rounding — which is what made the fold non-exact against the
-    unfolded-then-averaged oracle on the non-jitted path (fold-review F1).
+    rounding, which is enough to make the fold non-exact against the
+    unfolded-then-averaged oracle on the non-jitted path.
 
     The motivation is EXACTNESS, not speed. MEASURED (jax 0.10.1, CPU,
     float64, 1e6x4): with the weights closed over as constants — which is
@@ -369,24 +369,24 @@ def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., F
     EAGER path pays materially (5.3x), because nothing folds the `select`
     there. So this branch buys real time only for `enable_jit=False`.
 
-    ROUND-3/4 CAVEAT (external re-review). Selecting `jnp.average` restores
-    bit-exactness against the unfolded-then-averaged oracle on the NON-JITTED
-    path, but it does NOT make the JITTED fold bit-identical to that oracle:
-    under `jit` the fold's average is fused into the mapped value kernel while
-    the oracle averages a materialized unfolded array, so XLA may reassociate
-    the two reductions differently. The jitted contract is therefore numerical
-    equivalence within a SCALE-AWARE tolerance, not bit-identity, and NOT a
-    fixed ULP count: ULP is a result-space spacing metric and is unstable near
-    CANCELLATION. Round 4 exhibited a supported 18-node uniform-IID float32 fold
-    whose fused value and materialized oracle differ by only ~2.62e-7 in absolute
-    terms (a summand-scale float32 reduction floor) yet 287,557 ULP in the small
-    (~1e-5) cancelled result — so a `<= 2 * spacing(oracle)` claim is false there.
-    The honest contract is `|fold - oracle| <= atol + rtol * max|summand|`
-    (see `test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_
-    tolerance`). Do not describe the jitted fold as bit-identical or few-ULP.
-    (This branch is still correct and necessary: it removes the LARGER
-    `zero_safe_average` drift on all-positive axes and keeps the zero-weight
-    guard where a zero can occur.)
+    CAVEAT. Selecting `jnp.average` restores bit-exactness against the
+    unfolded-then-averaged oracle on the NON-JITTED path, but it does NOT make
+    the JITTED fold bit-identical to that oracle: under `jit` the fold's
+    average is fused into the mapped value kernel while the oracle averages a
+    materialized unfolded array, so XLA may reassociate the two reductions
+    differently. The jitted contract is therefore numerical equivalence within
+    a SCALE-AWARE tolerance, not bit-identity, and NOT a fixed ULP count: ULP
+    is a result-space spacing metric and is unstable near CANCELLATION. A
+    supported 18-node uniform-IID float32 fold has a fused value and a
+    materialized oracle differing by only ~2.62e-7 in absolute terms (a
+    summand-scale float32 reduction floor) yet 287,557 ULP in the small
+    (~1e-5) cancelled result, so a `<= 2 * spacing(oracle)` claim is false
+    there. The honest contract is `|fold - oracle| <= atol + rtol *
+    max|summand|` (see `test_fold_jitted_matches_unfolded_then_averaged_to_
+    summand_scale_tolerance`). Do not describe the jitted fold as bit-identical
+    or few-ULP. This branch is still correct and necessary: it removes the
+    LARGER `zero_safe_average` drift on all-positive axes and keeps the
+    zero-weight guard where a zero can occur.
 
     This is a per-AXIS decision on that axis's own weights, so a model that
     folds one zero-weight axis and one all-positive axis gets the right
@@ -461,7 +461,7 @@ def get_argmax_and_max_Q_over_a(
             is added to the masked maxima over the continuous axes before the
             discrete argmax — exactly logit-consistent with the smoothed solve.
         stakeholders: Ordered stakeholder names for a collective regime, or
-            `None` (the singleton default). COLLECTIVE-REGIMES (E4): when
+            `None` (the singleton default). When
             set, `Q_and_F` returns a stacked per-stakeholder `Q` (trailing
             stakeholder axis); the household argmax of the weighted
             scalarization is computed once (`collective_argmax_and_readout`)
@@ -556,10 +556,10 @@ def get_argmax_and_max_Q_over_a(
                 **states_actions_params,
             )
             if stakeholders is not None:
-                # COLLECTIVE-REGIMES (E4): mirrors the solve-side collective
+                # Mirrors the solve-side collective
                 # branch in `get_max_Q_over_a` — split the stacked Q by
                 # stakeholder, argmax the household scalarization once over
-                # the (value-masked, per E2) feasible action set, and gather
+                # the value-masked feasible action set, and gather
                 # each stakeholder's OWN value at that shared index. The
                 # simulate-only addition vs. the solve readout
                 # (`collective_readout`) is the argmax index itself, needed

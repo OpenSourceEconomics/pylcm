@@ -69,7 +69,7 @@ def _get_regime_V_shapes_and_shardings(
             for name, v in state_action_space.states.items()
             if name not in regime.fold_state_names
         )
-        # COLLECTIVE-REGIMES (E1): a collective regime's V carries a trailing
+        # A collective regime's V carries a trailing
         # stakeholder axis, so the zero template and the roll must too. The
         # sharding plan spans the state axes only; the trailing stakeholder
         # axis is replicated.

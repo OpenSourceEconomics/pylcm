@@ -77,13 +77,13 @@ def create_regime_params_template(
         "CE",
     }
     if user_regime.stakeholders is not None:
-        # COLLECTIVE-REGIMES (E1): a collective regime carries per-stakeholder
+        # A collective regime carries per-stakeholder
         # `utility_<s>` functions instead of a singleton `utility`, but the
         # Bellman aggregator H still takes a `utility` argument — engine-wired
         # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
         # so the name must not surface as a user-facing param.
         variables.add("utility")
-        # COLLECTIVE-REGIMES (E2): value-constraint predicates read the
+        # Value-constraint predicates read the
         # engine-computed per-stakeholder action values `Q_<s>` and the
         # interpolated same-period reference values (keyed by the
         # `same_period_refs` names) as named arguments — engine-wired, never
@@ -593,9 +593,9 @@ def _collect_all_functions_for_template(
     result |= {
         name: func for name, func in user_regime.constraints.items() if func is not None
     }
-    # COLLECTIVE-REGIMES (E2): value-constraint predicates carry user params
-    # (e.g. EKL's Delta_j) exactly like ordinary constraints; their engine-wired
-    # `Q_<s>` / reference-value arguments are excluded via `variables`.
+    # Value-constraint predicates carry user params exactly like ordinary
+    # constraints; their engine-wired `Q_<s>` / reference-value arguments are
+    # excluded via `variables`.
     result |= dict(user_regime.value_constraints)
     # A carried state contributes its `solve` variant as a derived function
     # under the state's name (solve-phase imputation), so its parameters

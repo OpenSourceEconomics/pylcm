@@ -7,11 +7,10 @@ Collective analogue of `test_flow_transitions_are_phase_closed.py`.
     flow         = simulate function pool
     continuation = solve function pool (`continuation_functions`)
 
-Before the collective-regimes-branch-2 audit F1 fix, the *collective* branch of
-`_build_Q_and_F_per_period` dropped `continuation_functions` (and, under the
-then-current signature, the separate flow-transition arguments), so the collective
-simulator built the current per-stakeholder flow from the SOLVE pool — a hybrid sub-DAG
-that is neither phase and reverses the household argmax.
+A collective branch of `_build_Q_and_F_per_period` that dropped
+`continuation_functions` would leave the collective simulator building the current
+per-stakeholder flow from the SOLVE pool — a hybrid sub-DAG that is neither phase, and
+that reverses the household argmax.
 
 Construction mirrors the singleton test: a two-period model whose period-1 continuation
 is FLAT, so `E[V]` is identical across period-0 actions and the household argmax is
@@ -20,8 +19,8 @@ utility reads the stock chosen this period — `new_stock`, an ordinary function
 period's states and actions, which the state law then carries forward (the NEGM
 service-flow pattern). That is the only observable exposing which pool the flow sub-DAG
 resolved. `new_stock` is `Phased`: the agent BELIEVES `stay` leads to good but LIVES
-the opposite. A flow closed under simulate therefore chooses `switch`; the pre-fix
-collective flow (solve pool) chose `stay`.
+the opposite. A flow closed under simulate therefore chooses `switch`; a collective
+flow built from the solve pool would choose `stay`.
 """
 
 import jax.numpy as jnp
@@ -132,10 +131,10 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
 def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
     """A `Phased` `new_stock` read by a stakeholder utility uses the SIMULATE variant.
 
-    Pre-fix, the collective branch built the flow from the SOLVE pool (while its helpers
-    still came from the simulate pool -- a sub-DAG that was neither phase), and every
-    household chose `stay`: it valued its current service flow under a rule it only
-    believes, rather than the one it lives in.
+    A collective branch that built the flow from the SOLVE pool while its helpers came
+    from the simulate pool -- a sub-DAG that is neither phase -- would have every
+    household choose `stay`, valuing its current service flow under a rule it only
+    believes rather than the one it lives in.
     """
     df = _simulate(
         live_functions={

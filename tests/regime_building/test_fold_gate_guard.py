@@ -23,7 +23,7 @@ A follow-up audit found this collective-only guard's enumerated prohibition
 was incomplete (it omitted gated-edge leg fallbacks, and skipped singleton
 folding regimes entirely) plus a false positive in a different, regime-local
 fold guard; see `test_fold_guard_complete.py` for the completed guard's
-coverage (F1/F2/F4) and the singleton-vs-collective negative controls this
+coverage and the singleton-vs-collective negative controls this
 module's cases don't exercise.
 """
 

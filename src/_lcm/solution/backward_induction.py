@@ -80,7 +80,7 @@ def solve(  # noqa: C901, PLR0915
         simulation can interpolate; regimes whose kernels publish none have no
         entry), and the immutable mapping of periods to each COLLECTIVE regime's
         dissolution flag `D` — `True` on the state cells whose action mask is
-        empty (E2), distinct from a numeric `-inf` value; empty inner mappings
+        empty, distinct from a numeric `-inf` value; empty inner mappings
         for models without collective regimes, so the default path only gains an
         empty dissolution mapping.
 
@@ -187,7 +187,7 @@ def solve(  # noqa: C901, PLR0915
             n_active_regimes=len(active_regimes),
         )
 
-        # COLLECTIVE-REGIMES (E2): regimes declaring `same_period_refs` read
+        # Regimes declaring `same_period_refs` read
         # other regimes' V of THIS period, so those references must be solved
         # first — order the period's active regimes topologically by the
         # reference edges (stable: dict order among independent regimes).
@@ -230,7 +230,7 @@ def solve(  # noqa: C901, PLR0915
                 period_continuations[regime_name] = result.continuation
             if result.simulation_policy is not None:
                 period_simulation_policies[regime_name] = result.simulation_policy
-            # COLLECTIVE-REGIMES (E2): a collective regime publishes its
+            # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
             # leave it None and never touch this mapping.
             if result.dissolution is not None:
@@ -267,7 +267,7 @@ def solve(  # noqa: C901, PLR0915
                 # implies a finished `min`/`max` too.
                 diagnostic_mean[-1].block_until_ready()
 
-        # COLLECTIVE-REGIMES (E3'): fold each declared gated edge whose target
+        # Fold each declared gated edge whose target
         # was solved this period onto the target grid, and roll the resulting
         # Wbar into the edge continuation the source reads next period. Reads
         # only the still-live period-t arrays (`period_solution`,
@@ -290,7 +290,7 @@ def solve(  # noqa: C901, PLR0915
             next_regime_to_continuation=next_regime_to_continuation,
         )
         solution[period] = MappingProxyType(period_solution)
-        # COLLECTIVE-REGIMES (E2): publish each collective regime's dissolution
+        # Publish each collective regime's dissolution
         # flag D alongside V. Kept as a plain per-period mapping (not rolled
         # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D — the
         # E3' gates read the still-live per-period flags at each period's end,
@@ -399,10 +399,10 @@ def _run_period_kernel(
     collective `dissolution` flag D), which the backward-induction loop
     accumulates.
 
-    COLLECTIVE-REGIMES (E2): a regime declaring `same_period_refs` additionally
+    A regime declaring `same_period_refs` additionally
     receives the referenced regimes' V arrays of THIS period, read off
     `period_solution` — the within-period topological order guarantees they were
-    solved earlier in this period's loop. COLLECTIVE-REGIMES (E3'): a source
+    solved earlier in this period's loop. a source
     declaring `gated_edges` receives its own rolled Wbar arrays, keyed by target
     regime name, which the grid-search kernel substitutes for the raw target V in
     `next_regime_to_V_arr`. Every other regime's adapter is called with the
@@ -462,7 +462,7 @@ def _run_period_kernel(
             }
         )
     if regime.gated_edges:
-        # COLLECTIVE-REGIMES (E3'): hand the source its own rolled Wbar arrays,
+        # Hand the source its own rolled Wbar arrays,
         # keyed by target regime name; the grid-search kernel substitutes them
         # for the raw target V in `next_regime_to_V_arr`.
         same_period_kwargs["edge_regime_to_V_arr"] = MappingProxyType(
@@ -489,7 +489,7 @@ def _order_regime_names_by_same_period_refs(
 ) -> tuple[RegimeName, ...]:
     """Topologically order one period's active regimes by `same_period_refs`.
 
-    COLLECTIVE-REGIMES (E2). A regime reading another regime's same-period V
+    A regime reading another regime's same-period V
     must be solved after it. Stable Kahn ordering: at each step the first (in
     dict order) not-yet-placed regime whose active references are all placed is
     emitted, so models without references keep the plain dict order exactly. A
@@ -573,7 +573,7 @@ def _roll_continuation_inputs(
     return rolled_V_arr, rolled_continuation
 
 
-# COLLECTIVE-REGIMES (E3'): a gated edge's continuation slot is keyed by the
+# A gated edge's continuation slot is keyed by the
 # (source regime, target regime) pair — a source has at most one edge per target,
 # and the same target is read raw by other regimes, so the edge cannot share the
 # plain regime-keyed V slot.
@@ -591,7 +591,7 @@ def _roll_gated_edges(
 ) -> MappingProxyType[_EdgeKey, FloatND]:
     """Fold every gated edge whose target was solved this period; roll the rest.
 
-    COLLECTIVE-REGIMES (E3'). For each declared edge whose target regime (and
+    For each declared edge whose target regime (and
     every reference regime it reads) was solved in the period just completed,
     evaluate its ``Wbar`` producer on the still-live period-``t`` arrays and
     store it; edges whose target is inactive this period keep their previous
@@ -606,7 +606,7 @@ def _roll_gated_edges(
             if target_name not in period_solution:
                 continue
             if any(ref not in period_solution for ref in edge.reference_regimes):
-                # COLLECTIVE-REGIMES (E3', F4). The target was solved this period
+                # The target was solved this period
                 # but a reference regime it reads was not — so its same-period V
                 # does not exist and this edge's Wbar cannot be folded here. This
                 # is reached ONLY at an unconsumed boundary: the construction-time
@@ -746,19 +746,16 @@ def _evaluate_edge_fold(
     interpolation grid, which belongs to neither the source nor the target:
     those params ride in `reference_flat_params` under
     `Q_and_F.SAME_PERIOD_PARAMS_ARG`, keyed by regime, and the reference readers
-    resolve them internally (F4).
+    resolve them internally.
 
-    COLLECTIVE-REGIMES (E3', slice 5): the target regime's grid may carry
-    DISCRETE state axes (e.g. EKL's encoded spouse-type categorical, or any
-    other `DiscreteGrid` state) alongside continuous ones — `target_states`
-    is `base_state_action_spaces[target_name].states`, whose value type is
-    `ContinuousState | DiscreteState` at the source (`_lcm.engine.
-    StateActionSpace.states`), not float-only. Slices 1-4's gated-edge tests
-    never exercised a discrete target-grid axis, so this signature under-
-    typed the mapping to `FloatND` only; discrete states hit a
-    `BeartypeCallHintParamViolation` at the `int32`-vs-float check inside
-    `fold` (`get_edge_fold`'s `jnp.meshgrid` state broadcast tolerates either
-    dtype — the guard was purely a stale type hint).
+    The target regime's grid may carry DISCRETE state axes (an encoded
+    categorical, or any other `DiscreteGrid` state) alongside continuous ones,
+    so `target_states` is typed as `base_state_action_spaces[target_name].
+    states` is at the source — `ContinuousState | DiscreteState`
+    (`_lcm.engine.StateActionSpace.states`), not float-only. Narrowing it to
+    `FloatND` makes a discrete state raise `BeartypeCallHintParamViolation` at
+    the `int32`-vs-float check inside `fold`, even though `get_edge_fold`'s
+    `jnp.meshgrid` state broadcast tolerates either dtype.
     """
     sig_params = set(inspect.signature(fold).parameters)
     kwargs: dict[str, object] = {
@@ -856,7 +853,7 @@ def _build_continuation_templates(
       the regime's V array;
     - the continuation template holds entries only for continuation-publishing
       regimes, in the key order reused every period;
-    - the gated-edge (E3') template holds a zero ``Wbar`` per declared edge,
+    - the gated-edge template holds a zero ``Wbar`` per declared edge,
       shaped like the target regime's V state grid plus the source regime's
       stakeholder axis (a singleton source: the target grid alone). Empty for
       models without gated edges, so the default path only gains an empty third
@@ -896,7 +893,7 @@ def _edge_lower_kwargs(
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> dict[str, object]:
-    """Lowering kwargs for a source kernel's gated-edge Wbar templates (E3')."""
+    """Lowering kwargs for a source kernel's gated-edge Wbar templates."""
     if not regime.gated_edges:
         return {}
     return {
@@ -914,7 +911,7 @@ def _iter_edge_shapes(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> Iterator[tuple[RegimeName, RegimeName, tuple[int, ...]]]:
-    """Yield ``(source, target, Wbar_shape)`` for every declared gated edge (E3')."""
+    """Yield ``(source, target, Wbar_shape)`` for every declared gated edge."""
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
@@ -961,7 +958,7 @@ def _drain_V_arr_shards(
     and blocks per-shard (no host transfer, no cross-device collective);
     free when kernels are already done, the minimum necessary sync when
     they are not. V stays sharded across devices. The collective dissolution
-    flags (E2) ride along in the same barrier.
+    flags ride along in the same barrier.
     """
     jax.block_until_ready((solution, dissolution_flags))
 
@@ -1002,8 +999,8 @@ def _compile_all_functions(
         next_regime_to_continuation: Template with consistent keys and carry
             shapes for constructing lowering arguments.
         next_edge_to_V_arr: Template with consistent keys and ``Wbar`` shapes
-            for constructing a source kernel's gated-edge lowering arguments
-            (E3'); empty for models without gated edges.
+            for constructing a source kernel's gated-edge lowering arguments;
+            empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.

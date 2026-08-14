@@ -19,10 +19,8 @@ path (`_lcm.simulation.gated_routing`, `_lcm.simulation.result_dataframe`,
   missing the subject axis a stateful collective or a stateless singleton
   regime always carries.
 
-Each test proves the finding reproduces against the pre-fix code (see the
-module-level PR description / audit notes for the pre-fix evidence
-captured while writing these tests), then pins the post-fix behavior.
-Byte-identical regression coverage for the untouched paths (stateful
+Each test pins the required behaviour and fails loudly on the defect it
+guards. Byte-identical regression coverage for the untouched paths (stateful
 collective, stateless singleton, mixed-topology dataframe, distinct-
 fallback dissolution, `own_stakeholder=None`/matching-leg routing) is
 already carried by `test_collective_regime_simulate.py` and
@@ -73,10 +71,12 @@ class Work:
 
 
 def test_missing_reference_regime_at_target_period_raises():
-    """Repro (see report): dropping `single_f` from period 1's solution while
-    keeping `married_ir` (the edge's target) present currently returns the
-    substitution UNCHANGED and no gate array -- a silent ungate. Post-fix
-    this raises `ModelInitializationError` naming the missing reference.
+    """A missing reference regime at the target's period raises, never ungates.
+
+    Dropping `single_f` from period 1's solution while keeping `married_ir`
+    (the edge's target) present must raise `ModelInitializationError` naming the
+    missing reference, rather than returning the substitution UNCHANGED with no
+    gate array -- a silent ungate.
     """
     _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
@@ -254,12 +254,13 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
 
 
 def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
-    """Repro (see report): pre-fix, `process_regimes` builds this model without
-    complaint, and forward-simulating it shows `single_shared`'s stored state
-    is entirely the "m" leg's (reverse-projected) values -- the "f" leg's own
-    write is silently clobbered, regardless of which leg `own_stakeholder`
-    would actually select. Post-fix, construction raises
-    `ModelInitializationError` naming the shared fallback regime.
+    """Two legs of one edge sharing a fallback regime are rejected at build.
+
+    Accepting the model would let `single_shared`'s stored state come out
+    entirely the "m" leg's (reverse-projected) values -- the "f" leg's own write
+    silently clobbered, regardless of which leg `own_stakeholder` selects. So
+    construction raises `ModelInitializationError` naming the shared fallback
+    regime.
     """
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes_dict = _make_shared_fallback_regimes()
@@ -408,10 +409,11 @@ def _solve_all_collective():
 
 
 def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
-    """Repro (see report): pre-fix, this raised `KeyError: ['value'] not in
-    index` inside `_reorder_columns` -- every populated regime here is
-    collective, so `_process_regime` never writes a scalar `value` column.
-    Post-fix, `to_dataframe()` returns `value_f`/`value_m` and no `value`.
+    """An all-collective result's dataframe has per-stakeholder value columns.
+
+    Every populated regime here is collective, so `_process_regime` never writes
+    a scalar `value` column and `_reorder_columns` must not name one.
+    `to_dataframe()` returns `value_f`/`value_m` and no `value`.
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_all_collective()
@@ -468,13 +470,12 @@ def _make_stateless_collective_regime() -> dict[str, Regime]:
 
 
 def test_stateless_collective_regime_simulate_carries_subject_axis():
-    """Repro (see report): pre-fix this raised `ValueError: vmap was
-    requested to map its argument along axis 0, which implies that its rank
-    should be at least 1, but is only 0` -- `argmax_and_max_Q_over_a` has no
-    per-subject state array to vmap over, so it returns a single
-    `(n_stakeholders,)` V_arr and a 0-d argmax index, un-broadcast to the
-    subject axis. Post-fix, `V_arr` is `(n_subjects, n_stakeholders)` and
-    every subject's own values/actions round-trip correctly.
+    """A stateless collective regime's simulated V_arr carries the subject axis.
+
+    `argmax_and_max_Q_over_a` has no per-subject state array to vmap over, so it
+    returns a single `(n_stakeholders,)` V_arr and a 0-d argmax index. Those must
+    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_stakeholders)`
+    and every subject's own values/actions round-trip correctly.
     """
     ages = AgeGrid(start=0, stop=1, step="Y")
     regimes_dict = _make_stateless_collective_regime()

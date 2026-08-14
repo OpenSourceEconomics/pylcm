@@ -600,7 +600,7 @@ class Model:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
         Returns the named backward-induction outputs: value-function arrays,
-        each regime's published per-period simulation policy, and (E2) the
+        each regime's published per-period simulation policy, and the
         per-period, per-COLLECTIVE-regime dissolution-flag arrays (empty for
         models without collective regimes). With `log_path` set, a
         snapshot is written at `log_level="debug"` (every solve) and at
@@ -903,7 +903,7 @@ class Model:
             # user-supplied V arrays there is no published policy, so the
             # grid-argmax path decides the continuous action.
             #
-            # COLLECTIVE-REGIMES (E2): the auto-solve also carries each
+            # The auto-solve also carries each
             # collective regime's dissolution flag D on the result, so a
             # dissolution-gated model driven through the auto-solve path
             # need not re-run `solve(return_dissolution_flags=True)`

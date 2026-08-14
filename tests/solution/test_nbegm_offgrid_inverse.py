@@ -75,7 +75,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
     # The EGM value is a max over feasible candidates, so it can never exceed the
     # dense feasible Bellman optimum by more than interpolation tolerance. A clipped
     # off-grid (infeasible high-consumption) candidate is the only thing that can
-    # push it above brute — the F5 signature, concentrated at the top liquid node.
+    # push it above brute, and that shows up at the top liquid node.
     excess = np.asarray(value) - np.asarray(brute)
     assert np.max(excess) <= 5e-3, f"max(step - brute) = {np.max(excess)}"
 

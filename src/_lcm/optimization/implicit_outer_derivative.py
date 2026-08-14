@@ -29,7 +29,7 @@ REPORTED, not repaired, through `ImplicitOptimumDiagnostics`:
   with the parameter; without this screen the tangent `-Q_ftheta/Q_ff`, valid
   only at a stationary point, would be reported as trustworthy.
 
-The kink screen has TWO tiers (round-3 audit F1). The exact certificate is
+The kink screen has TWO tiers. The exact certificate is
 BRANCH IDENTITY: when the caller supplies a `branch_id` oracle labelling which
 analytic piece of the value surface wins at a query point, a winner whose branch
 is not constant across the probe neighborhood is a breakpoint and is marked
@@ -82,7 +82,7 @@ _STATIONARITY_ATOL = 1e-7
 # |Q_f| from BOTH sides at this radius exposes the slope jump the AD value
 # hides. Must exceed the final polish bracket so the probe straddles the kink.
 _KINK_PROBE_ATOL = 1e-4
-# Multi-radius kink screen (round-2 audit F1). A single fixed-radius slope-jump
+# Multi-radius kink screen. A single fixed-radius slope-jump
 # threshold is amplitude-scaled — a kink whose jump is below rtol*|Q_ff|*delta
 # slips through, and the kink amplitude can be made arbitrarily small while the
 # argmax tangent error stays O(1). Instead compare the slope jump at delta and
@@ -129,7 +129,7 @@ class ImplicitOptimumDiagnostics:
     identity certificate (`branch_id` supplied and probed) rather than the
     value-only slope-jump HEURISTIC. Where `False`, a `resolved` cell is only
     heuristically screened: a sub-rounding-amplitude kink can slip through, so a
-    consumer needing a guarantee must supply `branch_id` (round-3 audit F1)."""
+    consumer needing a guarantee must supply `branch_id`."""
 
     unresolved: BoolND
     """Any of the above: no trustworthy local-normal derivative here."""
@@ -286,7 +286,7 @@ def implicit_optimum_diagnostics(
     `{f_star - delta, f_star, f_star + delta}` sits on a breakpoint and is marked
     nonstationary regardless of the slope-jump amplitude — closing the blind spot
     of the value-only heuristic, which cannot see a kink below the oracle's
-    rounding floor (round-3 audit F1). Without `branch_id` only the heuristic
+    rounding floor. Without `branch_id` only the heuristic
     screen runs and `branch_certified` is `False`.
     """
     lower, upper = bounds
@@ -311,9 +311,9 @@ def implicit_optimum_diagnostics(
     # forward-mode q_f: at an exact kink jax.jvp returns one sub-gradient branch
     # and can read ~0 (a tent peak differentiates to 0), passing a non-smooth
     # optimum as stationary. Probe the slope jump at two shrinking radii and
-    # test CONTRACTION (F1): a smooth optimum's jump shrinks ~linearly with the
+    # test CONTRACTION: a smooth optimum's jump shrinks ~linearly with the
     # radius, a kink's does not — the discriminant is amplitude-independent,
-    # where a single fixed-radius threshold let a small-but-critical kink pass.
+    # where a single fixed-radius threshold lets a small-but-critical kink pass.
     delta = jnp.maximum(width, kink_probe_atol)
 
     def _slope_jump(radius: FloatND) -> FloatND:
@@ -346,7 +346,7 @@ def implicit_optimum_diagnostics(
         jump_inner > kink_contraction_tol * jump_outer
     )
 
-    # Exact certificate (F1): a winner whose active branch is not constant across
+    # Exact certificate: a winner whose active branch is not constant across
     # the probe neighborhood is a breakpoint, whatever the slope-jump amplitude —
     # this is what the value-only heuristic cannot guarantee. Absent a `branch_id`
     # oracle the branch is unknown, so the term is inert and only the heuristic

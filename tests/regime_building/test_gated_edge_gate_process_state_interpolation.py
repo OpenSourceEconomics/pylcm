@@ -29,7 +29,7 @@ for the gate interpolator whenever the TARGET regime's own
 axis — the identical auto-select `_build_same_period_ref_reader` already uses,
 applied to this second, previously-missed reader.
 
-UPDATE (simulate F1 fix). `route_gated_edges` no longer interpolates a baked
+UPDATE. `route_gated_edges` no longer interpolates a baked
 boolean `gate` array at all — `gated_edge_gate_interpolators` /
 `GATE_ARR_NAME` are gone; `route_gated_edges` now RECOMPUTES the gate from
 interpolated VALUE operands via `get_edge_simulate_gate_evaluator`
@@ -68,7 +68,7 @@ grid `[0, 0, 1]` at nodes `[-1, 0, 1]` collapses to a clean closed form: 0 for
 "interpolated value `> 0.5`" is exactly "`shock > 0.5`" (`_hand_computed_gate`).
 
 (a) the model SOLVES and SIMULATES two periods without the integer-indexer
-    crash (pre-fix: `ValueError` at the second period's routing step);
+    crash (otherwise a `ValueError` at the second period's routing step);
 (b) EVERY simulated household's ACTUAL routing (`married_terminal` vs. its
     `single_f_terminal` fallback) matches the hand-computed
     `shock > 0.5` gate evaluated from that household's own realized
@@ -331,7 +331,7 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
 
 
 def test_gate_reader_solves_and_simulates_with_a_nonfolded_process_target():
-    """(a) No crash: pre-fix this raised `ValueError` at the period-1 routing step."""
+    """(a) No crash: an integer indexer would raise at the period-1 routing step."""
     _wages, result = _build_solve_and_simulate(n_subjects=40, seed=0)
     married = result.raw_results["married_terminal"][1]
     single_f_term = result.raw_results["single_f_terminal"][1]

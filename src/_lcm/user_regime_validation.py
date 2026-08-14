@@ -151,7 +151,7 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     if regime.terminal and (regime.value_constraints or regime.same_period_refs):
         raise NotImplementedError(
             "`value_constraints` / `same_period_refs` on a TERMINAL collective "
-            "regime are not implemented: value-aware feasibility (E2) masks a "
+            "regime are not implemented: value-aware feasibility masks a "
             "within-period household decision; the terminal kernel carries no "
             "such mask. Declare them on the non-terminal regime whose decision "
             "they constrain. See the design doc "
@@ -248,7 +248,7 @@ def _collective_weights_errors(
 def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
 
-    COLLECTIVE-REGIMES (E2). Cross-regime properties — the reference regime's
+    Cross-regime properties — the reference regime's
     existence, its stakeholder layout, projection coverage, co-activity, and
     reference cycles — are validated at model processing, where the other
     regimes are known.
@@ -307,7 +307,7 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
 def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     """Validate a regime's `gated_edges` declarations — E3' (regime-local part).
 
-    COLLECTIVE-REGIMES (E3'). Checks the properties knowable without the other
+    Checks the properties knowable without the other
     regimes: the gate is a plain boolean callable (a stochastic `kappa` gate —
     a `MarkovTransition` — is out of scope for this slice); every declared edge
     targets one of the regime's reachable transition targets; the legs cover the
@@ -366,22 +366,22 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
 
 
 def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
-    """Reject a gated-edge source outside the GridSearch / no-shock scope (E3')."""
+    """Reject a gated-edge source outside the GridSearch / no-shock scope."""
     if not isinstance(regime.solver, GridSearch):
         raise NotImplementedError(
-            "Gated edges (E3') are only implemented for GridSearch source "
+            "Gated edges are only implemented for GridSearch source "
             "regimes: the source reads the folded continuation through the "
             "grid-search machinery. Edges touching DC-EGM regimes are out of "
             "scope for this slice. Use `solver=GridSearch()`."
         )
     if regime.taste_shocks is not None:
         raise NotImplementedError(
-            "Gated edges (E3') on a taste-shock source regime are out of scope "
+            "Gated edges on a taste-shock source regime are out of scope "
             "for this slice."
         )
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
-            "Gated edges (E3') on a certainty-equivalent source regime are out "
+            "Gated edges on a certainty-equivalent source regime are out "
             "of scope for this slice."
         )
 
@@ -1372,7 +1372,7 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     immediately after the period's max-over-actions / collective readout, so
     nothing may condition on which node was realized beyond that point:
 
-    - a same-period gate / value-constraint predicate (E2/E3') that reads the
+    - a same-period gate / value-constraint predicate that reads the
       shock's realized value — these read live per-node values to decide a
       within-period household choice or a dissolution/consent gate, which the
       fold has already averaged away by the time any *other* regime's
@@ -1481,7 +1481,7 @@ def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callab
     """Named same-period gate / value-constraint / reference-projection roots.
 
     Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
-    and `gated_edges[...].gate_refs[...]` projections (F4 audit finding): a
+    and `gated_edges[...].gate_refs[...]` projections: a
     `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
     evaluated on the TARGET regime's grid/DAG
     (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
@@ -1517,7 +1517,7 @@ def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callab
 def _fold_same_period_read_errors(
     regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
-    """Reject a fold name read by a same-period gate / value-constraint (E2/E3')."""
+    """Reject a fold name read by a same-period gate / value-constraint."""
     resolution_table = _fold_resolution_table(regime)
     error_messages: list[str] = []
     for label, func in _fold_same_period_roots(regime):
@@ -1530,7 +1530,7 @@ def _fold_same_period_read_errors(
                 f"fold=True on state(s) {hit} conflicts with {label}, which "
                 "reads the shock's realized value: a same-period gate / "
                 "value-constraint / reference projection needs the unfolded "
-                "per-node value (E2/E3'), but a folded state's node axis is "
+                "per-node value, but a folded state's node axis is "
                 "averaged away before the period's value is published. Drop "
                 "`fold=True` on the shock, or stop reading it there."
             )

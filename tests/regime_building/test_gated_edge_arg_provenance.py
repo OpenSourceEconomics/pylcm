@@ -1,4 +1,4 @@
-"""Argument PROVENANCE across the regimes a gated edge relates (F2/F3/F4).
+"""Argument PROVENANCE across the regimes a gated edge relates.
 
 One defect class, three symptoms: an argument of an edge-side callable was
 bound from a regime that does not own it, because the callable did not record
@@ -162,7 +162,7 @@ def _same_period_mappings(regimes, flat_params, solution):
 
 # The contested qname. The SOURCE declares the projection, so `shift` is the
 # source's parameter; the target's identically named one exists only to make the
-# pre-fix misbinding SILENT rather than a crash (both halves are asserted below).
+# target-bound misbinding SILENT rather than a crash (both halves are asserted below).
 _SRC_SHIFT = 0.1
 _TARGET_SHIFT = 0.9
 
@@ -258,16 +258,16 @@ def _shift_flat_params(*, target_declares_shift: bool = True):
 
 
 def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
-    """Fail-pre/pass-post repro (F2, the completeness half).
+    """A gate-ref projection's param binds from the SOURCE, not the target.
 
-    A gate-ref reader's arguments have THREE provenances, and the previous
-    revision published all of them as target-owned
-    (`args_from_target_params = ... | union(gate_ref_args)`), so the router
-    filtered this SOURCE-declared projection param out of `flat_params[target]`.
+    A gate-ref reader's arguments have THREE provenances. Publishing all of them
+    as target-owned (`args_from_target_params = ... | union(gate_ref_args)`)
+    would have the router filter this SOURCE-declared projection param out of
+    `flat_params[target]`.
 
-    Proven here on the production evaluator, in this process: binding `shift`
-    from the target's namespace (the pre-fix behaviour, replayed by feeding that
-    value into the leaf) CLOSES the gate, binding it from the source's OPENS it,
+    Shown here on the production evaluator, in this process: binding `shift`
+    from the target's namespace (replayed by feeding that value into the leaf)
+    CLOSES the gate, binding it from the source's OPENS it,
     and the two differ. The published provenance says SOURCE — matching the
     solve-side fold, which bound this same argument from `flat_params["src"]`.
     """
@@ -314,7 +314,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     assert not _gate(_TARGET_SHIFT)
 
     # The production router binds it from the SOURCE, so the row is routed to
-    # the target — not to the fallback the pre-fix target-binding selected.
+    # the target — not to the fallback a target-binding would select.
     next_states = MappingProxyType(
         {
             "target": MappingProxyType({"x": jnp.array([_REALIZED_X])}),
@@ -340,15 +340,16 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
 
 
 def test_gate_ref_projection_param_absent_from_the_target_still_routes():
-    """Fail-pre/pass-post repro (F2, the crash half).
+    """A gate-ref projection param absent from the target still routes.
 
-    The misclassification was only SILENT because the target happened to declare
-    the same qname. A target that does not — the ordinary case, since `shift`
-    belongs to the source's edge declaration and nothing obliges the target to
-    have heard of it — made the pre-fix filter (`{name: value for name, value in
-    flat_params[target].items() if name in from_target}`) yield nothing, and the
-    evaluator was then called without a required argument. A valid topology
-    CRASHED. The source-bound provenance simply routes it.
+    A target-owned misclassification is only SILENT when the target happens to
+    declare the same qname. A target that does not — the ordinary case, since
+    `shift` belongs to the source's edge declaration and nothing obliges the
+    target to have heard of it — makes a target-namespace filter
+    (`{name: value for name, value in flat_params[target].items() if name in
+    from_target}`) yield nothing, and the evaluator is then called without a
+    required argument, crashing a valid topology. The source-bound provenance
+    simply routes it.
     """
     flat_params = _shift_flat_params(target_declares_shift=False)
     regimes, regime_names_to_ids, solution = _solve_fixture(
@@ -361,7 +362,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
     assert "shift" not in flat_params["target"]
     shift_arg = exposed_param_name(evaluator, qname="shift", namespace=SOURCE_PARAMS)
 
-    # The PRE-FIX binding, replayed on the production evaluator: `shift` filtered
+    # The target-namespace binding, on the production evaluator: `shift` filtered
     # out of the target's (empty) params is simply not passed, and the call dies.
     with pytest.raises(Exception, match="missing required argument"):
         _call_vmapped_with_accepted_kwargs(
@@ -433,11 +434,10 @@ _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
 
-def _old_style_call(func, kwargs):
-    """The PRE-FIX router's projector call, for the fail-pre proof.
+def _target_bound_call(func, kwargs):
+    """A projector call bound from the TARGET namespace, for contrast.
 
-    A local copy of the removed `gated_routing._call_with_accepted_kwargs`
-    (which the router used as
+    A local copy of a `_call_with_accepted_kwargs` helper of the form
     `_call_with_accepted_kwargs(projector, {**candidate_target_states,
     **flat_params[target_name]})`), kept here rather than in production: with the
     router now binding by provenance, that helper has no caller left, and dead
@@ -522,13 +522,13 @@ def _projector_flat_params():
 
 
 def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
-    """Fail-pre/pass-post repro (F3) — the actual contract.
+    """Fail-pre/pass-post repro — the actual contract.
 
     The fold's `Wbar` (gate closed everywhere, `V_fallback(z) = z`) IS the
     coordinate the SOLVE side projected, cell by cell. The simulate-side
     projector must produce the same number at the same target state; it did not,
-    because the router bound `shift` from the target while the fold bound it from
-    the source. The pre-fix call is replayed below — `{**states,
+    because binding `shift` from the target while the fold binds it from the
+    source pulls them apart. That call is run below — `{**states,
     **flat_params[target]}`, filtered to the projector's signature — and
     disagrees.
     """
@@ -561,19 +561,21 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     # THE CONTRACT: solve's projected coordinate == simulate's, at every cell.
     np.testing.assert_allclose(np.asarray(simulated["z"]), edge_wbar, atol=1e-6)
 
-    # The PRE-FIX recipe, replayed on the production projector: the removed
+    # The target-bound recipe, on the production projector:
     # `target_kwargs = {**candidate_target_states, **flat_params[target_name]}`,
-    # filtered to the projector's signature exactly as the removed
-    # `_call_with_accepted_kwargs` did. It disagrees with the fold by (9.0 - 1.0).
-    old_style = _old_style_call(projector, {**target_states, **flat_params["target"]})
+    # filtered to the projector's signature. It disagrees with the fold by
+    # (9.0 - 1.0).
+    old_style = _target_bound_call(
+        projector, {**target_states, **flat_params["target"]}
+    )
     np.testing.assert_allclose(
         np.asarray(old_style["z"]),
         [0.0 + _PROJ_TARGET_SHIFT, 1.0 + _PROJ_TARGET_SHIFT],
         atol=1e-6,
     )
     assert not np.allclose(np.asarray(old_style["z"]), edge_wbar), (
-        "The pre-fix binding must genuinely disagree with the fold, or this is "
-        "not a repro."
+        "The target binding must genuinely disagree with the fold, or this "
+        "fixture does not discriminate."
     )
 
 
@@ -596,13 +598,13 @@ def _same_period_wbar(regimes, flat_params, solution):
 
 
 def test_router_writes_the_fold_consistent_fallback_state():
-    """Fail-pre/pass-post repro (F3) at the router level.
+    """The router writes the fold-consistent fallback state.
 
     The end of the causal chain the equality above pins: the row enters the
     fallback regime, and the state it enters with must be the one the solved
-    policy priced (`x + 1.0`), not the target-bound `x + 9.0` the pre-fix router
-    stored and carried into the next period. The pre-fix number is asserted to
-    be a DIFFERENT one, so this is not a pin on an arbitrary value.
+    policy priced (`x + 1.0`), not the target-bound `x + 9.0` that would be
+    stored and carried into the next period. That other number is asserted to be
+    a DIFFERENT one, so this is not a pin on an arbitrary value.
     """
     flat_params = _projector_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
@@ -771,15 +773,15 @@ def _ref_grid_flat_params():
 
 
 def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
-    """Fail-pre/pass-post (F4 + the reference-provenance half).
+    """A gate-ref reads the REFERENCE regime's own runtime grid.
 
-    Pre-fix this topology could not run at all (see
-    `test_prefixed_reference_grid_param_is_satisfiable_by_no_regime`). Post-fix
-    it solves and routes — and the reader interpolates on the REFERENCE
-    regime's points, not on the source's identically named ones: binding the
-    reference's grid from the reading regime's namespace (the merge that F4's
-    prefix-stripping would have invited, and the reason F4 does not subsume F2)
-    is replayed here by handing the reader a params mapping in which
+    A prefixed reference-grid param is satisfiable by no regime (see
+    `test_prefixed_reference_grid_param_is_satisfiable_by_no_regime`), so this
+    topology must solve and route with the reader interpolating on the REFERENCE
+    regime's points, not on the source's identically named ones. Binding the
+    reference's grid from the reading regime's namespace — the merge that
+    prefix-stripping would invite — is run here by handing the reader a params
+    mapping in which
     `refregime`'s points are the source's, and it returns the OPPOSITE gate.
     """
     flat_params = _ref_grid_flat_params()
@@ -906,15 +908,15 @@ _FALLBACK_POINTS = (0.0, 0.25, 1.0)
 
 
 def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
-    """Fail-pre/pass-post (F4, the solve-side leg-fallback reader).
+    """The leg-fallback reader reads the FALLBACK regime's own runtime grid.
 
     The fourth consumer of `_build_same_period_ref_reader`, and the one that runs
     at SOLVE time inside `get_edge_fold`. With the gate closed everywhere, `Wbar`
     IS this reader's output: `V_fallback(pi(x)) = pi(x) = x`, exactly, whatever
     the fallback's grid spacing — but only if the reader interpolated on the
-    FALLBACK's own runtime points. Pre-fix the fold could not be called at all
-    (its signature carried `__same_period_ref__z__points`, which nothing
-    supplies).
+    FALLBACK's own runtime points. A signature carrying
+    `__same_period_ref__z__points`, which nothing supplies, makes the fold
+    uncallable.
     """
     flat_params = MappingProxyType(
         {
@@ -1020,7 +1022,7 @@ def _identity_x_wage(wage: ContinuousState) -> ContinuousState:
 
 
 def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
-    """Fail-pre/pass-post (F4, the ordinary E2 consumer).
+    """A same-period ref reads the REFERENCE regime's own runtime grid.
 
     The one consumer of `_build_same_period_ref_reader` that lives inside a
     regime's own compiled kernel, which is why its reference-grid params could
@@ -1028,9 +1030,10 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     regime's namespace, and the kernel is splatted with only its own. They ride
     in `SAME_PERIOD_PARAMS_ARG` beside the same-period V arrays instead.
 
-    Pre-fix this topology raised a missing-argument error for
-    `__same_period_ref__wage__points`. Post-fix it solves, and the number proves
-    WHICH namespace won: the reference regime's points, not the reading regime's
+    A missing-argument error for `__same_period_ref__wage__points` is what an
+    unsupplied prefixed param produces. This topology solves instead, and the
+    number proves WHICH namespace won: the reference regime's points, not the
+    reading regime's
     identically named ones (which would empty the mask — the assertion below is
     the difference between a feasible cell and a dissolved household).
     """
@@ -1124,12 +1127,10 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     assert _ref_value(_SINGLE_POINTS) <= 5.0
 
 
-# ----------------------------------------------------------------------------------
-# Round-4 audit F2: a param introduced by the TARGET regime's OWN functions, read
-# by a source-declared gate, is mis-owned as source (and would collapse with a
-# same-named source param). Origin-preserving edge compilation is deferred, so the
-# builder FENCES this topology instead of silently misbinding it.
-# ----------------------------------------------------------------------------------
+# A param introduced by the TARGET regime's OWN functions, read by a
+# source-declared gate, would be mis-owned as source (and collapse with a
+# same-named source param). Origin-preserving edge compilation is deferred, so
+# the builder FENCES this topology instead of silently misbinding it.
 _HELPER_TARGET_SCALE = 0.9
 
 
@@ -1187,7 +1188,7 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
 
 
 def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
-    """Round-4 F2 fence: building an edge whose gate reads a target-regime function
+    """Building an edge whose gate reads a target-regime function
     with a free dynamic parameter must raise, rather than silently binding that
     parameter from the source namespace."""
     flat_params = MappingProxyType(
@@ -1208,21 +1209,19 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
         _solve_fixture(_make_target_helper_regimes(), flat_params)
 
 
-# ----------------------------------------------------------------------------------
-# Round-5 audit. The round-4 fence covered only the concatenated gate predicate and
-# was keyed on GLOBAL target-DAG leaf names, so three topologies slipped through:
-#   F1 - a gate-REFERENCE projection reaches a target helper param (never fenced:
-#        the readers are compiled on a separate path from the gate predicate).
-#   F2 - the fence over-rejects a valid DIRECT source param merely because an
-#        UNRELATED target helper reuses the qname (global union, not the consumer's
-#        own ancestor closure).
-#   F3 - a target function/transition NODE whose name collides with an injected
-#        gate-ref key shadows the injected reference value in the concatenated DAG.
-# The fix makes the fence ancestry-aware (seeded on each consumer's OWN args) and
-# applies it to every gate-ref / fallback projection, plus an injected-name
-# collision guard. Fixtures give the two candidate bindings DIFFERENT values so the
-# misbinding each finding describes is a genuine repro, not a coincidence.
-# ----------------------------------------------------------------------------------
+# A fence covering only the concatenated gate predicate, keyed on GLOBAL
+# target-DAG leaf names, lets three topologies through:
+#   - a gate-REFERENCE projection reaches a target helper param (unfenced: the
+#     readers are compiled on a separate path from the gate predicate);
+#   - the fence over-rejects a valid DIRECT source param merely because an
+#     UNRELATED target helper reuses the qname (global union, not the consumer's
+#     own ancestor closure);
+#   - a target function/transition NODE whose name collides with an injected
+#     gate-ref key shadows the injected reference value in the concatenated DAG.
+# So the fence is ancestry-aware (seeded on each consumer's OWN args) and applies
+# to every gate-ref / fallback projection, alongside an injected-name collision
+# guard. Fixtures give the two candidate bindings DIFFERENT values so each
+# misbinding is genuinely discriminated, not coincidentally agreed.
 
 
 def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
@@ -1230,8 +1229,8 @@ def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
 
     The projected coordinate is `target_scaled_x(x, target_scale)`, so
     `target_scale` is a TARGET-owned param reached by a gate-ref READER — the
-    fourth target-DAG-concatenating path the round-4 direct-gate fence never
-    inspected (round-5 F1).
+    fourth target-DAG-concatenating path, which a direct-gate fence does not
+    inspect.
     """
     return target_scaled_x
 
@@ -1289,13 +1288,13 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
 
 
 def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
-    """Round-5 F1: a gate-ref projection reaching a target helper's param must raise.
+    """A gate-ref projection reaching a target helper's param must raise.
 
-    The round-4 fence only inspected the concatenated gate predicate; a gate-ref
-    reader is compiled separately (`_build_same_period_ref_reader`) and its args
-    were classified source-owned, so the target-owned `target_scale` was bound
-    from the source in both the solve fold and the simulate gate. Fail-pre the
-    edge builds silently; post-fix construction raises.
+    A fence that inspects only the concatenated gate predicate misses this: a
+    gate-ref reader is compiled separately (`_build_same_period_ref_reader`), and
+    classifying its args source-owned binds the target-owned `target_scale` from
+    the source in both the solve fold and the simulate gate. Construction raises
+    instead of building silently.
     """
     flat_params = MappingProxyType(
         {
@@ -1333,12 +1332,12 @@ def _unrelated_helper(y: ContinuousState, shift: FloatND) -> FloatND:
 
 
 def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
-    """Round-5 F2: the fence returns only the target params a consumer REACHES.
+    """The fence returns only the target params a consumer REACHES.
 
-    The round-4 fence unioned the free args of every target-DAG function and
-    rejected on a bare name match, so a gate declaring `shift` directly was
-    rejected merely because an unrelated target helper also had a `shift`. The
-    ancestry-aware replacement walks the consumer's own closure: a gate that
+    Unioning the free args of every target-DAG function and rejecting on a bare
+    name match would reject a gate declaring `shift` directly, merely because an
+    unrelated target helper also has a `shift`. The ancestry-aware form walks the
+    consumer's own closure: a gate that
     reaches `reached_helper` (hence `target_scale`) but declares `shift` as its
     OWN source param yields exactly `{target_scale}` — never `shift`.
     """
@@ -1431,13 +1430,13 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
 
 
 def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
-    """Round-5 F3: a gate-ref key equal to a target function/transition name must
-    raise, rather than let the target node shadow the injected reference value.
+    """A gate-ref key equal to a target function/transition name must raise,
+    rather than let the target node shadow the injected reference value.
 
     `concatenate_functions({**dag_pool, "__gate__": gate})` resolves the gate's
     `outside` argument to the target's `outside` function (0.9) instead of the
-    declared gate-ref (~0.6), silently reversing the gate. Fail-pre the model
-    builds with the wrong operand; post-fix construction raises on the collision.
+    declared gate-ref (~0.6), silently reversing the gate. Construction raises on
+    the collision rather than building with the wrong operand.
     """
     flat_params = MappingProxyType(
         {
@@ -1456,14 +1455,13 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
         _solve_fixture(_make_gate_ref_name_collision_regimes(), flat_params)
 
 
-# ----------------------------------------------------------------------------------
-# Round-6 audit. Two residual namespace defects survived the round-5 fences:
-#   F1 - a gate/projection arg naming a STATE-ONLY target node reaches no dynamic
-#        leaf, so `_reject_target_function_params` stays silent -- but name-based
-#        concatenation still rebinds the arg to the node and drops a same-named
-#        source parameter (a silent gate reversal / wrong projected fallback state).
-#   F2 - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
-#        operand; the `injected_names` SET collapses the duplicate and the built-in
+# Two residual namespace defects survive the fences above:
+#   - a gate/projection arg naming a STATE-ONLY target node reaches no dynamic
+#     leaf, so `_reject_target_function_params` stays silent -- but name-based
+#     concatenation still rebinds the arg to the node and drops a same-named
+#     source parameter (a silent gate reversal / wrong projected fallback state);
+#   - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
+#     operand; the `injected_names` SET collapses the duplicate and the built-in
 #        wins, silently discarding the computed reference value.
 # The fixtures give the two candidate bindings different meanings so each is a
 # genuine repro, and each fence rejects the topology at construction.
@@ -1479,7 +1477,7 @@ def _target_threshold(x: ContinuousState) -> FloatND:
 def _gate_reads_shadowed_threshold(V_target: FloatND, threshold: FloatND) -> BoolND:
     """The source MEANS `threshold` as its own param (0.1); the target declares a
     state-only node `threshold(x)=0.9`, which name-based concatenation binds instead,
-    silently reversing the gate (round-6 F1)."""
+    silently reversing the gate."""
     return V_target > threshold
 
 
@@ -1520,7 +1518,7 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
 
 
 def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
-    """Round-6 F1: a gate arg naming a STATE-ONLY target node must be rejected.
+    """A gate arg naming a STATE-ONLY target node must be rejected.
 
     `_reject_target_function_params` sees no dynamic leaf (the node reads only the
     target state `x`), so it stays silent -- but `concatenate_functions` still binds
@@ -1600,7 +1598,7 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
 
 
 def test_gate_ref_key_aliasing_v_target_is_rejected():
-    """Round-6 F2: a gate-ref key that aliases a built-in injected operand.
+    """A gate-ref key that aliases a built-in injected operand is rejected.
 
     `injected_names` is a SET, so a `gate_refs` key spelled `V_target` collapses onto
     the target value component; `_assemble_gate_kwargs` resolves the target component
@@ -1623,9 +1621,8 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
         _solve_fixture(_make_gate_ref_v_target_alias_regimes(), flat_params)
 
 
-# ----------------------------------------------------------------------------------
-# Round-7 F2 - the gate-operand namespace is still not disjoint from target STATE
-# names. `_assemble_gate_kwargs` resolves target value component(s) and gate-ref
+# The gate-operand namespace must be disjoint from target STATE names.
+# `_assemble_gate_kwargs` resolves target value component(s) and gate-ref
 # values BEFORE the target state mesh, so a target state named `V_target` (or a
 # gate-ref key equal to a target state name) is silently preempted -- the gate reads
 # the injected value / reference instead of the realized state, reversing routing
@@ -1678,7 +1675,7 @@ def _gate_reads_x_operand(V_target: FloatND, x: FloatND) -> BoolND:
     """The source MEANS `x` as the target's realized STATE. A gate-ref keyed `x`
     injects the projected reference value under the SAME name; `_assemble_gate_kwargs`
     resolves the gate ref BEFORE the state mesh, so the gate silently reads the
-    reference value instead of the state (round-7 F2)."""
+    reference value instead of the state."""
     return V_target > x
 
 
@@ -1695,7 +1692,7 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
                 gate=_gate_reads_x_operand,
                 gate_refs={
                     # Aliases the TARGET STATE `x` (not a value/D operand, so the
-                    # round-6 gate-ref alias fence stays silent).
+                    # gate-ref alias fence stays silent).
                     "x": SamePeriodRef(
                         regime="refregime", projection={"x": _identity_x}
                     )
@@ -1732,13 +1729,13 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
 
 
 def test_gate_ref_key_aliasing_a_target_state_is_rejected():
-    """Round-7 F2 (integration): the builder must wire the state-collision fence.
+    """The builder wires the state-collision fence (integration).
 
     A gate-ref key `x` equals the target state `x`. `_reject_gate_ref_operand_alias`
     only checks gate-ref keys against the value/D built-ins, so it stays silent; but
     `_assemble_gate_kwargs` resolves the gate-ref value before the state mesh, so
     `gate(x)` would read the projected reference instead of the realized state and
-    silently change routing. Pre-fix the model built; the build must now raise.
+    silently change routing, so the build must raise.
     """
     flat_params = MappingProxyType(
         {
@@ -1853,9 +1850,9 @@ def _make_gate_param_aliases_target_state_regimes(
 
 
 def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
-    """simulate-round8 F1: the solve-time fence rejects the double-bound leaf.
+    """The solve-time fence rejects the double-bound leaf.
 
-    Pre-fix the model solved silently, with the solve-side `Wbar` reading the
+    Without it the model solves silently, with the solve-side `Wbar` reading the
     source param `x=0.9` (`_evaluate_edge_fold` overwrites the state grid) and the
     simulate router reading the realized target state instead -- two different
     gates for one edge. `x` is a genuine source param (the source utility reads
@@ -1916,9 +1913,8 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
 # BEFORE it could be a source param, so SIMULATE reads the engine object. Solve and
 # simulate then evaluate different gates (or the solve side crashes when the source
 # scalar overwrites the value MAPPING). A target STATE named after an engine arg is
-# the same hazard. The round-8 guard only intersected source-params with target
-# STATES, never the engine names; the round-9 fix reserves both.
-# ----------------------------------------------------------------------------------
+# the same hazard. Intersecting source-params with target STATES alone is not
+# enough; the engine names are reserved too.
 def _gate_reads_params_engine_arg(
     V_target: FloatND, same_period_regime_to_params: FloatND
 ) -> BoolND:

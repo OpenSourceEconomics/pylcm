@@ -43,7 +43,7 @@ from lcm.typing import UserFunction
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class SamePeriodRef:
-    """Declaration of a same-period cross-regime reference value (E2).
+    """Declaration of a same-period cross-regime reference value.
 
     A collective regime's `same_period_refs` maps a *reference-value name* (the
     named argument under which the interpolated value enters the regime's
@@ -100,7 +100,7 @@ class SamePeriodRef:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class EdgeLeg:
-    """One source-stakeholder leg of a gated edge (E3').
+    """One source-stakeholder leg of a gated edge.
 
     A gated edge carries one leg per SOURCE stakeholder (a singleton source
     declares exactly one leg; a collective source one per stakeholder). Each leg
@@ -112,8 +112,8 @@ class EdgeLeg:
       target's stakeholders; for a singleton target it is ``None``.
     - ``fallback`` — a `SamePeriodRef` giving the value the CLOSED (gate-False)
       branch takes: a same-period reference regime's V at a projection from the
-      TARGET regime's grid coordinates (EKL: the source stakeholder's own single
-      regime, at the projection back to its single state). The mixture is the
+      TARGET regime's grid coordinates — typically the source stakeholder's own
+      single regime, at the projection back to its single state. The mixture is the
       strict ``jnp.where(gate, V_target, V_fallback)`` — NEVER a linear
       ``gate*V_target + (1-gate)*V_fallback`` (the target value is ``-inf`` in a
       dissolution cell, and ``0 * -inf = NaN``).
@@ -130,9 +130,9 @@ class EdgeLeg:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class GatedEdge:
-    """A gated edge routing a source regime's continuation into a target (E3').
+    """A gated edge routing a source regime's continuation into a target.
 
-    The design-doc §2 E3' construct that unlocks MIXED singleton/collective
+    The construct that unlocks MIXED singleton/collective
     regime topologies: a singleton regime may reach a collective regime (mutual
     consent marriage) and a collective regime may route per-stakeholder to
     singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
@@ -361,27 +361,25 @@ class Regime:
     off a per-stakeholder value at that common argmax, with value-aware
     feasibility and value-gated regime routing (consent / dissolution).
 
-    This is the API surface of the "collective regimes" extension (E1-E4 +
-    shared shocks). The **E1 solve** is implemented for terminal and
+    The **solve** is implemented for terminal and
     non-terminal regimes: a collective regime carries a per-stakeholder utility
     `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
     `weights`; its solve reads off each stakeholder's own value at the shared
     household argmax, and a non-terminal collective regime aggregates the
-    per-stakeholder continuation `Q^s = H(u^s, E[V'^s])` (see the design doc
-    `pylcm-extension-collective-regimes.md` v2.1, §2 E1). A non-terminal
+    per-stakeholder continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes (value gates, dissolution) is E3'. EV1 taste shocks, nonlinear
+    regimes goes through `gated_edges`. EV1 taste shocks, nonlinear
     certainty equivalents, and non-GridSearch solvers on a collective regime
-    still raise `NotImplementedError`. Collective-regime **simulation** (E4) is
+    raise `NotImplementedError`. Collective-regime **simulation** is
     implemented for the reduced synthetic-cohort envelope: one fixed-size
     population, an APPROXIMATE off-grid value-gate router (the simulate gate
-    interpolates already-maximized target V — not the exact E4 recompute; see
-    `get_edge_simulate_gate_evaluator`), and a per-call `own_stakeholder` (or
-    first-declared-leg) row role. Deliberately deferred follow-ups: an exact
-    off-grid E4 max-recompute, linked two-row dissolution reallocation,
-    between-period child-age (carried-state) reassignment, and transient-node
-    shock folding (full-scale EKL's x27-81 node memory).
+    interpolates already-maximized target V rather than recomputing the
+    household maximum off-grid; see `get_edge_simulate_gate_evaluator`), and a
+    per-call `own_stakeholder` (or first-declared-leg) row role. Deliberately
+    deferred: an exact off-grid max-recompute, linked two-row dissolution
+    reallocation, between-period child-age (carried-state) reassignment, and
+    transient-node shock folding.
     """
 
     weights: Mapping[str, float] | None = None
@@ -397,7 +395,7 @@ class Regime:
     value_constraints: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Value-aware feasibility predicates for a non-terminal collective regime (E2).
+    """Value-aware feasibility predicates for a non-terminal collective regime.
 
     Each entry maps a constraint name to a predicate returning `True` where the
     (state, action) combination is feasible. Unlike ordinary `constraints`
@@ -408,16 +406,16 @@ class Regime:
     - `Q_<s>` for each stakeholder `<s>` — that stakeholder's own action value
       `Q^s(x, a)` (felicity plus discounted continuation) at the cell;
     - each key of `same_period_refs` — the reference regime's same-period value
-      interpolated at the projected state (e.g. the dissolutione's single value);
+      interpolated at the projected state (e.g. the dissolved single's value);
     - ordinary states, actions, regime functions, and parameters via the DAG
-      (a predicate parameter such as EKL's `Delta_j` surfaces in the params
-      template under the constraint's name).
+      (a predicate's own parameter surfaces in the params template under the
+      constraint's name).
 
     The final action mask is the AND of ordinary constraints and all value
     constraints; the household argmax runs over the masked set, and a state
     cell whose mask is empty publishes the dissolution flag `D = True` (returned by
     the solve alongside V — never conflated with a numeric `-inf` value, which
-    can occur on-path). EKL 2019 eq. 11 is exactly
+    can occur on-path). A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 
     Only non-terminal collective regimes may declare value constraints.
@@ -426,7 +424,7 @@ class Regime:
     gated_edges: Mapping[RegimeName, GatedEdge] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Gated edges routing this regime's continuation into a target regime (E3').
+    """Gated edges routing this regime's continuation into a target regime.
 
     Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
     reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
@@ -435,8 +433,7 @@ class Regime:
     fence. When declared, the engine folds a gated continuation object
     ``Wbar^s = jnp.where(gate, V_target, V_fallback)`` on the target regime's
     grid at each period's end, and this regime's continuation reads ``Wbar`` in
-    place of the raw target V. See `GatedEdge` and the design doc
-    `pylcm-extension-collective-regimes.md` §2 E3'. Only meaningful together
+    place of the raw target V. See `GatedEdge`. Only meaningful together
     with the corresponding `transition` / `state_transitions` into the target's
     state space; a target reached by a gated edge is exempt from the mixed-
     stakeholder rejection.
@@ -445,7 +442,7 @@ class Regime:
     same_period_refs: Mapping[str, SamePeriodRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Same-period cross-regime reference values read by `value_constraints` (E2).
+    """Same-period cross-regime reference values read by `value_constraints`.
 
     Maps each reference-value name (the argument name under which the
     interpolated value enters the predicates) to a `SamePeriodRef` declaring
@@ -477,14 +474,11 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
-        # COLLECTIVE-REGIMES (E1): the solve is implemented for terminal and
-        # non-terminal collective regimes. A collective regime is validated
-        # here (per-stakeholder `utility_<s>`, weights, >=1 discrete action;
-        # out-of-scope features — taste shocks, certainty equivalents,
-        # non-GridSearch solvers — are rejected) and then solves via the
-        # collective kernels. The default `None` (singleton) path never enters
-        # this branch, so today's behavior is provably untouched. See
-        # `pylcm-extension-collective-regimes.md` §2.
+        # A collective regime is validated here (per-stakeholder
+        # `utility_<s>`, weights, >=1 discrete action; out-of-scope features —
+        # taste shocks, certainty equivalents, non-GridSearch solvers — are
+        # rejected) and then solves via the collective kernels. The default
+        # `None` (singleton) path never enters this branch.
         if self.gated_edges:
             _validate_gated_edges(self)
         if self.stakeholders is not None:
@@ -498,14 +492,14 @@ class Regime:
         elif self.value_constraints:
             raise RegimeInitializationError(
                 "`value_constraints` are value-aware feasibility predicates for "
-                "a collective regime (E2); they read the per-stakeholder action "
+                "a collective regime; they read the per-stakeholder action "
                 "values `Q_<s>`, which only exist when `stakeholders` is set. "
                 "Use ordinary `constraints` for a singleton regime."
             )
         elif self.same_period_refs:
             raise RegimeInitializationError(
                 "`same_period_refs` declares same-period reference values for a "
-                "collective regime's `value_constraints` (E2); it is only "
+                "collective regime's `value_constraints`; it is only "
                 "meaningful together with `stakeholders`. Omit it for a "
                 "singleton regime."
             )

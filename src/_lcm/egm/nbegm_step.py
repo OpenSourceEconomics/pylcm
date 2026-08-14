@@ -349,11 +349,11 @@ def _invert_coh_with_linear_extension(
     # for the reason given in `_framed_difference`: a raw `a - b` overflows on
     # opposite-signed top-binade operands even though both are finite normals,
     # and one `inf` in a boundary width poisons the whole inversion with NaN
-    # (round-13 audit F2, the same defect class as in the envelope query).
+    # — the same defect class as in the envelope query.
     #
-    # The two guards are direct float comparisons on the stored nodes. They used
-    # to test a materialized width against zero, which needs the very difference
-    # that can overflow; `a > b` is exact for finite floats and forms nothing.
+    # The two guards are direct float comparisons on the stored nodes: testing a
+    # materialized width against zero would need the very difference that can
+    # overflow, whereas `a > b` is exact for finite floats and forms nothing.
     below = jnp.where(
         coh_case_grid[1] > coh_case_grid[0],
         _linear_extension(

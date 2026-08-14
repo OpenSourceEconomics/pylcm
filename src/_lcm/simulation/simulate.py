@@ -131,7 +131,7 @@ def simulate(
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
         period_to_regime_to_dissolution_flags: Immutable mapping of periods to each
-            COLLECTIVE regime's dissolution flag `D` (E2/E4), as returned by
+            COLLECTIVE regime's dissolution flag `D`, as returned by
             `backward_induction.solve`'s third element. Empty (the default)
             for models without gated edges reading `D_target`, or when the
             caller does not have it at hand. Surfaced publicly by
@@ -403,7 +403,7 @@ def _simulate_subject_chunk(
             # when their state is infeasible under this regime's problem);
             # validate only the subjects simulated in this regime.
             #
-            # COLLECTIVE-REGIMES (E4): a collective regime's `V_arr` carries a
+            # A collective regime's `V_arr` carries a
             # trailing stakeholder axis (`(n_subjects, n_stakeholders)`), so
             # `in_regime` (always `(n_subjects,)`) needs trailing singleton
             # axes to broadcast against it; a singleton regime's `V_arr` is
@@ -570,7 +570,7 @@ def _simulate_regime_in_period(
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
         period_to_regime_to_dissolution_flags: Each COLLECTIVE regime's dissolution
-            flag `D` per period (E2/E4); empty for models without one.
+            flag `D` per period; empty for models without one.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         decision_targets_next_period: This source's retained *solution*-graph
@@ -622,7 +622,7 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
-    # COLLECTIVE-REGIMES (E4): the simulate value router. A regime declaring
+    # The simulate value router. A regime declaring
     # `gated_edges` must have its OWN action choice informed by the gated
     # continuation `Wbar`, not the target's raw (ungated) value — substitute
     # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
@@ -631,9 +631,9 @@ def _simulate_regime_in_period(
     # reference-V arrays each firing edge was folded on, per target) feeds
     # the REGIME-ROUTING step below, after the action and candidate
     # next-states are known — `route_gated_edges` RECOMPUTES the gate from
-    # these (simulate F1 fix) rather than interpolating a baked boolean.
+    # these rather than interpolating a baked boolean.
     # No-op (returns the inputs unchanged) for a regime without
-    # `gated_edges`. See design doc §2 (E4) / §3.
+    # `gated_edges`. See design doc §2 / §3.
     next_regime_to_V_arr, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=regime_name,
@@ -650,7 +650,7 @@ def _simulate_regime_in_period(
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
 
-    # COLLECTIVE-REGIMES (E2, simulate side): a regime declaring
+    # A regime declaring
     # `same_period_refs` reads other regimes' THIS-period V (not the
     # next-period continuation) inside its value-aware feasibility mask —
     # exactly like the solve kernel's `same_period_regime_to_V_arr`, sourced
@@ -658,7 +658,7 @@ def _simulate_regime_in_period(
     # induction loop. Empty for every regime without same-period references.
     #
     # Each reference regime's OWN flat params ride alongside under
-    # `SAME_PERIOD_PARAMS_ARG` (F4): the reader interpolates the REFERENCE
+    # `SAME_PERIOD_PARAMS_ARG`: the reader interpolates the REFERENCE
     # regime's V over the REFERENCE regime's grid, whose runtime grid points are
     # that regime's parameters, not this one's — mirrors the identical pairing in
     # `solution.solvers._GridSearchPeriodKernel`.
@@ -703,7 +703,7 @@ def _simulate_regime_in_period(
             # meaningless under this regime's problem); validate only the
             # subjects simulated in this regime.
             #
-            # COLLECTIVE-REGIMES (E4): `V_arr` carries a trailing stakeholder
+            # `V_arr` carries a trailing stakeholder
             # axis for a collective regime; broadcast the mask the same way
             # as the diagnostic logger below.
             in_regime_mask = subject_ids_in_regime.reshape(
@@ -718,7 +718,7 @@ def _simulate_regime_in_period(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    # COLLECTIVE-REGIMES (E4, F7 guard). A STATELESS collective regime (no
+    # A STATELESS collective regime (no
     # declared states, e.g. a terminal `Regime(stakeholders=(...), ...)`
     # with only actions and/or constant utilities) has no per-subject state
     # array for the dispatcher to `vmap` the household argmax over, so
@@ -823,12 +823,12 @@ def _simulate_regime_in_period(
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
         )
-        # COLLECTIVE-REGIMES (E4): the value router's routing half. A gated
+        # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
         # target, so `calculate_next_states` already computed candidate
         # target states above and `calculate_next_regime_membership` already
         # drew a (gate-blind) next regime id; `route_gated_edges` now
-        # RECOMPUTES the gate at those candidate states (simulate F1 fix)
+        # RECOMPUTES the gate at those candidate states
         # and OVERRIDES both — the target when open, a leg's fallback (with
         # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without `gated_edges`.
@@ -887,7 +887,7 @@ def _replace_continuous_action_with_policy_read(
     Boolean array from `_read_nested_policy` on the continuous-outer path, or
     `None` on every other path (no policy, the flat single-EGM read, passive
     rows, the discrete-branch redecide). The caller resolves `None` to all-False
-    where the regime's subject count is known (F4).
+    where the regime's subject count is known.
     """
     if sim_policy is None:
         return optimal_actions, None
@@ -1158,7 +1158,7 @@ _UNIT_SLOPE_ATOL = 1e-8
 # through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
 # A two-point 0/1 slope probe cannot see a non-affine transition that merely
 # happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
-# the ACTUAL recovered action and rejects the subject otherwise (round-3 F3).
+# the ACTUAL recovered action and rejects the subject otherwise.
 _TRANSITION_RESIDUAL_RTOL = 1e-6
 
 

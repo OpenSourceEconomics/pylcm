@@ -97,7 +97,7 @@ def _build_married_regime() -> Regime:
             "consumption": _CONSUMPTION,
         },
         functions={
-            # Per-stakeholder utilities (E1). One `utility` today; a stakeholder
+            # Per-stakeholder utilities. One `utility` today; a stakeholder
             # axis tomorrow.
             "utility_f": _utility_f,
             "utility_m": _utility_m,
@@ -140,7 +140,7 @@ def test_declaring_non_terminal_stakeholders_constructs():
 def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     """A terminal collective regime must carry a `utility_<s>` per stakeholder.
 
-    Terminal collective regimes are implemented (E1), so construction no longer
+    Terminal collective regimes are implemented, so construction no longer
     raises `NotImplementedError`; instead it validates the collective contract.
     Supplying a single `utility` instead of `utility_f`/`utility_m` is a
     configuration error, reported as such.
@@ -187,7 +187,7 @@ def test_stakeholders_field_default_is_none():
 
 
 @pytest.mark.xfail(
-    reason="collective regimes not yet implemented; see design doc (E1)",
+    reason="collective regimes not yet implemented",
     strict=False,
 )
 def test_two_stakeholder_values_differ():
@@ -196,7 +196,7 @@ def test_two_stakeholder_values_differ():
     At the common household argmax, the wife's and husband's per-stakeholder
     values are read off separately (`V^s = Q^s(x, a*)`). Because their felicities
     differ (different disutility of work), the two value arrays must not be
-    identical. See design doc §2 (E1).
+    identical. See design doc §2.
     """
     regime = _build_married_regime()
     # Target API: the solved regime exposes one value array per stakeholder.
@@ -205,7 +205,7 @@ def test_two_stakeholder_values_differ():
 
 
 @pytest.mark.xfail(
-    reason="collective regimes not yet implemented; see design doc (E2)",
+    reason="collective regimes not yet implemented",
     strict=False,
 )
 def test_value_aware_feasibility_reads_reference_value():
@@ -215,7 +215,7 @@ def test_value_aware_feasibility_reads_reference_value():
     the mask must read a *same-period* single-regime reference value at the
     matched shock realization — it can no longer be computed before Q. The solve
     must also expose an explicit dissolution flag `D = 1[mask empty]`, distinct from
-    a numeric -inf value. See design doc §2 (E2).
+    a numeric -inf value. See design doc §2.
     """
     regime = _build_married_regime()
     result = regime.solve_period_values()  # ty: ignore[unresolved-attribute]
@@ -225,7 +225,7 @@ def test_value_aware_feasibility_reads_reference_value():
 
 
 @pytest.mark.xfail(
-    reason="collective regimes not yet implemented; see design doc (E3')",
+    reason="collective regimes not yet implemented",
     strict=False,
 )
 def test_mutual_consent_gate():
@@ -234,7 +234,7 @@ def test_mutual_consent_gate():
     The gated edge object folds `E_eps[ kappa*V_married + (1-kappa)*V_single ]`
     where the consent gate `kappa` is `1` iff `V^{jM}_{t+1} > V^j_{t+1}` for BOTH
     stakeholders (strict, no slack). A candidate marriage that clears only one
-    partner's outside option must NOT form. See design doc §2 (E3').
+    partner's outside option must NOT form. See design doc §2.
     """
     regime = _build_married_regime()
     # Target API: the edge gate is a callable reading both stakeholders' values
@@ -249,7 +249,7 @@ def test_mutual_consent_gate():
 
 
 @pytest.mark.xfail(
-    reason="collective regimes not yet implemented; see design doc (E4)",
+    reason="collective regimes not yet implemented",
     strict=False,
 )
 def test_simulate_value_router_routes_on_realized_values():
@@ -258,7 +258,7 @@ def test_simulate_value_router_routes_on_realized_values():
     At simulation, the router draws candidate realizations, recomputes the
     candidate regimes' per-stakeholder values at the realized point, evaluates
     the same gates as E3', then routes and discards the losing candidate. See
-    design doc §2 (E4).
+    design doc §2.
     """
     regime = _build_married_regime()
     router = regime.simulate_value_router  # ty: ignore[unresolved-attribute]

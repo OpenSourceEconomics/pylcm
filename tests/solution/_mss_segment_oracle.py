@@ -201,7 +201,7 @@ def interval_owners(
 
 
 def f1_branches() -> tuple[Branch, ...]:
-    """Return the round-15 F1 three-branch witness (A=1+R/10, B=.84+R/3, C=.2+R)."""
+    """Return the three-branch witness (A=1+R/10, B=.84+R/3, C=.2+R)."""
     return (
         Branch("A", (F(0), F(1)), (F(1), F(11, 10)), (F(10), F(10))),
         Branch("B", (F(0), F(1)), (F(21, 25), F(88, 75)), (F(3), F(3))),

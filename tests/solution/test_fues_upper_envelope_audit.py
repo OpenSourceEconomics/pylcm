@@ -108,8 +108,9 @@ def test_interpolated_function_is_correct_despite_retained_duplicate():
     """The interpolated value/policy is exact even with the duplicate retained.
 
     `interp_on_padded_grid` skips the lower-index duplicate (`side="right"`), so
-    the array-level F3 defect has no effect on the function the EGM step reads.
-    This invariant is why F3 carries no practical impact; it must not regress.
+    a retained array-level duplicate has no effect on the function the EGM step
+    reads. That invariant is what makes the duplicate harmless; it must not
+    regress.
     """
     grid, policy, value, _ = refine_envelope(
         endog_grid=jnp.array([0.0, 0.0, 1.0]),

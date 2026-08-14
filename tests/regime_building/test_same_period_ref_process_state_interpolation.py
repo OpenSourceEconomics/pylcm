@@ -1,4 +1,4 @@
-"""Regression: a `SamePeriodRef` reading a NON-FOLDED process-state V (E2 x IID).
+"""A `SamePeriodRef` reading a NON-FOLDED process-state V interpolates it.
 
 A process state (`NormalIIDProcess`, `fold=False`) is classified
 `topology="discrete"` for the ordinary Markov-chain solve path
@@ -224,8 +224,8 @@ def _utility_married_terminal(wage: FloatND, work: DiscreteAction) -> FloatND:
 def _vc_f(Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
     """Feasible only when `Q_f` matches the interpolated reference EXACTLY.
 
-    A wrong interpolation (wrong node pair, wrong weight, or the pre-fix
-    integer-lookup crash) would make `Q_f` (engineered off the hand-computed
+    A wrong interpolation (wrong node pair, wrong weight, or an integer
+    lookup) would make `Q_f` (engineered off the hand-computed
     value) fail this tight tolerance for every action, emptying the mask
     (`D=True`, `V=-inf`) instead of the exact match asserted below.
     """
@@ -316,7 +316,7 @@ def _build_and_solve():
 
 
 def test_same_period_ref_solves_with_a_nonfolded_process_reference():
-    """(a) The model SOLVES: pre-fix this raised `ValueError` at `V.py:191`."""
+    """(a) The model SOLVES: an integer lookup on the process axis would raise."""
     _regimes, _flat_params, solution, dissolution_flags = _build_and_solve()
 
     V_married = np.asarray(solution[0]["married"])

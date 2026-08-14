@@ -1,10 +1,10 @@
-"""Repro/regression: simulate F1 -- recompute the gate from VALUE OPERANDS,
-never by interpolating the solve-side fold's baked BOOLEAN gate array.
+"""The gate is recomputed from VALUE OPERANDS, never by interpolating the
+solve-side fold's baked BOOLEAN gate array.
 
-Pre-fix, `route_gated_edges` (`_lcm.simulation.gated_routing`) decided
-routing by interpolating the fold's grid-level boolean `gate` array (cast to
-float) at the subject's realized candidate target state, then thresholding
-the interpolated float at 0.5. That does not commute with the gate's own
+Deciding routing in `route_gated_edges` (`_lcm.simulation.gated_routing`) by
+interpolating the fold's grid-level boolean `gate` array (cast to float) at
+the subject's realized candidate target state and thresholding the
+interpolated float at 0.5 does not commute with the gate's own
 (nonlinear) predicate: "interpolate the {0,1}-valued grid, then threshold"
 and "interpolate the VALUE operands, then apply the predicate" agree at
 every grid node by construction, but can disagree at any off-grid point
@@ -42,11 +42,11 @@ boolean-interpolate-then-threshold recipe would have produced the OPPOSITE
 (OPEN) answer for this exact fixture, so the two recipes are shown to
 genuinely disagree here (not merely asserted to).
 
-CHARACTERIZATION (F1 residual, deliberately NOT fixed)
-------------------------------------------------------
-That fix replaced boolean interpolation with VALUE-OPERAND interpolation; it
-did NOT make the gate faithful. `V_target` is an ALREADY-MAXIMIZED object and
-interpolation does not commute with a `max`, so `interp(V_grid) != max_a Q`
+CHARACTERIZATION (a residual, deliberately NOT fixed)
+
+Value-operand interpolation does NOT make the gate faithful. `V_target` is an
+ALREADY-MAXIMIZED object and interpolation does not commute with a `max`, so
+`interp(V_grid) != max_a Q`
 off-grid whenever the target's V curves (see
 `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
 docstring, which documents this residual and declines to fix it).
@@ -313,9 +313,8 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
         flat_params=flat_params,
     )
 
-    # Faithful (post-fix) answer: gate CLOSED at x=0.6 -> routed to the
-    # fallback, NOT the target the old interpolate-then-threshold recipe
-    # would have (wrongly) selected.
+    # Faithful answer: gate CLOSED at x=0.6 -> routed to the fallback, NOT the
+    # target an interpolate-then-threshold recipe would wrongly select.
     np.testing.assert_array_equal(np.asarray(routed_ids), [fallback_id])
 
 
@@ -456,7 +455,7 @@ def _measure_gate_value_read(*, x: float) -> float:
     evaluator = src.gated_edge_simulate_gate_evaluators["target"]
 
     # The gate's own param is SOURCE-owned, and the evaluator exposes it under a
-    # namespace-qualified leaf (F2) — ask the published provenance for the name
+    # namespace-qualified leaf — ask the published provenance for the name
     # rather than hard-coding the qualification scheme here.
     threshold_arg = exposed_param_name(
         evaluator, qname="gate_threshold", namespace=SOURCE_PARAMS

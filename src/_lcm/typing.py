@@ -109,7 +109,7 @@ type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, EGMSimPolicy | NestedEGMSimPolicy]
 ]
 # Sparse over regimes: the inner mapping carries an entry only for COLLECTIVE
-# regimes (E2/E4). `True` on the state cells whose action mask is empty
+# regimes. `True` on the state cells whose action mask is empty
 # (distinct from a numeric `-inf` value); empty inner mappings for models
 # without collective regimes. Returned as `backward_induction.solve`'s third
 # element and consumed by `simulate` to route a dissolution-gated edge whose gate
@@ -243,9 +243,9 @@ class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
-    over all actions. COLLECTIVE-REGIMES (E1/E2): for a collective regime the
-    core returns the pair `(V, D)` — the stakeholder-axis value array plus the
-    boolean dissolution flag — instead of the plain V array.
+    over all actions. For a collective regime the core returns the pair
+    `(V, D)` — the stakeholder-axis value array plus the boolean dissolution
+    flag — instead of the plain V array.
 
     Used for both type checking and beartype runtime checks.
 

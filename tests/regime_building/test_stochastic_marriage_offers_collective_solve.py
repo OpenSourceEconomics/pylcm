@@ -6,9 +6,9 @@ distribution conditioned on the single's own education. Consent (eq. 27,
 slice 4's `GatedEdge`) then compares the household's married value (given the
 DRAWN spouse) against each partner's own outside option.
 
-**What this slice adds vs. what was already there.** Slice 4 (E3') built the
-gated-edge fold `Wbar = jnp.where(gate, V_target, V_fallback)` on the TARGET
-regime's full state grid, and slice 2 (E1 continuation) already averages a
+**What this adds on top of the surrounding machinery.** The gated-edge fold
+`Wbar = jnp.where(gate, V_target, V_fallback)` is built on the TARGET
+regime's full state grid, and the continuation already averages a
 non-terminal regime's continuation over any `MarkovTransition`-declared
 stochastic state, INCLUDING a "target-only" state declared solely in a
 per-target `state_transitions` dict entry (a state that is BORN at the
@@ -447,7 +447,7 @@ def _self_referential_offer_probs(Q_f: FloatND) -> FloatND:  # noqa: ARG001
 def test_endogenous_offer_distribution_is_rejected():
     """A `Q_<s>`-conditioned (self-referential) offer distribution is unrepresentable.
 
-    `Q_<s>` is injected only into `value_constraints` predicates (E2); an
+    `Q_<s>` is injected only into `value_constraints` predicates; an
     ordinary state-transition / `MarkovTransition` function has no such
     injection — it resolves through the regime's plain DAG (states, actions,
     params, helper functions). `process_regimes` itself does not eagerly call

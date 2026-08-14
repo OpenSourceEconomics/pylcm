@@ -1,21 +1,17 @@
-"""Collective-regime (E1) readout: the stakeholder value gather at the household argmax.
+"""Collective-regime readout: the stakeholder value gather at the household argmax.
 
-The mathematical heart of the "collective regimes" extension (design doc
-`pylcm-extension-collective-regimes.md`, §2 E1). A collective regime carries one
-per-stakeholder action-value array ``Q^s`` each, chooses the action that maximizes
-a household *scalarization* ``O = Σ_s λ_s Q^s`` over the feasible set, and then reads
-off *each stakeholder's own* ``Q^s`` at that common argmax — NOT the scalarized
-value ``O`` (paper eqs. 10-12: the couple maximizes the weighted objective, but the
-individual married values are each partner's own utility stream under that joint
-choice).
+A collective regime carries one per-stakeholder action-value array ``Q^s`` each,
+chooses the action that maximizes a household *scalarization*
+``O = Σ_s λ_s Q^s`` over the feasible set, and then reads off *each stakeholder's
+own* ``Q^s`` at that common argmax — NOT the scalarized value ``O``. The household
+maximizes the weighted objective, but the individual values are each stakeholder's
+own utility stream under that joint choice.
 
 This module is a pure, engine-topology-free building block: it takes already-computed
 per-stakeholder ``Q`` arrays and the feasibility mask and returns the per-stakeholder
 ``V`` plus the all-infeasible flag ``D`` (the dissolution / empty-feasible-set marker,
 kept distinct from a numeric ``-inf`` that can arise on-path). The terminal and
-non-terminal solve kernels call it after building their ``Q^s``; wiring it into the
-kernels and threading the stakeholder axis through the V-array topology is the
-remaining part of slice 1 (see `pylcm-extension-implementation-plan.md`).
+non-terminal solve kernels call it after building their ``Q^s``.
 """
 
 from collections.abc import Mapping
@@ -46,13 +42,12 @@ def collective_argmax_and_readout(
 ) -> tuple[IntND, dict[str, FloatND], BoolND]:
     r"""Like `collective_readout`, but also returns the household argmax index.
 
-    COLLECTIVE-REGIMES (E4). The solve-side readout (`collective_readout`)
-    only needs the per-stakeholder VALUES at the shared argmax; the simulate-
-    side value router additionally needs the argmax INDEX itself, so the
-    engine can look up which action was actually taken (mirroring the
-    singleton `argmax_and_max_Q_over_a`, whose flat index feeds
-    `_lookup_values_from_indices`). Factored out so `collective_readout`
-    (still the solve entry point) stays byte-identical.
+    The solve-side readout (`collective_readout`) only needs the
+    per-stakeholder VALUES at the shared argmax; the simulate-side value
+    router additionally needs the argmax INDEX itself, so the engine can look
+    up which action was actually taken (mirroring the singleton
+    `argmax_and_max_Q_over_a`, whose flat index feeds
+    `_lookup_values_from_indices`).
 
     Returns:
         Tuple ``(argmax_flat, V, D)`` — the flat argmax index (in the same

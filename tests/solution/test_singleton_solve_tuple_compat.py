@@ -1,4 +1,4 @@
-"""F6 regression: singleton-only `Model.solve()` keeps its legacy return shape.
+"""A singleton-only `Model.solve()` keeps its two-element return shape.
 
 The collective-regimes extension added `return_simulation_policy` and
 `return_dissolution_flags` to the public `Model.solve()` and threaded a third

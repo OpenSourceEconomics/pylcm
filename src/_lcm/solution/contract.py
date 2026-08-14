@@ -90,7 +90,7 @@ type ContinuationPayload = EGMCarry
 #
 # The read set says what may be read off a row; this union says which rows
 # exist, and the two are separate rules. The simulation read dispatches on the
-# concrete payload type over this CLOSED union (round-3 audit F11): a
+# concrete payload type over this CLOSED union: a
 # `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
 # (`_read_nested_policy`, which the self-describing payload parameterizes), a
 # flat `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
@@ -255,7 +255,7 @@ class SolverBuildContext:
     stakeholders: tuple[str, ...] | None = None
     """Ordered stakeholder names for a collective regime, or `None` (singleton).
 
-    COLLECTIVE-REGIMES (E1). When set, the grid-search kernel reads off each
+    When set, the grid-search kernel reads off each
     stakeholder's own value at the shared household argmax of the Pareto-weighted
     scalarization, and the regime's value-function array gains a trailing
     stakeholder axis.
@@ -265,9 +265,9 @@ class SolverBuildContext:
     """Household Pareto weights per stakeholder; set together with `stakeholders`."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    """Target regimes this regime reaches through a gated edge, or empty (E3').
+    """Target regimes this regime reaches through a gated edge, or empty.
 
-    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    Non-empty only for a source regime declaring
     `gated_edges`. The grid-search kernel then substitutes each such target's
     gated continuation object ``Wbar`` (supplied by the solve loop under
     ``edge_regime_to_V_arr``) for the raw target V in the ``next_regime_to_V_arr``
@@ -284,9 +284,9 @@ class SolverBuildContext:
     """
 
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Reference regimes whose SAME-period V this regime's kernels read (E2).
+    """Reference regimes whose SAME-period V this regime's kernels read.
 
-    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    Non-empty only for a collective regime declaring
     `same_period_refs`. The grid-search kernel then accepts the extra call
     argument `same_period_regime_to_V_arr` (the mapping of these regimes to
     their current-period V arrays, supplied by the solve loop after solving
@@ -323,7 +323,7 @@ class KernelResult:
     dissolution: BoolND | None = None
     """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
 
-    COLLECTIVE-REGIMES (E2). Published by every collective regime's kernel:
+    Published by every collective regime's kernel:
     `True` exactly where NO action satisfies the combined (ordinary AND value)
     constraints, so the household argmax was taken over an empty set. Distinct
     from a numeric `-inf` value, which occurs on-path; gates must consume this
@@ -355,7 +355,7 @@ class BackwardInductionResult:
     dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
     """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
 
-    COLLECTIVE-REGIMES (E2). `True` on the state cells whose action mask is empty
+    `True` on the state cells whose action mask is empty
     (distinct from a numeric `-inf` value); empty inner mappings for models
     without collective regimes, so the default (singleton) path is unchanged.
     """

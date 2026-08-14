@@ -133,14 +133,14 @@ class _GridSearchPeriodKernel:
     collective: bool = False
     """Whether the core is a collective (stakeholder-valued) reduction.
 
-    COLLECTIVE-REGIMES (E1/E2). A collective core returns the pair `(V, D)` —
+    A collective core returns the pair `(V, D)` —
     the stakeholder-axis value array plus the boolean dissolution flag — instead
     of the plain V array; the adapter unpacks it into the `KernelResult`.
     `False` keeps the singleton default byte-identical.
     """
 
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Reference regimes whose same-period V the core reads (E2), or empty.
+    """Reference regimes whose same-period V the core reads, or empty.
 
     When non-empty, `__call__` forwards the solve loop's
     `same_period_regime_to_V_arr` mapping into the core, and
@@ -151,9 +151,9 @@ class _GridSearchPeriodKernel:
     """
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    """Target regimes reached through a gated edge (E3'), or empty.
+    """Target regimes reached through a gated edge, or empty.
 
-    COLLECTIVE-REGIMES (E3'). When non-empty, `build_lower_args` and `__call__`
+    When non-empty, `build_lower_args` and `__call__`
     replace each such target's entry in `next_regime_to_V_arr` with the gated
     continuation object ``Wbar`` supplied under `edge_regime_to_V_arr` (a
     per-source template at lowering, the freshly folded array at run time), so
@@ -168,7 +168,7 @@ class _GridSearchPeriodKernel:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     ) -> Mapping[RegimeName, FloatND]:
-        """Replace edge targets' raw V with their gated ``Wbar`` (E3')."""
+        """Replace edge targets' raw V with their gated ``Wbar``."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
         if edge_regime_to_V_arr is None:
@@ -258,7 +258,7 @@ class _GridSearchPeriodKernel:
     def _same_period_params(
         self, *, flat_params: FlatParams
     ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
-        """Each reference regime's OWN flat params, for its own grid (F4).
+        """Each reference regime's OWN flat params, for its own grid.
 
         A same-period reference reader interpolates the REFERENCE regime's V over
         the REFERENCE regime's grid, so its runtime grid helpers (an
@@ -291,8 +291,8 @@ class _GridSearchPeriodKernel:
         """Evaluate the grid search and assemble the `KernelResult`.
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
-        regime declaring `same_period_refs` (E2); `edge_regime_to_V_arr` only for
-        a regime declaring `gated_edges` (E3', substituted into
+        regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
+        a regime declaring `gated_edges` (substituted into
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
         """
@@ -323,7 +323,7 @@ class _GridSearchPeriodKernel:
             **extra_kwargs,
         )
         if self.collective:
-            # COLLECTIVE-REGIMES (E1/E2): the collective core returns the pair
+            # The collective core returns the pair
             # (stakeholder-axis V, dissolution flag D).
             V_arr, dissolution = out
             return KernelResult(V_arr=V_arr, dissolution=dissolution)

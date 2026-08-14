@@ -1,4 +1,4 @@
-"""Integration test for the terminal collective-regime (E1) solve (slice 1b).
+"""Integration test for the terminal collective-regime solve (slice 1b).
 
 Wires the already-committed `collective_readout` core into the GridSearch
 terminal kernel: a terminal `Regime(stakeholders=("f", "m"))` solved end-to-end

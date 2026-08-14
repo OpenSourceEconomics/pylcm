@@ -81,31 +81,30 @@ def _sum_regime_mixture(
     per-target contributions ``p_r·V_r`` are then reduced by a VALUE-ORDERED
     ``jnp.sum`` — the contributions are ``jnp.sort``-ed along the target axis
     before the sum. Two
-    properties this buys over the earlier sequential left-fold
-    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`` (round-8/round-10 external
-    re-review, both MEASURED reproduce-first):
+    properties this buys over a sequential left-fold
+    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)``, both MEASURED:
 
     - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
-      NOT stacking the already-formed products — lands on the exact-policy side of the
-      round-8 pinned 5-target fixture (``> alternative`` bits ...843) where the
+      NOT stacking the already-formed products — lands on the exact-policy side of a
+      pinned 5-target fixture (``> alternative`` bits ...843) where the
       left-fold and ``jnp.sum(jnp.stack(products))`` both land on the wrong side
       (bits ...842). It
       is still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
       error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
       argmax can still resolve either way. Deterministic resolution AT a genuine
-      knife-edge would need compensated/exact summation, which is not implemented (a
-      value-sorted Neumaier compensated sum WAS measured and, on the round-10
-      counterexample, landed on the WRONG side of the competing action while the plain
-      value-sorted reduction landed exact-side, so it was NOT adopted).
+      knife-edge would need compensated/exact summation, which is not implemented: a
+      value-sorted Neumaier compensated sum WAS measured and, on a counterexample,
+      landed on the WRONG side of the competing action while the plain
+      value-sorted reduction landed exact-side, so it was NOT adopted.
     - **Reproducibility (label-independence).** The reduction ORDER is a deterministic
       function of the contribution VALUES — economically meaningful — and NEVER of the
-      arbitrary regime NAMES. The pre-round-10 code ``sorted(mixture_terms, key=name)``
-      removed the transition-mapping ITERATION-ORDER dependence but made the float64
-      summation order a function of the user's regime LABELS: a pure ALPHA-RENAMING of
-      the regimes (same probabilities, same continuations, only the dict keys change)
-      reordered the non-associative float64 sum and, MEASURED, moved the result across
-      37 distinct outputs over the 120 name bijections of a valid 5-target float64
-      mixture — reversing a non-tied household argmax on the round-10 counterexample.
+      arbitrary regime NAMES. Sorting by name (``sorted(mixture_terms, key=name)``)
+      would remove the transition-mapping ITERATION-ORDER dependence but make the
+      float64 summation order a function of the user's regime LABELS: a pure
+      ALPHA-RENAMING of the regimes (same probabilities, same continuations, only the
+      dict keys change) reorders the non-associative float64 sum and, MEASURED, moves
+      the result across 37 distinct outputs over the 120 name bijections of a valid
+      5-target float64 mixture — reversing a non-tied household argmax.
       Sorting the CONTRIBUTION MULTISET (``jnp.sort`` along the target axis) makes the
       sum provably invariant to alpha-renaming: the multiset ``{p_r·V_r}`` is unchanged
       by relabeling, and the sorted order (hence the summation order and its bits) is a
@@ -301,13 +300,13 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        # COLLECTIVE-REGIMES (E2): F_arr is built here, before and independently
+        # F_arr is built here, before and independently
         # of Q (it never reads E_next_V). A value-aware mask cannot stay here:
         # it needs per-stakeholder Q^s, so E2 splits this into (i) build the
         # state-independent F here, (ii) compute Q^s, (iii) `mask = F ∧ g(...)`
         # applied in max_Q_over_a. This site also returns the explicit dissolution
         # flag D = 1[mask empty], distinct from a numeric -inf. See design doc
-        # §2 (E2) / §3.
+        # §2 / §3.
         U_arr, F_arr = U_and_F(**states_actions_params)
         CE, _ = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -505,7 +504,7 @@ def get_Q_and_F_terminal_collective(
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
 
-    COLLECTIVE-REGIMES (E1). Separate from `get_Q_and_F_terminal` so the singleton
+    Separate from `get_Q_and_F_terminal` so the singleton
     terminal path (shared with the simulate / compute-intermediates machinery) is
     byte-identical; this builder is used only at the collective solve site.
 
@@ -576,12 +575,12 @@ def get_Q_and_F_terminal_collective(
     return Q_and_F
 
 
-# COLLECTIVE-REGIMES (E2): the name under which the mapping of same-period
+# The name under which the mapping of same-period
 # reference regimes to their current-period V arrays enters the kernel
 # signature. Only regimes declaring `same_period_refs` carry it.
 SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
 
-# COLLECTIVE-REGIMES (E2, F4 fix): the name under which the mapping of
+# The name under which the mapping of
 # same-period reference regimes to THEIR OWN flat params enters the kernel
 # signature, alongside `SAME_PERIOD_V_ARG`. Carried by every reader built by
 # `_build_same_period_ref_reader`, and hence by every regime that reads another
@@ -616,7 +615,7 @@ _REF_V_ARR_NAME = "__same_period_ref_V_arr__"
 class ResolvedSamePeriodRef:
     """Engine-side form of a user `SamePeriodRef`, resolved at model processing.
 
-    COLLECTIVE-REGIMES (E2). The user declaration names a stakeholder; the
+    The user declaration names a stakeholder; the
     engine resolves it to the index on the reference regime's trailing
     stakeholder axis (`None` for a singleton reference, whose V has no such
     axis).
@@ -643,7 +642,7 @@ def _build_same_period_ref_reader(
 ) -> Callable[..., FloatND]:
     """Build the reader of one same-period reference value at a (state, action) cell.
 
-    COLLECTIVE-REGIMES (E2). Each projection entry is concatenated with the
+    Each projection entry is concatenated with the
     regime's function DAG (so it may read states, actions, helper functions,
     and the merged deterministic `next_<state>` laws), producing one coordinate
     per reference state; the reference regime's CURRENT-period V array — passed
@@ -659,7 +658,7 @@ def _build_same_period_ref_reader(
     free parameters are bound from the reading regime's own params (every caller
     passes exactly that); the INTERPOLATION helpers instead belong to the
     REFERENCE regime's grid and are resolved against `SAME_PERIOD_PARAMS_ARG`
-    (F4 fix — see that constant). The two provenances are separated here rather
+    (see that constant). The two provenances are separated here rather
     than merged into one namespace, because a runtime irregular grid names its
     helper after the STATE alone (`x__points`), so a reading regime that happens
     to declare an identically named state would otherwise silently supply its
@@ -718,7 +717,7 @@ def _build_same_period_ref_reader(
         f"{_REF_STATE_PREFIX}{state}" for state in v_interpolation_info.state_names
     }
     # Extra interpolator inputs beyond the coordinates and the V array (e.g.
-    # runtime-supplied irregular-grid points). F4 fix: these are the REFERENCE
+    # runtime-supplied irregular-grid points). These are the REFERENCE
     # regime's own parameters, so they are NOT exposed as outer arguments of
     # this reader (the reading regime's caller has no such param, and the
     # prefixed name they carried was unsatisfiable by anyone) — they are looked
@@ -769,7 +768,7 @@ def _reference_interpolator_param_qnames(
 ) -> MappingProxyType[str, str]:
     """Map each extra interpolator input to its qname in the REFERENCE namespace.
 
-    COLLECTIVE-REGIMES (E2, F4 fix). `get_V_interpolator` derives its runtime
+    `get_V_interpolator` derives its runtime
     grid-helper names from the COORDINATE VARIABLE it was given
     (`_get_coordinate_finder`: `qname_from_tree_path((in_name.removeprefix(
     "next_"), "points"))`), so with `state_prefix=_REF_STATE_PREFIX` the helper
@@ -812,7 +811,7 @@ def _lookup_reference_params(
 ) -> dict[str, _ParamsLeaf]:
     """Resolve a reader's interpolation helpers in the REFERENCE regime's params.
 
-    COLLECTIVE-REGIMES (E2, F4 fix). See `SAME_PERIOD_PARAMS_ARG`.
+    See `SAME_PERIOD_PARAMS_ARG`.
 
     Raises:
         KeyError: The reference regime's params are missing from the mapping, or
@@ -864,7 +863,7 @@ def get_Q_and_F_collective(
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
-    COLLECTIVE-REGIMES (E1, slice 2). Separate from `get_Q_and_F` so the
+    Separate from `get_Q_and_F` so the
     singleton path is byte-identical; this builder is used only at the
     collective solve site.
 
@@ -909,8 +908,8 @@ def get_Q_and_F_collective(
         co_map_state_names: Tuple of state names co-mapped with the continuation
             V (see `get_Q_and_F`).
         value_constraints: Immutable mapping of value-constraint names to
-            predicates (params already renamed to qnames). COLLECTIVE-REGIMES
-            (E2): evaluated AFTER the per-stakeholder `Q^s`, each predicate may
+            predicates (params already renamed to qnames). Evaluated AFTER the
+            per-stakeholder `Q^s`, each predicate may
             read `Q_<s>` per stakeholder, the `same_period_refs` reference
             values, and ordinary states / actions / functions / params via the
             DAG; the results are ANDed into the feasibility mask, so the
@@ -1024,7 +1023,7 @@ def get_Q_and_F_collective(
     _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
     _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    # COLLECTIVE-REGIMES (E2): build the same-period reference readers and the
+    # Build the same-period reference readers and the
     # value-constraint evaluators once; their engine-supplied arguments —
     # `Q_<s>` and the reference-value names — are excluded from the kernel
     # signature and bound per (state, action) cell inside `Q_and_F`.
@@ -1152,7 +1151,7 @@ def get_Q_and_F_collective(
             **_build_W_kwargs(states_actions_params),
         )
 
-        # COLLECTIVE-REGIMES (E2): value-aware feasibility. Evaluated AFTER
+        # Value-aware feasibility. Evaluated AFTER
         # Q^s — this is the reorder the singleton path never needs (there,
         # F is built before and independently of Q). Interpolate each declared
         # same-period reference value at the projected coordinates, then AND
@@ -1207,7 +1206,7 @@ def _build_value_constraint_machinery(
 ) -> _ValueConstraintMachinery:
     """Build the E2 reference readers and value-constraint evaluators once.
 
-    COLLECTIVE-REGIMES (E2). Each evaluator is the predicate concatenated with
+    Each evaluator is the predicate concatenated with
     the regime's function DAG (so it may read helper functions, exactly like
     ordinary constraints); its engine-supplied arguments — `Q_<s>` and the
     reference-value names — are bound per (state, action) cell by
@@ -1264,7 +1263,7 @@ def _apply_value_constraints(
 ) -> BoolND:
     """AND every value constraint into the feasibility of one (state, action) cell.
 
-    COLLECTIVE-REGIMES (E2). Reads each declared same-period reference value at
+    Reads each declared same-period reference value at
     the projected coordinates (the readers pull the current-period reference V
     arrays off `states_actions_params[SAME_PERIOD_V_ARG]`), then evaluates each
     predicate with its `Q_<s>` arguments gathered from the trailing stakeholder
@@ -1301,7 +1300,7 @@ def _get_stakeholder_sliced_interpolator(
 ) -> Callable[..., FloatND]:
     """Evaluate a V-interpolator per stakeholder slice of a stacked V array.
 
-    COLLECTIVE-REGIMES (E1, slice 2). The target regime's `next_V_arr` leaf has
+    The target regime's `next_V_arr` leaf has
     shape `(*target_state_axes, n_stakeholders)`; the base interpolator
     interpolates over the state axes of a plain `(*target_state_axes,)` array.
     Calling it once per stakeholder on the slice `next_V_arr[..., s]` and
@@ -1619,8 +1618,8 @@ def _get_compute_CE(
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
                 # reduced ONCE by `_sum_regime_mixture` -- stack the operands, one
                 # zero-safe contraction, value-ordered sum. See that helper for why
-                # this beats a sequential left-fold on accuracy (round-8) and why the
-                # order must not depend on regime LABELS (round-10 F1).
+                # this beats a sequential left-fold on accuracy and why the
+                # order must not depend on regime LABELS.
                 #
                 # Multiplying here, as the upstream accumulator does, would put this
                 # term outside that single value-ordered reduction -- which is the
@@ -1664,8 +1663,8 @@ def _get_compute_CE(
 
         # ONE reduction for the whole regime mixture: stack the operands and
         # contract once, value-ordered, rather than folding `CE = CE + p*V` per
-        # target. Accuracy (round-8) and a sum order that must not depend on
-        # regime LABELS (round-10 F1). Empty on the lottery route, where
+        # target. Accuracy and a sum order that must not depend on
+        # regime LABELS. Empty on the lottery route, where
         # `_sum_regime_mixture` returns `zeros_like(like)` -- the same zero the
         # upstream accumulator started from, so the branches below compose.
         CE = _sum_regime_mixture(mixture_terms, like=zero)

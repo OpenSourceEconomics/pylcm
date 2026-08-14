@@ -121,10 +121,8 @@ from lcm_examples.mahler_yum_2024 import (
 # - `cell_block_size=256` with `branch_batch_size=1`: ~10.4 GiB resident, ran
 #   15 minutes without blowing up.
 #
-# An earlier measurement at `8828b33` put the unbounded request at 318 GiB; the
-# round-11 rewrite of the exact comparator brought it down to 242.6 GiB, which is
-# still far past any available machine -- so these knobs remain necessary rather
-# than merely prudent.
+# The unbounded request is far past any available machine, so these knobs are
+# necessary rather than merely prudent.
 #
 # Blocking is the mechanism the solver already provides for exactly this, and it
 # is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,

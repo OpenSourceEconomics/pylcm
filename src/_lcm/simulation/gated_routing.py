@@ -1,4 +1,4 @@
-"""Forward-simulation value router for gated edges (E4).
+"""Forward-simulation value router for gated edges.
 
 The design-doc §2 E4 counterpart to the solve-side E3' fold
 (`_lcm.regime_building.gated_edges`). pylcm's forward simulation recomputes
@@ -14,7 +14,7 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
 2. **Regime routing** (`route_gated_edges`) — genuinely new relative to
    solve: forward simulation must decide, for each REALIZED subject, which
    regime it actually occupies next period and with what states. The gate is
-   RECOMPUTED (simulate F1 fix) at the subject's candidate target-state draw
+   RECOMPUTED at the subject's candidate target-state draw
    (the states `calculate_next_states` already computed for the target via
    the regime's ordinary `transition` declaration — a gated edge's target is
    always ALSO an ordinary Markov transition target, so those candidate
@@ -114,13 +114,13 @@ def substitute_gated_edge_continuations(
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
 ]:
-    """Substitute each declared edge's ``Wbar`` for the raw target V (E4).
+    """Substitute each declared edge's ``Wbar`` for the raw target V.
 
     A no-op (returns `next_regime_to_V_arr` unchanged and no same-period
     mappings) when `regime` declares no `gated_edges` — the default
     simulate path is untouched.
 
-    COLLECTIVE-REGIMES (E4 bugfix). ``period_to_regime_to_V_arr`` is the
+    ``period_to_regime_to_V_arr`` is the
     SPARSE per-period solution `backward_induction.solve` returns (only the
     regimes actually active — i.e. solved — in that period; see
     `solution[period] = MappingProxyType(period_solution)` there). A
@@ -158,7 +158,7 @@ def substitute_gated_edge_continuations(
         evaluated on (target V, `D`-as-float, and every reference regime's
         V — `build_same_period_mapping_for_fold`'s output), consumed by
         `route_gated_edges` to RECOMPUTE the gate from interpolated value
-        operands at the realized candidate state (simulate F1 fix) — only
+        operands at the realized candidate state — only
         for edges that fired.
     """
     if not regime.gated_edges:
@@ -201,8 +201,7 @@ def substitute_gated_edge_continuations(
             ),
         )
         substituted[target_name] = wbar
-        # Simulate F1 fix: no longer captures the fold's own boolean `gate`
-        # output (the fold doesn't compute one for this purpose any more) —
+        # The fold's own boolean `gate` output is deliberately not captured:
         # `route_gated_edges` recomputes the gate itself from this SAME
         # same-period mapping, at the realized candidate state.
         same_period_mappings[target_name] = same_period_mapping
@@ -216,7 +215,7 @@ def _bind_provenance_params(
     source_name: RegimeName,
     target_name: RegimeName,
 ) -> dict[str, object]:
-    """Bind an edge callable's params, each from the regime that OWNS it (F2/F3).
+    """Bind an edge callable's params, each from the regime that OWNS it.
 
     The router holds every regime's flat params and the realized candidate
     target states; `provenance` (published by the callable's builder in
@@ -276,9 +275,9 @@ def _call_vmapped_with_accepted_kwargs(
     params and the raw grid-level array being read) are filtered down to the
     names `func` accepts; on a name collision, `static_kwargs` wins, mirroring
     the original `{**states, **params}` merge precedence. That precedence is
-    safe here and is NOT the F2/F3 defect: `static_kwargs` carries the
-    provenance-bound params, whose exposed names are namespace-qualified and so
-    cannot collide with a target state name.
+    safe here: `static_kwargs` carries the provenance-bound params, whose
+    exposed names are namespace-qualified and so cannot collide with a target
+    state name.
 
     `axis_size` is REQUIRED, not inferred. A STATELESS gated target (no
     continuous or discrete states of its own — e.g. a terminal scrap-value
@@ -322,7 +321,7 @@ def _select_own_leg(
     A non-`None` `own_stakeholder` that matches NO leg of a COLLECTIVE
     source is a caller error — a typo'd or stale role name — not tolerated
     silently: raises `ValueError` rather than routing the row through an
-    arbitrary leg (F5).
+    arbitrary leg.
 
     The singleton exemption keys on `legs[0].source_stakeholder is None`,
     NOT on `len(legs) == 1`. Arity is the wrong test: the validator accepts
@@ -364,12 +363,12 @@ def route_gated_edges(
     flat_params: FlatParams,
     own_stakeholder: str | None = None,
 ) -> tuple[StatesPerRegime, Int1D]:
-    """Route each subject through its regime's declared gated edges (E4).
+    """Route each subject through its regime's declared gated edges.
 
     A no-op (returns the inputs unchanged) when `regime` declares no
     `gated_edges`.
 
-    For each declared edge: RECOMPUTES the gate (simulate F1 fix) at the
+    For each declared edge: RECOMPUTES the gate at the
     candidate target states `calculate_next_states` already computed for the
     target (the regime's ordinary `transition` declaration always
     structurally reaches a gated edge's target — see module docstring) via
@@ -380,7 +379,7 @@ def route_gated_edges(
     arrays, from `substitute_gated_edge_continuations`) and re-applies the
     SAME predicate the solve-side fold uses — never by interpolating the
     fold's baked boolean `gate` array and thresholding the result, which does
-    not commute with a nonlinear predicate (pre-fix defect; see
+    not commute with a nonlinear predicate (see
     `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
     docstring). Then for every subject `subjects_in_regime` AND whose
     ORDINARY next-regime draw (`new_subject_regime_ids`, snapshotted before
@@ -391,7 +390,7 @@ def route_gated_edges(
     `own_stakeholder` — see `_select_own_leg` and the module docstring's
     scope fence for a collective (multi-leg) source). A row whose ordinary
     draw selected a different regime — this edge's target was never reached
-    — keeps that draw untouched by this edge (F2): this is also what makes
+    — keeps that draw untouched by this edge: this is also what makes
     several gated edges declared on one source order-independent, since each
     edge's eligibility is decided from the same pre-loop snapshot rather
     than from the (successively overwritten) routing result of an
@@ -407,7 +406,7 @@ def route_gated_edges(
     if not regime.gated_edges:
         return next_states, new_subject_regime_ids
 
-    # F2 fix. An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
+    # An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
     # BEFORE the edge loop below ever writes into `routed_ids`. Each edge's
     # mask below reads THIS snapshot, never the successively-updated
     # `routed_ids` — so which rows an edge is even eligible to touch does not
@@ -418,7 +417,7 @@ def route_gated_edges(
     states = next_states
     routed_ids = new_subject_regime_ids
     for target_name, edge in regime.gated_edges.items():
-        # COLLECTIVE-REGIMES (E4 bugfix). `same_period_mappings` only carries
+        # `same_period_mappings` only carries
         # an entry for a target `substitute_gated_edge_continuations`
         # actually folded this period — absent for a REPEATING edge's target
         # that is not itself solved at `period + 1` (e.g. a self-looping
@@ -436,14 +435,14 @@ def route_gated_edges(
             edge=edge, flat_params=flat_params
         )
 
-        # Simulate F1 fix. Recompute the gate from interpolated VALUE
+        # Recompute the gate from interpolated VALUE
         # operands at the realized candidate state, instead of interpolating
         # the fold's baked boolean `gate` array and thresholding it.
         #
-        # F2 fix. Every param the evaluator needs is bound from the regime that
+        # Every param the evaluator needs is bound from the regime that
         # OWNS it, as recorded argument by argument in the evaluator's published
         # `arg_provenance`. Filtering two dicts by unqualified names and merging
-        # them was a real bug, not a tidiness question, and no merge ORDER fixes
+        # them is not merely untidy but wrong, and no merge ORDER fixes
         # it: an interpolator's runtime grid helper is named after the STATE
         # alone (`x__points`), so a source and a target that both declare a state
         # `x` contribute the same qname, the filtered dicts intersect, and one
@@ -452,7 +451,7 @@ def route_gated_edges(
         # resolved on the wrong grid. The evaluator therefore exposes each
         # namespace's params under distinct, qualified leaves, and the reference
         # regimes' own grid params never reach this signature at all — they ride
-        # in `SAME_PERIOD_PARAMS_ARG` (F4).
+        # in `SAME_PERIOD_PARAMS_ARG`.
         simulate_gate_evaluator = regime.gated_edge_simulate_gate_evaluators[
             target_name
         ]
@@ -471,13 +470,13 @@ def route_gated_edges(
                     SAME_PERIOD_PARAMS_ARG: reference_params,
                 },
                 # A stateless target leaves `batched_kwargs` empty; `vmap`
-                # cannot infer a batch size from nothing (F3).
+                # cannot infer a batch size from nothing.
                 axis_size=int(subjects_in_regime.shape[0]),
             )
         )
 
         target_id = regime_names_to_ids[target_name]
-        # F2 fix. Only a row whose ORDINARY draw actually selected THIS
+        # Only a row whose ORDINARY draw actually selected THIS
         # edge's target is eligible for this edge's gate at all — a row
         # whose ordinary draw picked some other (edge-unrelated, or another
         # edge's target) regime must keep that draw untouched, not be
@@ -496,10 +495,10 @@ def route_gated_edges(
 
         projectors = regime.gated_edge_leg_projectors[target_name]
         for leg, projector in zip(legs, projectors, strict=True):
-            # F3 fix. The projector's free parameters are bound from the regime
+            # The projector's free parameters are bound from the regime
             # that owns them — the SOURCE for a source-declared projection, as
-            # recorded in `arg_provenance` — not from the target, whose params
-            # this call used to merge in wholesale. The solve-side fold projects
+            # recorded in `arg_provenance` — never from the target by merging
+            # its params in wholesale. The solve-side fold projects
             # this very coordinate with `flat_params[source]`
             # (`backward_induction._evaluate_edge_fold`), so any other binding
             # writes the row into the right fallback REGIME at a STATE the
@@ -520,7 +519,7 @@ def route_gated_edges(
                     ),
                 ),
             )
-            # F2 fix. Likewise, a row not eligible for this edge (its
+            # Likewise, a row not eligible for this edge (its
             # ordinary draw isn't this edge's target) must not have this
             # edge's fallback-leg state written into its record either —
             # that state slot belongs to a row this edge never routes.

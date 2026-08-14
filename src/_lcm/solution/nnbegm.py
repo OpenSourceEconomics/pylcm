@@ -388,13 +388,13 @@ class NNBEGM(Solver):
         )
         keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
         # The inner ride-along template may carry the exact-consumption `policy`
-        # leaf (round-3 audit F2) so a STANDALONE ride-along NBEGM continuation
-        # matches its policy-carrying runtime carry (round-4 audit F1). NNBEGM,
+        # leaf so a STANDALONE ride-along NBEGM continuation matches its
+        # policy-carrying runtime carry. NNBEGM,
         # though, republishes the BRIDGED outer collapse as its cross-period
         # continuation, and that collapse is policy-free (publication reads the
         # RAW keeper/adjuster carries, not the collapsed one). Strip the leaf from
         # the republished template so the cross-period roll sees the same pytree
-        # as the policy-free continuation — the standalone F1 leaf must not leak
+        # as the policy-free continuation — the standalone leaf must not leak
         # into the NNBEGM continuation template.
         inner_template = keeper_kernels.continuation_template
         template = (
@@ -574,8 +574,8 @@ class _NNBEGMPeriodKernel:
     a discrete choice whose winning branch is collapsed out of the published
     carry rows (`derive_inner_sim_policy` cannot recover which branch won
     off-grid), so the nested payload is NOT published and simulation keeps the
-    grid-argmax path (round-3 audit F8). Empty for the v1 continuous-only
-    scope, where publication proceeds."""
+    grid-argmax path. Empty for a continuous-only regime, where publication
+    proceeds."""
 
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
@@ -837,7 +837,7 @@ class _NNBEGMPeriodKernel:
         # keeper vs adjuster off-grid from exactly these conditional ingredients.
         # Under a fixed-cost aggregation the realized branch depends on the drawn
         # cost, and an inner DISCRETE action's winning branch is collapsed out of
-        # the published carry rows (round-3 audit F8) — the reader cannot replay
+        # the published carry rows — the reader cannot replay
         # either, so simulation falls back to the grid argmax, which is precisely
         # what `policy_fallback_mask` reports (so the mask is set from this same
         # condition rather than hard-coded).
@@ -1045,8 +1045,8 @@ def _collapse_finite_candidate_bank(
     return KernelResult(
         V_arr=V_arr,
         # The fold seeds from the KEEPER's carry, which — being a standalone
-        # ride-along NBEGM carry — may hold the exact-consumption `policy` leaf
-        # (round-3 audit F2 / round-4 audit F1). The republished NNBEGM
+        # ride-along NBEGM carry — may hold the exact-consumption `policy`
+        # leaf. The republished NNBEGM
         # continuation TEMPLATE strips that leaf, so the producer must strip it
         # too, or the cross-period roll compares a policy-carrying continuation
         # against a policy-free template. `jax.tree.map` does NOT catch that:

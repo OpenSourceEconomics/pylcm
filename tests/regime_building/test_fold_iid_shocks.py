@@ -21,7 +21,7 @@ self-transition, in any regime a transition reaches. A genuinely persistent
 IID shock (redrawn every period across many periods of the SAME regime)
 would additionally need the continuation side (`regime_to_v_interpolation_info`
 / `stochastic_transition_names`) of every regime reading into it to also
-recognize the fold; that is out of scope here (fold-review F5). Concretely:
+recognize the fold; that is out of scope here. Concretely:
 the memory saving this slice delivers is PER-PERIOD only (isolated,
 non-persistent shocks within the one period that folds them) — it does not
 yet deliver a MULTI-period saving for a shock redrawn every period across
@@ -395,8 +395,7 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
 
 def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     """A source folding a state does NOT reject merely because its OWN
-    outbound `gated_edges[...].gate` declares an argument of the same name
-    (fold-review F4, corrected from this test's earlier assertion).
+    outbound `gated_edges[...].gate` declares an argument of the same name.
 
     `GatedEdge.gate` is compiled and evaluated on the TARGET regime's own
     grid/DAG (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on
@@ -529,8 +528,8 @@ def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyT
     The fold's exactness contract must hold on BOTH paths, and they are not
     the same path: the jitted core closes over the fold weights as compile-time
     constants (XLA constant-folds them), while the non-jitted core executes the
-    reduction eagerly. Fold-review F1 was invisible precisely because every
-    other test in this module pins only `enable_jit=False`.
+    reduction eagerly. A jitted-path defect is invisible to every other test in
+    this module, which pins only `enable_jit=False`.
     """
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -589,8 +588,8 @@ def _bits(x: FloatND) -> int:
 #
 # This matters more than it looks: the module defaults (5, 2.0) happen NOT to
 # separate the kernels — their symmetric quadrature cancels exactly — so an
-# exactness test built on them passes against the PRE-FIX code and pins
-# nothing at all (fold-review F1/J4). `_average` is asymmetric here only
+# exactness test built on them passes whatever the reducer does, and so pins
+# nothing at all. `_average` is asymmetric here only
 # because the sigma is large enough for the leisure floor to bind at the
 # bottom node.
 _DRIFT_N_POINTS = 5
@@ -604,11 +603,10 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     This is the fold's actual contract ("a pure, value-invariant memory
     optimization"), pinned on bit patterns rather than a tolerance.
 
-    PROVEN fail-pre/pass-post (both `--precision=64` and `--precision=32`):
-    pre-fix, `_wrap_with_fold_reduction` unconditionally used
-    `zero_safe_average`, whose per-term `jnp.where` blocks XLA's FMA
-    contraction, so a strictly-positive-weight fold drifted 1 ULP off the
-    oracle (fold-review F1).
+    Holds at both `--precision=64` and `--precision=32`. Using
+    `zero_safe_average` unconditionally in `_wrap_with_fold_reduction` would
+    break it: its per-term `jnp.where` blocks XLA's FMA contraction, so a
+    strictly-positive-weight fold drifts 1 ULP off the oracle.
 
     Scoped to `enable_jit=False` deliberately — see
     `test_fold_jitted_matches_unfolded_then_averaged_within_one_ulp` for why
@@ -631,7 +629,7 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     # Guard the guard #2: this configuration really does separate the two
     # kernels, so the assertion below has something to catch. The module
     # defaults do NOT — without this, a future edit to the fixture could
-    # silently defang the test into passing against the pre-fix code.
+    # silently defang the test into passing whatever the reducer does.
     guarded = zero_safe_average(unfolded_V, axis=0, weights=weights, shifts=None)
     assert _bits(oracle) != _bits(guarded)
 
@@ -647,22 +645,22 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     not reproducible by any standalone oracle. The gap is the float32 REDUCTION
     error of the weighted summands, so the bound is summand-scale.
 
-    Two refinements over a naive `rtol * max|summand|` (fold-round5 T2):
+    Two refinements over a naive `rtol * max|summand|`:
 
     1. The principled forward-error scale for a length-`n` weighted sum is the SUM
        of absolute weighted contributions `Σ_k |w_k V_k|`, not `max_k |w_k V_k|`.
-       The two diverge sharply near cancellation: the round-5 review's executed
-       192-node fixture had a gap of 255.6 epsilons times `max|w_k V_k|` but only
+       The two diverge sharply near cancellation: a 192-node fixture has a gap
+       of 255.6 epsilons times `max|w_k V_k|` but only
        1.42 epsilons times `Σ|w_k V_k|`, so a small fixed rtol on the max is not a
        general contract while the sum-scale one holds.
     2. The coefficient must be NODE-COUNT- and dtype-aware: the reduction accrues
        O(n) rounding steps, so a fixed node-count-independent rtol silently tightens
        or loosens as `n` grows. Use `c(n, dtype) = C * n * eps(dtype)`.
 
-    Do NOT pin this to a fixed few-ULP count of the RESULT (fold-round4 F3): ULP is
-    a result-space spacing metric and becomes unstable near CANCELLATION — the
-    round-4 18-node fold differed by only ~2.62e-7 absolute yet 287,557 ULP in the
-    small (~1e-5) cancelled result. This model's node values are ~10 (no
+    Do NOT pin this to a fixed few-ULP count of the RESULT: ULP is a result-space
+    spacing metric and becomes unstable near CANCELLATION — an 18-node fold can
+    differ by only ~2.62e-7 absolute yet 287,557 ULP in the small (~1e-5)
+    cancelled result. This model's node values are ~10 (no
     cancellation), so the gap is at the float32 floor (here exactly 0), but the
     sum-scale node-count-aware bound is the one that also holds under cancellation.
     """
@@ -745,9 +743,9 @@ def test_zero_weight_fold_axis_still_averages_infinities_safely():
     """The guard is still TAKEN where it is needed: a zero-weight fold node
     beside an admissible on-path `-inf` must not poison the fold average.
 
-    The F1 fix narrows WHERE `zero_safe_average` is applied, so this pins that
-    it is still applied on the zero-weight path — otherwise the fix would have
-    traded a 1-ULP drift for a `nan`.
+    `zero_safe_average` is applied only where it is needed, so this pins that it
+    IS applied on the zero-weight path — otherwise narrowing it would trade a
+    1-ULP drift for a `nan`.
     """
     reducer = _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
     out = reducer(
@@ -765,16 +763,13 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
     regime transition — with NO ordinary state law to carry it.
 
     The sibling test above deliberately adds a `wealth` law "SOLELY to force
-    the target into reachable_targets". That admission was the bug
-    (fold-review F2/J5): reachability was derived from ordinary state laws
-    only, so WITHOUT such a law the target's process transitions were never
-    built, its bundle stayed empty, the guard found no `next_wage_shock` to
-    object to, and `get_period_targets` dropped the target from E[V] entirely
-    — silently, since `get_period_targets` assumes an absent target "has no
-    state and therefore zero value".
-
-    PROVEN fail-pre/pass-post: pre-fix `process_regimes` returned normally
-    with `period0.solution.transitions == {}`.
+    the target into reachable_targets". That admission marks the hazard:
+    deriving reachability from ordinary state laws only means that WITHOUT such
+    a law the target's process transitions are never built, its bundle stays
+    empty, the guard finds no `next_wage_shock` to object to, and
+    `get_period_targets` drops the target from E[V] entirely — silently, since
+    `get_period_targets` assumes an absent target "has no state and therefore
+    zero value", leaving `period0.solution.transitions == {}`.
     """
     from lcm.transition import MarkovTransition  # noqa: PLC0415
 
@@ -911,7 +906,7 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
     source (`source_shock`) does not carry -- no `next_target_shock` edge can be
     auto-wired from the source, so the fold cannot persist across the coarse edge.
     `shared=True`: `terminal` folds the SAME name the source carries -- the
-    genuinely ambiguous round-4 case.
+    genuinely ambiguous case.
     """
     fold_name = "source_shock" if shared else "target_shock"
     period0 = Regime(
@@ -938,9 +933,8 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
     `terminal` folds a target-local `target_shock` the source never carries, so no
     `next_target_shock` continuation can persist across the coarse edge -- there is
     nothing for the persistence guard to validate and the model is unambiguous.
-    Pre-fix it was rejected solely because the check ignored process provenance;
-    it must now build AND solve, with the fold axis integrated out of `terminal`'s
-    stored value.
+    A check that ignored process provenance would reject it; it must build AND
+    solve, with the fold axis integrated out of `terminal`'s stored value.
     """
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -977,9 +971,9 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
 
 
 def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
-    """fold-round5 F1 negative control: when the folded name IS carried by the
-    source, persistence across the coarse edge is genuinely possible, so the
-    ambiguous topology must still be rejected (round-4 behaviour preserved)."""
+    """Negative control: when the folded name IS carried by the source,
+    persistence across the coarse edge is genuinely possible, so the ambiguous
+    topology must still be rejected."""
     with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
         process_regimes(
             prepared_structure=build_prepared_structure(
@@ -1005,12 +999,13 @@ def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
 
 def test_coarse_self_transition_retains_the_self_continuation():
     """A coarse transition that returns its OWN regime keeps the self-continuation
-    in E[V] (fold-round4 F1: excluding the source by name dropped it).
+    in E[V].
 
     `stay` is active for two periods and coarse-routes to itself over a live
-    (non-folded) `wage_shock`; its next-period self-value must enter E[V]. Pre-fix
-    (source excluded) the `stay` self-target was dropped and its continuation was
-    zero; now `stay` is admitted and appears as its own transition target.
+    (non-folded) `wage_shock`; its next-period self-value must enter E[V].
+    Excluding the source by name would drop the `stay` self-target and zero its
+    continuation; instead `stay` is admitted and appears as its own transition
+    target.
     """
     ages3 = AgeGrid(start=0, stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
@@ -1196,13 +1191,13 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
 
 def test_coarse_regime_transition_to_shared_process_target_builds_continuation():
     """A coarse transition to a target that shares a NON-folded process with the
-    source now BUILDS that target's continuation into E[V] — the positive half of
-    the fold-round3 F1 fix — matching the per-target form value-for-value.
+    source BUILDS that target's continuation into E[V], matching the per-target
+    form value-for-value.
 
     `wage_shock` is live (not folded) in both regimes, so it persists
-    source->target and the continuation must interpolate over it. Pre-fix the
-    coarse form dropped `terminal` entirely (empty `period0` bundle, continuation
-    = 0); post-fix it equals the per-target form, which never dropped it.
+    source->target and the continuation must interpolate over it. A coarse form
+    that dropped `terminal` entirely would leave an empty `period0` bundle and a
+    zero continuation; instead it equals the per-target form.
     """
     from lcm.transition import MarkovTransition  # noqa: PLC0415
 
@@ -1244,8 +1239,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
     )
 
 
-# --------------------------------------------------------------------------------------
-# fold-review F2 (fold-only continuation): a target whose ONLY state is a
+# Fold-only continuation: a target whose ONLY state is a
 # target-local folded IID process must still enter E[V] — its stored V is a
 # SCALAR (the folded axis is integrated out), so it needs an empty transition
 # bundle that keeps it enumerable by `get_period_targets`, and its continuation
@@ -1371,17 +1365,14 @@ def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxy
 def test_folded_only_per_target_continuation_enters_expected_value():
     """A folded-only target reached by a per-target transition enters E[V].
 
-    fold-review F2 (folded slice): `folded_B`'s only state is a target-local
-    folded IID process, so its stored V is the scalar 1.0. Pre-fix, `src`'s
-    transition bundle was empty for BOTH targets (no state law, no source
-    process edge), so `get_period_targets` enumerated neither and E[V] was
-    identically zero — `src` took `dead_C`'s immediate 0.5 (V_src = 0.5), a
-    REVERSED policy. Post-fix, the folded target keeps an explicit empty bundle
-    (enumerable, read as its scalar V), so routing to B yields the discounted
-    continuation and `src` prefers it.
-
-    PROVEN fail-pre/pass-post: pre-fix V_src == 0.5 (routes to worthless C);
-    post-fix V_src == discount * 1.0 (routes to the value-1 folded target).
+    `folded_B`'s only state is a target-local folded IID process, so its stored
+    V is the scalar 1.0. An empty `src` transition bundle for BOTH targets (no
+    state law, no source process edge) would leave `get_period_targets`
+    enumerating neither and E[V] identically zero — `src` would take `dead_C`'s
+    immediate 0.5 (V_src = 0.5), a REVERSED policy. Instead the folded target
+    keeps an explicit empty bundle (enumerable, read as its scalar V), so
+    routing to B yields the discounted continuation and `src` prefers it:
+    V_src == discount * 1.0.
     """
     discount = 0.9
     solution = _solve_route(_make_route_to_folded_target_regimes(), discount=discount)
@@ -1390,15 +1381,14 @@ def test_folded_only_per_target_continuation_enters_expected_value():
     assert V_src.shape == ()
     # The folded target's stored V is the scalar 1.0 (shock integrated out).
     np.testing.assert_allclose(np.asarray(solution[1]["folded_B"]), 1.0, atol=1e-5)
-    # Post-fix: route to B, value = discount * 1.0 = 0.9 (> C's immediate 0.5).
+    # Route to B, value = discount * 1.0 = 0.9 (> C's immediate 0.5).
     np.testing.assert_allclose(V_src, discount, atol=1e-5)
 
 
 def test_folded_only_per_target_target_is_enumerable_in_transitions():
     """The folded-only target keeps an (empty) bundle so it stays enumerable.
 
-    Structural companion to the value test: pre-fix `src.solution.transitions`
-    was empty (the folded-only target was dropped); post-fix it carries a
+    Structural companion to the value test: `src.solution.transitions` carries a
     `folded_B` key with an empty bundle (no state law / process edge needed —
     its V is scalar). `dead_C` stays absent: it is genuinely stateless and
     worthless, so the general non-folded empty-bundle hole stays deferred.
@@ -1575,13 +1565,13 @@ def test_folded_only_per_target_continuation_enters_simulated_value():
     does: route to B for the discounted continuation `discount * 1.0 = 0.9`, which
     beats `dead_C`'s immediate 0.5.
 
-    Pre-fix (simulate side of fold-round6 unpatched), the simulate Q read passed the
-    UNSTRIPPED interpolation info for `folded_B` (whose stored V is the scalar 1.0 but
-    whose `VInterpolationInfo` still lists the folded `bshock` axis), so it demanded a
-    `next_bshock` coordinate the source never realises / indexed an axis the scalar V
-    lacks — the simulated decision was wrong or the run crashed. Post-fix, the folded
-    axis is stripped for the simulate continuation read (parity with solve), so `src`
-    simulates `work == 1` (route to B) with recomputed V = discount.
+    Passing the UNSTRIPPED interpolation info for `folded_B` to the simulate Q
+    read (its stored V is the scalar 1.0, but its `VInterpolationInfo` still
+    lists the folded `bshock` axis) would demand a `next_bshock` coordinate the
+    source never realises, or index an axis the scalar V lacks — a wrong
+    simulated decision or a crash. The folded axis is stripped for the simulate
+    continuation read, in parity with solve, so `src` simulates `work == 1`
+    (route to B) with recomputed V = discount.
     """
     discount = 0.9
     solution, result = _simulate_route(

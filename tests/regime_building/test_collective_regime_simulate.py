@@ -762,13 +762,13 @@ def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
 def test_value_masked_simulate_reports_the_solved_masked_value():
     """A household evaluated directly IN married_ir at the D=True cell gets -inf.
 
-    Initializing subjects directly into `married_ir` (bypassing the `married`
-    source, so the value router's routing does not preempt it) confirms the
-    simulate-side Q_and_F applies the IDENTICAL value-aware feasibility mask
-    (E2) the solve phase used: the argmax's `V_arr` reports the same `-inf`
-    sentinel `solution[1]["married_ir"]` carries at wage=2 (the empty mask;
-    the household's real-world routing away from this cell is E3'/E4's
-    separate concern, covered by the dissolution test above).
+       Initializing subjects directly into `married_ir` (bypassing the `married`
+       source, so the value router's routing does not preempt it) confirms the
+       simulate-side Q_and_F applies the IDENTICAL value-aware feasibility mask
+    the solve phase used: the argmax's `V_arr` reports the same `-inf`
+       sentinel `solution[1]["married_ir"]` carries at wage=2 (the empty mask;
+       the household's real-world routing away from this cell is E3'/E4's
+       separate concern, covered by the dissolution test above).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
@@ -1015,8 +1015,8 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
         }
     )
 
-    # Pre-fix, this raised: `ValueError: coordinates must be a sequence of
-    # length input.ndim, but 1 != 2` (the un-vmapped gate interpolator).
+    # An un-vmapped gate interpolator raises here: `ValueError: coordinates
+    # must be a sequence of length input.ndim, but 1 != 2`.
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
@@ -1194,12 +1194,11 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
 
     The public `Model.simulate` accepts a precomputed / cached
     `period_to_regime_to_V_arr` and skips `solve()` entirely, so a guard installed
-    only in `solve()` (the round-8 placement) would let the simulate gate and
-    fallback-state projector read a colliding leaf unchecked. This asserts the
-    guard is invoked on exactly that precomputed-value path — for a gated model,
-    even though `solve()` never runs. Correctness of the guard itself (that it
-    rejects a genuine collision) is pinned by the round-8 tests in
-    `test_gated_edge_arg_provenance.py`; this pins its PLACEMENT.
+    only in `solve()` would let the simulate gate and fallback-state projector
+    read a colliding leaf unchecked. This asserts the guard is invoked on exactly
+    that precomputed-value path — for a gated model, even though `solve()` never
+    runs. Correctness of the guard itself (that it rejects a genuine collision)
+    is pinned in `test_gated_edge_arg_provenance.py`; this pins its PLACEMENT.
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
@@ -1448,9 +1447,8 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
 # genuinely repeating self-loop. At `src`'s own last active period (age 1,
 # the activity boundary), the edge's target (`src` at age 2) does not exist:
 # `period_to_regime_to_V_arr[2]` (the sparse per-period solve output) has no
-# `"src"` entry. Pre-fix, `build_same_period_mapping_for_fold`'s unconditional
-# `period_solution[edge.target]` raised `KeyError: 'src'` there.
-# ----------------------------------------------------------------------------------
+# `"src"` entry, so an unconditional `period_solution[edge.target]` in
+# `build_same_period_mapping_for_fold` raises `KeyError: 'src'` there.
 
 _REPEAT_GATE_THRESHOLD = 2.0
 
@@ -1533,8 +1531,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
 
 
 def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
-    """E4 regression: a REPEATING self-loop edge must not `KeyError` at the
-    source's own activity boundary (see module-level Test 8 comment).
+    """A REPEATING self-loop edge simulates past the source's activity boundary.
 
     Hand computation. Period 1's `src` Bellman weights only the `src_exit`
     continuation (`_prob_stay(age=1)=0`, `_prob_exit_boundary(age=1)=1`):
@@ -1546,10 +1543,10 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
       (period-1 value `0.1 * 1 = 0.1`); period-0 own value
       `V_0(1) = 1 + beta * 0.1 = 1.095`.
     - wage=2: period-0 gate OPEN -> STAYS in `src` for period 1 — the
-      genuine repeat, and exactly the household that raised `KeyError`
-      pre-fix (period 1 is `src`'s own activity boundary, and period 2's
-      solution has no `src` entry). Post-fix the edge is a no-op at period 1
-      (its target is absent); the ordinary transition (100% `src_exit` at
+      genuine repeat, and the household that exercises the boundary (period 1
+      is `src`'s own activity boundary, and period 2's solution has no `src`
+      entry). The edge is a no-op at period 1, its target being absent; the
+      ordinary transition (100% `src_exit` at
       age=1) routes it to `src_exit` for period 2, with period-1 own value
       `V_1(2) = 2.95` and period-2 terminal value `0.5 * 2 = 1.0`. Period-0
       own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
@@ -1589,10 +1586,9 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
             "regime_id": jnp.array([regime_names_to_ids["src"]] * 2, dtype=jnp.int32),
         }
     )
-    # Pre-fix, this raised `KeyError: 'src'` inside
-    # `build_same_period_mapping_for_fold`, called from
-    # `substitute_gated_edge_continuations` while simulating the wage=2
-    # household's period-1 (boundary) step.
+    # An unconditional target lookup in `build_same_period_mapping_for_fold`,
+    # called from `substitute_gated_edge_continuations`, raises
+    # `KeyError: 'src'` on the wage=2 household's period-1 (boundary) step.
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,

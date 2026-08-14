@@ -16,9 +16,9 @@ after the STATE with no regime qualification
 (`_lcm.regime_building.V._get_coordinate_finder` ->
 `qname_from_tree_path((state_name, "points"))` -> `x__points`). A SOURCE
 regime that happens to declare a state named `x` therefore contributes an
-identically named param, and the pre-fix single merged dict
+identically named param, and a single merged dict
 (`{**flat_params[target_name], **flat_params[regime.name]}`, source last =
-source wins) silently handed the TARGET's interpolator the SOURCE's grid
+source wins) silently hands the TARGET's interpolator the SOURCE's grid
 points. `test_gate_reads_target_grid_points_not_the_source_s_same_named_ones`
 proves the current code reads the target's grid and — by calling
 `_call_vmapped_with_accepted_kwargs` with exactly the old merged dict, in
@@ -48,11 +48,11 @@ batched arguments ("vmap wrapped function must be passed at least one
 argument containing an array or axis_size must be specified"). `axis_size`
 is now threaded explicitly from the population size.
 
-**F4 — `_select_own_leg`'s sole-leg exemption must key on the leg's ROLE,
-not on arity.** The validator accepts a ONE-element `stakeholders` tuple, and
+**`_select_own_leg`'s sole-leg exemption keys on the leg's ROLE, not on
+arity.** The validator accepts a ONE-element `stakeholders` tuple, and
 `processing.py`'s `leg_order = [(s, s) for s in source_stakeholders]` gives
-that sole leg `source_stakeholder="f"`, not `None`. The pre-fix
-`len(legs) > 1` guard therefore let a typo'd `own_stakeholder` fall through
+that sole leg `source_stakeholder="f"`, not `None`. An arity-only
+`len(legs) > 1` guard therefore lets a typo'd `own_stakeholder` fall through
 silently on exactly the single-stakeholder COLLECTIVE source the raise
 exists to protect.
 """
@@ -104,7 +104,7 @@ _SOURCE_POINTS = (0.0, 10.0)
 # Gate threshold, in the SOURCE's namespace. V_target is 1 + 2x on the
 # target's own {0, 1} grid, so:
 #   - read on the TARGET's points, x=0.6 -> V = 2.2 > 2.0  -> gate OPEN.
-#   - read on the SOURCE's points (the pre-fix bug), x=0.6 collapses to grid
+#   - read on the SOURCE's points, x=0.6 collapses to grid
 #     coordinate 0.06 -> V = 1.12 < 2.0 -> gate CLOSED (misroute).
 _GATE_THRESHOLD = 2.0
 
@@ -266,9 +266,9 @@ def test_gate_evaluator_provenance_partitions_its_signature():
     load-bearing (see the module docstring):
 
     - DISJOINT: the target's runtime-grid helper and the source's identically
-      named param are distinct LEAVES, so neither can clobber the other. The
-      pre-fix frozensets carried the qname `x__points` in both sets, which no
-      merge order can resolve.
+      named param are distinct LEAVES, so neither can clobber the other. Two
+      frozensets of unqualified names carry the qname `x__points` in BOTH sets,
+      which no merge order can resolve.
     - COMPLETE: no argument is left for the router to guess a namespace for.
     """
     regimes, _ids, _flat_params, _solution = _solve_f2_fixture()
@@ -301,23 +301,23 @@ def test_gate_evaluator_provenance_partitions_its_signature():
 
 
 def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
-    """Fail-pre/pass-post repro (F2, the disjointness half).
+    """The gate reads the TARGET's grid points, not the source's same-named ones.
 
-    Proves (a) the pre-fix and post-fix BINDINGS genuinely disagree for this
-    fixture, in this same process and on the production evaluator — the source
-    files are never touched — and (b) the CURRENT `route_gated_edges` produces
-    the faithful (target-grid) answer.
+    A differential check: (a) the merged-dict and provenance-bound BINDINGS
+    genuinely disagree for this fixture, in this same process and on the
+    production evaluator — the source files are never touched — and (b) the
+    CURRENT `route_gated_edges` produces the faithful (target-grid) answer.
 
-    The pre-fix call cannot be replayed verbatim any more, and that is the fix
-    working rather than a gap in the proof: both the ORIGINAL merged dict and
-    the intermediate two-frozenset revision fed the target's interpolator
-    through a leaf named by the bare qname `x__points`, which the source's
-    identically named param won. That leaf no longer exists — the evaluator
-    exposes the target's points and the source's under distinct
-    namespace-qualified names, so no caller can deliver one where the other
-    belongs. What IS replayed here is the VALUE the pre-fix binding delivered:
-    the target's interpolation helper fed the source's points, which is exactly
-    what the merge produced and what `_bind_provenance_params` now cannot.
+    The merged-dict call cannot be replayed verbatim, and that is the design
+    working rather than a gap in the proof: both a merged dict and a
+    two-frozenset split feed the target's interpolator through a leaf named by
+    the bare qname `x__points`, which the source's identically named param
+    wins. That leaf does not exist here — the evaluator exposes the target's
+    points and the source's under distinct namespace-qualified names, so no
+    caller can deliver one where the other belongs. What IS replayed is the
+    VALUE such a binding delivers: the target's interpolation helper fed the
+    source's points, which is what a merge produces and what
+    `_bind_provenance_params` cannot.
     """
     regimes, regime_names_to_ids, flat_params, solution = _solve_f2_fixture()
     src = regimes["src"]
@@ -373,11 +373,12 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
             )[0]
         )
 
-    # (a) The PRE-FIX binding's VALUE: the target's interpolation helper fed the
-    # SOURCE's points, exactly what `{**flat_params[target], **flat_params[src]}`
-    # (source last) delivered, and what the intermediate revision's frozensets
-    # still delivered (their intersection on `x__points` left the merge to
-    # decide). x=0.6 on the points (0, 10) is grid coordinate 0.06, V ~ 1.12.
+    # (a) The merged-dict binding's VALUE: the target's interpolation helper fed
+    # the SOURCE's points, exactly what `{**flat_params[target],
+    # **flat_params[src]}` (source last) delivers, and what two frozensets of
+    # unqualified names also deliver (their intersection on `x__points` leaves
+    # the merge to decide). x=0.6 on the points (0, 10) is grid coordinate 0.06,
+    # V ~ 1.12.
     assert not _gate(_SOURCE_POINTS), (
         "Sanity check on the repro fixture itself: with the source's "
         "x__points=(0, 10) driving the target's interpolation the gate must "
@@ -387,7 +388,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     # identical call with the target's own points (the only change) opens it.
     assert _gate(_TARGET_POINTS)
 
-    # The post-fix, provenance-bound recipe on the SAME evaluator and the SAME
+    # The provenance-bound recipe on the SAME evaluator and the SAME
     # realized point: the target's own points win, the gate opens. Nothing is
     # merged — each leaf is looked up in exactly the one namespace that owns it.
     new_style_gate = jnp.asarray(
@@ -530,14 +531,13 @@ def _solve_f3_fixture():
 
 
 def test_stateless_gated_target_routes_without_vmap_axis_size_error():
-    """Fail-pre/pass-post repro (F3).
+    """A stateless gated target routes without a vmap axis-size error.
 
-    A stateless target's evaluator accepts no batched arg at all, so the
-    pre-fix `jax.vmap(f)(batched)` with `batched == {}` raised
-    `ValueError: vmap wrapped function must be passed at least one argument
-    containing an array or axis_size must be specified`. The routing call
-    below must simply work, and produce a per-subject gate of the right
-    length.
+    Such a target's evaluator accepts no batched arg at all, so a bare
+    `jax.vmap(f)(batched)` with `batched == {}` raises `ValueError: vmap
+    wrapped function must be passed at least one argument containing an array
+    or axis_size must be specified`. The routing call below must simply work,
+    and produce a per-subject gate of the right length.
     """
     regimes, regime_names_to_ids, flat_params, solution = _solve_f3_fixture()
     src = regimes["src"]
@@ -580,12 +580,12 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
     np.testing.assert_array_equal(np.asarray(routed_ids), [target_id] * n_subjects)
 
 
-def test_vmap_without_axis_size_is_the_pre_fix_failure_for_a_stateless_target():
-    """Proves the F3 test above is fail-pre, not just a pin.
+def test_vmap_without_axis_size_fails_for_a_stateless_target():
+    """The axis-size argument is what makes the test above pass, not luck.
 
-    Reproduces the PRE-FIX call (`jax.vmap(f)(batched)`, no `axis_size`) on
-    the SAME evaluator and the SAME empty batched kwargs, in this process —
-    the production source is never reverted.
+    Runs the bare call (`jax.vmap(f)(batched)`, no `axis_size`) on the SAME
+    evaluator and the SAME empty batched kwargs, in this process — the
+    production source is never touched.
     """
     regimes, _ids, flat_params, solution = _solve_f3_fixture()
     src = regimes["src"]
@@ -609,11 +609,11 @@ def test_vmap_without_axis_size_is_the_pre_fix_failure_for_a_stateless_target():
     def _call_one_subject(one_subject_kwargs):
         return evaluator(**one_subject_kwargs, **static)
 
-    # The pre-fix body, verbatim except for the missing `axis_size`.
+    # The same body, verbatim except for the missing `axis_size`.
     with pytest.raises(ValueError, match="at least one argument"):
         jax.vmap(_call_one_subject)({})
 
-    # And the post-fix body, on the identical inputs, does not raise.
+    # And the production body, on the identical inputs, does not raise.
     result = _call_vmapped_with_accepted_kwargs(
         evaluator,
         batched_kwargs={},
@@ -638,10 +638,11 @@ def _leg(source_stakeholder: str | None, fallback_regime: str) -> ResolvedEdgeLe
     )
 
 
-def _old_select_own_leg(legs, own_stakeholder):
-    """A local copy of the PRE-FIX guard (`len(legs) > 1`), for the
-    fail-pre proof. Never imported from production — the production
-    `_select_own_leg` is the fixed one."""
+def _arity_only_select_own_leg(legs, own_stakeholder):
+    """A local copy of the arity-only guard (`len(legs) > 1`), for contrast.
+
+    Never imported from production — the production `_select_own_leg` keys on
+    the leg's role instead."""
     if own_stakeholder is not None:
         for leg in legs:
             if leg.source_stakeholder == own_stakeholder:
@@ -665,9 +666,9 @@ def test_one_leg_collective_source_raises_on_unknown_own_stakeholder():
     with pytest.raises(ValueError, match="does not match any"):
         _select_own_leg(legs, "typo")
 
-    # The PRE-FIX guard, reproduced here: `len(legs) > 1` is False, so the
-    # typo fell through to legs[0] silently.
-    assert _old_select_own_leg(legs, "typo") is legs[0]
+    # The arity-only guard, for contrast: `len(legs) > 1` is False, so the
+    # typo falls through to legs[0] silently.
+    assert _arity_only_select_own_leg(legs, "typo") is legs[0]
 
 
 def test_one_leg_singleton_source_still_falls_back_without_raising():
@@ -692,8 +693,9 @@ def test_one_leg_collective_source_selects_the_matching_leg():
 
 
 def test_multi_leg_collective_source_unknown_own_stakeholder_still_raises():
-    """Regression pin: the multi-leg case the pre-fix guard DID cover keeps
-    raising — the fix is a widening, not a replacement."""
+    """A multi-leg collective source still raises on an unknown own_stakeholder.
+
+    The role-keyed guard widens the arity-only one; it does not replace it."""
     legs = (_leg("f", "single_f"), _leg("m", "single_m"))
     with pytest.raises(ValueError, match="does not match any"):
         _select_own_leg(legs, "typo")

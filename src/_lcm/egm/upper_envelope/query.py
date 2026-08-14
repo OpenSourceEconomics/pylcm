@@ -1751,10 +1751,9 @@ def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
     top-binade operands are the counterexample: for `H = 2**127` in float32 or
     `2**1023` in float64 — both finite normals — the lift is zero because the
     operands already exceed the target, and `_two_diff(H, -H)` returns
-    `(inf, nan)`. A finite exact envelope was then published as three NaNs
-    (round-13 audit F2).
+    `(inf, nan)`. A finite exact envelope is then published as three NaNs.
 
-    Rounds 8 to 12 guarded the same operation against UNDERFLOW and round 13
+    Guarding the same operation against UNDERFLOW alone is not enough:
     against nothing else; each repair fixed the direction its witness pointed at
     and left the mirror image open. The fix is to stop performing the operation.
 
@@ -1783,7 +1782,7 @@ def _framed_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Ar
     """`(head, tail, exponent)` with `a - b == (head + tail) * 2**exponent`.
 
     The double-double SCREEN's counterpart to `_exact_difference`, and the answer
-    to the same round-13 finding on the public path: `_candidate_terms` formed
+    to the same hazard on the public path: `_candidate_terms` formed
     its grid and value differences in the working dtype after a LIFT-ONLY shift,
     so two opposite-signed top-binade operands overflowed there exactly as they
     did in the exact kernel, and the published triple was `(NaN, NaN, NaN)`.
@@ -1839,7 +1838,7 @@ def _framed_affine(
     Round 14 gave the VALUE channel this treatment and left `policy` and
     `marginal` on `left + fraction*(right - left)` in the working dtype, where
     `fraction = ldexp(rh, t_exp - w_exp)`. Both halves of that expression lose
-    finite results (round-14 audit F2):
+    finite results:
 
     - `fraction` is materialized BEFORE it is multiplied, so it can flush to
       zero even when `fraction * (right - left)` is a finite normal. With
@@ -1899,9 +1898,9 @@ def _dyadic_product(a: _Dyadic, b: _Dyadic, split: float) -> _Dyadic:
     which retires the caveat at the top of this module for the exact path.
 
     The magnitudes ride along in the integer exponents, where nothing rounds.
-    This is what the round-12 finding asked for: the decisive product of a
-    half-minimum-normal numerator term with a half-minimum-normal denominator
-    term used to flush to zero before the exact summation ever saw it.
+    This is what the representation must deliver: otherwise the decisive
+    product of a half-minimum-normal numerator term with a half-minimum-normal
+    denominator term flushes to zero before the exact summation ever sees it.
     """
     b_parts = [_dyadic_parts(b.mantissa[..., j]) for j in range(b.mantissa.shape[-1])]
     mantissas: list[FloatND] = []
@@ -1956,10 +1955,10 @@ def _accumulator_layout(dtype: jnp.dtype) -> _AccumulatorLayout:
 
     # A difference contributes its two OPERANDS as terms (`_exact_difference`
     # performs no subtraction), so each sits in the operand's own binade — inside
-    # `[min_exponent, max_exponent]`. The wider window kept here is the round-13
-    # bound for a rounded head-plus-residual pair; it strictly CONTAINS the
+    # `[min_exponent, max_exponent]`. The wider window kept here is the bound
+    # for a rounded head-plus-residual pair; it strictly CONTAINS the
     # current one, so it stays valid, and holding it fixed keeps the layout the
-    # one the round-13 review verified directly at 2,000/2,000 sign matches. A
+    # one verified directly at 2,000/2,000 sign matches. A
     # product of two normalized mantissas puts its own residual at most
     # `2 * precision` below its head.
     difference_hi = max_exponent + 1
@@ -2123,9 +2122,10 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     # Canonical orientation. Endpoints may be stored in either order within a
     # branch; negating both numerator and denominator leaves `V` unchanged.
     #
-    # Read off the STORED endpoints, not off a leading term. Under the round-13
-    # representation the width's first term was the rounded difference, whose
-    # sign was the width's sign; it is now the frexp mantissa of `right_grid`,
+    # Read off the STORED endpoints, not off a leading term. A representation
+    # whose width carries the rounded difference as its first term has that
+    # term's sign as the width's sign; here it is the frexp mantissa of
+    # `right_grid`,
     # whose sign is that endpoint's. A comparison of two finite floats is exact
     # and needs no difference to be formed at all.
     flip = right_grid < left_grid
@@ -2170,7 +2170,7 @@ def _exact_compare(*, cols_a: FloatND, cols_b: FloatND, q: FloatND) -> FloatND:
     This is the only test that can tell a genuine tie from a strict gap finer
     than the working precision — double-double values cannot, because
     algebraically different segment parameterizations of the SAME exact value
-    need not produce the same low word (round-6 audit F2).
+    need not produce the same low word.
 
     The columns are handed over RAW. Every difference is formed on them, every
     product carries its own exponent, and the sum is accumulated in fixed point:
@@ -2233,8 +2233,7 @@ def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
     `fl((v1-v0)/(x1-x0))` re-introduces the very defect the exact value predicate
     removed one operation earlier: two strictly ordered exact slopes can share a
     single float key, and `argmax` then silently falls back to candidate order,
-    so a pure branch permutation flips the published policy and marginal
-    (round-7 audit F2).
+    so a pure branch permutation flips the published policy and marginal.
     """
     return _exact_cross_sign(
         a=_exact_slope_ratio(cols=cols_a),
@@ -2321,7 +2320,7 @@ def _exactly_maximal(
     # to zero for interior lanes whose value pair also collapsed, so two candidates
     # that are NOT tied presented as certifiably tied and `_exact_compare` — which
     # returns the correct strict sign on exactly that input — was never consulted
-    # (round-11 audit F2/RT11). "The radius came out zero" is a statement about
+    # "The radius came out zero" is a statement about
     # the arithmetic's dynamic range, not about the candidate's value.
     #
     # The consequence is the invariant the whole selection now rests on: the
@@ -2438,7 +2437,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     #
     # Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`, so it
     # needs `|a| < 2**(emax - s)` — `2**115` in float32, `2**996` in float64 —
-    # and past that the interior pair goes non-finite (round-8 audit F2). Rounds
+    # and past that the interior pair goes non-finite. Rounds
     # 9 and 10 bought that headroom by scaling the OPERANDS first: round 9 with
     # one exponent for the whole array, round 10 with one per candidate. Both are
     # lossy for the same reason — scaling `q` and `x0` before subtracting them
@@ -2446,8 +2445,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # `t = q - x0` is zero and no downstream exactness can recover it. Round 10's
     # own witness: `x0 = 1`, `q = nextafter(1)`, `x1 = 2**126`, where the
     # candidate exponent 127 makes both `x0` and `q` the same subnormal and a
-    # strictly lower constant competitor takes the value, policy and marginal
-    # (round-10 audit F2).
+    # strictly lower constant competitor takes the value, policy and marginal.
     #
     # So the differences are formed FIRST, on the raw stored operands, where
     # `_two_diff` is exact and subtraction of finite floats cannot overflow.
@@ -2467,23 +2465,23 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # times a grid difference — which this form never constructs.
     #
     # Boundedness is not the whole requirement, though, and reading it as if it
-    # were is what left the value axis unscaled through round 11 (round-11 audit
-    # F2). The value axis needs a scale for the OPPOSITE reason to the grid axis:
+    # were is what leaves the value axis unscaled. It needs a scale for the
+    # OPPOSITE reason to the grid axis:
     # not because its intermediates can grow, but because they can vanish. See
     # the value lift below.
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
     # ... and the ONE thing a shift of the OPERANDS can never deliver is safety
-    # in both directions at once, which is the round-13 finding. A difference of
+    # in both directions at once. A difference of
     # finite floats can UNDERFLOW — near the bottom of the range the gap between
     # two distinct normals is subnormal and XLA flushes it, so `q - x0` came back
-    # exactly `0.0` and the interpolant collapsed onto its left value (round-9
-    # audit MT6). Rounds 9 to 13 answered that by LIFTING, never lowering, and
-    # asserted that subtraction of finite floats cannot overflow. It can: for
+    # exactly `0.0` and the interpolant collapsed onto its left value. LIFTING
+    # and never lowering answers that end, but only by assuming subtraction of
+    # finite floats cannot overflow. It can: for
     # `H = 2**127` in float32 the operands already exceed any target, the lift is
     # zero, and `H - (-H)` is `+inf`. A finite exact envelope was published as
-    # three NaNs (round-13 audit F2, MT10: 288 of 288 generated cells).
+    # three NaNs (288 of 288 generated cells).
     #
     # No choice of shift closes both ends, because the spread the operands can
     # span is the whole format and no single frame holds it. So the difference is
@@ -2495,7 +2493,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     #
     # Each difference carries its OWN frame, so the grid axis needs no common
     # shift for `q` and the two nodes: `r = t/w` recombines them through the
-    # integer exponents, where the round-10 hazard of merging two distinct grid
+    # integer exponents, where the hazard of merging two distinct grid
     # points onto one float cannot arise because no operand is ever lowered
     # relative to another it is compared against.
     th, tl, t_frame = _framed_difference(q, left_grid)
@@ -2507,7 +2505,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # The value axis takes the same treatment, and for BOTH reasons. Downward:
     # with `v0 = tiny` and `v1 = nextafter(tiny)` the endpoint gap `d` used to
     # flush and a strictly lower branch took the policy and the marginal
-    # (round-11 audit F2, MT8). Upward: with `v0 = -H` and `v1 = H` the gap `2H`
+    # Upward: with `v0 = -H` and `v1 = H` the gap `2H`
     # is not representable at all, though every endpoint and the interpolated
     # value are. In the framed form `d` is `(1.0, 0.0)` at exponent `maxexp`, and
     # nothing overflows.
@@ -2518,7 +2516,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     dh, _, d_frame = _framed_difference(right_value, left_value)
 
     # Renormalize each head into `[0.5, 1)` before Dekker sees it, and fold the
-    # shift into the integer exponent. This is the round-8 requirement — the
+    # shift into the integer exponent. This is Dekker's own requirement — the
     # split constant `2**s + 1` needs `|a| < 2**(emax - s)` — now applied to a
     # quantity that is already O(1), so it is conditioning rather than rescue.
     t_exp = _binade_exponent(jnp.abs(th)) + t_frame
@@ -2543,9 +2541,9 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # `marginal` on `left + fraction*(right - left)` in the working dtype, so a
     # certified winner published uncertified outputs: a `fraction` that flushed
     # to zero before multiplication, and a `right - left` that overflowed on
-    # opposite-signed top-binade endpoints (round-14 audit F2, RT16 24/24 and
-    # MT11 66/66). Repairing the channel a witness names and not its siblings is
-    # exactly how the previous nine rounds each ended.
+    # opposite-signed top-binade endpoints (24/24 and 66/66 generated cells).
+    # Repairing the channel a witness names and not its siblings is how this
+    # defect class keeps coming back.
     #
     # For a BRACKETING candidate `|t| <= |w|`, so `r` is in `[0, 1]` and each
     # result is bounded by its own endpoints: scaling back out of the frame is
@@ -2605,7 +2603,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         # "One subtraction over another carries no overflow risk of its own" was
         # the same false hinge as in `_exact_difference`: with `v0 = -H`,
         # `v1 = H` the numerator alone is `+inf`, and against an equally
-        # overflowing width it becomes NaN — a key the round-13 sentinel repair
+        # overflowing width it becomes NaN — a key the sentinel repair
         # in `_right_continuous_winner` then has to demote, losing the ordering
         # rather than getting it right. Here the mantissa ratio is O(1) and the
         # magnitude rides in the integer exponent, so the key is finite whenever
@@ -2632,12 +2630,12 @@ def _right_continuous_winner(
     `_exact_slope_compare`. Ordering on the rounded key alone is unsound: two
     strictly ordered exact slopes can collapse onto one float key, and `argmax`
     then resolves by candidate order, so permuting the branches flips the
-    published policy and marginal (round-7 audit F2 — 16 of 16 generated
-    collision classes were order-dependent).
+    published policy and marginal (16 of 16 generated collision classes were
+    order-dependent).
 
     Keeping the two keys separate rather than folding them into one scalar is
     still required: an `arctan(slope)/pi + right_available` rank loses slope
-    bits for near-equal small slopes in float32 (round-4 audit F2).
+    bits for near-equal small slopes in float32.
 
     Returns the per-query right-extension flag (so the blocked scan can
     reconcile that priority across blocks) and ONE winner index.
@@ -2655,8 +2653,8 @@ def _right_continuous_winner(
     # a candidate that is not competing at all, which the loop below seeds as
     # the lead and never revisits. The published policy and marginal are then
     # whichever branch happens to sit first, so a pure branch permutation flips
-    # them while the value stays right: the round-7 F2 signature, reached
-    # through the sentinel rather than through a shared float key.
+    # them while the value stays right — the same failure as a shared float
+    # key, reached through the sentinel instead.
     #
     # Selecting the first COMPETING candidate that attains the maximum keeps the
     # documented earliest-on-tie rule and makes the sentinel unreachable as an
@@ -2678,7 +2676,7 @@ def _right_continuous_winner(
     # finite normal. `reach` is then infinite, `lead_slope - reach` is NaN,
     # every `>=` is False, and `contends` would be EMPTY: the exact loop never
     # runs and the winner is whatever `argmax` over the rounded key returned,
-    # i.e. candidate order. That is precisely the round-7 F2 failure — level
+    # i.e. candidate order. That is precisely the collision failure — level
     # tied either way, only the published policy and marginal wrong — and it is
     # reachable at `|Δvalue| / Δgrid > max_float` (probe: float32 values at
     # `2**100` over a width of `2**-60` flip policy 1.0 <-> 2.0 under a branch
@@ -2744,7 +2742,7 @@ class _BlockedCarry(NamedTuple):
     one compiled scan body; no quantity is ever recomputed in a second program
     and compared for equality (XLA is free to fuse each lowering differently at
     the bit level, so a cross-program exact-equality rendezvous would be
-    unsound — the round-5 rewrite's first blocked draft failed exactly there).
+    unsound).
     """
 
     any_bracket: BoolND
@@ -2969,8 +2967,7 @@ def _envelope_at_query_407(
     # two adjacent local floats into the same subnormal BEFORE the certified
     # comparator ever saw them. Exact arithmetic downstream cannot rebuild bits
     # that were discarded upstream, and the published value, policy and marginal
-    # all changed in response to a segment that is mathematically irrelevant
-    # (round-9 audit F2).
+    # all changed in response to a segment that is mathematically irrelevant.
     #
     # Exponent safety is therefore established PER CANDIDATE, inside
     # `_candidate_terms`, where the operands of each error-free transform are

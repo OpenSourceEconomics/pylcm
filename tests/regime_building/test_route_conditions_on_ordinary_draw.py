@@ -1,12 +1,13 @@
-"""Regression tests for F2: `route_gated_edges` must condition on the ORDINARY
-next-regime draw, not just on `subjects_in_regime`.
+"""`route_gated_edges` conditions on the ORDINARY next-regime draw, not just
+on `subjects_in_regime`.
 
-Pre-fix, `route_gated_edges` (`_lcm.simulation.gated_routing`) masked its
-`jnp.where` overrides with `subjects_in_regime` alone: for EVERY subject in
-the source regime, the row's `new_subject_regime_ids` (the ordinary,
-already-drawn next regime — `calculate_next_regime_membership`'s output) was
-force-overridden through a declared edge's gate, regardless of what that
-ordinary draw actually selected. Two concrete failure modes:
+Masking the `jnp.where` overrides in `route_gated_edges`
+(`_lcm.simulation.gated_routing`) with `subjects_in_regime` alone would, for
+EVERY subject in the source regime, force-override the row's
+`new_subject_regime_ids` (the ordinary, already-drawn next regime —
+`calculate_next_regime_membership`'s output) through a declared edge's gate,
+regardless of what that ordinary draw actually selected. Two concrete failure
+modes follow:
 
 (a) A row whose ordinary draw selected some OTHER, edge-unrelated regime is
     still routed through the edge (to the target when its gate happens to be
@@ -80,8 +81,8 @@ def _same_period_mappings_for(
     """Fold exactly like `simulate()` does before `route_gated_edges`.
 
     Returns the per-target same-period value mapping (target V / `D` /
-    reference-V arrays) `route_gated_edges` now recomputes its gate from
-    (simulate F1 fix), not a boolean gate array.
+    reference-V arrays) `route_gated_edges` recomputes its gate from, rather
+    than a boolean gate array.
     """
     base_state_action_spaces = {
         name: r.solution.state_action_space(regime_params=flat_params[name])
@@ -108,20 +109,17 @@ def _same_period_mappings_for(
 
 
 def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
-    """Repro (F2a): a row whose ordinary draw picked an edge-unrelated regime
-    (`single_m_terminal`) must stay there even though the edge's gate,
-    evaluated at the row's candidate `married_terminal` state, is OPEN.
+    """A row whose ordinary draw picked an edge-unrelated regime stays there.
 
-    Pre-fix, `route_gated_edges` masks only on `subjects_in_regime` (True for
-    both rows here), so BOTH rows get force-routed to `married_terminal`
-    (the fix's failing assertion). Post-fix, only the row whose ordinary
-    draw actually IS `married_terminal` is routed by this edge; the
-    unrelated row's draw is untouched.
+    The row drew `single_m_terminal` and must keep it even though the edge's
+    gate, evaluated at the row's candidate `married_terminal` state, is OPEN.
+    Masking only on `subjects_in_regime` (True for both rows here) would
+    force-route BOTH rows to `married_terminal`; only the row whose ordinary
+    draw actually IS `married_terminal` may be routed by this edge.
 
     Also proves the state-write conditioning: `single_f_terminal`'s (the
     edge's OWN fallback regime) state slot for the unrelated row must NOT be
-    overwritten by this edge's fallback projector either -- pre-fix it is
-    (unconditionally, for every `subjects_in_regime` row).
+    overwritten by this edge's fallback projector either.
     """
     _ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent()
@@ -176,11 +174,11 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
 
 
 def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
-    """Behavior-preservation control (EKL-shaped, prob-1 offer): a row whose
-    ordinary draw IS the edge's target routes identically pre- and post-fix
-    -- open gate -> target, closed gate -> own fallback. This is the shape
-    every existing collective-simulate test exercises, and must stay
-    byte-identical.
+    """A row whose ordinary draw IS the edge's target routes on the gate alone.
+
+    Control case with a probability-1 offer: open gate -> target, closed gate ->
+    own fallback. This is the shape every other collective-simulate test
+    exercises, and must stay byte-identical.
     """
     _ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent()
@@ -221,11 +219,9 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     np.testing.assert_array_equal(np.asarray(routed_ids), [target_id, fallback_id])
 
 
-# ------------------------------------------------------------------------------
-# Test 2: multiple gated edges from one source -- order independence. A row
-# drawn to edge B's target must not be clobbered by edge A's (unconditional,
-# pre-fix) overwrite, regardless of declaration order.
-# ------------------------------------------------------------------------------
+# Multiple gated edges from one source -- order independence. A row drawn to
+# edge B's target must not be clobbered by an unconditional overwrite from
+# edge A, regardless of declaration order.
 
 _WAGE_2 = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
@@ -405,16 +401,17 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
 
 
 def test_multiple_gated_edges_route_order_independently():
-    """Repro (F2b): declared as (target_a, target_b), edge_a's (processed
-    first) unconditional pre-fix overwrite would force EVERY subject to
-    target_a, then edge_b's unconditional overwrite would force EVERY
-    subject to target_b -- so pre-fix BOTH rows end at target_b (the LAST
-    declared edge wins), clobbering row 0's real target_a draw.
+    """Two gated edges from one source route independently of declaration order.
 
-    Post-fix: row 0 (drew target_a) stays at target_a -- edge_b's mask
-    (`ordinary_draw == target_b_id`) excludes it; row 1 (drew target_b)
-    ends at target_b. Declaring the edges in the OPPOSITE order must give
-    the identical result (order independence).
+    Declared as (target_a, target_b), an unconditional overwrite from edge_a
+    (processed first) would force EVERY subject to target_a, then edge_b's would
+    force EVERY subject to target_b -- BOTH rows ending at target_b, the LAST
+    declared edge winning and clobbering row 0's real target_a draw.
+
+    Instead row 0 (drew target_a) stays at target_a, edge_b's mask
+    (`ordinary_draw == target_b_id`) excluding it, and row 1 (drew target_b)
+    ends at target_b. Declaring the edges in the OPPOSITE order gives the
+    identical result.
     """
     routed_ids_ab, target_a_id, target_b_id = _route_dual_edge(
         edge_order=("target_a", "target_b")

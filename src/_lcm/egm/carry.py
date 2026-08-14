@@ -78,7 +78,7 @@ class EGMCarry:
     re-inverting `marginal_utility`: the marginal carries the budget's
     cash-on-hand slope in liquid (`marginal = (d coh/d liquid) * u'(c)`), so
     inverting it recovers `c` only when that slope is unit — carrying the
-    exact policy is correct for any affine budget slope (round-3 audit F2).
+    exact policy is correct for any affine budget slope.
     `None` for every other carry (cross-period continuations, discrete-branch
     or jump-schedule rows), whose downstream never reaches that replay.
     """

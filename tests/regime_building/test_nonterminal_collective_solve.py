@@ -1,4 +1,4 @@
-"""Integration tests for the NON-terminal collective-regime (E1) solve (slice 2).
+"""Integration tests for the NON-terminal collective-regime solve (slice 2).
 
 Extends the slice-1b terminal machinery with per-stakeholder continuation
 values: a non-terminal `Regime(stakeholders=("f", "m"))` computes
@@ -322,7 +322,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
 
 
 def test_collective_model_simulates_end_to_end_via_public_model_api():
-    """Simulation of a collective regime is no longer a raising stub (E4, slice 6).
+    """A collective regime simulates end to end through the public model API.
 
     The full recomputed-argmax mechanics (both stakeholders tracked, values
     matching the hand computation above) are covered in depth by
@@ -356,7 +356,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
 
 
 def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
-    """Routing a collective regime toward a singleton target is slice 4 (E3')."""
+    """Routing a collective regime toward a singleton target is slice 4."""
 
     def _utility_single(wage: ContinuousState) -> FloatND:
         return wage

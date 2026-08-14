@@ -9,13 +9,13 @@ poisons the household scalarization, the argmax comparison, or a weighted
 average — even though the zero-weight term should contribute exactly nothing.
 
 These tests target `_lcm.regime_building.zero_safe` (the centralized helper)
-and its call sites in `_lcm.regime_building.collective` (F4) directly, plus
+and its call sites in `_lcm.regime_building.collective` directly, plus
 the collective-regime construction validation in
-`_lcm.user_regime_validation` (J1). Before the fix, every test in this file
-that exercises an on-path `-inf` next to a zero weight either raises (a bare
-`nan` propagating into a boolean comparison silently returns `False`
+`_lcm.user_regime_validation`. Without the zero-safe arithmetic, every test in
+this file that exercises an on-path `-inf` next to a zero weight either raises
+(a bare `nan` propagating into a boolean comparison silently returns `False`
 everywhere, which here manifests as a WRONG argmax, not an exception) or
-asserts a value that is `nan` pre-fix.
+asserts a value that comes out `nan`.
 """
 
 import contextlib
@@ -56,12 +56,10 @@ from lcm.typing import DiscreteAction, FloatND, ScalarInt
 # (`where(w==0, 0, w*v)`). Both neutralize a zero-weight `+-inf`, but only the
 # value-masking form leaves the multiply FMA-contractible into the downstream
 # reduction, so the all-positive-weight path is BIT-IDENTICAL to the naive
-# `jnp.average` / raw corner sum. The pre-fix product-masking form drifts (up to
-# 6 ULP measured), enough to reverse a non-tied action or an IR/dissolution flag.
-# `_old_weighted_average*` replay that pre-fix recipe in-process so each
-# bit-identity test can PROVE it would have failed against the old code without
-# reverting `src/`.
-# ----------------------------------------------------------------------------------
+# `jnp.average` / raw corner sum. The product-masking form drifts (up to 6 ULP
+# measured), enough to reverse a non-tied action or an IR/dissolution flag.
+# `_product_masked_average*` run that recipe in-process so each bit-identity
+# test can PROVE the difference is live on its fixture, without touching `src/`.
 
 
 @contextlib.contextmanager
@@ -84,13 +82,13 @@ def _bits(x: object) -> object:
     return arr.view(view)
 
 
-def _old_weighted_average(a: FloatND, w: FloatND) -> FloatND:
-    """The PRE-FIX recipe: mask the PRODUCT after the multiply (blocks FMA fusion)."""
+def _product_masked_average(a: FloatND, w: FloatND) -> FloatND:
+    """Mask the PRODUCT after the multiply, which blocks FMA fusion."""
     return jnp.sum(jnp.where(w == 0, jnp.zeros((), a.dtype), w * a)) / jnp.sum(w)
 
 
-def _old_weighted_average_axis(a: FloatND, w: FloatND) -> FloatND:
-    """Pre-fix product-masking recipe, reduced along `axis=1` (per row)."""
+def _product_masked_average_axis(a: FloatND, w: FloatND) -> FloatND:
+    """Product-masking recipe, reduced along `axis=1` (per row)."""
     w2 = jnp.reshape(w, (1, -1))
     numerator = jnp.sum(jnp.where(w2 == 0, jnp.zeros((), a.dtype), w2 * a), axis=1)
     return numerator / jnp.sum(w2, axis=1)
@@ -214,18 +212,15 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
 ):
     """The all-positive path is now BIT-IDENTICAL to `jnp.average`, not within a ULP.
 
-    This replaces `test_...within_one_ulp...`, whose `<= 2` assertion encoded the
-    now-retracted drift claim. On the reviewer-supplied counterexample both weights
-    are strictly positive, so the zero guard never fires. Pre-fix (product masking)
-    the guarded path rounded twice and drifted from `jnp.average`; post-fix (value
-    masking) the multiply stays FMA-contractible and the result matches bit-for-bit.
+    On this counterexample both weights are strictly positive, so the zero guard
+    never fires. Product masking would round twice and drift from `jnp.average`;
+    value masking keeps the multiply FMA-contractible and the result matches
+    bit-for-bit.
 
-    Fail-pre/pass-post is PROVEN in-process (no `src/` revert): the `guarded ==
-    naive` assertion itself would have failed against the pre-fix code in float32,
-    and we additionally replay the OLD product-masking recipe and show IT drifts
-    while the real `zero_safe_average` does not. In float64 this fixture happens to
-    round identically under both forms, so there the bit-identity is a regression
-    pin rather than a fail-pre proof (noted, not forced).
+    The difference is shown live in-process: the product-masking recipe is run
+    alongside and shown to drift where the real `zero_safe_average` does not. In
+    float64 this fixture happens to round identically under both forms, so there
+    the bit-identity is a regression pin rather than a discriminating check.
     """
     with _x64(enabled=use_x64):
         dtype = jnp.float64 if use_x64 else jnp.float32
@@ -239,7 +234,7 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
         guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
             values, weights
         )
-        old = jax.jit(_old_weighted_average)(values, weights)
+        old = jax.jit(_product_masked_average)(values, weights)
 
         naive_bits = _bits(naive)
         guarded_bits = _bits(guarded)
@@ -252,11 +247,11 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
         )
 
         if dtype == jnp.float32:
-            # Fail-pre proof: the pre-fix product-masking recipe (what
-            # zero_safe_average USED to compute) drifts from jnp.average here,
-            # so the `guarded == naive` assertion above would have FAILED pre-fix.
+            # Guard the guard: the product-masking recipe drifts from
+            # jnp.average here, so the `guarded == naive` assertion above is
+            # discriminating rather than vacuous.
             assert old_bits != naive_bits, (
-                "the OLD product-masking recipe no longer drifts from jnp.average "
+                "the product-masking recipe no longer drifts from jnp.average "
                 "on this fixture -- it then fails to exercise the FMA divergence "
                 "and the fail-pre proof is vacuous"
             )
@@ -285,12 +280,12 @@ def test_zero_safe_average_is_exact_where_ties_actually_arise():
 def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path():
     """The axis reduction is now BYTE-IDENTICAL to `jnp.average` on the positive path.
 
-    Was documented "mathematically equal, not byte-identical" -- that described the
-    pre-fix product-masking form. With the value-masking fix each per-row weighted
-    sum stays FMA-contractible, so it matches `jnp.average` bit-for-bit. Exercised on
-    a cancellation-prone float32 fixture whose first row is the F1 counterexample, so
-    the FMA actually bites: the OLD product-masking recipe drifts on that row
-    (fail-pre proof) while the real axis reduction is exact.
+    "Mathematically equal, not byte-identical" describes the product-masking
+    form. Under value masking each per-row weighted sum stays FMA-contractible,
+    so it matches `jnp.average` bit-for-bit. Exercised on a cancellation-prone
+    float32 fixture whose first row is the drift counterexample, so the FMA
+    actually bites: the product-masking recipe drifts on that row while the real
+    axis reduction is exact.
     """
     values = jnp.array(
         [[-3.9480734, 2.623802], [5.5, -1.25], [0.38403073, -7.1]],
@@ -304,11 +299,11 @@ def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path
         lambda a, w: zero_safe_average(a, axis=1, weights=w, shifts=None)
     )(values, weights)
     naive = jax.jit(lambda a, w: jnp.average(a, axis=1, weights=w))(values, weights)
-    old = jax.jit(_old_weighted_average_axis)(values, weights)
+    old = jax.jit(_product_masked_average_axis)(values, weights)
 
     # Byte-identical on the positive path.
     np.testing.assert_array_equal(_bits(guarded), _bits(naive))
-    # Fail-pre: the pre-fix product-masking recipe drifts on at least the F1 row.
+    # The product-masking recipe drifts on at least the counterexample row.
     assert int(np.sum(_bits(old) != _bits(naive))) > 0
 
 
@@ -326,8 +321,8 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     and probabilities `[0.38403073, 0.61596930]` (both strictly positive, sum
     exactly 1 in float32), the exact stochastic value is ~0.0999998 -- just BELOW
     a deterministic alternative of 0.1, so the household picks the alternative.
-    `jnp.average` and the fixed `zero_safe_average` both land below 0.1 (same
-    choice). The pre-fix product-masking recipe rounds up to ~0.1000000, ABOVE
+    `jnp.average` and `zero_safe_average` both land below 0.1 (same choice).
+    The product-masking recipe rounds up to ~0.1000000, ABOVE
     0.1, and would pick the stochastic action instead -- a reversed, non-tied
     choice. No exact tie is required; this is the decision-relevance of the drift.
     """
@@ -344,7 +339,7 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
         nodes, probabilities
     )
-    old = jax.jit(_old_weighted_average)(nodes, probabilities)
+    old = jax.jit(_product_masked_average)(nodes, probabilities)
 
     naive_below = bool(naive < alternative)
     guarded_below = bool(guarded < alternative)
@@ -353,20 +348,20 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     # Fixed function picks the SAME side of the alternative as jnp.average.
     assert guarded_below == naive_below
     assert naive_below is True  # exact value is below 0.1 -> choose alternative
-    # Fail-pre proof: the pre-fix recipe lands on the OPPOSITE side (>= 0.1),
-    # i.e. it would reverse the action to the stochastic node.
+    # The product-masking recipe lands on the OPPOSITE side (>= 0.1), i.e. it
+    # would reverse the action to the stochastic node.
     assert old_below is False
     assert guarded_below != old_below
 
 
-def _old_left_fold_mixture(terms: list[FloatND]) -> FloatND:
-    """The PRE-round-8 recipe: a Python left-fold over already-multiplied terms.
+def _product_left_fold_mixture(terms: list[FloatND]) -> FloatND:
+    """A Python left-fold over already-multiplied terms.
 
-    `Q_and_F` used to accumulate `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`.
-    `_sum_regime_mixture` replaced it with a deferred vectorised zero-safe contraction
-    over the UNMULTIPLIED operands (round-8). This replays the old order in-process so
-    the regression can PROVE the pre-round-8 recipe lands on the wrong knife-edge side
-    without reverting `src/`.
+    The accumulating form `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`,
+    against which `_sum_regime_mixture` is a deferred vectorised zero-safe
+    contraction over the UNMULTIPLIED operands. Run in-process so the regression
+    can show the left fold lands on the wrong knife-edge side, without touching
+    `src/`.
     """
     total = jnp.zeros_like(terms[0])
     for term in terms:
@@ -400,16 +395,15 @@ def test_sum_regime_mixture_is_zero_mass_safe():
 
 
 def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not():
-    """F1 (round-8): the deferred vectorised reduction crosses to the exact-policy side.
+    """The deferred vectorised reduction crosses to the exact-policy side.
 
-    On the round-7 pinned 5-target float64 fixture the exact mixture is bits ...851,
-    above a representable knife-edge alternative at bits ...843. `_sum_regime_mixture`
-    (stack the UNMULTIPLIED operands, one zero-safe contraction) lands on the exact side
-    (> alternative), while the pre-round-8 left fold lands at bits ...842, BELOW the
-    alternative -- the opposite action. Proves the round-7 "no source restructuring
-    fixes this" disposition was wrong. (Stacking the already-MULTIPLIED products, by
-    contrast, reproduces the left fold's wrong-side bits -- the operand-vs-product
-    distinction is the point.)
+    On a pinned 5-target float64 fixture the exact mixture is bits ...851, above a
+    representable knife-edge alternative at bits ...843. `_sum_regime_mixture`
+    (stack the UNMULTIPLIED operands, one zero-safe contraction) lands on the
+    exact side (> alternative), while the left fold lands at bits ...842, BELOW
+    the alternative -- the opposite action. Stacking the already-MULTIPLIED
+    products, by contrast, reproduces the left fold's wrong-side bits: the
+    operand-vs-product distinction is the point.
     """
     vals = [
         0.812941999835589,
@@ -433,7 +427,7 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
         deferred = float(jax.jit(lambda w, v: _deferred_mixture(w, v, order))(w, v))
         left_fold = float(
             jax.jit(
-                lambda w, v: _old_left_fold_mixture(
+                lambda w, v: _product_left_fold_mixture(
                     [
                         zero_safe_weighted_term(
                             weight=w[i], value=v[i], subnormal_is_accounted_for=False
@@ -443,16 +437,16 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
                 )
             )(w, v)
         )
-    assert deferred > alternative  # post-fix: exact-policy side
-    assert left_fold < alternative  # fail-pre: wrong side
+    assert deferred > alternative  # exact-policy side
+    assert left_fold < alternative  # wrong side
     assert (deferred > alternative) != (left_fold > alternative)
 
 
 def test_sum_regime_mixture_is_independent_of_target_declaration_order():
-    """F2 (round-8): the sorted reduction is invariant to target permutation.
+    """The sorted reduction is invariant to target permutation.
 
-    The left fold changed a pinned-fixture policy under a mere target permutation on the
-    same backend. `_sum_regime_mixture` sorts by target name before stacking, so any
+    A left fold changes a pinned-fixture policy under a mere target permutation on
+    the same backend. `_sum_regime_mixture` sorts by target name before stacking, so any
     permutation of the same (name, prob, value) terms yields bit-identical results.
     """
     vals = [0.81, 1.14, -0.58, -2.64, 1.28]
@@ -471,7 +465,7 @@ def test_sum_regime_mixture_is_independent_of_target_declaration_order():
 
 
 def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ulp():
-    """F2 (round-8): the error bound is summand-scale, NOT a fixed few result-ULP.
+    """The error bound is summand-scale, NOT a fixed few result-ULP.
 
     Under cancellation (sum|p_r*V_r| >> |sum p_r*V_r|) the reduction is hundreds of
     result-space ULP from exact, so a fixed few-ULP contract is false. The valid bound
@@ -508,13 +502,13 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
 
 
 def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
-    """F3 (round-9): at the COLLECTIVE site each per-target continuation is a
-    STAKEHOLDER vector, so stacking gives values (K, S) while the scalar regime
-    probabilities stack to (K,). The reduction must weight the TARGET axis (axis 0)
+    """At the COLLECTIVE site each per-target continuation is a STAKEHOLDER vector,
+    so stacking gives values (K, S) while the scalar regime probabilities stack to
+    (K,). The reduction must weight the TARGET axis (axis 0)
     and hold the weight constant across the trailing stakeholder axis. Without the
     rank-align, trailing-axis broadcasting weights the stakeholder axis instead:
-    K=S=2 with p=[0.25, 0.75] and values=[[0, 4], [4, 0]] returns [1, 3] (fail-pre)
-    rather than the correct [3, 1] -- silently reversing the household action.
+    K=S=2 with p=[0.25, 0.75] and values=[[0, 4], [4, 0]] returns [1, 3] rather
+    than the correct [3, 1] -- silently reversing the household action.
     """
     terms = [
         ("r0", jnp.asarray(0.25), jnp.asarray([0.0, 4.0])),
@@ -525,9 +519,9 @@ def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
 
 
 def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
-    """F3 (round-9): a zero-probability target with an admissible -inf stakeholder
-    vector must contribute exactly 0 across ALL stakeholders, not leak -inf through
-    a misaligned broadcast (fail-pre returned [-inf, 0])."""
+    """A zero-probability target with an admissible -inf stakeholder vector
+    contributes exactly 0 across ALL stakeholders, and does not leak -inf through
+    a misaligned broadcast (which would return [-inf, 0])."""
     terms = [
         ("r0", jnp.asarray(1.0), jnp.asarray([1.0, 2.0])),
         ("r1", jnp.asarray(0.0), jnp.asarray([-jnp.inf, -jnp.inf])),
@@ -538,8 +532,8 @@ def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
 
 
 def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_counts():
-    """F3 (round-9): K != S must not raise -- the misaligned trailing-axis broadcast
-    crashed with a ValueError when K=3, S=2."""
+    """K != S must not raise -- a misaligned trailing-axis broadcast crashes with
+    a ValueError when K=3, S=2."""
     terms = [
         ("r0", jnp.asarray(0.2), jnp.asarray([1.0, 1.0])),
         ("r1", jnp.asarray(0.3), jnp.asarray([2.0, 2.0])),
@@ -549,14 +543,14 @@ def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_cou
     assert [float(x) for x in out] == pytest.approx([2.3, 2.3])
 
 
-# The round-10 counterexample (external re-review): a valid strictly-positive
-# 5-target float64 mixture (probs sum to exactly 1.0) on which the round-8 name-sort
-# made the float64 bits — and a NON-TIED household argmax — a function of the
-# arbitrary regime LABELS. A pure alpha-renaming (same probabilities, same
-# continuations, only the dict keys change) reorders the non-associative name-sorted
+# The alpha-renaming counterexample: a valid strictly-positive 5-target float64
+# mixture (probs sum to exactly 1.0) on which a name-sort makes the float64 bits
+# — and a NON-TIED household argmax — a function of the arbitrary regime LABELS. A
+# pure alpha-renaming (same probabilities, same continuations, only the dict keys
+# change) reorders the non-associative name-sorted
 # sum: across the 120 name bijections the name-sort produces 37 distinct outputs,
 # 20 of which choose the action OPPOSITE to exact arithmetic. `_sum_regime_mixture`
-# now reduces the per-target contributions in VALUE order, provably invariant to
+# reduces the per-target contributions in VALUE order, provably invariant to
 # alpha-renaming. See `_sum_regime_mixture`.
 _ALPHA_RENAME_PROBS = [
     0.17226549255821572,
@@ -577,12 +571,12 @@ _ALPHA_RENAME_VALS = [
 _ALPHA_RENAME_COMPETING = -0.007134269741330662
 
 
-def _old_name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
-    """PRE-round-10 recipe: sort `(name, p, V)` by NAME, stack, one zero-safe sum.
+def _name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+    """Sort `(name, p, V)` by NAME, stack, one zero-safe sum.
 
-    Replays the label-dependent reduction in-process so the regression can PROVE the
-    name-sort flips the bits (and a non-tied argmax) under a pure alpha-renaming
-    without reverting `src/`. The ONLY difference from `_sum_regime_mixture` is the
+    The label-dependent reduction, run in-process so the regression can show the
+    name-sort flips the bits (and a non-tied argmax) under a pure alpha-renaming,
+    without touching `src/`. The ONLY difference from `_sum_regime_mixture` is the
     missing value-sort of the zero-safe contributions before `jnp.sum`.
     """
     order = sorted(range(len(names)), key=lambda i: names[i])
@@ -596,7 +590,7 @@ def _old_name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatN
     )
 
 
-def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+def _value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
     """Drive `_sum_regime_mixture` (the code under test) under an alpha-renaming.
 
     Each economic term `i` keeps its own `(prob, value)`; only its NAME (`names[i]`)
@@ -609,8 +603,8 @@ def _new_value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> Float
 def _alpha_rename_mixture(
     reducer: Callable[[list[str], FloatND, FloatND], FloatND], names: list[str]
 ) -> FloatND:
-    """Broadcast the round-10 mixture over an 8x8 carrier through two nested `vmap`s
-    inside `jit` — exactly the collective site's structure — and reduce it with
+    """Broadcast the alpha-renaming mixture over an 8x8 carrier through two nested
+    `vmap`s inside `jit` — exactly the collective site's structure — and reduce it with
     `reducer` under the alpha-renaming `names`, returning one carrier cell."""
 
     def core(w: FloatND, v: FloatND) -> FloatND:
@@ -624,18 +618,18 @@ def _alpha_rename_mixture(
 
 
 def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
-    """F1 (round-10): the value-ordered reduction is BIT-invariant to a pure
-    alpha-renaming of the regimes, where the round-8 name-sort was not.
+    """The value-ordered reduction is BIT-invariant to a pure alpha-renaming of
+    the regimes, where a name-sort is not.
 
     A pure alpha-renaming is economically inert (same probabilities, same
     continuations, only the dict keys change), so the household argmax must not
-    depend on it. `_sum_regime_mixture` now reduces the per-target contributions in
+    depend on it. `_sum_regime_mixture` reduces the per-target contributions in
     VALUE order (`jnp.sort` of the zero-safe `p_r*V_r` along the target axis before
     `jnp.sum`), which is a deterministic function of the contribution MULTISET and
     hence provably invariant to relabeling. This asserts bit-identity AND a single
-    policy across ALL 120 name bijections, and PROVES the pre-round-10 name-sort
-    (`_old_name_sorted_mixture`, replayed in-process) produced many distinct bit
-    patterns AND reversed the non-tied argmax.
+    policy across ALL 120 name bijections, and shows the name-sort
+    (`_name_sorted_mixture`, run in-process) produces many distinct bit patterns
+    AND reverses the non-tied argmax.
     """
     exact = float(
         sum(
@@ -652,8 +646,8 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
     with _x64(enabled=True):
         for perm in itertools.permutations(range(5)):
             names = [str(p) for p in perm]
-            new_val = _alpha_rename_mixture(_new_value_sorted_mixture, names)
-            old_val = _alpha_rename_mixture(_old_name_sorted_mixture, names)
+            new_val = _alpha_rename_mixture(_value_sorted_mixture, names)
+            old_val = _alpha_rename_mixture(_name_sorted_mixture, names)
             new_bits.add(_bits(new_val))
             new_policy.add(bool(float(new_val) > _ALPHA_RENAME_COMPETING))
             old_bits.add(_bits(old_val))
@@ -670,15 +664,15 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
 
 
 def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
-    """F2: the real interpolation path is bit-exact vs the raw `w*v` corner sum.
+    """The real interpolation path is bit-exact vs the raw `w*v` corner sum.
 
     `map_coordinates` weights each corner via `zero_safe_weighted_term`; off-grid,
     with both corner weights strictly positive, that must be bit-identical to the
-    naive `w*v` corner sum (same internals, plain term). The pre-fix
-    product-masking corner term drifts on a nonzero fraction of coordinates
-    (~14-40% here, exact count platform/jax-version dependent), enough to reverse
-    an IR / dissolution comparison. Asserted as `== 0` for the real path and `> 0`
-    for the old path rather than a hard-coded count.
+    naive `w*v` corner sum (same internals, plain term). A product-masking corner
+    term drifts on a nonzero fraction of coordinates (~14-40% here, exact count
+    platform/jax-version dependent), enough to reverse an IR / dissolution
+    comparison. Asserted as `== 0` for the real path and `> 0` for the
+    product-masking path rather than a hard-coded count.
     """
     array = jnp.array([-3.9480734, 2.623802], dtype=jnp.float32)
     rng = np.random.default_rng(0)
@@ -708,10 +702,10 @@ def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
         f"map_coordinates drifted from the raw w*v corner sum on {real_diffs} "
         f"of {coordinates.size} off-grid coordinates"
     )
-    # Fail-pre proof: the pre-fix product-masking corner term drifts on some.
+    # Guard the guard: the product-masking corner term drifts on some.
     old_diffs = int(np.sum(old_bits != reference_bits))
     assert old_diffs > 0, (
-        "the OLD product-masking corner term no longer drifts from the naive "
+        "the product-masking corner term no longer drifts from the naive "
         "corner sum -- the fixture stopped exercising the FMA divergence"
     )
 
@@ -738,7 +732,7 @@ def test_weighted_sum_zero_weight_minus_inf_stakeholder_stays_finite():
 def test_zero_pareto_weight_with_minus_inf_does_not_flip_the_argmax():
     """A zero-weighted stakeholder's `-inf` must not corrupt the household argmax.
 
-    Pre-fix repro: `objective = 0.0 * Q_f + 1.0 * Q_m`. At action 0, where
+    Without the guard, `objective = 0.0 * Q_f + 1.0 * Q_m`. At action 0, where
     `Q_f = -inf`, `0.0 * -inf = nan`, so `objective[0] = nan`. `jnp.maximum`
     propagates `nan`, so the masked max over all three (feasible) actions
     becomes `nan` too; `a == nan` is `False` everywhere, so `argmax` of an

@@ -29,11 +29,11 @@ specialization, hide a builder in a stakeholder-only branch), and every one must
 rejected. One reproduces the defect actually found.
 
 Checked against the REAL history, not only against synthetic mutations: at `f0f7173`
-(the round-2 baseline) `get_Q_and_F_collective` exposed NO phase argument and the
-dispatch passed none. The twin-pair rule rejects that tree, and accepts the head.
+`get_Q_and_F_collective` exposed NO phase argument and the dispatch passed none. The
+twin-pair rule rejects that tree, and accepts the head.
 
-Adopted from the round-3 external audit's MT1 mutation suite (hardening note H1); kept
-in the suite so it stays enforced, and pruned in step with the roles it tracks.
+Kept in the suite so the rule stays enforced, and pruned in step with the roles it
+tracks.
 """
 
 import ast

@@ -795,7 +795,7 @@ class Regime:
     stakeholders: tuple[str, ...] | None = None
     """Ordered stakeholder names for a collective regime, or `None` (singleton).
 
-    COLLECTIVE-REGIMES (E1). When set, the regime's value-function array carries a
+    When set, the regime's value-function array carries a
     trailing length-`len(stakeholders)` axis: the backward-induction V topology
     appends it so the zero template and the roll match the collective kernel's
     stakeholder-valued output.
@@ -804,7 +804,7 @@ class Regime:
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
 
-    COLLECTIVE-REGIMES (E2). Non-empty only for a collective regime declaring
+    Non-empty only for a collective regime declaring
     `same_period_refs`. The backward-induction loop orders each period's active
     regimes topologically by these edges (references solved first) and passes
     the referenced regimes' freshly solved V arrays into this regime's kernel
@@ -812,31 +812,31 @@ class Regime:
     """
 
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
-    """This regime's gated edges keyed by TARGET regime name, or empty (E3').
+    """This regime's gated edges keyed by TARGET regime name, or empty.
 
-    COLLECTIVE-REGIMES (E3'). Non-empty only for a source regime declaring
+    Non-empty only for a source regime declaring
     `gated_edges`: each entry folds a gated continuation object ``Wbar`` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
     """
 
     gated_edge_folds: MappingProxyType[RegimeName, Callable] = MappingProxyType({})
-    """Compiled ``Wbar`` producers per gated-edge target regime, or empty (E3').
+    """Compiled ``Wbar`` producers per gated-edge target regime, or empty.
 
     Built once at model processing (a second pass, once every regime's grid and
     functions are known); the backward-induction loop evaluates each at the end
     of the period the target was solved in, storing ``Wbar`` in the rolled edge
-    continuation mapping this regime's kernel reads. Forward simulation (E4)
+    continuation mapping this regime's kernel reads. Forward simulation
     evaluates the same fold once per period from the solved solution and
     substitutes ``Wbar`` into the source's own continuation. Simulated regime
-    ROUTING no longer reads anything off this fold (simulate F1 fix) — see
+    ROUTING reads nothing off this fold — see
     `gated_edge_simulate_gate_evaluators` instead.
     """
 
     gated_edge_leg_projectors: MappingProxyType[RegimeName, tuple[Callable, ...]] = (
         MappingProxyType({})
     )
-    """Per-leg FALLBACK state projectors per gated-edge target regime (E4).
+    """Per-leg FALLBACK state projectors per gated-edge target regime.
 
     One callable per `ResolvedGatedEdge.legs` entry (same order), mapping a
     target-grid-coordinate point to the leg's fallback regime's own state
@@ -849,10 +849,9 @@ class Regime:
     gated_edge_simulate_gate_evaluators: MappingProxyType[RegimeName, Callable] = (
         MappingProxyType({})
     )
-    """Per gated-edge target regime, the SIMULATE-side gate evaluator (E4).
+    """Per gated-edge target regime, the SIMULATE-side gate evaluator.
 
-    COLLECTIVE-REGIMES (E4, simulate F1 fix). Built by
-    `get_edge_simulate_gate_evaluator`
+    Built by `get_edge_simulate_gate_evaluator`
     (`_lcm.regime_building.gated_edges`): recomputes the gate PREDICATE at a
     realized (off-grid or on-grid) candidate target-state point by
     interpolating its VALUE operands (the target's own value components,
@@ -1007,7 +1006,7 @@ class PeriodRegimeSimulationData:
     """Value function array for all subjects at this period.
 
     Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
-    n_stakeholders)` for a collective regime (E4) — each stakeholder's own
+    n_stakeholders)` for a collective regime — each stakeholder's own
     value at the household's shared argmax, mirroring the solve-side V's
     trailing stakeholder axis.
 

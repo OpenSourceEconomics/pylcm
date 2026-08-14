@@ -106,11 +106,11 @@ def test_values_are_numerically_equal_to_the_unrestricted_mask(accounted):
 def test_the_equality_above_is_numerical_and_not_bitwise_at_signed_zero(accounted):
     """Pin the ONE case where the two forms differ in bits: `+0` weight, negative value.
 
-    This test exists because the assertion above was originally named "bit_identical"
-    -- and could never have checked that, since `jnp.array_equal` treats `+0.0 == -0.0`
-    as True. An outside review found the gap (round-3 audit H2). The restricted mask no
-    longer fires at a finite zero-weight node, so the product carries the sign of the
-    value: `-0.0` where the old form gave `+0.0`.
+    The two forms are numerically equal but not bit-identical, and no check
+    written with `jnp.array_equal` can see the difference, since it treats
+    `+0.0 == -0.0` as True. The restricted mask does not fire at a finite
+    zero-weight node, so the product carries the sign of the value: `-0.0`
+    where an unrestricted mask gives `+0.0`.
 
     Nothing downstream can observe it -- equal by comparison, same derivative, and any
     reduction consuming the term is byte-for-byte unchanged -- but the DOCUMENTATION now

@@ -321,14 +321,13 @@ def _reorder_columns(
 ) -> pd.DataFrame:
     """Reorder columns: id, period, regime_name, value, states, actions, rest.
 
-    COLLECTIVE-REGIMES (F6 guard). `base`'s canonical columns are built from
-    the ones ACTUALLY present in `df`, not assumed unconditionally: a
-    scalar `value` column exists only when at least one populated regime is
-    a SINGLETON (`_process_regime` never writes one for an all-collective
-    result — `_split_stakeholder_value` pops `"value"` and replaces it with
-    `value_<stakeholder>` columns instead). Unconditionally including
-    `"value"` here raised `KeyError: ['value'] not in index` on `df[...]`
-    when every populated regime was collective. `value_<stakeholder>`
+    `base`'s canonical columns are built from the ones ACTUALLY present in
+    `df`, not assumed unconditionally: a scalar `value` column exists only
+    when at least one populated regime is a SINGLETON (`_process_regime`
+    never writes one for an all-collective result — `_split_stakeholder_value`
+    pops `"value"` and replaces it with `value_<stakeholder>` columns
+    instead), so naming `"value"` unconditionally would index a column that
+    an all-collective result does not have. `value_<stakeholder>`
     columns are placed deterministically right after `base` — after
     `"value"` when it is present, else after `"regime_name"` (`base`'s last
     entry either way) — instead of drifting to the end with the unordered

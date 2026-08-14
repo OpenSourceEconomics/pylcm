@@ -1,10 +1,10 @@
-"""Unit tests for the collective-regime (E1) value readout.
+"""Unit tests for the collective-regime value readout.
 
 The readout is the mathematical heart of the "collective regimes" extension: given
 per-stakeholder action-value arrays and a feasibility mask, choose the action that
 maximizes the household scalarization Σ_s λ_s Q^s over the feasible set, then read
 off each stakeholder's OWN Q at that common argmax (eqs. 10-12 of Eckstein-Keane-
-Lifshitz 2019). See `pylcm-extension-collective-regimes.md` §2 (E1).
+Lifshitz 2019). See `pylcm-extension-collective-regimes.md` §2.
 """
 
 import itertools

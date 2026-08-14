@@ -409,7 +409,7 @@ def process_regimes(
         }
     )
 
-    # fold-review F2 (folded slice): regimes whose EVERY state is a folded IID
+    # Regimes whose EVERY state is a folded IID
     # process. Their stored V has all state axes integrated out
     # (`_get_regime_V_shapes_and_shardings`), so V is a scalar (per any trailing
     # stakeholder axis). Such a regime reached ONLY via a regime transition has
@@ -426,7 +426,7 @@ def process_regimes(
         == state_names
     )
 
-    # COLLECTIVE-REGIMES (E2): same-period reference declarations are a
+    # Same-period reference declarations are a
     # cross-regime contract — validate it (existence, stakeholder layout,
     # projection coverage, co-activity) and reject reference cycles before any
     # kernel is built.
@@ -437,7 +437,7 @@ def process_regimes(
     )
     _fail_if_same_period_ref_cycle(user_regimes=user_regimes)
 
-    # COLLECTIVE-REGIMES (E3'): gated-edge declarations are a cross-regime
+    # Gated-edge declarations are a cross-regime
     # contract — validate endpoints, stakeholder layout, and projection coverage
     # before any kernel is built.
     _fail_if_gated_edges_invalid(
@@ -522,13 +522,13 @@ def process_regimes(
         regime_params_template = regime_to_params_template[regime_name]
         granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
-        # COLLECTIVE-REGIMES (E1): resolve the household Pareto weights once (equal
+        # Resolve the household Pareto weights once (equal
         # weights when unspecified) and thread the stakeholder names / weights into
         # both phase builds. `None` for the singleton default, so the existing path
         # is byte-identical.
         stakeholders = user_regime.stakeholders
         weights = _resolve_stakeholder_weights(user_regime)
-        # COLLECTIVE-REGIMES (E2): the (deduplicated, order-preserving) regimes
+        # The (deduplicated, order-preserving) regimes
         # whose same-period V this regime reads; drives the within-period
         # topological solve order and the kernel's same-period V threading.
         same_period_ref_regimes = tuple(
@@ -643,7 +643,7 @@ def process_regimes(
 
     _fail_if_folded_state_persists(canonical_regimes=canonical_regimes)
 
-    # COLLECTIVE-REGIMES (E3'): build the gated-edge folds in a second pass, now
+    # Build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
     # fold lands on its TARGET regime's grid and reads the target's functions, so
     # it can only be built after all regimes exist.
@@ -664,13 +664,13 @@ def _attach_gated_edge_folds(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     enable_jit: bool,
 ) -> dict[RegimeName, Regime]:
-    """Resolve and compile each source regime's gated-edge folds (E3').
+    """Resolve and compile each source regime's gated-edge folds.
 
     For every source regime declaring `gated_edges`, resolve each user
     `GatedEdge` to its engine form and build the ``(Wbar, gate)`` producer on the
     target regime's grid (reading the target's processed functions), plus one
-    per-leg FALLBACK state projector and a gate interpolator (E4 simulate
-    routing — see `build_fallback_state_projector`). The resolved edges,
+    per-leg FALLBACK state projector and a gate interpolator for simulate
+    routing (see `build_fallback_state_projector`). The resolved edges,
     folds, and projectors are stored back on the source's canonical regime.
     """
     for source_name, user_regime in user_regimes.items():
@@ -702,9 +702,9 @@ def _attach_gated_edge_folds(
                 target_stakeholders=user_regimes[target_name].stakeholders,
             )
             folds[target_name] = jax.jit(fold) if enable_jit else fold
-            # COLLECTIVE-REGIMES (E4, simulate F1 fix). The simulate-side
+            # The simulate-side
             # router needs its own gate re-evaluated at a REALIZED (candidate
-            # target-state) point — no longer by interpolating the fold's
+            # target-state) point, rather than by interpolating the fold's
             # baked boolean `gate` array and thresholding it (which does not
             # commute with a nonlinear predicate), but by recomputing the
             # predicate from interpolated VALUE operands
@@ -800,7 +800,7 @@ def _resolve_gated_edge(
     edge: object,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> ResolvedGatedEdge:
-    """Resolve one user `GatedEdge` to its engine form (E3').
+    """Resolve one user `GatedEdge` to its engine form.
 
     Validated already by `_fail_if_gated_edges_invalid`, so every named regime
     and stakeholder exists. Legs are ordered by the SOURCE's stakeholder tuple
@@ -872,7 +872,7 @@ def _resolve_stakeholder_weights(
 ) -> MappingProxyType[str, float] | None:
     """Resolve a collective regime's household Pareto weights.
 
-    COLLECTIVE-REGIMES (E1). Returns `None` for a singleton regime (the default,
+    Returns `None` for a singleton regime (the default,
     keeping the existing path untouched). For a collective regime, uses the
     user's explicit `weights` when given, else equal weights `1/len(stakeholders)`
     (validated to match the stakeholder names at regime construction).
@@ -894,12 +894,12 @@ def _fail_if_collective_regime_targets_unsupported(
 ) -> None:
     """Reject regime transitions mixing collective and mismatched stakeholders.
 
-    COLLECTIVE-REGIMES (E1, slice 2). The E1 continuation reads each target's
+    The continuation reads each target's
     `next_V_arr` with the SOURCE regime's stakeholder layout: a collective
     source expects every target leaf to carry the identical trailing
     stakeholder axis, and a singleton source expects none. Per-stakeholder
     routing across stakeholder layouts (dissolution into `single_f`/`single_m`,
-    marriage formation) is the gated-edge machinery (E3', slice 4), so any
+    marriage formation) is the gated-edge machinery, so any
     non-terminal regime whose reachable target declares a different
     `stakeholders` tuple is rejected here. Both-`None` (the singleton default)
     never enters the comparison, so today's path is untouched.
@@ -923,7 +923,7 @@ def _fail_if_collective_regime_targets_unsupported(
                 continue
             if user_regime.stakeholders is None and target_regime.stakeholders is None:
                 continue
-            # COLLECTIVE-REGIMES (E3'): a target reached through a DECLARED gated
+            # A target reached through a DECLARED gated
             # edge is exempt — the edge folds a gated continuation object matching
             # the SOURCE's stakeholder layout, so the mixed-topology read is safe.
             if target_regime_name in user_regime.gated_edges:
@@ -938,9 +938,8 @@ def _fail_if_collective_regime_targets_unsupported(
                     "with the identical `stakeholders` tuple (and a singleton "
                     "regime cannot target a collective one). Per-stakeholder "
                     "routing to different regimes (e.g. dissolution into "
-                    "single-person regimes) is the gated-edge machinery (E3', "
-                    "slice 4) and is not yet implemented. See the design doc "
-                    "`pylcm-extension-collective-regimes.md` (v2.1)."
+                    "single-person regimes) is the gated-edge machinery and "
+                    "is not yet implemented. Declare a `GatedEdge` instead."
                 )
                 raise NotImplementedError(msg)
 
@@ -952,7 +951,7 @@ def _resolve_same_period_refs(
 ) -> MappingProxyType[str, ResolvedSamePeriodRef]:
     """Resolve a regime's user `SamePeriodRef` declarations to the engine form.
 
-    COLLECTIVE-REGIMES (E2). The declarations were validated by
+    The declarations were validated by
     `_fail_if_same_period_refs_invalid`, so the reference regime exists and its
     stakeholder naming is consistent; here the named stakeholder becomes the
     index on the reference V's trailing stakeholder axis (`None` for a
@@ -982,7 +981,7 @@ def _fail_if_same_period_refs_invalid(
 ) -> None:
     """Validate every `same_period_refs` declaration against the other regimes.
 
-    COLLECTIVE-REGIMES (E2). Checks, per reference: the reference regime
+    Checks, per reference: the reference regime
     exists; a collective reference names one of its stakeholders while a
     singleton reference names none; the projection covers exactly the reference
     regime's solve states (the coordinates its V is interpolated over); and the
@@ -1062,15 +1061,15 @@ def _fail_if_gated_edges_invalid(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
-    """Validate every `gated_edges` declaration against the other regimes (E3').
+    """Validate every `gated_edges` declaration against the other regimes.
 
-    COLLECTIVE-REGIMES (E3'). Checks, per edge: the target regime exists; each
+    Checks, per edge: the target regime exists; each
     leg's OPEN-branch target component names a target stakeholder (or is `None`
     for a singleton target); each fallback and gate reference names an existing
     regime, with a stakeholder iff that regime is collective, and a projection
     covering exactly that regime's states; and every regime the edge reads
     (fallbacks + gate references) is active in every period its target is active
-    (F4 co-activity: the edge's Wbar reads those same-period Vs whenever the
+    (co-activity: the edge's Wbar reads those same-period Vs whenever the
     target is solved, so a reference that was never solved cannot be read).
 
     Raises:
@@ -1126,9 +1125,9 @@ def _fail_if_gated_edge_references_inactive(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
     """Reject a gated edge whose fallback / gate reference is not co-active with
-    its target on every period whose ``Wbar`` is actually consumed (E3', F4).
+    its target on every period whose ``Wbar`` is actually consumed.
 
-    COLLECTIVE-REGIMES (E3', F4). `_roll_gated_edges` folds the edge's ``Wbar``
+    `_roll_gated_edges` folds the edge's ``Wbar``
     in each period ``t`` the TARGET regime is solved, reading each fallback's and
     gate reference's SAME-PERIOD V, and that ``Wbar`` is consumed by the SOURCE
     one period earlier (at ``t-1``). If a referenced regime is inactive in a
@@ -1172,9 +1171,9 @@ def _fail_if_gated_edge_references_inactive(
 
 
 def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: object) -> None:
-    """Reject an edge whose legs share a fallback regime (F4).
+    """Reject an edge whose legs share a fallback regime.
 
-    COLLECTIVE-REGIMES (E4, F4 guard). `route_gated_edges`
+    `route_gated_edges`
     (`_lcm.simulation.gated_routing`) writes EVERY leg's own projected
     fallback state into `leg.fallback.regime`'s per-subject state slot, one
     leg at a time, masked by `subjects_in_regime` — never keyed by leg. If
@@ -1245,7 +1244,7 @@ def _fail_if_ref_invalid(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> None:
-    """Reject an edge fallback / gate reference with an invalid endpoint (E3')."""
+    """Reject an edge fallback / gate reference with an invalid endpoint."""
     ref = cast("Any", ref)
     reference = user_regimes.get(ref.regime)
     if reference is None:
@@ -1290,7 +1289,7 @@ def _fail_if_same_period_ref_cycle(
 ) -> None:
     """Reject cyclic `same_period_refs` declarations at model build.
 
-    COLLECTIVE-REGIMES (E2). Within one period, a regime's value constraints
+    Within one period, a regime's value constraints
     read reference regimes solved EARLIER in that period, so the reference
     graph must be acyclic (a self-reference is a one-node cycle). Depth-first
     three-color search; the error names one offending cycle.
@@ -1334,8 +1333,7 @@ def _fail_if_folded_regime_is_same_period_endpoint(
 ) -> None:
     """Reject `fold=True` on a regime read nodewise by another gate/reference.
 
-    COLLECTIVE-REGIMES (fold / E2 / E3' interaction — F1-F4 audit, completed
-    guard). `fold=True` integrates a shock's node axis out of a regime's
+    `fold=True` integrates a shock's node axis out of a regime's
     stored V — and, for a COLLECTIVE regime, additionally collapses its
     dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
     period solve (`_wrap_with_fold_reduction` in
@@ -1823,7 +1821,7 @@ def _build_solution_phase(
         phase_name="solution",
     )
 
-    # fold-review F2 (folded slice): a folded-only target enters `core.transitions`
+    # A folded-only target enters `core.transitions`
     # with an EMPTY bundle (see `_process_regime_core`). Its stored V has the
     # folded axes integrated out, but its `VInterpolationInfo` still lists the
     # folded states, so the continuation interpolator would otherwise demand a
@@ -1854,7 +1852,7 @@ def _build_solution_phase(
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
         if stakeholders is not None:
-            # COLLECTIVE-REGIMES (E1): the collective terminal kernel builds one
+            # The collective terminal kernel builds one
             # `U^s`-and-`F` per stakeholder and stacks the utilities on a trailing
             # stakeholder axis. Separate builder so the singleton path is untouched.
             terminal_func = get_Q_and_F_terminal_collective(
@@ -1918,7 +1916,7 @@ def _build_solution_phase(
             )
             for state in co_map_state_names
         )
-        # COLLECTIVE-REGIMES (E2): value-constraint predicates carry user params
+        # Value-constraint predicates carry user params
         # exactly like ordinary constraints — rename them to their qnames; the
         # user's same-period reference declarations are resolved to the
         # engine-side form (the stakeholder name becomes the index on the
@@ -1958,7 +1956,7 @@ def _build_solution_phase(
             grid_schedule=grid_schedule,
         )
         if stakeholders is not None:
-            # COLLECTIVE-REGIMES (E1): the NaN-diagnostics intermediates mirror
+            # The NaN-diagnostics intermediates mirror
             # the singleton Q evaluation (one `utility` target), which a
             # collective regime does not carry. The failure path handles a
             # missing closure gracefully (no U/F/E/Q breakdown).
@@ -2221,7 +2219,7 @@ class _TerminalCarryPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        # `dissolution` (E2) rides through unchanged — unreachable today (collective
+        # `dissolution` rides through unchanged — unreachable today (collective
         # terminals carry actions, so no closed-form carry producer wraps them),
         # but the decorator must not silently drop a base kernel's output.
         return KernelResult(
@@ -2413,9 +2411,9 @@ def _build_simulation_phase(  # noqa: PLR0915
             declarations by the policy-replay gate.
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
-            instances. COLLECTIVE-REGIMES (E4): only consulted for a
-            collective regime, to resolve its `value_constraints` (E2) and
-            `same_period_refs` (E2) exactly as the solve phase does — the
+            instances. only consulted for a
+            collective regime, to resolve its `value_constraints` and
+            `same_period_refs` exactly as the solve phase does — the
             simulate-phase Q_and_F must apply the identical value-aware
             feasibility mask so the simulated argmax never picks an action
             the solved value function excluded.
@@ -2457,7 +2455,7 @@ def _build_simulation_phase(  # noqa: PLR0915
             `None` (the singleton default).
         weights: Household Pareto weights per stakeholder; required (and only
             used) when `stakeholders` is set — feeds the simulate-side
-            argmax's household scalarization (E4).
+            argmax's household scalarization.
 
     Returns:
         Complete simulate functions container.
@@ -2539,7 +2537,7 @@ def _build_simulation_phase(  # noqa: PLR0915
         granular_param_expansions=granular_param_expansions,
     )
 
-    # COLLECTIVE-REGIMES (E4): forward simulation of a collective regime
+    # Forward simulation of a collective regime
     # reuses the SAME Q_and_F builders the solve phase uses (E1/E2's
     # `get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
     # value-masked exactly like solve), so the simulated argmax never picks
@@ -2588,7 +2586,7 @@ def _build_simulation_phase(  # noqa: PLR0915
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
         if collective:
-            # COLLECTIVE-REGIMES (E2): resolve the same value_constraints /
+            # Resolve the same value_constraints /
             # same_period_refs the solve phase reads, so simulate applies the
             # identical value-aware feasibility mask (E2's `Q_<s>`-conditioned
             # IR predicates, and same-period reference reads).
@@ -3077,8 +3075,8 @@ def _process_regime_core(
         variables: States and actions of the regime with kind/topology/process tags.
         fold_only_regimes: Regime names whose every state is a folded IID process
             (scalar stored V). A reachable target in this set that would otherwise
-            get an empty bundle is kept enumerable with an explicit empty bundle
-            (fold-review F2), so its scalar continuation enters E[V].
+            get an empty bundle is kept enumerable with an explicit empty
+            bundle, so its scalar continuation enters E[V].
         phase_reachability: This phase's static regime graph, the sole source
             of which targets need a continuation built.
         source_regime_name: This regime's name, used to read its retained
@@ -3164,7 +3162,7 @@ def _process_regime_core(
     # spurious entries for unreachable regimes.
     #
     # A target is reachable if it is DECLARED by the regime transition
-    # (`nested_transitions` keys — #407 `ec96c12`: declared reachability is the
+    # (`nested_transitions` keys — declared reachability is the
     # single source of truth, not state laws), OR if a PER-TARGET regime
     # transition names it explicitly, OR if it is a coarse candidate. Deriving
     # from `flat_nested_transitions` alone — i.e. from ordinary (non-process)
@@ -3198,7 +3196,7 @@ def _process_regime_core(
     # persists` is STRUCTURAL (it inspects built `next_<process>` edges, not
     # transition probability), so if we built a `next_<process>` continuation for
     # a folded candidate we would either accept a real persisting self-fold that
-    # deletes the fold axis (F1) or reject a folded candidate the function never
+    # deletes the fold axis or reject a folded candidate the function never
     # returns (fold-round4 F2). We therefore (a) do NOT build a continuation for a
     # candidate's FOLDED process -- a folded process is consumed in its own period
     # and its stored `V` has no such axis, so no continuation is needed; and
@@ -3408,7 +3406,7 @@ def _process_regime_core(
     )
 
     nested_transitions_by_target = unflatten_regime_namespace(internal_transition)
-    # fold-review F2 (folded slice): a reachable target whose ONLY state is a
+    # A reachable target whose ONLY state is a
     # target-local folded IID process has no ordinary state law and no
     # source-carried process edge, so it is absent from
     # `nested_transitions_by_target` and would be silently dropped from
@@ -5052,7 +5050,7 @@ def _strip_folded_axes_for_scalar_targets(
 ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
     """Override the continuation interpolation info of empty-bundle folded targets.
 
-    fold-review F2 (folded slice): a folded-only target carries an EMPTY
+    A folded-only target carries an EMPTY
     transition bundle so the continuation graph keeps it enumerable
     (`_process_regime_core`). Its stored V has every folded axis integrated out
     (`_get_regime_V_shapes_and_shardings`), but `create_v_interpolation_info`
@@ -5319,9 +5317,9 @@ def _build_Q_and_F_per_period(
             `None` (the singleton default). When set, the per-period closures
             come from `get_Q_and_F_collective` (per-stakeholder continuation,
             trailing stakeholder axis on Q); only the solve site passes this.
-        value_constraints: Value-aware feasibility predicates (E2), params
+        value_constraints: Value-aware feasibility predicates, params
             already renamed; only used for collective regimes.
-        same_period_refs: Resolved same-period reference declarations (E2);
+        same_period_refs: Resolved same-period reference declarations;
             only used for collective regimes.
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
             against; `None` in the solve phase, where it coincides with `functions`.
@@ -5381,7 +5379,7 @@ def _build_Q_and_F_per_period(
             periods=tuple(periods),
         )
         if stakeholders is not None:
-            # COLLECTIVE-REGIMES (E1): separate builder so the singleton path
+            # Separate builder so the singleton path
             # is byte-identical. No certainty equivalent — rejected at regime
             # construction for collective regimes. Functions/constraints are
             # resolved at the group's age exactly as the singleton branch — a
@@ -5417,7 +5415,7 @@ def _build_Q_and_F_per_period(
                 # branch below: dropping these made the collective simulator build
                 # current flow from the SOLVE transitions and the continuation from
                 # the SIMULATE/decision pool — a hybrid sub-DAG that can reverse the
-                # household argmax (collective-regimes-branch-2 audit F1). `None` /
+                # household argmax. `None` /
                 # solve-phase values are a passthrough, so the solve build is
                 # unchanged.
                 continuation_functions=(
@@ -5484,7 +5482,7 @@ def _build_argmax_and_max_Q_over_a_per_period(
     With taste shocks, the per-subject Gumbel key is vmapped alongside the
     simulated states.
 
-    COLLECTIVE-REGIMES (E4): `stakeholders`/`weights`, when set, thread into
+    `stakeholders`/`weights`, when set, thread into
     `get_argmax_and_max_Q_over_a`'s collective branch — the returned V carries
     a trailing stakeholder axis, which `simulation_spacemap` below preserves
     (it only maps over `state_names`, never the trailing axis).

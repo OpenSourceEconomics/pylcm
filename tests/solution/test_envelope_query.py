@@ -200,9 +200,9 @@ def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
 
     This test descends from ``test_large_magnitude_value_tie_is_precision_
     scaled``, which asserted that a 16-ULP represented gap should be treated as
-    a tie by a magnitude-scaled band. The round-5 audit identified that
-    expectation as the defect itself: a stored node value carries ZERO rounding
-    error, so genuinely distinct stored floats must never be declared tied. The
+    a tie by a magnitude-scaled band. That expectation is itself the defect: a stored
+    node value carries ZERO rounding error, so genuinely distinct stored floats must
+    never be declared tied. The
     tie half of the old test survives here with a ``gap`` BELOW half an ULP of
     ``base``, so ``base + gap`` rounds to exactly ``base``: the two branches
     carry bitwise-equal stored values at the shared node ``q=1`` and the
@@ -240,7 +240,7 @@ def test_strict_represented_gap_selects_the_higher_branch(dtype, base, gap, bloc
 
     The strict-gap half of the retired ``test_large_magnitude_value_tie_is_
     precision_scaled`` (same data: a ~16-ULP gap at large magnitude), with the
-    expectation corrected per the round-5 audit. The stored node values are
+    corrected expectation. The stored node values are
     candidate DATA, compared exactly: segment A ends at ``q=1`` with value
     ``base+gap`` (policy 0, marginal 7), strictly above segment B's ``base``
     (policy 1), so A wins outright and value, policy, AND marginal are all
@@ -269,9 +269,9 @@ def test_strict_represented_gap_selects_the_higher_branch(dtype, base, gap, bloc
 def test_common_value_translation_does_not_change_a_strict_winner(block_size):
     """Adding a constant to every branch value cannot flip a strict winner.
 
-    Round-5 audit regression (RT2): the retired magnitude-proportional tie band
-    grew with ``|value|`` while a genuine represented gap does not, so a common
-    translation flipped the selected branch. Segment A ends at the shared node
+    A magnitude-proportional tie band grows with ``|value|`` while a genuine
+    represented gap does not, so a common translation flips the selected branch.
+    Segment A ends at the shared node
     ``q=1`` with a strict float32 gap of ``1e-5`` (~84 ULPs at 1.0) over the
     right-extending segment B; A must win at translation 0 and still win after
     translating every value by 1.0.
@@ -301,7 +301,7 @@ def test_common_value_translation_does_not_change_a_strict_winner(block_size):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_node_event_selection_matches_the_exact_oracle_across_scales(order, block_size):
-    """Compact round-5 mutation battery: node events resolve by exact comparison.
+    """Node events resolve by exact comparison, across dtypes and scales.
 
     Two branches share the node ``q=1``: the ending branch carries
     ``base + multiple*ULP(base)`` there (policy 0), the right-extending branch
@@ -309,8 +309,8 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
     block-size combination the backend must agree with the exact host oracle at
     ``tol=0``: any strict represented gap (``multiple >= 1``) selects the higher
     ending branch; only the exact stored tie (``multiple == 0``) resolves
-    right-continuously to the extending branch. The full 800-case battery lives
-    in the round-5 audit artifacts; this compact grid pins the class.
+    right-continuously to the extending branch. This compact grid pins the
+    class; the full battery runs 800 cases.
     """
     configs = {np.float32: [1.0, 1.0e6], np.float64: [1.0, 1.0e12]}
     multiples = [0, 1, 16, 256]
@@ -429,13 +429,12 @@ def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
     """A value tie between two branches with near-equal slopes must resolve to the
     larger-slope branch in BOTH the dense and blocked paths.
 
-    Audit finding F2 (round 4, second half): the tie-break folded the
-    right-extends bit and the value-slope into one scalar
-    (``arctan(slope)/pi + right_available``). For two genuinely-distinct but
-    near-equal small slopes that fold rounds to the SAME value in float32, so
-    ``argmax`` fell back to the lower index — the smaller-slope branch — reversing
-    right-continuity. Comparing the slope directly at native precision picks the
-    larger-slope branch.
+    Folding the right-extends bit and the value-slope into one scalar
+    (``arctan(slope)/pi + right_available``) breaks this: for two
+    genuinely-distinct but near-equal small slopes that fold rounds to the SAME
+    value in float32, so ``argmax`` falls back to the lower index — the
+    smaller-slope branch — reversing right-continuity. Comparing the slope directly at
+    native precision picks the larger-slope branch.
 
     Both segments span ``[1, 2]`` and cross to ~0 at ``q=1.5``; segment A (policy
     20) carries the SMALLER slope, segment B (policy 10) the LARGER. Right-continuity
@@ -558,8 +557,8 @@ def test_exact_interior_tie_takes_the_right_continuous_branch(
     words differ even though the exact values coincide. A selector that orders
     candidates lexicographically on `(hi, lo)` reads that difference as strict
     order, hands the query to B, and never runs the right-continuous rule —
-    round-6 audit F2, which found 672 wrong policy/marginal choices in 1,680
-    such ties. Only an exact comparison can classify this correctly, so this
+    672 wrong policy/marginal choices in 1,680 such ties, measured. Only an
+    exact comparison can classify this correctly, so this
     test is a direct check that one is being made.
     """
     end = np.asarray(denominator, dtype=dtype).item()
@@ -643,8 +642,8 @@ def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
 ):
     """An exact VALUE tie must be broken by the exact slope, not a rounded key.
 
-    Round-6 made the value comparison exact; round-7 audit F2 found the class
-    reopened one operation later. Both branches leave the stored node `(1, 0)`,
+    An exact value comparison is not enough: the class reopens one operation
+    later. Both branches leave the stored node `(1, 0)`,
     so the values are exactly tied and right-continuity decides — and the rule is
     "larger value-slope, then earliest candidate". The selector computed that
     slope as `fl((v1 - v0) / (x1 - x0))`, and two strictly ordered exact slopes
@@ -766,8 +765,8 @@ def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block
 
 # Operand magnitude above which Dekker's TwoProd splitting itself overflows: the
 # split multiplies by `2**s + 1`, so it needs `|a| < 2**(emax - s)`. These are the
-# thresholds the round-8 selector silently crossed, and a scale test that stays
-# below them cannot detect the defect at all.
+# thresholds a selector can silently cross, and a scale test that stays below
+# them cannot detect the defect at all.
 _SPLIT_OVERFLOW_EXPONENT = {np.float32: 127 - 12, np.float64: 1023 - 27}
 
 
@@ -794,7 +793,7 @@ def _rescaling_exponents(entries, dtype):
 def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     dtype, order, block_size
 ):
-    """Choosing a unit must not choose a policy (round-8 audit F2).
+    """Choosing a unit must not choose a policy.
 
     Multiplying every grid and value coordinate by one positive power of two is
     a change of units: exact in binary floating point, and it leaves the value
@@ -820,7 +819,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     assert reached > _SPLIT_OVERFLOW_EXPONENT[dtype], (
         f"the ladder tops out at 2**{reached}, below the "
         f"2**{_SPLIT_OVERFLOW_EXPONENT[dtype]} splitting edge, so it could not "
-        "have caught the round-8 defect"
+        "have caught a splitting-overflow defect"
     )
 
     tiny = np.finfo(dtype).tiny
@@ -924,7 +923,7 @@ def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
     subnormal BEFORE the certified comparator saw them. The comparator then
     correctly reported an exact tie between values that are distinct as stored,
     and the published value, policy and marginal all moved in response to a
-    segment that cannot affect the answer (round-9 audit F2).
+    segment that cannot affect the answer.
 
     Exact arithmetic cannot rebuild bits discarded upstream of it, so this is
     pinned at the public boundary: inserting the far segment must change
@@ -1015,9 +1014,10 @@ def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block
     contender set empties, `_exact_slope_compare` never runs, and the winner is
     whatever `argmax` over the rounded key returned: candidate order.
 
-    That is the round-7 F2 signature exactly -- the value is tied either way and
-    only the published policy and marginal are wrong -- so it is pinned the same
-    way: the answer must not depend on the order the branches are listed in.
+    That is the same failure as a rounded slope key -- the value is tied either
+    way and only the published policy and marginal are wrong -- so it is pinned
+    the same way: the answer must not depend on the order the branches are
+    listed in.
     """
     for value_exp, width_exp in _slope_overflow_cases(dtype):
         width = dtype(np.ldexp(1.0, width_exp))
@@ -1101,8 +1101,8 @@ def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
     introduced: "the difference of two finite floats cannot overflow" is true,
     but it can UNDERFLOW. At the bottom of the range the difference of two
     distinct normals is subnormal, XLA flushes it to zero, and the interpolant
-    collapses onto its left value exactly as it did when the operands were
-    pre-scaled DOWN (round-9 audit MT6, 48/144 mismatches).
+    collapses onto its left value exactly as it does when the operands are
+    pre-scaled DOWN (48/144 mismatches measured).
 
     The two cases together pin the asymmetry the repair rests on: operands may be
     lifted UP before differencing, because a power of two is exact and injective,
@@ -1195,9 +1195,9 @@ def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
 
     The grid lift exists because differencing can lose a difference; the value
     lift exists because the increment `r*d` can be smaller than anything the
-    format represents at that scale. Rounds 8 to 11 all reasoned that the value
-    axis needed no scale because its intermediates stay BOUNDED, which is true
-    and beside the point (round-11 audit F2, MT8: 234 of 234 generated cells).
+    format represents at that scale. Reasoning that the value axis needs no scale
+    because its intermediates stay BOUNDED is true and beside the point (234 of
+    234 generated cells fail).
 
     `fraction` sweeps both rounding directions on purpose. Above one half the
     correctly rounded value is A's upper endpoint, so the defect showed up in
@@ -1294,10 +1294,10 @@ def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
     strictly orders, the exact comparator has been bypassed on precisely the
     input it exists for, and the answer is whatever the approximate layer said.
 
-    Round 11 read `radius == 0` as that certificate. A radius is a float: at the
-    bottom of the range `eps**2 * |v|` underflows, and two candidates that were
-    not tied at all presented as certifiably tied while `_exact_compare` returned
-    the correct strict sign `+1` (round-11 audit F2/RT11). The certificate is now
+    Reading `radius == 0` as that certificate fails: a radius is a float, so at
+    the bottom of the range `eps**2 * |v|` underflows, and two candidates that
+    are not tied at all present as certifiably tied while `_exact_compare`
+    returns the correct strict sign `+1`. The certificate is instead
     structural -- a node event, which publishes stored data and performs no
     arithmetic -- so no numerical accident can manufacture it.
 
@@ -1380,10 +1380,9 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
     zero and no downstream exactness can rebuild it. Here the candidate exponent
     is set by its own far endpoint, so a candidate that is entirely relevant
     destroys its own interpolation fraction and collapses to its left value,
-    handing value, policy and marginal to a strictly lower competitor
-    (round-10 audit F2).
+    handing value, policy and marginal to a strictly lower competitor.
 
-    The repair forms the differences first, on the raw operands where `_two_diff`
+    So the differences are formed first, on the raw operands where `_two_diff`
     is exact, and carries each scale as an integer exponent applied once at the
     end.
     """
@@ -1435,9 +1434,8 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
     Probes `_exact_compare` DIRECTLY, because the public path passes this witness
     for the wrong reason: the value screen resolves the gap before the comparator
     is consulted, so a comparator that reports a tie where the exact ordering is
-    strict stays invisible there. Two rounds of the round-10 F2 repair passed the
-    public test with this one still returning `0` (it was pinned `xfail(strict)`
-    in between). A screen that rescues a broken comparator hides it.
+    strict stays invisible there: the public test can pass with this one still
+    returning `0`. A screen that rescues a broken comparator hides it.
     """
     x0, q, x1, competitor, exact = _wide_segment_case(dtype)
     cols_wide = jnp.asarray(
@@ -1453,10 +1451,9 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
     assert float(sign[0]) == 1.0
 
 
-# ---------------------------------------------------------------------------
-# Round-13: the exponent-preserving exact ordering kernel.
+# The exponent-preserving exact ordering kernel.
 #
-# Rounds 6 to 12 each repaired the SITE a witness pointed at — a value
+# Repairing only the SITE a witness points at — a value
 # comparison, a slope tie-break, an exponent, a normalization's scope, then its
 # shape, then the last normalization inside the "exact" fallback — and every
 # time the same reasoning error reappeared one layer down. The premise all nine
@@ -1474,7 +1471,7 @@ def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):
     midpoint is zero — its two numerator products cancel COMPLETELY, which is
     what makes the comparison hinge entirely on `B`'s terms. `B` is the constant
     `-a * tiny`, a strictly lower finite normal whose cross products used to
-    flush to zero before the exact summation saw them (round-12 F2).
+    flush to zero before the exact summation saw them.
     """
     info = np.finfo(dtype)
     tiny = dtype(info.tiny)
@@ -1708,7 +1705,7 @@ def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     mid-range, and justified it with the claim that subtraction of two finite
     floats cannot overflow. Opposite-signed top-binade operands refute that:
     for `H = 2**127` in float32 both operands are finite normals while their
-    difference `2H` is not representable at all (round-13 audit F2).
+    difference `2H` is not representable at all.
 
     So the assertion is not that the difference is finite — it is that no float
     is ever asked to hold it. Every mantissa stays inside its own binade and the
@@ -1765,9 +1762,9 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
     value axis the sloped branch legitimately WINS at some query positions, and
     a hand-written expectation gets that wrong.
 
-    Note what the round-13 sweep did instead: it drew wide-range operands and
-    then skipped any draw with `not np.isfinite(x1 - x0)`, which discards
-    precisely the cells this test keeps. A filter written in the same arithmetic
+    Note the trap in the obvious sweep: drawing wide-range operands and then
+    skipping any draw with `not np.isfinite(x1 - x0)` discards precisely the
+    cells this test keeps. A filter written in the same arithmetic
     as the defect cannot witness it.
     """
     top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
@@ -1845,10 +1842,10 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
 def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
     """Policy and marginal must be as certified as the value they accompany.
 
-    Round 14 certified the VALUE channel and left `policy` and `marginal` on
-    `left + fraction * (right - left)` in the working dtype, so the winner was
-    selected exactly and then described by two lossy numbers (round-14 audit
-    F2). Both halves of that expression lose finite results:
+    Certifying the VALUE channel while leaving `policy` and `marginal` on
+    `left + fraction * (right - left)` in the working dtype selects the winner
+    exactly and then describes it with two lossy numbers. Both halves of that
+    expression lose finite results:
 
     - `fraction` is materialized before it is multiplied, so it can flush to
       zero while `fraction * (right - left)` is a finite normal;
