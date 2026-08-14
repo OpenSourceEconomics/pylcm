@@ -62,11 +62,13 @@ few hundred flops. The evaluation is branch-free and elementwise, so it stays
 """
 
 import operator
-from functools import reduce
+from functools import cache, reduce
 from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from numpy.typing import DTypeLike
 
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
@@ -76,8 +78,10 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_mul_float,
     dd_negate,
     dd_quotient,
+    is_stored_zero,
     normalizing_exponent,
     scale_by_power_of_two,
+    two_sum,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -262,37 +266,42 @@ def certified_margin_sign(
     # may be measured on its own scale — the two factors multiply `D` by a
     # positive constant and leave its sign alone. The query enters only inside
     # one link's distances at a time, so it too may be scaled per link.
-    distances_a, a_on_scale, a_distances_read = _link_distances(
-        x0=a_x0, x1=a_x1, x_query=x_query
-    )
-    distances_b, b_on_scale, b_distances_read = _link_distances(
-        x0=b_x0, x1=b_x1, x_query=x_query
-    )
-    numerator_a = dd_add(
-        dd_mul_float(distances_a[0], a_v0), dd_mul_float(distances_a[1], a_v1)
-    )
-    numerator_b = dd_add(
-        dd_mul_float(distances_b[0], b_v0), dd_mul_float(distances_b[1], b_v1)
-    )
+    distances_a, a_on_scale = _link_distances(x0=a_x0, x1=a_x1, x_query=x_query)
+    distances_b, b_on_scale = _link_distances(x0=b_x0, x1=b_x1, x_query=x_query)
     # Each of those four products pairs a distance with an endpoint value, and
-    # either factor may be ordinary while the product is not. A product that
-    # underflows is discarded whole — estimate and discarded tail both exactly
-    # zero — so the term reads as one the caller never supplied, and a
-    # determinant assembled from the survivors is the determinant of a different
-    # pair of links.
-    products_read = reduce(
-        operator.and_,
+    # either factor may be ordinary while the product is not. What underflows is
+    # bounded rather than refused: the term is below the smallest normal exactly
+    # when its product is, so an estimate of zero carrying that threshold as its
+    # discarded tail is a true statement about a term the caller did supply.
+    terms = tuple(
+        _bounded_mul_float(distance, endpoint_value)
+        for distance, endpoint_value in (
+            (distances_a[0], a_v0),
+            (distances_a[1], a_v1),
+            (distances_b[0], b_v0),
+            (distances_b[1], b_v1),
+        )
+    )
+    numerator_a = dd_add(terms[0][0], terms[1][0])
+    numerator_b = dd_add(terms[2][0], terms[3][0])
+    width_a, width_b = distances_a[2], distances_b[2]
+
+    # A floored bound is a fallback rather than a measurement: it says the term
+    # is somewhere below the smallest normal, not how far below. Where the
+    # determinant clears it the verdict is unaffected — the bound is a valid
+    # upper bound either way. Where it does not, the two links are *not* thereby
+    # within a rounding of each other, which is what `BELOW_RESOLUTION_SIGN`
+    # promises its callers, so such a case abstains as unresolved instead. That
+    # keeps the weaker code meaning what the consumers read it as, and it is the
+    # only reason the distinction is tracked at all.
+    bound_is_a_fallback = reduce(
+        operator.or_,
         (
-            _product_survived(value=distance, factor=endpoint_value)
-            for distance, endpoint_value in (
-                (distances_a[0], a_v0),
-                (distances_a[1], a_v1),
-                (distances_b[0], b_v0),
-                (distances_b[1], b_v1),
-            )
+            *(floored for _term, floored in terms),
+            _any_bound_floored(distances_a),
+            _any_bound_floored(distances_b),
         ),
     )
-    width_a, width_b = distances_a[2], distances_b[2]
 
     product_a = _bounded_product(numerator_a, width_b)
     product_b = _bounded_product(numerator_b, width_a)
@@ -324,14 +333,28 @@ def certified_margin_sign(
     # is not symmetric with it and is handled inside `_bounded_product`.
     products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
 
+    # What remains reports a quantity the *backend* destroyed, not one the format
+    # cannot hold. Where subnormals survive, nothing was destroyed: the operands
+    # are readable, the distances between them are readable, and the products are
+    # the numbers they claim to be. Consulting the clause there would refuse
+    # comparisons the arithmetic can settle exactly — the mirror of the defect it
+    # exists to prevent, and one a battery run only where the flush happens
+    # cannot see.
+    #
+    # Only the determinant's own difference is asked about. What each *term*
+    # discarded is carried as a bound instead, all the way to the comparison, so
+    # a flushed distance or an underflowing product costs the margin it could
+    # actually account for rather than the whole verdict.
+    everything_read = (
+        readable & difference_read
+        if backend_flushes_subnormals(a_x0.dtype)
+        else jnp.ones_like(finite)
+    )
     sign = _certified_sign_of(
         determinant,
         finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=readable
-        & a_distances_read
-        & b_distances_read
-        & products_read
-        & difference_read,
+        readable=everything_read,
+        bound_is_a_fallback=bound_is_a_fallback,
     )
     exact = jnp.where(same_line, jnp.int32(0), node_sign)
     settled_off_the_operands = same_line | (both_at_node & both_readable)
@@ -391,16 +414,6 @@ def certified_quotient_margin(
         _bounded_product(left_numerator, right_divisor),
         dd_negate(_bounded_product(right_numerator, left_divisor)),
     )
-    # `_bounded_product` answers an underflowing product with the magnitude bound
-    # the underflow establishes, and that bound is the smallest normal — it has no
-    # headroom beneath it. The bound below is divided by the divisor product, so
-    # any divisor product above one returns it to the band it was meant to escape
-    # and it arrives as exactly zero: the certificate for an exact margin, resting
-    # on a product that was discarded whole. The fact that a product was lost is
-    # therefore carried as a fact rather than as a magnitude.
-    cross_products_read = _product_survived(
-        value=left_numerator, factor=right_divisor[0]
-    ) & _product_survived(value=right_numerator, factor=left_divisor[0])
     divisor_product = dd_mul(left_divisor, right_divisor)
     high, low = dd_quotient(determinant, divisor_product)
     value = high + low
@@ -422,9 +435,21 @@ def certified_quotient_margin(
         - jnp.abs(divisor_product[2])
     )
     epsilon = jnp.finfo(value.dtype).eps
+    # Referring the bound back through the divisor is the one division a bound
+    # passes through, and any divisor above one can send it under the smallest
+    # normal — where it arrives as exactly zero, the certificate for an exact
+    # margin, resting on a quantity that was destroyed. The underflow is itself
+    # the statement that the referred amount is below the smallest normal, so
+    # that is what it becomes. A residual of exactly zero reproduced the
+    # determinant exactly and keeps its zero.
+    referred = unreproduced / divisor_floor
+    tiny = jnp.finfo(referred.dtype).tiny
+    floored = jnp.where(
+        is_stored_zero(unreproduced), referred, jnp.maximum(referred, tiny)
+    )
     # The residual's own sum, the division, and this widening each round once; the
     # widening is multiplicative, so a residual of exactly zero stays exactly zero.
-    bound = (unreproduced / divisor_floor) * (1.0 + 8.0 * epsilon)
+    bound = floored * (1.0 + 8.0 * epsilon)
 
     # Dekker's transform is exact only while its products stay normal. Above that
     # range the determinant is not evidence of anything, least of all of a tie.
@@ -441,7 +466,6 @@ def certified_quotient_margin(
         value=value,
         bound=bound,
         trustworthy=in_domain
-        & cross_products_read
         & jnp.isfinite(value)
         & jnp.isfinite(bound)
         & (divisor_floor > 0.0),
@@ -475,6 +499,38 @@ def _same_bits(left: FloatND, right: FloatND) -> BoolND:
     return jax.lax.bitcast_convert_type(left, jnp.dtype(unsigned)) == (
         jax.lax.bitcast_convert_type(right, jnp.dtype(unsigned))
     )
+
+
+@cache
+def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
+    """Report whether this backend destroys a subnormal rather than reading it.
+
+    The answer belongs to the compiled backend, not to the format: XLA:CPU
+    flushes, CUDA reads the whole band. So it is measured by asking the backend
+    to halve the smallest normal and seeing whether what comes back is the
+    subnormal that step lands on.
+
+    Every refusal built on "the arithmetic could not see this" is a claim about a
+    backend that cannot represent it. Where the backend can, the same refusal
+    withholds a verdict the arithmetic reached correctly — the mirror of the
+    defect the refusals exist to prevent, and invisible to a battery run only
+    where the flush happens.
+
+    The probe runs on concrete inputs, so it resolves to a Python bool while the
+    program is traced and the refusals it gates leave the compiled program
+    entirely on a backend that reads the band.
+
+    `ensure_compile_time_eval` is what makes "concrete inputs" true from inside a
+    trace. Without it the halving stages into the enclosing jaxpr and hands back a
+    tracer, and asking a tracer for a Python bool raises. The memo on this function
+    hides that completely whenever an eager call for the same dtype happened to come
+    first, so whether it raises depends on which test a process drew first — a
+    failure that reads as random and is not.
+    """
+    with jax.ensure_compile_time_eval():
+        smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
+        halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
+        return bool(np.asarray(halved) == 0.0)
 
 
 def is_subnormal(value: FloatND) -> BoolND:
@@ -578,8 +634,8 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     """
     high, low, dropped = dd_mul(left, right)
     tiny = jnp.finfo(high.dtype).tiny
-    both_nonzero = (left[0] != 0.0) & (right[0] != 0.0)
-    negligible = both_nonzero & (jnp.abs(left[0] * right[0]) < tiny)
+    both_present = ~is_stored_zero(left[0]) & ~is_stored_zero(right[0])
+    negligible = both_present & (jnp.abs(left[0] * right[0]) < tiny)
     zero = jnp.zeros_like(high)
     return (
         jnp.where(negligible, zero, high),
@@ -588,34 +644,48 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     )
 
 
-def _product_survived(*, value: DoubleDouble, factor: FloatND) -> BoolND:
-    """Report whether a product by a plain float stayed where it can be read.
+def _bounded_mul_float(
+    value: DoubleDouble, factor: FloatND
+) -> tuple[DoubleDouble, BoolND]:
+    """Return the product by a plain float, or a certified bound where it underflows.
 
     A product of two ordinary numbers can still land among the subnormals — a
     distance below one against an endpoint value near the bottom of the range, or
     a value of any size against a distance that small — and there the transform
     keeps nothing. What arrives is an exact zero whose discarded tail also reads
-    as exactly zero, and that pair is the certificate for an exact zero.
+    as exactly zero, and that pair is the certificate for an exact zero, so a
+    determinant assembled from such terms is the determinant of a different pair
+    of links.
 
-    What is reported is a fact about the operands, not about the result, and it
-    is reported as a fact rather than as a magnitude. A bound would have to
-    survive every multiplication still to come, and the smallest bound this
-    underflow establishes is the smallest normal — which the next factor below
-    one sends back into the band it was meant to escape. A flag cannot underflow.
+    The magnitude is not unknown, though: it is below the smallest normal, which
+    is exactly what an underflowing product tells you. Recording that as the
+    term's discarded tail keeps the statement true and lets a determinant whose
+    other terms are ordinary numbers still be decided. `scale_tail_bound` is what
+    makes the bound survive the multiplications still to come.
 
-    Two nonzero operands whose product does not fit are the only case this
-    refuses. A term that is genuinely zero loses nothing and keeps its exactness,
-    so two links lying on one line still certify the tie they have earned.
+    A term that is genuinely zero loses nothing and keeps its exactness, so two
+    links lying on one line still certify the tie they have earned.
+
+    The second return says whether the bound is that fallback rather than a
+    measured tail, which is what decides how an inconclusive determinant
+    abstains — not whether it may be strict.
     """
-    tiny = jnp.finfo(value[0].dtype).tiny
-    both_nonzero = (value[0] != 0.0) & (factor != 0.0)
-    return ~(both_nonzero & (jnp.abs(value[0] * factor) < tiny))
+    high, low, dropped = dd_mul_float(value, factor)
+    tiny = jnp.finfo(high.dtype).tiny
+    both_present = ~is_stored_zero(value[0]) & ~is_stored_zero(factor)
+    negligible = both_present & (jnp.abs(value[0] * factor) < tiny)
+    zero = jnp.zeros_like(high)
+    return (
+        jnp.where(negligible, zero, high),
+        jnp.where(negligible, zero, low),
+        jnp.where(negligible, jnp.maximum(dropped, tiny), dropped),
+    ), negligible
 
 
 def _link_distances(
     *, x0: FloatND, x1: FloatND, x_query: FloatND
-) -> tuple[tuple[DoubleDouble, ...], BoolND, BoolND]:
-    """Return one link's three distances, whether they scaled, and whether they read.
+) -> tuple[tuple[DoubleDouble, ...], BoolND]:
+    """Return one link's three distances and whether they scaled.
 
     A link enters the determinant only through the two distances from the query
     to its endpoints and the width between them, and every term of `D` pairs one
@@ -636,21 +706,17 @@ def _link_distances(
     A link that still cannot be lifted clear — a query far outside a narrow link
     pins the exponent on the query, and a link whose own endpoints span the
     format has no exponent at all — is left with a difference of exactly zero
-    between operands that are not equal. That zero is the flush itself, and
-    downstream it is indistinguishable from a link the caller supplied as a
-    point, which is the shape that licenses a certified tie.
+    between operands that are not equal. That zero is the flush itself, and on
+    its own it is indistinguishable from a link the caller supplied as a point,
+    which is the shape that licenses a certified tie.
 
-    Reporting it as *unreadable* is what keeps the determinant honest, and it is
-    the same statement an unreadable operand already makes: a strict verdict
-    still stands, because a margin that clears its tolerance does so by more than
-    a flushed distance could contribute, while the near-zero end — where the
-    whole determinant is of the order of what went missing — is refused.
-
-    A magnitude bound is the wrong instrument here even though the magnitude is
-    known. Carrying it means recording a discarded tail just below the smallest
-    normal, and every later multiplication by a factor below one drives that tail
-    under the same threshold and flushes it in turn, so the bound is gone by the
-    time the determinant reads it. The flag cannot underflow.
+    The magnitude is known, though — a difference that flushed is below the
+    smallest normal — so the distance carries that as its discarded tail and the
+    two cases stop looking alike. A determinant whose other terms are ordinary
+    numbers is then still decided, and one of the order of what went missing
+    falls below resolution on the bound rather than on a flag. That is only
+    possible because `scale_tail_bound` keeps the tail from being flushed in turn
+    by the multiplications still to come.
     """
     source = (x1, x_query, x0)
     exponent = _shared_exponent(x0, x1, x_query)
@@ -661,20 +727,25 @@ def _link_distances(
         (scaled_query, scaled_x0),
         (scaled_x1, scaled_x0),
     )
-    distances = tuple(dd_from_difference(left, right) for left, right in pairs)
-    nothing_flushed = reduce(
-        operator.and_,
-        (
-            (distance[0] != 0.0) | (left == right)
-            for distance, (left, right) in zip(distances, pairs, strict=True)
-        ),
-    )
+    distances = tuple(_bounded_difference(left, right) for left, right in pairs)
     rescaled, on_scale = _on_its_own_scale(distances)
-    return (
-        rescaled,
-        on_scale & _round_trips(scaled, source, exponent),
-        nothing_flushed,
-    )
+    return rescaled, on_scale & _round_trips(scaled, source, exponent)
+
+
+def _bounded_difference(a: FloatND, b: FloatND) -> DoubleDouble:
+    """Return `a - b`, recording the smallest normal as its tail where it flushed.
+
+    Two operands that differ cannot have an exact difference of zero, so a zero
+    arriving from a subtraction of unequal operands is the flush and nothing
+    else. What it destroyed is below the smallest normal — that is what made it
+    flush — so the smallest normal bounds it, and a distance that says so is a
+    true statement where an exact-zero tail would be a false one.
+    """
+    high, low = two_sum(a, -b)
+    tiny = jnp.finfo(high.dtype).tiny
+    zero = jnp.zeros_like(high)
+    flushed = (high == 0.0) & (low == 0.0) & (a != b)
+    return high, low, jnp.where(flushed, jnp.full_like(high, tiny), zero)
 
 
 def _on_its_own_scale(
@@ -740,12 +811,29 @@ def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
     """
     product = jnp.abs(a * b)
     tiny = jnp.finfo(product.dtype).tiny
-    both_nonzero = (a != 0.0) & (b != 0.0)
-    return jnp.isfinite(product) & (~both_nonzero | (product >= tiny))
+    both_present = ~is_stored_zero(a) & ~is_stored_zero(b)
+    return jnp.isfinite(product) & (~both_present | (product >= tiny))
+
+
+def _any_bound_floored(distances: tuple[DoubleDouble, ...]) -> BoolND:
+    """Report where any of one link's distances carries a floored tail bound.
+
+    A distance starts out exact, so the only way it acquires a tail at all is a
+    floor — the flush of the difference itself, or the tail the rescaling could
+    not keep. A nonzero tail here therefore identifies a bound that stands in
+    for a magnitude rather than measuring one.
+    """
+    return reduce(
+        operator.or_, (~is_stored_zero(distance[2]) for distance in distances)
+    )
 
 
 def _certified_sign_of(
-    value: DoubleDouble, *, finite: BoolND, readable: BoolND
+    value: DoubleDouble,
+    *,
+    finite: BoolND,
+    readable: BoolND,
+    bound_is_a_fallback: BoolND,
 ) -> IntND:
     """Turn a double-double with an error bound into a certified sign.
 
@@ -769,13 +857,20 @@ def _certified_sign_of(
     exactly_zero = (dropped == 0.0) & (estimate == 0.0)
     unresolved = jnp.asarray(UNRESOLVED_SIGN, dtype=jnp.int32)
     below_resolution = jnp.asarray(BELOW_RESOLUTION_SIGN, dtype=jnp.int32)
+    # `BELOW_RESOLUTION_SIGN` promises that the two lines are within a rounding
+    # of each other, which is what licenses a caller to choose between them on
+    # any deterministic rule. A determinant that failed to clear a *floored*
+    # bound has earned no such statement — the floor says only that a term was
+    # somewhere below the smallest normal — so it abstains as unresolved, where
+    # a caller must fail loud.
+    inconclusive = jnp.where(bound_is_a_fallback, unresolved, below_resolution)
     sign = jnp.where(
         estimate > tolerance,
         jnp.int32(1),
         jnp.where(
             estimate < -tolerance,
             jnp.int32(-1),
-            jnp.where(exactly_zero, jnp.int32(0), below_resolution),
+            jnp.where(exactly_zero, jnp.int32(0), inconclusive),
         ),
     )
     return jnp.where(finite & readable, sign, unresolved).astype(jnp.int32)
