@@ -21,7 +21,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import certified_quotient_margin
+from _lcm.egm.upper_envelope.certified_sign import (
+    backend_flushes_subnormals,
+    certified_quotient_margin,
+)
 from _lcm.egm.upper_envelope.query import _value_quotient
 
 _N_CASES = 400
@@ -159,7 +162,16 @@ def test_a_margin_whose_cross_product_underflowed_is_not_published_as_exact():
     makes — the margin is that number exactly. A cross product that fell among
     the subnormals was discarded whole, so no such statement is available, and
     the margin has to declare itself uncertifiable instead.
+
+    The premise is the discarding, which belongs to the backend rather than to
+    the format. Where the whole subnormal band is readable the same operands
+    produce an ordinary product, nothing is discarded, and a bound of exactly
+    zero is then the true statement rather than an overclaim.
     """
     margin = certified_quotient_margin(**_underflowing_cross_product_operands())
 
-    assert not (float(margin.bound) == 0.0 and bool(margin.trustworthy))
+    if backend_flushes_subnormals(jnp.zeros(()).dtype):
+        assert not (float(margin.bound) == 0.0 and bool(margin.trustworthy))
+    else:
+        assert float(margin.value) != 0.0
+        assert bool(margin.trustworthy)
