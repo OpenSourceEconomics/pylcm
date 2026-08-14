@@ -12,7 +12,7 @@ import pytest
 from jax import config as jax_config
 from numpy.typing import ArrayLike
 
-from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_available
+from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_built
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -187,15 +187,22 @@ def pytest_collection_modifyitems(items):
 
 
 def is_missing_kernel_failure(
-    *, failed: bool, asked_for_kernel: bool, kernel_available: bool
+    *, failed: bool, asked_for_kernel: bool, kernel_built: bool
 ) -> bool:
     """Return whether a failure is only this host's missing exact-affine kernel.
 
     All three must hold: the test failed, it failed asking for an exact verdict,
-    and no kernel can be loaded here. A host that has one reports every failure
+    and no kernel was ever built here. A host that has one reports every failure
     as the failure it is, so this can never absorb a real defect.
+
+    Absence is decided by the file rather than by whether a verdict could be
+    obtained, because the two are different situations with opposite verdicts. A
+    platform with no kernel skips; a kernel that is present and cannot answer is
+    a broken build and must fail. Treating them alike would let a shared object
+    left over from an earlier build turn the whole certified suite green by
+    removing every test that could have caught it.
     """
-    return failed and asked_for_kernel and not kernel_available
+    return failed and asked_for_kernel and not kernel_built
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -218,7 +225,7 @@ def pytest_runtest_makereport(item, call):
     if is_missing_kernel_failure(
         failed=report.outcome == "failed",
         asked_for_kernel=asked_for_kernel,
-        kernel_available=kernel_available(),
+        kernel_built=kernel_built(),
     ):
         report.outcome = "skipped"
         report.longrepr = (
