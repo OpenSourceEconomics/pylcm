@@ -7,17 +7,24 @@ wheel a development environment installs — has to carry the compiled libraries
 beside `_lcm/egm/upper_envelope/_exact_affine/`.
 
 Compiling is a build-time step on purpose. Importing pylcm never invokes a
-compiler: a missing library raises at import of the certified path, naming the
-task that builds it, rather than silently falling back to arithmetic that cannot
-make the guarantee.
+compiler: a missing library is reported when an exact verdict is requested,
+naming the task that builds it, rather than silently falling back to arithmetic
+that cannot make the guarantee.
 
 Run standalone during development, after any change to the C++ or CUDA sources:
 
     pixi run build-exact-affine
 
 CUDA is optional. Where `nvcc` is absent the CPU library is built alone and the
-certified path runs on CPU only; the GPU arm needs the CUDA library built with
-the target architecture, e.g. `NVCCFLAGS='-arch=sm_80'`.
+certified path runs on CPU only. Where it is present the build emits ready code
+for several architectures plus a virtual target; `NVCCFLAGS='-arch=sm_80'`
+replaces that set with one architecture, which builds faster and runs only
+there.
+
+Which libraries come out therefore depends on the environment the build ran in,
+and every combination exits successfully. The build states the toolchain it
+found on stdout so that a CPU-only result is read at the time rather than
+inferred later from a library that is not there.
 """
 
 import os
@@ -40,6 +47,67 @@ PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
 # Names the Python wrapper loads, per platform. The CUDA one may be absent.
 CPU_LIBRARY = "libcertified_affine_ffi_cpu.so"
 CUDA_LIBRARY = "libcertified_affine_ffi_cuda.so"
+
+# Architectures the CUDA build emits ready code for, plus one virtual target so
+# an architecture not listed can still be translated at load. Naming none would
+# leave translation the only route, and a driver older than the toolchain that
+# emitted the intermediate form refuses it — the kernel fails to launch rather
+# than running slowly.
+_DEFAULT_CUDA_TARGETS = (
+    "arch=compute_75,code=sm_75",
+    "arch=compute_80,code=sm_80",
+    "arch=compute_86,code=sm_86",
+    "arch=compute_90,code=sm_90",
+    "arch=compute_90,code=compute_90",
+)
+
+
+def cuda_arch_flags(*, nvcc_flags: tuple[str, ...]) -> list[str]:
+    """Return the `-gencode` targets to add to a CUDA compile.
+
+    Args:
+        nvcc_flags: Flags the caller supplied, via `NVCCFLAGS`.
+
+    Returns:
+        List of `-gencode` argument pairs, flattened, and empty where the caller
+        already names an architecture — two sets of targets would conflict.
+
+    """
+    if any(
+        flag.startswith(("-arch", "--gpu-architecture", "-gencode"))
+        for flag in nvcc_flags
+    ):
+        return []
+    flags = []
+    for target in _DEFAULT_CUDA_TARGETS:
+        flags += ["-gencode", target]
+    return flags
+
+
+def toolchain_report(*, compiler: str, nvcc: str | None) -> str:
+    """Return the line a build prints to state which toolchain it found.
+
+    Which libraries a build produces depends on the environment it ran in, and a
+    build that skipped CUDA exits successfully. Stating the toolchain makes the
+    two cases distinguishable at the time rather than inferable afterwards from a
+    library that is not there.
+
+    Args:
+        compiler: Path to the C++ compiler the CPU library is built with.
+        nvcc: Path to `nvcc`, or `None` where none is on the path.
+
+    Returns:
+        One line naming the compilers found, and — where `nvcc` is absent — what
+        that means for the certified path.
+
+    """
+    if nvcc is None:
+        return (
+            f"exact-affine: building with c++ at {compiler}; no nvcc on this "
+            "path, so the CUDA library is not built and the certified upper "
+            "envelope runs on CPU only."
+        )
+    return f"exact-affine: building with c++ at {compiler} and nvcc at {nvcc}."
 
 
 def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> list[Path]:
@@ -64,6 +132,10 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         # MinGW artifact under a `.so` name loads only where its toolchain's
         # runtime is present. Building nothing leaves the certified path to
         # report its own absence, which names what is missing.
+        sys.stdout.write(
+            "exact-affine: no kernel is built on this platform, so the certified "
+            "upper envelope is unavailable here.\n"
+        )
         return []
 
     source_dir = root / PACKAGE_DIR
@@ -77,6 +149,9 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         )
         raise RuntimeError(msg)
 
+    nvcc = shutil.which("nvcc")
+    sys.stdout.write(f"{toolchain_report(compiler=compiler, nvcc=nvcc)}\n")
+
     written = [
         _compile(
             command=[
@@ -85,6 +160,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                 "-O3",
                 "-DNDEBUG",
                 "-fPIC",
+                "-pthread",
                 "-shared",
                 f"-I{include_dir}",
                 str(source_dir / "certified_affine_ffi_cpu.cc"),
@@ -95,8 +171,8 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         )
     ]
 
-    nvcc = shutil.which("nvcc")
     if nvcc is not None:
+        nvcc_flags = tuple(os.environ.get("NVCCFLAGS", "").split())
         written.append(
             _compile(
                 command=[
@@ -105,7 +181,8 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                     "-O3",
                     "--shared",
                     "-Xcompiler=-fPIC",
-                    *os.environ.get("NVCCFLAGS", "").split(),
+                    *cuda_arch_flags(nvcc_flags=nvcc_flags),
+                    *nvcc_flags,
                     f"-I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cuda.cu"),
                     "-o",

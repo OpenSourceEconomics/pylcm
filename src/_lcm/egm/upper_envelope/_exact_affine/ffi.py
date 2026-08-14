@@ -1,6 +1,6 @@
 """Exact affine comparison and publication over stored IEEE operands.
 
-Both entry points here answer a question about the *stored* floating-point
+The entry points here answer questions about the *stored* floating-point
 operands, not about a floating evaluation of them. Every finite operand is
 decoded as an exact signed dyadic $(-1)^s m 2^e$ and the arithmetic runs in
 fixed-width integers, so subnormal bits are read as the values they are and no
@@ -28,7 +28,7 @@ import jax
 import jax.numpy as jnp
 
 from lcm.exceptions import ExactAffineKernelUnavailableError
-from lcm.typing import FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND
 
 # Returned where an operand is non-finite, a width is not positive, or an exact
 # result overflows the target format. Callers must fail loud; nothing is known.
@@ -39,6 +39,10 @@ _TARGETS = (
     "CertifiedAffineCompareF64",
     "ExactAffineReadF32",
     "ExactAffineReadF64",
+    "ExactAffineHandoverF32",
+    "ExactAffineHandoverF64",
+    "ExactCellHullF32",
+    "ExactCellHullF64",
 )
 
 _DIRECTORY = Path(__file__).resolve().parent
@@ -64,6 +68,17 @@ CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
 
 # Whether the targets have been registered with XLA in this process.
 _REGISTERED: bool = False
+
+
+def kernel_built() -> bool:
+    """Return whether this platform has an exact-affine kernel at all.
+
+    Answers from the file alone, deliberately: a platform that never built one
+    is a different situation from a build that is present and cannot answer, and
+    only the first is a reason to stop asking. The second is a broken build and
+    belongs in front of whoever made it.
+    """
+    return _CPU_LIBRARY.is_file()
 
 
 def kernel_available() -> bool:
@@ -111,13 +126,13 @@ def _ensure_registered() -> None:
         _register_platform(library=_CPU_LIBRARY, platform="cpu")
         if CUDA_AVAILABLE:
             _register_platform(library=_CUDA_LIBRARY, platform="CUDA")
-    except OSError as error:
+    except (OSError, AttributeError) as error:
         msg = (
             f"The exact-affine kernel at {_CPU_LIBRARY} exists but could not be "
-            f"loaded: {error}. A library built by one toolchain and loaded by "
-            "another commonly fails this way, missing the first toolchain's "
-            "runtime. Rebuild it in this environment with "
-            "`pixi run build-exact-affine`."
+            f"loaded: {error}. Two builds commonly fail this way: one made by a "
+            "different toolchain, which is missing that toolchain's runtime, and "
+            "one made before a target existed, which loads but does not export "
+            "it. Rebuild in this environment with `pixi run build-exact-affine`."
         )
         raise ExactAffineKernelUnavailableError(msg) from error
 
@@ -226,6 +241,164 @@ def exact_affine_read(
         target, result_shapes, vmap_method="broadcast_all"
     )(*operands)
     return published, status
+
+
+def exact_affine_handover(
+    *,
+    a_x0: FloatND,
+    a_x1: FloatND,
+    a_v0: FloatND,
+    a_v1: FloatND,
+    b_x0: FloatND,
+    b_x1: FloatND,
+    b_v0: FloatND,
+    b_v1: FloatND,
+    left: FloatND,
+    right: FloatND,
+) -> tuple[FloatND, IntND]:
+    """Return the first representable state where the incoming line owns.
+
+    The exact cross-multiplied line difference is affine. Its root is formed as
+    a fixed-width integer ratio and rounded directly to IEEE; an exact sign check
+    then moves at most one representable state to obtain the least float at or
+    above the root.
+
+    Args:
+        a_x0: Lower endpoint abscissa of the outgoing line.
+        a_x1: Upper endpoint abscissa of the outgoing line.
+        a_v0: Outgoing-line value at ``a_x0``.
+        a_v1: Outgoing-line value at ``a_x1``.
+        b_x0: Lower endpoint abscissa of the incoming line.
+        b_x1: Upper endpoint abscissa of the incoming line.
+        b_v0: Incoming-line value at ``b_x0``.
+        b_v1: Incoming-line value at ``b_x1``.
+        left: Left edge of the interval the outgoing line owns from.
+        right: Right edge of the interval in which the handover must lie.
+
+    Returns:
+        The first representable state the incoming line owns and a status. The
+        status is nonzero when the operands are invalid, the lines do not have a
+        unique increasing-slope handover, or that state cannot be represented.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
+
+    """
+    _ensure_registered()
+    operands = _broadcast(
+        a_x0,
+        a_x1,
+        a_v0,
+        a_v1,
+        b_x0,
+        b_x1,
+        b_v0,
+        b_v1,
+        left,
+        right,
+    )
+    target = _target_for(
+        operands=operands,
+        f32="ExactAffineHandoverF32",
+        f64="ExactAffineHandoverF64",
+    )
+    result_shapes = (
+        jax.ShapeDtypeStruct(operands[0].shape, operands[0].dtype),
+        jax.ShapeDtypeStruct(operands[0].shape, jnp.int32),
+    )
+    handover, status = jax.ffi.ffi_call(
+        target, result_shapes, vmap_method="broadcast_all"
+    )(*operands)
+    return handover, status
+
+
+def exact_cell_hull(
+    *,
+    left: FloatND,
+    right: FloatND,
+    live: BoolND,
+    low: IntND,
+    high: IntND,
+    endog_grid: FloatND,
+    value: FloatND,
+    max_runs: int,
+) -> tuple[FloatND, IntND, IntND]:
+    """Resolve one node cell's complete affine envelope in one custom call.
+
+    All ownership and handover decisions are made from the stored IEEE endpoint
+    operands by fixed-width integer arithmetic. The representation stays inside
+    the FFI handler, so the lowered JAX program has one operation regardless of
+    limb count or owner-walk length.
+
+    Args:
+        left: Left edge of every cell in the batch.
+        right: Right edge of every cell in the batch.
+        live: Run mask with shape ``left.shape + (max_runs,)``.
+        low: Lower candidate index of each run's covering link.
+        high: Upper candidate index of each run's covering link.
+        endog_grid: Candidate abscissae, with one trailing candidate axis.
+        value: Candidate values, with the same shape as ``endog_grid``.
+        max_runs: Static owner capacity of every cell.
+
+    Returns:
+        Breakpoints, owner indices, and one status per cell. A nonzero status
+        means no exact cell envelope was published.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
+        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        ValueError: If the batch, run, or candidate shapes are inconsistent.
+
+    """
+    _ensure_registered()
+    left = jnp.asarray(left)
+    right = jnp.asarray(right)
+    endog_grid = jnp.asarray(endog_grid)
+    value = jnp.asarray(value)
+    floating = [left, right, endog_grid, value]
+    target = _target_for(
+        operands=floating,
+        f32="ExactCellHullF32",
+        f64="ExactCellHullF64",
+    )
+    if right.shape != left.shape:
+        msg = f"left and right must share a shape, got {left.shape} and {right.shape}."
+        raise ValueError(msg)
+    expected_runs = (*left.shape, max_runs)
+    live = jnp.asarray(live, dtype=jnp.int32)
+    low = jnp.asarray(low, dtype=jnp.int32)
+    high = jnp.asarray(high, dtype=jnp.int32)
+    if (
+        live.shape != expected_runs
+        or low.shape != expected_runs
+        or high.shape != expected_runs
+    ):
+        msg = (
+            "live, low, and high must have shape left.shape + (max_runs,), got "
+            f"{live.shape}, {low.shape}, and {high.shape}; expected {expected_runs}."
+        )
+        raise ValueError(msg)
+    if endog_grid.shape != value.shape or endog_grid.ndim != left.ndim + 1:
+        msg = (
+            "endog_grid and value must share shape left.shape + (n_candidates,), "
+            f"got {endog_grid.shape} and {value.shape}."
+        )
+        raise ValueError(msg)
+    if endog_grid.shape[:-1] != left.shape:
+        msg = (
+            "endog_grid's batch prefix must match left.shape, got "
+            f"{endog_grid.shape[:-1]} and {left.shape}."
+        )
+        raise ValueError(msg)
+    result_shapes = (
+        jax.ShapeDtypeStruct((*left.shape, max_runs + 1), left.dtype),
+        jax.ShapeDtypeStruct((*left.shape, max_runs), jnp.int32),
+        jax.ShapeDtypeStruct(left.shape, jnp.int32),
+    )
+    bounds, owners, status = jax.ffi.ffi_call(
+        target, result_shapes, vmap_method="broadcast_all"
+    )(left, right, live, low, high, endog_grid, value)
+    return bounds, owners, status
 
 
 def _broadcast(*operands: FloatND) -> list[FloatND]:
