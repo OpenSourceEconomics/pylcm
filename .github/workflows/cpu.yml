@@ -94,12 +94,14 @@ jobs:
         # compiled, because JAX holds each one live in an in-memory cache, and
         # the DC-EGM solve/oracle battery (`slow`) compiles enough of them to
         # exhaust the 16 GB runner mid-suite. Two mechanisms keep it in budget:
-        # - `--release-compiled-programs` drops that cache at every module
-        #   boundary, which bounds the growth instead of merely dividing it.
-        #   Measured on the `slow` battery at `-n 2`: peak resident memory over
-        #   the process tree falls from 18.25 GB to 9.44 GB and stops ratcheting,
-        #   and the phase runs faster rather than slower, because a released
-        #   program is recompiled from the persistent on-disk cache.
+        # - the suite drops that cache at every module boundary by default,
+        #   which bounds the growth instead of merely dividing it. Measured on
+        #   the `slow` battery at `-n 2`: peak resident memory over the process
+        #   tree falls from 18.25 GB to 9.44 GB and stops ratcheting, and the
+        #   phase runs faster rather than slower, because a released program is
+        #   recompiled from the persistent on-disk cache. `--keep-compiled-
+        #   programs` turns it off, for a run measuring compile behaviour
+        #   itself; nothing here wants that.
         # - the phases stay separate, each starting from a fresh process, as a
         #   second line of defence and so coverage can be appended across them.
         #
@@ -130,15 +132,15 @@ jobs:
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow" \
-            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m slow \
-            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-solution-slow.xml \
             --cov=./ --cov-append --cov-report= -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
-            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
             --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -227,8 +229,8 @@ jobs:
         # Same memory budget as the fp64 leg above, for the same reason: a
         # worker's resident memory grows with every program it compiles, and the
         # `slow` battery compiles enough to exhaust the 16 GB runner. So this leg
-        # runs the same phases with `--release-compiled-programs` rather than the
-        # single `tests-32bit` invocation, which is the configuration that dies.
+        # runs the same separate phases rather than the single `tests-32bit`
+        # invocation, which is the configuration that dies.
         # Precision does not change the compile load, so it does not change the
         # remedy.
         env:
@@ -236,15 +238,15 @@ jobs:
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
-            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 -m slow \
-            --release-compiled-programs --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp32-solution-slow.xml \
             -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            --precision=32 -m slow --release-compiled-programs \
+            --precision=32 -m slow \
             --timeout=600 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
       - name: Upload JUnit reports
