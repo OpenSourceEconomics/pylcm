@@ -33,6 +33,7 @@ from _lcm.regime_building.age_normalization import (
     normalize_age_specialization,
 )
 from _lcm.regime_building.age_specialization import resolve_node
+from _lcm.regime_building.broadcast import root_functions
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import normalize_all_regime_phases
@@ -42,7 +43,6 @@ from _lcm.regime_building.processing import (
     compute_active_periods_by_regime,
     process_regimes,
 )
-from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -366,7 +366,7 @@ def _model_wide_conditioning_names(
     )
 
 
-def _validate_all_variables_used(  # noqa: C901
+def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
@@ -375,11 +375,21 @@ def _validate_all_variables_used(  # noqa: C901
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
-    Each state or action must appear in at least one of:
-    - The concurrent valuation (utility or constraints)
-    - A transition function
-    - A regime function whose output the Koopmans aggregator consumes at
-      the Bellman step
+    Each state or action must be read by one of the regime's root computations
+    (`root_functions`) or by a law of motion that is not the identity. That
+    covers, per regime:
+
+    - the concurrent valuation — utility, or a collective regime's
+      per-stakeholder utilities, and the constraints;
+    - a derived-categorical function;
+    - the Koopmans aggregator, directly or through a regime function whose
+      output it consumes at the Bellman step;
+    - the regime transition;
+    - a value-constraint predicate or a `same_period_refs` projection;
+    - the gate, gate references or fallback projections of a gated edge whose
+      target is this regime — those are declared on the source regime but
+      evaluated here, so this regime is where the state they read must live;
+    - a law of motion, unless it hands the state to itself.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
@@ -404,6 +414,32 @@ def _validate_all_variables_used(  # noqa: C901
         if broadcast_variables is not None:
             variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        # `root_functions` is the single definition of what a root computation
+        # is, shared with the broadcast pruning walk so the two cannot disagree
+        # about what counts as a read. It also supplies the reads no per-regime
+        # walk can see: a gated edge declared on another regime whose gate,
+        # gate references and fallbacks are evaluated on *this* regime's grid.
+        solve_roots = root_functions(
+            regime_name=regime_name,
+            regime=user_regime,
+            all_regimes=user_regimes,
+            phase="solve",
+        )
+        simulate_roots = root_functions(
+            regime_name=regime_name,
+            regime=user_regime,
+            all_regimes=user_regimes,
+            phase="simulate",
+        )
+        # A `Phased` slot may consume a variable in only one phase, and the
+        # variable is used either way, so a simulate variant that is a different
+        # object joins the pool under its own key.
+        roots: dict[str, Callable[..., object]] = dict(solve_roots) | {
+            f"{key}__simulate": func
+            for key, func in simulate_roots.items()
+            if solve_roots.get(key) is not func
+        }
+        user_functions |= roots
         if ages is not None:
             active_periods = (
                 ()
@@ -438,47 +474,18 @@ def _validate_all_variables_used(  # noqa: C901
                     },
                 )
 
-        # A collective regime's value-constraint predicates and same-period
-        # projection functions are decision inputs too — a state or action read
-        # only by them (e.g. one that only shifts the dissolution's projected
-        # state) must count as "used". Added under reserved names to this
-        # local DAG copy only; `get_all_functions` itself is unchanged.
-        value_decision_targets: list[str] = []
-        for name, predicate in user_regime.value_constraints.items():
-            key = f"__value_constraint__{name}"
-            user_functions[key] = predicate
-            value_decision_targets.append(key)
-        for ref_name, ref in user_regime.same_period_refs.items():
-            for state_name, projection_func in ref.projection.items():
-                key = f"__same_period_ref__{ref_name}__{state_name}"
-                user_functions[key] = projection_func
-                value_decision_targets.append(key)
-
-        # A collective regime carries a per-stakeholder `utility_<s>` in place
-        # of a single `utility`; a state/action used only through those
-        # per-stakeholder utilities must still count as "used".
-        utility_targets = (
-            [f"utility_{s}" for s in user_regime.stakeholders]
-            if user_regime.stakeholders is not None
-            else ["utility"]
-        )
         targets = [
-            *utility_targets,
-            *value_decision_targets,
-            *list(user_regime.constraints),
+            *roots,
+            # A law of motion is a use of what it reads, except when it is the
+            # identity: handing a state to itself says nothing about the state
+            # being needed. This is where the two consumers of `root_functions`
+            # part ways — the pruning walk roots the identity hand-over, because
+            # a target that keeps the state has to be given its value.
             *(
                 name
                 for name in user_functions
                 if name.startswith("next_")
                 and not getattr(user_functions[name], "_is_auto_identity", False)
-            ),
-            # Both phases, because a `Phased` aggregator may consume a variable
-            # in only one of them and the variable is used either way.
-            *get_dag_targets_consumed_by_W(
-                user_functions, user_regime.get_koopmans_aggregator(phase="solve")
-            ),
-            *get_dag_targets_consumed_by_W(
-                user_functions, user_regime.get_koopmans_aggregator(phase="simulate")
             ),
         ]
         reachable = get_ancestors(

@@ -63,6 +63,7 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.v_topology import expected_V_rank
 from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -692,19 +693,18 @@ class Model:
         A freshly solved value function is correct by construction, so only a
         supplied one is checked. It is the one simulate input nothing else
         validates: a value function of the wrong rank broadcasts rather than
-        raising, so it has to be caught against the declared state space here.
+        raising, so it has to be caught against the produced rank here.
         """
         if period_to_regime_to_V_arr is None or not validation_enabled(log):
             return
         try:
             validate_supplied_V_shapes(
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                # The solve phase, not the user declaration: a carried state is
-                # derived during backward induction and contributes no axis, so
-                # the user's `states` would over-count the ranks it produced.
-                regime_to_state_names=MappingProxyType(
+                # `expected_V_rank` is the same rule the solver sizes V with, so
+                # the rank a solve produces is the rank simulate accepts.
+                regime_to_expected_rank=MappingProxyType(
                     {
-                        name: tuple(regime.solution.state_names)
+                        name: expected_V_rank(regime=regime)
                         for name, regime in self._regimes.items()
                     }
                 ),

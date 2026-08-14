@@ -58,7 +58,9 @@ class ResultMetadata:
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
-    regime_to_stakeholders: MappingProxyType[RegimeName, tuple[str, ...] | None]
+    regime_to_stakeholders: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
+        MappingProxyType({})
+    )
     """Immutable mapping of regime names to their ordered stakeholder names.
 
     `None` for a singleton regime. Captured at `SimulationResult.__init__` time
@@ -66,6 +68,12 @@ class ResultMetadata:
     collective regime's recorded `value` apart from a singleton's even after
     `save()` has dropped the `Regime` objects themselves — see
     `_lcm.simulation.result_dataframe._process_regime`.
+
+    The default is empty, so a saved artifact whose metadata payload carries no
+    such mapping still loads. Every regime then reads as a singleton, which is
+    the only reading available; a regime whose recorded value does carry a
+    stakeholder axis is reported by `_lcm.simulation.result_dataframe`, naming
+    this field, instead of being published under a wrong column layout.
     """
 
 

@@ -101,16 +101,20 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     """Validate a collective (stakeholder-valued) regime — E1.
 
     Both the terminal (slice 1b) and non-terminal continuation (slice 2) cases
-    are implemented; a regime is checked for the invariants the collective
-    kernels rely on: a non-empty, duplicate-free `stakeholders` tuple, a
-    per-stakeholder `utility_<s>` function for every stakeholder, at least one
-    discrete action (the household argmax runs over the discrete-action
-    product), and — if `weights` is given — weight keys matching the
-    stakeholder names, with every weight finite, non-negative, and a positive
-    total (the zero-safe scalarization in `collective._weighted_sum` treats an
-    exact-zero weight as a deliberate exclusion, so a non-finite or negative
-    weight, or an all-zero `weights` mapping, would silently produce a
-    meaningless or undefined household objective rather than erroring).
+    are implemented. Checked here are the properties a bare `Regime` already
+    determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
+    the regime-local `value_constraints` / `same_period_refs` grammar, and — if
+    `weights` is given — weight keys matching the stakeholder names, with every
+    weight finite, non-negative, and a positive total (the zero-safe
+    scalarization in `collective._weighted_sum` treats an exact-zero weight as
+    a deliberate exclusion, so a non-finite or negative weight, or an all-zero
+    `weights` mapping, would silently produce a meaningless or undefined
+    household objective rather than erroring).
+
+    What a collective regime needs but a model-level slot may supply — the
+    per-stakeholder `utility_<s>` functions and at least one discrete action —
+    is completeness, so `_validate_completeness` checks it once the regimes are
+    finalized at model build.
 
     Features outside the E1 scope raise `NotImplementedError`: EV1 taste shocks
     (the collective argmax is the hard household maximum), a nonlinear
@@ -161,23 +165,6 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_stakeholders_tuple_errors(stakeholders))
-
-    missing = [s for s in stakeholders if f"utility_{s}" not in regime.functions]
-    if missing:
-        needed = ", ".join(f"'utility_{s}'" for s in stakeholders)
-        raise RegimeInitializationError(
-            f"A collective regime with stakeholders {stakeholders} must supply "
-            f"a per-stakeholder utility for each stakeholder ({needed}) in its "
-            f"functions. Missing: {[f'utility_{s}' for s in missing]}."
-        )
-
-    if not any(isinstance(grid, DiscreteGrid) for grid in regime.actions.values()):
-        error_messages.append(
-            "A collective regime must have at least one discrete action: the "
-            "household argmax of the scalarization runs over the discrete-action "
-            "product."
-        )
-
     error_messages.extend(_collective_weights_errors(regime, stakeholders))
 
     if error_messages:
@@ -709,14 +696,27 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
     return error_messages
 
 
-def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
+def _validate_completeness(
+    *, regime: lcm.regime.Regime, reserved_value_columns: frozenset[str]
+) -> list[str]:
     """Collect completeness errors for a finalized (post-merge) regime.
+
+    Args:
+        regime: The finalized regime to check.
+        reserved_value_columns: The `value_<stakeholder>` names published by
+            the model's collective regimes — the whole model's, not this
+            regime's, because the published frame is one table over all of
+            them.
 
     These properties hold only for the regime the model actually runs —
     a bare user `Regime` may legitimately lack them until model-level slots
     are merged in:
 
-    - a `utility` entry in `functions`
+    - a `utility` entry in `functions` — a per-stakeholder `utility_<s>` for
+      each stakeholder of a collective regime
+    - at least one discrete action in a collective regime
+    - no declaration under a name any of the model's collective regimes
+      publishes as a `value_<stakeholder>` column
     - state-transition coverage (every non-process state has a law; terminal
       regimes have none; identity laws refer to existing states)
     - no state/action name overlap
@@ -726,9 +726,8 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     error_messages: list[str] = []
 
     if regime.stakeholders is not None:
-        # A collective regime supplies a per-stakeholder `utility_<s>` instead
-        # of a single `utility` (validated in full by `_validate_collective_regime`
-        # at construction); require each here so a finalized regime stays complete.
+        # A collective regime supplies a per-stakeholder `utility_<s>` in place
+        # of a single `utility`.
         missing = [
             s for s in regime.stakeholders if f"utility_{s}" not in regime.functions
         ]
@@ -738,11 +737,22 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
                 f"function for each stakeholder. Missing: "
                 f"{[f'utility_{s}' for s in missing]}.",
             )
+        if not any(isinstance(grid, DiscreteGrid) for grid in regime.actions.values()):
+            error_messages.append(
+                "A collective regime must have at least one discrete action: "
+                "the household argmax of the scalarization runs over the "
+                "discrete-action product.",
+            )
     elif "utility" not in regime.functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
         )
 
+    error_messages.extend(
+        _published_value_column_errors(
+            regime=regime, reserved_value_columns=reserved_value_columns
+        )
+    )
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
@@ -757,6 +767,40 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
         )
 
     return error_messages
+
+
+def _published_value_column_errors(
+    *, regime: lcm.regime.Regime, reserved_value_columns: frozenset[str]
+) -> list[str]:
+    """Collect errors for declarations that shadow a published value column.
+
+    A collective regime publishes one `value_<stakeholder>` column per
+    stakeholder, unconditionally, and the published frame is a single table
+    over every regime — so a singleton regime standing beside a collective one
+    claims the same column with a state of that name. A declaration that
+    collides neither wins the column nor errors at publication: the frame
+    carries the stakeholder's value under that name twice and the declared
+    variable is absent. The collision is refused here, where the name is still
+    the author's, and against the model's stakeholders rather than the
+    declaring regime's.
+    """
+    declared = (
+        set(regime.states)
+        | set(regime.actions)
+        | set(regime.functions)
+        | set(regime.constraints)
+        | set(regime.derived_categoricals)
+    )
+    colliding = sorted(reserved_value_columns & declared)
+    if not colliding:
+        return []
+    return [
+        (
+            "A collective regime publishes a `value_<stakeholder>` column for "
+            "each of its stakeholders, so those names are reserved. Rename the "
+            f"following declarations: {colliding}."
+        ),
+    ]
 
 
 def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:

@@ -12,11 +12,16 @@ slice. Regime-level declarations are never pruned. The needed-set is a
 cross-regime fixed point: a state unused inside a regime is still required
 when a candidate target keeps it and the law of motion toward that target
 reads it.
+
+`root_functions` is the single definition of those root computations. The
+pruning walk here and the variable-usage check in `_lcm.model_processing`
+both take their roots from it, so the two cannot disagree about what counts
+as a read.
 """
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 from dags import get_ancestors
 
@@ -33,9 +38,15 @@ from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
+
+# Which `Phased` side each `PhasedRegimeSpec` slice is built from.
+_PHASE_OF_SLICE: Mapping[PhaseName, Literal["solve", "simulate"]] = MappingProxyType(
+    {"solution": "solve", "simulation": "simulate"}
+)
 
 _BROADCASTABLE_SLOTS = (
     "functions",
@@ -242,6 +253,164 @@ def prune_broadcast_variables(
     return MappingProxyType(pruned_regimes), MappingProxyType(pruned_variables)
 
 
+def root_functions(
+    *,
+    regime_name: RegimeName,
+    regime: UserRegime,
+    all_regimes: Mapping[RegimeName, UserRegime],
+    phase: Literal["solve", "simulate"],
+    koopmans_aggregator: UserFunction | None = None,
+) -> MappingProxyType[str, UserFunction]:
+    """Collect one regime's root computations, keyed under reserved names.
+
+    A root is a computation the model evaluates on *this* regime's grid, so
+    every name it transitively reads is a genuine input of the regime. The
+    roots are
+
+    - `utility`, or one `utility_<stakeholder>` per stakeholder of a
+      collective regime;
+    - every derived-categorical function;
+    - every constraint;
+    - the Koopmans aggregator, in a non-terminal regime;
+    - the regime transition — every cell of a per-target dict, or the coarse
+      callable;
+    - every value-constraint predicate;
+    - every `same_period_refs` projection;
+    - for each gated edge *whose target is this regime*, the edge's gate, its
+      gate-reference projections, and its legs' fallback projections.
+
+    That last group is why `all_regimes` is an argument: a gated edge is
+    declared on the SOURCE regime but gate, gate references and fallbacks are
+    all evaluated on the TARGET regime's grid, so nothing in the target's own
+    slots mentions them and a walk over one regime in isolation cannot see the
+    read.
+
+    Laws of motion are deliberately absent: the two consumers ask different
+    questions of them. The pruning walk roots a law toward a target that keeps
+    the state, because the value has to be handed over; the usage check roots
+    every law that is not an identity, because handing a state to itself is
+    not a use of it. Each consumer adds its own law roots on top of these.
+
+    Args:
+        regime_name: Name of the regime whose roots are collected.
+        regime: The regime itself.
+        all_regimes: Mapping of regime names to every regime of the model,
+            scanned for gated edges pointing at `regime_name`.
+        phase: Which side of a `Phased` slot the roots are taken from.
+        koopmans_aggregator: The model-level aggregator, used when the regime
+            declares none of its own. `None` leaves the aggregator out, which
+            is what a regime that already carries its own needs.
+
+    Returns:
+        Immutable mapping of reserved root name to the callable it roots.
+
+    """
+    return MappingProxyType(
+        _valuation_roots(
+            regime=regime, phase=phase, koopmans_aggregator=koopmans_aggregator
+        )
+        | _transition_roots(regime=regime, phase=phase)
+        | _value_aware_roots(regime=regime)
+        | _incoming_edge_roots(regime_name=regime_name, all_regimes=all_regimes)
+    )
+
+
+def _valuation_roots(
+    *,
+    regime: UserRegime,
+    phase: Literal["solve", "simulate"],
+    koopmans_aggregator: UserFunction | None,
+) -> dict[str, UserFunction]:
+    """Key the payoff side of the regime — utility, categoricals, constraints, W."""
+    functions = {
+        name: cast("UserFunction", _for_phase(func, phase=phase))
+        for name, func in regime.functions.items()
+    }
+    utility_names = (
+        tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
+        if regime.stakeholders is not None
+        else ("utility",)
+    )
+    roots = {
+        f"__utility__{name}": functions[name]
+        for name in utility_names
+        if name in functions
+    }
+    roots |= {
+        f"__derived_categorical__{name}": functions[name]
+        for name in regime.derived_categoricals
+        if name in functions
+    }
+    roots |= {
+        f"__constraint__{name}": cast("UserFunction", _for_phase(value, phase=phase))
+        for name, value in regime.constraints.items()
+    }
+    if not regime.terminal:
+        aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
+        if aggregator is not None:
+            roots["__koopmans_aggregator"] = aggregator
+    return roots
+
+
+def _transition_roots(
+    *, regime: UserRegime, phase: Literal["solve", "simulate"]
+) -> dict[str, UserFunction]:
+    """Key the regime transition: every cell of a per-target dict, or the coarse one."""
+    transition = _for_phase(regime.transition, phase=phase)
+    if isinstance(transition, Mapping):
+        return {
+            f"__next_regime__{target_regime_name}": cast("UserFunction", cell)
+            for target_regime_name, cell in transition.items()
+        }
+    if transition is not None:
+        return {"__next_regime": cast("UserFunction", transition)}
+    return {}
+
+
+def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:
+    """Key a collective regime's value constraints and same-period projections."""
+    roots = {
+        f"__value_constraint__{name}": predicate
+        for name, predicate in regime.value_constraints.items()
+    }
+    roots |= {
+        f"__same_period_ref__{ref_name}__{state_name}": projection
+        for ref_name, ref in regime.same_period_refs.items()
+        for state_name, projection in ref.projection.items()
+    }
+    return roots
+
+
+def _incoming_edge_roots(
+    *, regime_name: RegimeName, all_regimes: Mapping[RegimeName, UserRegime]
+) -> dict[str, UserFunction]:
+    """Key the gated-edge functions other regimes evaluate on this regime's grid."""
+    roots: dict[str, UserFunction] = {}
+    for source_name, source in all_regimes.items():
+        edge = source.gated_edges.get(regime_name)
+        if edge is None:
+            continue
+        roots[f"__incoming_gate__{source_name}"] = edge.gate
+        roots |= {
+            f"__incoming_gate_ref__{source_name}__{ref_name}__{state_name}": projection
+            for ref_name, ref in edge.gate_refs.items()
+            for state_name, projection in ref.projection.items()
+        }
+        roots |= {
+            f"__incoming_fallback__{source_name}__{leg_name}__{state_name}": projection
+            for leg_name, leg in edge.legs.items()
+            for state_name, projection in leg.fallback.projection.items()
+        }
+    return roots
+
+
+def _for_phase(value: object, *, phase: Literal["solve", "simulate"]) -> object:
+    """Take the side of a `Phased` slot value this phase runs, else the value."""
+    if isinstance(value, Phased):
+        return value.solve if phase == "solve" else value.simulate
+    return value
+
+
 def _phase_fixed_point(
     *,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
@@ -282,7 +451,10 @@ def _phase_fixed_point(
             phase_slice = getattr(specs[regime_name], phase_name)
             needed = _needed_names(
                 phase_slice=phase_slice,
+                regime_name=regime_name,
                 user_regime=user_regime,
+                user_regimes=user_regimes,
+                phase_name=phase_name,
                 koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
                 kept=grown,
@@ -390,7 +562,10 @@ def _resolved_at_representative_age(
 def _needed_names(
     *,
     phase_slice: RegimePhaseSpec,
+    regime_name: RegimeName,
     user_regime: UserRegime,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    phase_name: PhaseName,
     koopmans_aggregator: UserFunction,
     candidate_targets: frozenset[RegimeName],
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -399,77 +574,41 @@ def _needed_names(
 ) -> set[str]:
     """Collect every name this phase slice's root computations read.
 
-    Roots:
+    The roots are `root_functions`' — utility, derived categoricals,
+    constraints, the Koopmans aggregator, the regime transition, the
+    value-constraint predicates, the `same_period_refs` projections and the
+    incoming gated edges' gates, gate references and fallbacks — plus the laws
+    of motion toward candidate targets that keep the law's state, which are
+    pruning's own: whatever such a law reads has to stay alive here so the
+    target can be handed its value.
 
-    - `utility`
-    - the Koopmans aggregator (non-terminal regimes only)
-    - every constraint
-    - every derived-categorical function
-    - the regime transition (coarse inputs, or every granular cell)
-    - the laws of motion toward candidate targets that keep the law's state
-
-    `functions`/`constraints` are resolved at a representative active period before
-    the DAG walk, so `get_ancestors` sees a marked node's real argument names
-    instead of `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
+    The whole pool is resolved at a representative active period before the DAG
+    walk, so `get_ancestors` sees a marked node's real argument names instead of
+    `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
     """
-    # BOTH sides are load-bearing. Upstream added the representative-age resolution
-    # (the docstring's last paragraph describes it, and `constraints` below is only
-    # defined by it -- taking HEAD wholesale leaves that name undefined). The
-    # collective branch added the per-stakeholder utility targets.
-    functions = _resolved_at_representative_age(
-        phase_slice.functions, ages=ages, active_periods=active_periods
-    )
-    constraints = _resolved_at_representative_age(
-        phase_slice.constraints, ages=ages, active_periods=active_periods
-    )
+    pool: dict[str, UserFunction] = dict(phase_slice.functions)
 
-    pool: dict[str, UserFunction] = dict(functions)
-    # A collective regime carries a per-stakeholder `utility_<s>` in place of a
-    # single `utility`; a broadcast variable read only by those must survive.
-    utility_names: tuple[str, ...] = (
-        tuple(f"utility_{s}" for s in user_regime.stakeholders)
-        if user_regime.stakeholders is not None
-        else ("utility",)
-    )
-    targets = [name for name in utility_names if name in pool]
-    targets += [name for name in user_regime.derived_categoricals if name in pool]
-
-    roots = {f"__constraint_{name}": func for name, func in constraints.items()}
-    if not user_regime.terminal:
-        roots["__koopmans_aggregator"] = (
-            phase_slice.koopmans_aggregator
-            if phase_slice.koopmans_aggregator is not None
-            else koopmans_aggregator
+    roots = dict(
+        root_functions(
+            regime_name=regime_name,
+            regime=user_regime,
+            all_regimes=user_regimes,
+            phase=_PHASE_OF_SLICE[phase_name],
+            koopmans_aggregator=koopmans_aggregator,
         )
-    roots |= _regime_transition_roots(phase_slice)
+    )
     roots |= _law_roots(
         phase_slice=phase_slice, candidate_targets=candidate_targets, kept=kept
     )
     pool |= roots
-    targets += list(roots)
 
+    targets = list(roots)
     if not targets:
         return set()
-    return set(get_ancestors(pool, targets=targets, include_targets=True))
-
-
-def _regime_transition_roots(
-    phase_slice: RegimePhaseSpec,
-) -> dict[str, UserFunction]:
-    """Key the regime transition's callables as pruning roots.
-
-    A per-target dict contributes every cell; a coarse transition contributes
-    itself; a terminal regime contributes nothing.
-    """
-    regime_transition = phase_slice.regime_transition
-    if isinstance(regime_transition, Mapping):
-        return {
-            f"__next_regime_{target_regime_name}": cast("UserFunction", cell)
-            for target_regime_name, cell in regime_transition.items()
-        }
-    if regime_transition is not None:
-        return {"__next_regime": cast("UserFunction", regime_transition)}
-    return {}
+    resolved_pool = _resolved_at_representative_age(
+        pool, ages=ages, active_periods=active_periods
+    )
+    return set(get_ancestors(resolved_pool, targets=targets, include_targets=True))
 
 
 def _law_roots(

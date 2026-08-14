@@ -474,11 +474,14 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
-        # A collective regime is validated here (per-stakeholder
-        # `utility_<s>`, weights, >=1 discrete action; out-of-scope features —
-        # taste shocks, certainty equivalents, non-GridSearch solvers — are
-        # rejected) and then solves via the collective kernels. The default
-        # `None` (singleton) path never enters this branch.
+        # A collective regime's own declaration is validated here (the
+        # `stakeholders` tuple, `weights`, the value-constraint grammar;
+        # out-of-scope features — taste shocks, nonlinear certainty
+        # equivalents, non-GridSearch solvers — are rejected). What a
+        # model-level slot may still supply — the per-stakeholder
+        # `utility_<s>` functions and at least one discrete action — is
+        # checked when the model finalizes its regimes. The default `None`
+        # (singleton) path never enters this branch.
         if self.gated_edges:
             _validate_gated_edges(self)
         if self.stakeholders is not None:
@@ -524,6 +527,9 @@ class Regime:
         make_immutable("value_constraints")
         make_immutable("gated_edges")
         make_immutable("same_period_refs")
+        # `weights` is optional; a singleton regime declares none at all.
+        if self.weights is not None:
+            make_immutable("weights")
 
         # The phase grammar (states matrix, carried laws, regime-transition
         # variants) is validated by the normalizer; the per-phase spec it

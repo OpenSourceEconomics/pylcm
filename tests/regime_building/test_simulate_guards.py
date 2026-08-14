@@ -34,6 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import ResolvedEdgeLeg
 from _lcm.regime_building.Q_and_F import ResolvedSamePeriodRef
 from _lcm.simulation.gated_routing import (
@@ -43,7 +44,14 @@ from _lcm.simulation.gated_routing import (
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, categorical, fixed_transition
+from lcm import (
+    DiscreteGrid,
+    LinearAggregator,
+    LinearExpectation,
+    LinSpacedGrid,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
@@ -522,21 +530,30 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     assert period_0.in_regime.shape == (n_subjects,)
 
 
-def test_stateless_collective_without_any_action_is_rejected_upstream():
-    """Documents scope: a collective regime with NO discrete action at all
-    (the OTHER stateless variant the finding names) is already rejected by
-    `_validate_collective_regime` before this guard is ever reached -- "a
-    collective regime must have at least one discrete action" -- so it can
-    never reach `_simulate_regime_in_period` in the first place.
+def test_stateless_collective_without_any_action_is_rejected_when_regimes_finalize():
+    """A collective regime declaring no discrete action is rejected at model build.
+
+    The household argmax runs over the discrete-action product, so a collective
+    regime that offers none has nothing to maximize over. Completeness is a
+    property of the merged regime, so the rejection happens when the model
+    finalizes its regimes rather than at `Regime` construction — a bare regime
+    may legitimately receive its actions from a model-level slot.
     """
     with pytest.raises(RegimeInitializationError, match="discrete action"):
-        Regime(
-            transition=None,
-            stakeholders=("f", "m"),
-            functions={
-                "utility_f": lambda: jnp.asarray(3.0),
-                "utility_m": lambda: jnp.asarray(7.0),
+        finalize_regimes(
+            user_regimes={
+                "couple": Regime(
+                    transition=None,
+                    stakeholders=("f", "m"),
+                    functions={
+                        "utility_f": lambda: jnp.asarray(3.0),
+                        "utility_m": lambda: jnp.asarray(7.0),
+                    },
+                )
             },
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
         )
 
 

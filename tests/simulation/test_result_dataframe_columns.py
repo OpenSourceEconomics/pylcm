@@ -14,6 +14,7 @@ import pytest
 from _lcm.simulation.result_dataframe import _reorder_columns
 from lcm import DiscreteGrid, Model, Regime, categorical
 from lcm.exceptions import PyLCMError
+from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import (
     AGES,
@@ -31,6 +32,16 @@ class SoloRegimeId:
 
     working: ScalarInt  # code 0
     retired: ScalarInt  # code 1
+
+
+@categorical(ordered=False)
+class MixedRegimeId:
+    """Regime ids of the model pairing a collective household with a singleton."""
+
+    couple: ScalarInt  # code 0
+    solo: ScalarInt  # code 1
+    couple_terminal: ScalarInt  # code 2
+    solo_terminal: ScalarInt  # code 3
 
 
 # Params of the collective models here, whose regimes are `couple` /
@@ -120,6 +131,19 @@ def test_model_rejects_a_state_named_like_a_stakeholder_value_column():
     """
     with pytest.raises(PyLCMError, match="value_f"):
         _make_collective_model_with_colliding_state()
+
+
+def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column():
+    """`value_<stakeholder>` is reserved across the model, not within one regime.
+
+    The published frame is a single table over every regime, so a singleton
+    regime's state named `value_f` claims the column a collective regime already
+    publishes for its wife. Neither regime is wrong on its own, which is why the
+    name is refused against the model's stakeholders rather than the declaring
+    regime's.
+    """
+    with pytest.raises(PyLCMError, match="value_f"):
+        _make_mixed_model_with_a_singleton_state_shadowing_a_value_column()
 
 
 @pytest.mark.parametrize("missing_column", ["subject_id", "period", "regime_name"])
@@ -244,6 +268,68 @@ def _make_collective_model_with_colliding_state() -> Model:
         ages=AGES,
         regime_id_class=CoupleRegimeId,
     )
+
+
+def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model:
+    """Build a model pairing a collective household with an unrelated singleton.
+
+    The couple is the two-stakeholder household of `tests.collective_fixtures`
+    over its wage state; the singleton lives alongside it and calls its own state
+    `value_f`. Each regime transitions only into its own terminal, so the two
+    never meet — they share nothing but the published frame.
+    """
+    couple = Regime(
+        transition={"couple_terminal": MarkovTransition(_probability_one)},
+        active=lambda age: age < 1,
+        stakeholders=("f", "m"),
+        states={"wage": WAGE_GRID},
+        state_transitions={"wage": _next_wage},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _utility_wife, "utility_m": _utility_husband},
+    )
+    couple_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        stakeholders=("f", "m"),
+        states={"wage": WAGE_GRID},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _utility_wife, "utility_m": _utility_husband},
+    )
+    solo = Regime(
+        transition={"solo_terminal": MarkovTransition(_probability_one)},
+        active=lambda age: age < 1,
+        states={"value_f": WAGE_GRID},
+        state_transitions={"value_f": _next_colliding_state},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _colliding_solo_utility},
+    )
+    solo_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"value_f": WAGE_GRID},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _colliding_solo_utility},
+    )
+    return Model(
+        regimes={
+            "couple": couple,
+            "solo": solo,
+            "couple_terminal": couple_terminal,
+            "solo_terminal": solo_terminal,
+        },
+        ages=AGES,
+        regime_id_class=MixedRegimeId,
+    )
+
+
+def _probability_one(age: FloatND) -> FloatND:
+    """Regime transition: the declared target is reached with probability one."""
+    return jnp.ones_like(age, dtype=float)
+
+
+def _colliding_solo_utility(value_f: ContinuousState, work: DiscreteAction) -> FloatND:
+    """The singleton's earnings from the state its author called `value_f`."""
+    return value_f * work
 
 
 def _utility_wife(wage: ContinuousState, work: DiscreteAction) -> FloatND:

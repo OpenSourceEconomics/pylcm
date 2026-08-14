@@ -191,7 +191,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -210,7 +210,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -236,13 +236,11 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
 def test_couple_simulate_with_runtime_validation_enabled():
     """The trailing stakeholder axis on `V_arr` broadcasts against `in_regime`.
 
-    `log_level="off"` (used by every other test in this module) skips the
-    `validate_V` / NaN-diagnostic code paths entirely; those paths compare
-    `V_arr` against `in_regime`/`subject_ids_in_regime`, which for a
-    collective regime's `(n_subjects, n_stakeholders)` V need an explicit
-    broadcast (a singleton regime's `V_arr` is already `(n_subjects,)`).
-    Regression pin for that reshape, at `log_level="debug"` (the strictest
-    level — raises on any validation failure).
+    The `validate_V` / NaN-diagnostic code paths compare `V_arr` against
+    `in_regime`/`subject_ids_in_regime`, which for a collective regime's
+    `(n_subjects, n_stakeholders)` V needs an explicit broadcast (a singleton
+    regime's `V_arr` is already `(n_subjects,)`). Pinned at `log_level="debug"`,
+    the strictest level, which raises on any validation failure.
     """
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes_dict = _make_couple_regimes()
@@ -261,7 +259,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -412,7 +410,7 @@ def _solve_consent():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -445,7 +443,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -493,7 +491,7 @@ def test_consent_routing_never_populates_the_non_routed_target():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -668,7 +666,7 @@ def _solve_dissolution():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -706,7 +704,7 @@ def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -791,7 +789,7 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -832,7 +830,7 @@ def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
             initial_conditions=initial_conditions,
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
-            logger=get_logger(log_level="off"),
+            logger=get_logger(log_level="debug"),
             period_to_regime_to_V_arr=solution,
             # period_to_regime_to_dissolution_flags omitted (defaults to empty).
             ages=ages,
@@ -980,7 +978,7 @@ def _solve_consent_discrete_axis():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -1022,7 +1020,7 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -1108,7 +1106,7 @@ def test_public_model_solve_return_dissolution_flags_matches_internal_solve():
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
     )
     np.testing.assert_array_equal(
         np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
@@ -1123,7 +1121,7 @@ def test_public_model_solve_return_both_returns_three_tuple():
     model = _make_dissolution_model()
     solution, sim_policy, dissolution_flags = model.solve(
         params=_DISSOLUTION_PARAMS,
-        log_level="off",
+        log_level="debug",
         return_simulation_policy=True,
         return_dissolution_flags=True,
     )
@@ -1137,7 +1135,7 @@ def test_public_model_solve_return_both_returns_three_tuple():
 def test_public_model_solve_default_return_shape_is_byte_identical():
     """Without either flag, `solve` still returns the bare value-function mapping."""
     model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     assert isinstance(solution, MappingProxyType)
     assert set(solution) == {0, 1, 2, 3}
 
@@ -1152,7 +1150,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
     )
     initial_conditions = MappingProxyType(
         {
@@ -1168,7 +1166,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
-        log_level="off",
+        log_level="debug",
         seed=0,
     )
 
@@ -1202,7 +1200,7 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
     )
 
     calls: list[frozenset[str]] = []
@@ -1228,7 +1226,7 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=solution,  # precomputed -> solve() is skipped
         period_to_regime_to_dissolution_flags=dissolution_flags,
-        log_level="off",
+        log_level="debug",
         seed=0,
     )
     assert calls, (
@@ -1246,7 +1244,7 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
     crash — confirming the default path change is opt-in only.
     """
     model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([2.0]),
@@ -1262,7 +1260,7 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
             initial_conditions=initial_conditions,
             period_to_regime_to_V_arr=solution,
             # period_to_regime_to_dissolution_flags omitted (defaults to None).
-            log_level="off",
+            log_level="debug",
             seed=0,
         )
 
@@ -1303,7 +1301,7 @@ def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -1402,7 +1400,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -1420,7 +1418,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,
@@ -1572,7 +1570,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     )
     solution = _bi_result.value_functions
@@ -1594,7 +1592,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
         initial_conditions=initial_conditions,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         ages=ages,

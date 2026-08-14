@@ -69,7 +69,11 @@ def collective_argmax_and_readout(
     argmax_flat, _ = argmax_and_max(
         objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
-    dissolution = ~jnp.any(feasibility, axis=action_axes)
+    # With no action axis to reduce, a cell dissolves exactly where its own single
+    # (state, action) cell is infeasible.
+    dissolution = (
+        ~jnp.any(feasibility, axis=action_axes) if action_axes else ~feasibility
+    )
     values = {
         name: jnp.where(
             dissolution,
@@ -190,7 +194,13 @@ def _gather_along_actions(
     ``argmax_and_max`` moves ``action_axes`` to the back, flattens them, and argmaxes
     the last axis, so ``argmax_flat`` indexes into that flattened action space with
     the state axes as its shape. Reproduce the same layout on ``q`` and take along it.
+
+    With no action axis to reduce, ``argmax_and_max`` returns ``q``'s own maximum —
+    the array itself — so the gather is the identity here too.
     """
+    if not action_axes:
+        return q
+
     q_moved = _move_axes_to_back(q, axes=action_axes)
     q_flat = _flatten_last_n_axes(q_moved, n=len(action_axes))
     gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)

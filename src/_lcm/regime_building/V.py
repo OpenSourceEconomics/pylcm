@@ -2,6 +2,7 @@ import dataclasses
 from collections.abc import Callable
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
@@ -127,21 +128,34 @@ def get_V_interpolator(
             `SamePeriodRef` projection / gated-edge fallback); the ordinary
             continuation-value path always feeds a process axis its exact
             on-grid Markov-chain index and must keep using the fast integer
-            lookup, so leave this `False` there. `False` (the default) is
-            byte-identical to before this parameter existed. It takes precedence
-            over `entered_process_names`: the process-aware reader already reads
-            every process axis by value, so naming a subset adds nothing.
+            lookup, so leave this `False` there.
         entered_process_names: Tuple of stochastic-process state names the caller
             enters at one declared physical value rather than drawing. Their axes
             are interpolated at that value instead of indexed, so the caller passes
             the value itself and the cost is one interpolation rather than the
-            process's whole node axis. Ignored when `interpolate_process_axes`.
+            process's whole node axis.
 
     Returns:
         A callable that lets you treat the result of pre-calculating a function on the
             state space as an analytical function.
 
+    Raises:
+        ValueError: If `interpolate_process_axes` and `entered_process_names` are
+            both given. The two ask for different treatment of a value outside a
+            process's node range — clamping to the nearest node, and poisoning the
+            read — so a reader that wants the second cannot get it from the first.
+
     """
+    if interpolate_process_axes and entered_process_names:
+        named = ", ".join(f"'{name}'" for name in entered_process_names)
+        msg = (
+            "get_V_interpolator takes either `interpolate_process_axes=True` or "
+            f"`entered_process_names` ({named}), not both: the process-aware "
+            "reader clamps an out-of-range value to the nearest node, while an "
+            "entered process poisons a value the target cannot represent."
+        )
+        raise ValueError(msg)
+
     if interpolate_process_axes:
         return _get_V_interpolator_process_aware(
             v_interpolation_info=v_interpolation_info,
@@ -336,19 +350,32 @@ def _get_process_coordinate_finder(
 
 
 def _get_identity_coordinate(*, in_name: str) -> Callable[..., FloatND]:
-    """Create a function that passes a genuine discrete axis value through unchanged.
+    """Create a function that places a genuine discrete axis value on its own axis.
 
     Used by `_get_V_interpolator_process_aware` for a genuine (non-process)
-    `discrete_states` axis: the incoming value is already the exact integer
-    node index, so it becomes an (integer-valued) `map_coordinates`
-    coordinate directly — no translation needed.
+    `discrete_states` axis: the incoming value is the exact integer node
+    index, so it is the `map_coordinates` coordinate directly — no
+    translation needed.
+
+    Each node of such an axis is a category, and nothing lies between two of
+    them, so a coordinate strictly between two nodes names no state at all.
+    `map_coordinates` would happily return the weighted blend of the two
+    categories' values, which is why a non-integral coordinate is refused
+    here rather than interpolated:
+
+    - Evaluated on a concrete value (outside a JAX trace), it raises and
+      names the axis.
+    - Under a trace the value is not available to a Python conditional, so
+      the coordinate is poisoned to NaN instead, which carries through the
+      interpolation and leaves the read reportable as NaN rather than
+      readable as a blend.
 
     Args:
         in_name: Name via which the value is passed into the resulting function.
 
     Returns:
         A callable with keyword-only argument [in_name] that returns that argument
-        unchanged.
+        as a coordinate, refusing a value that names no category.
 
     """
 
@@ -357,7 +384,25 @@ def _get_identity_coordinate(*, in_name: str) -> Callable[..., FloatND]:
     )
     def identity_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
         kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        return kwargs[in_name]
+        value = kwargs[in_name]
+        if jnp.issubdtype(jnp.asarray(value).dtype, jnp.integer):
+            # An integer code is a category by construction, and returning it
+            # untouched keeps the coordinate's dtype the caller's own.
+            return value
+        names_a_category = value == jnp.round(value)
+        try:
+            all_name_a_category = bool(jnp.all(names_a_category))
+        except jax.errors.ConcretizationTypeError:
+            return jnp.where(names_a_category, value, jnp.nan)
+        if not all_name_a_category:
+            msg = (
+                f"Categorical state '{in_name}' was read at a coordinate that "
+                "lies strictly between two of its categories, which names no "
+                f"category: {value}. A categorical value must be one of the "
+                "integer codes of its `DiscreteGrid`."
+            )
+            raise ValueError(msg)
+        return value
 
     return identity_coordinate
 

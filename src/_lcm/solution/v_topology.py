@@ -27,6 +27,29 @@ class _RegimeVTopology:
     """Device sharding for the V-array, or `None` when no state is distributed."""
 
 
+def expected_V_rank(*, regime: Regime) -> int:
+    """Return the number of axes this regime's stored value function has.
+
+    Single source of truth for the rank: the topology below builds V to it, and
+    the boundary that accepts a caller-supplied solution checks against it.
+
+    - One axis per solve state that is kept as a grid axis. A folded state is
+      integrated out by quadrature at solve time and contributes none.
+    - One trailing stakeholder axis when the regime is collective.
+
+    Args:
+        regime: Canonical regime whose stored value function is being sized.
+
+    Returns:
+        The rank of this regime's value-function array.
+
+    """
+    n_state_axes = sum(
+        1 for name in regime.solution.state_names if name not in regime.fold_state_names
+    )
+    return n_state_axes + (1 if regime.stakeholders is not None else 0)
+
+
 def _get_regime_V_shapes_and_shardings(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -75,6 +98,10 @@ def _get_regime_V_shapes_and_shardings(
         # axis is replicated.
         if regime.stakeholders is not None:
             shape = (*shape, len(regime.stakeholders))
+        assert len(shape) == expected_V_rank(regime=regime), (  # noqa: S101
+            f"regime {regime_name!r}: V topology built rank {len(shape)}, "
+            f"while the rank rule states {expected_V_rank(regime=regime)}"
+        )
         sharding_plan = _build_regime_sharding(
             grids=regime.solution.grids, n_devices=n_devices
         )

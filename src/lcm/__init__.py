@@ -145,6 +145,8 @@ from lcm.processes import (  # noqa: E402
     UniformIIDProcess,
 )
 from lcm.regime import (  # noqa: E402
+    EdgeLeg,
+    GatedEdge,
     MarkovTransition,
     Regime,
     SamePeriodRef,
@@ -203,8 +205,10 @@ __all__ = [
     "CertaintyEquivalent",
     "DeterministicOuterMaximum",
     "DiscreteGrid",
+    "EdgeLeg",
     "ExtremeValueTasteShocks",
     "FiniteOuterGrid",
+    "GatedEdge",
     "GridSearch",
     "IrregSpacedGrid",
     "LegacyGoldenSection",
