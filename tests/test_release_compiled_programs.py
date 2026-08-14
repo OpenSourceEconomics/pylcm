@@ -15,9 +15,11 @@ counting against the worker.
 """
 
 import gc
+from types import SimpleNamespace
 
 import pytest
 
+from tests import conftest
 from tests.conftest import (
     resident_mebibytes,
     return_free_heap_to_os,
@@ -65,3 +67,40 @@ def test_freed_heap_stops_counting_against_the_worker_once_it_is_returned() -> N
     once_returned = resident_mebibytes()
     assert once_returned is not None
     assert once_returned < baseline + _ALLOCATION_MIB / 8
+
+
+def _releases_during_teardown(*, monkeypatch: pytest.MonkeyPatch, keep: bool) -> int:
+    """Return how many times a teardown drops the cache for the given flag state.
+
+    Drives `pytest_runtest_teardown` itself rather than the predicate it calls,
+    so the assertion covers the wiring as well as the decision — the defect this
+    guards against was a correct release routine reached only under a flag.
+    """
+    calls = 0
+
+    def record() -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(conftest.jax, "clear_caches", record)
+    item = SimpleNamespace(
+        config=SimpleNamespace(getoption=lambda _name: keep),
+        session=SimpleNamespace(),
+        module=object(),
+    )
+    conftest.pytest_runtest_teardown(item, None)
+    return calls
+
+
+def test_compiled_programs_are_released_when_no_flags_are_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run that passes no memory flags still drops the compiled-program cache."""
+    assert _releases_during_teardown(monkeypatch=monkeypatch, keep=False) == 1
+
+
+def test_keeping_compiled_programs_opts_out_of_releasing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--keep-compiled-programs` leaves the compiled-program cache in place."""
+    assert _releases_during_teardown(monkeypatch=monkeypatch, keep=True) == 0
