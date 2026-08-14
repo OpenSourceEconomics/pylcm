@@ -15,7 +15,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 
 
 @categorical(ordered=False)
@@ -513,6 +513,110 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
 
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 0.5, atol=1e-6)
+
+
+def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
+    """A `MarkovTransition` entry law enters a target-only discrete state.
+
+    The source carries no `shock`, so its entry law states the whole
+    distribution over the target's two nodes. The source's value is that
+    lottery's expectation, `Σ_s entry_probs[s] · V_target[s]`.
+    """
+
+    @categorical(ordered=False)
+    class _Outcome:
+        low: ScalarInt
+        high: ScalarInt
+
+    def _entry_probs() -> FloatND:
+        return jnp.array([0.25, 0.75])
+
+    def _outcome_utility(shock: DiscreteState) -> FloatND:
+        return 10.0 * shock + 2.0
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": DiscreteGrid(_Outcome)},
+                functions={"utility": _outcome_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
+
+    np.testing.assert_allclose(
+        np.asarray(solution[0]["source"]), 0.25 * 2.0 + 0.75 * 12.0, atol=1e-6
+    )
+
+
+@pytest.mark.parametrize(("period", "expected"), [(0, 9.5), (1, 3.0)])
+def test_markov_entry_law_reads_the_source_age_and_its_own_params(
+    period: int, expected: float
+) -> None:
+    """An entry law is priced at the source's age, from its own runtime params.
+
+    The law's params nest under the target it enters
+    (`source -> target -> next_shock`). Reading age 20's row `[0.25, 0.75]`
+    against target node values `[2, 12]` gives `9.5`, and age 21's row
+    `[0.9, 0.1]` gives `3.0`.
+    """
+
+    @categorical(ordered=False)
+    class _Outcome:
+        low: ScalarInt
+        high: ScalarInt
+
+    def _entry_probs(age: float, entry_table: FloatND) -> FloatND:
+        return entry_table[jnp.int32(age) - 20]
+
+    def _outcome_utility(shock: DiscreteState) -> FloatND:
+        return 10.0 * shock + 2.0
+
+    model = Model(
+        regimes={
+            "source": Regime(
+                transition={"target": MarkovTransition(_one_probability)},
+                active=_source_is_early,
+                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                functions={"utility": _zero_utility},
+            ),
+            "target": Regime(
+                transition=None,
+                states={"shock": DiscreteGrid(_Outcome)},
+                functions={"utility": _outcome_utility},
+            ),
+        },
+        ages=AgeGrid(start=20, stop=22, step="Y"),
+        regime_id_class=RegimeId,
+        enable_jit=False,
+    )
+
+    solution = model.solve(
+        params={
+            "discount_factor": 1.0,
+            "source": {
+                "target": {
+                    "next_shock": {"entry_table": jnp.array([[0.25, 0.75], [0.9, 0.1]])}
+                }
+            },
+        },
+        log_level="debug",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(solution[period]["source"]), expected, atol=1e-6
+    )
 
 
 def test_coarse_transition_validates_each_activity_compatible_candidate() -> None:
