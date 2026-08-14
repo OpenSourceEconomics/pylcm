@@ -82,15 +82,15 @@ jobs:
         # workers sharing one persistent-cache directory race on its autotune
         # scratch files, which fails the run at collection.
         #
-        # `--release-compiled-programs` drops JAX's in-memory compiled-program
-        # cache at every module boundary. A worker's resident memory otherwise
-        # grows with every distinct program it has compiled, and the splitting
-        # above divides that growth without bounding it. A released program is
-        # recompiled from the persistent on-disk cache rather than from cold.
+        # The suite drops JAX's in-memory compiled-program cache at every module
+        # boundary by default. A worker's resident memory otherwise grows with
+        # every distinct program it has compiled, and the splitting above divides
+        # that growth without bounding it. A released program is recompiled from
+        # the persistent on-disk cache rather than from cold.
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
-          --precision=64 -n0 --release-compiled-programs
+          --precision=64 -n0
           --junitxml=reports/junit-gpu-fp64-${{ matrix.suite }}.xml
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
