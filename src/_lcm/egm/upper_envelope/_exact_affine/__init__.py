@@ -4,12 +4,16 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import (
     CUDA_AVAILABLE,
     UNRESOLVED_STATUS,
     certified_affine_compare,
+    exact_affine_handover,
     exact_affine_read,
+    exact_cell_hull,
 )
 
 __all__ = [
     "CUDA_AVAILABLE",
     "UNRESOLVED_STATUS",
     "certified_affine_compare",
+    "exact_affine_handover",
     "exact_affine_read",
+    "exact_cell_hull",
 ]
