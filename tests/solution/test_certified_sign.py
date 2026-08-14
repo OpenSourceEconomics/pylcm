@@ -18,7 +18,6 @@ import pytest
 from _lcm.egm.upper_envelope.certified_sign import (
     BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
-    backend_flushes_subnormals,
     certified_margin_sign,
 )
 
@@ -174,25 +173,20 @@ def _flushed_distance_witness() -> tuple[
     return a, b, query
 
 
-def test_a_flushed_distance_never_yields_a_strict_sign():
-    """A margin resting on this distance is refused where the distance is lost.
+def test_a_distance_in_the_subnormal_band_yields_the_exact_sign():
+    """A margin resting on a subnormal distance is decided, not refused.
 
-    Where the backend reads the subnormal band the distance is not lost, the
-    arithmetic has what it needs, and the exact sign is the honest answer —
-    refusing there would withhold a verdict that was reached correctly. So the
-    same geometry has two right answers, one per backend, and which one is owed
-    is a property of the backend rather than of the geometry.
+    The distance between the two abscissae is below the smallest normal, so any
+    backend that flushes destroys it before a floating subtraction can read it.
+    The verdict does not go through one: the operands are decoded from their
+    stored bits and compared in integers, so the same geometry has one answer on
+    every backend, and it is the exact one.
     """
     a, b, query = _flushed_distance_witness()
-    # The lines are strictly ordered, so an abstention is the only honest
-    # alternative to the exact sign — a tie would not be one.
+    # The lines are strictly ordered, so a tie or an abstention would both be
+    # wrong — this is a decidable contest, not a near one.
     assert _exact_line_margin(a, b, query) == 1
-    expected = (
-        UNRESOLVED_SIGN
-        if backend_flushes_subnormals(jnp.zeros(()).dtype)
-        else _exact_line_margin(a, b, query)
-    )
-    assert _sign_at(a, b, query) == expected
+    assert _sign_at(a, b, query) == _exact_line_margin(a, b, query)
 
 
 def _flushed_endpoint_product_witness() -> tuple[

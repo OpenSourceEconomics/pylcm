@@ -1,0 +1,15 @@
+"""Exact arithmetic over stored IEEE operands for the certified upper envelope."""
+
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    CUDA_AVAILABLE,
+    UNRESOLVED_STATUS,
+    certified_affine_compare,
+    exact_affine_read,
+)
+
+__all__ = [
+    "CUDA_AVAILABLE",
+    "UNRESOLVED_STATUS",
+    "certified_affine_compare",
+    "exact_affine_read",
+]
