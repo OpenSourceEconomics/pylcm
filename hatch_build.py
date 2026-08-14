@@ -160,6 +160,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                 "-O3",
                 "-DNDEBUG",
                 "-fPIC",
+                "-pthread",
                 "-shared",
                 f"-I{include_dir}",
                 str(source_dir / "certified_affine_ffi_cpu.cc"),

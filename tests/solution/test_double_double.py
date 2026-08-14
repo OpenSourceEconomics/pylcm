@@ -7,9 +7,11 @@ withholds rows whose crossing was located exactly.
 
 from fractions import Fraction
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.egm.upper_envelope.cell_hull import hull_owners
 from _lcm.egm.upper_envelope.double_double import dd_quotient_bounded, two_prod
 from tests.conftest import X64_ENABLED
 
@@ -114,24 +116,36 @@ def test_a_product_is_exact_up_to_the_top_of_the_range() -> None:
     assert Fraction(float(high)) + Fraction(float(low)) == exact
 
 
-def test_a_product_is_exact_down_to_the_bottom_of_the_range() -> None:
-    """`two_prod` is exact where the split's lower half lands among the subnormals.
+def test_cell_hull_resolves_a_handover_at_the_bottom_of_the_range() -> None:
+    """The production owner walk does not inherit Dekker's subnormal split limit.
 
-    Splitting an operand just above the smallest normal puts the lower half of
-    its significand below the smallest normal. That half is still a real part of
-    the operand, and against a large second operand its contribution is an
-    ordinary number — so a transform that loses it returns a decomposition that
-    is not the product, while reporting nothing.
+    The incoming line is below at zero and above immediately afterwards. Its
+    exact crossing rounds to a subnormal state whose stored bit pattern is 413.
+    A floating error-free transform can lose that state while splitting the
+    endpoint; the cell-level exact kernel must instead publish it bit-for-bit.
     """
-    dtype = jnp.float64 if X64_ENABLED else jnp.float32
-    info = np.finfo(np.float64 if X64_ENABLED else np.float32)
-    small = float(np.nextafter(info.tiny, np.float64(np.inf)))
-    large = float(np.ldexp(1.0, int(info.maxexp) - 1))
+    numpy_dtype = np.float64 if X64_ENABLED else np.float32
+    jax_dtype = jnp.float64 if X64_ENABLED else jnp.float32
+    uint_dtype = np.uint64 if X64_ENABLED else np.uint32
+    event = np.asarray(413, dtype=uint_dtype).view(numpy_dtype)
 
-    left = jnp.asarray(small, dtype=dtype)
-    right = jnp.asarray(large, dtype=dtype)
-    high, low = two_prod(left, right)
-    exact = Fraction(float(left)) * Fraction(float(right))
+    solve_cell = jax.jit(
+        lambda grid, value: hull_owners(
+            left=jnp.asarray(0.0, dtype=jax_dtype),
+            right=jnp.asarray(1.0, dtype=jax_dtype),
+            live=jnp.asarray([True, True]),
+            low=jnp.asarray([0, 2], dtype=jnp.int32),
+            high=jnp.asarray([1, 3], dtype=jnp.int32),
+            endog_grid=grid,
+            value=value,
+            max_runs=2,
+        )
+    )
+    bounds, owners, unresolved = solve_cell(
+        jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jax_dtype),
+        jnp.asarray([0.0, 0.0, -event, 1.0], dtype=jax_dtype),
+    )
 
-    assert np.isfinite(float(low)), "the split's lower half poisoned the tail"
-    assert Fraction(float(high)) + Fraction(float(low)) == exact
+    assert not bool(unresolved)
+    np.testing.assert_array_equal(np.asarray(owners), np.asarray([0, 1]))
+    assert int(np.asarray(bounds[1]).view(uint_dtype)) == 413
