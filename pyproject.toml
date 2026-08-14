@@ -34,7 +34,7 @@ dependencies = [
   "dags>=0.6",
   "h5py>=3.12",
   "jax>=0.11",
-  "jaxtyping>=0.3.10",
+  "jaxtyping>=0.3.11",
   "orbax-checkpoint>=0.11",
   "pandas",
   "portion>=2.6",
