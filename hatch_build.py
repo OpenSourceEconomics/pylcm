@@ -20,6 +20,11 @@ certified path runs on CPU only. Where it is present the build emits ready code
 for several architectures plus a virtual target; `NVCCFLAGS='-arch=sm_80'`
 replaces that set with one architecture, which builds faster and runs only
 there.
+
+Which libraries come out therefore depends on the environment the build ran in,
+and every combination exits successfully. The build states the toolchain it
+found on stdout so that a CPU-only result is read at the time rather than
+inferred later from a library that is not there.
 """
 
 import os
@@ -79,6 +84,32 @@ def cuda_arch_flags(*, nvcc_flags: tuple[str, ...]) -> list[str]:
     return flags
 
 
+def toolchain_report(*, compiler: str, nvcc: str | None) -> str:
+    """Return the line a build prints to state which toolchain it found.
+
+    Which libraries a build produces depends on the environment it ran in, and a
+    build that skipped CUDA exits successfully. Stating the toolchain makes the
+    two cases distinguishable at the time rather than inferable afterwards from a
+    library that is not there.
+
+    Args:
+        compiler: Path to the C++ compiler the CPU library is built with.
+        nvcc: Path to `nvcc`, or `None` where none is on the path.
+
+    Returns:
+        One line naming the compilers found, and — where `nvcc` is absent — what
+        that means for the certified path.
+
+    """
+    if nvcc is None:
+        return (
+            f"exact-affine: building with c++ at {compiler}; no nvcc on this "
+            "path, so the CUDA library is not built and the certified upper "
+            "envelope runs on CPU only."
+        )
+    return f"exact-affine: building with c++ at {compiler} and nvcc at {nvcc}."
+
+
 def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> list[Path]:
     """Compile the FFI libraries and return the paths that were written.
 
@@ -101,6 +132,10 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         # MinGW artifact under a `.so` name loads only where its toolchain's
         # runtime is present. Building nothing leaves the certified path to
         # report its own absence, which names what is missing.
+        sys.stdout.write(
+            "exact-affine: no kernel is built on this platform, so the certified "
+            "upper envelope is unavailable here.\n"
+        )
         return []
 
     source_dir = root / PACKAGE_DIR
@@ -113,6 +148,9 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
             "build the exact-affine kernel; set CXX or install a compiler."
         )
         raise RuntimeError(msg)
+
+    nvcc = shutil.which("nvcc")
+    sys.stdout.write(f"{toolchain_report(compiler=compiler, nvcc=nvcc)}\n")
 
     written = [
         _compile(
@@ -132,7 +170,6 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         )
     ]
 
-    nvcc = shutil.which("nvcc")
     if nvcc is not None:
         nvcc_flags = tuple(os.environ.get("NVCCFLAGS", "").split())
         written.append(
