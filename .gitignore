@@ -35,6 +35,9 @@ node_modules/
 __pycache__/
 *.py[cod]
 *.so
+# Compiler reports written beside each built kernel: absolute paths and toolchain
+# versions from whichever machine built it, regenerated on every build.
+*.so.build.log
 *$py.class
 
 # Ruff

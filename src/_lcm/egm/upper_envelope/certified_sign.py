@@ -21,40 +21,29 @@ cross-multiplied determinant
 D = N_a w_b - N_b w_a .
 ```
 
-`D` is evaluated in the double-double arithmetic of `double_double`, whose
-error-free transforms are exact. The only inexactness is the low-order tail each
-renormalization discards, and that tail is captured exactly and accumulated into
-a `dropped` bound. Two properties follow, and they are what the envelope relies
-on:
+`D` is evaluated exactly, in integers. Each finite operand is decoded from its
+stored bits into a signed dyadic $(-1)^s m 2^e$, the sixteen signed triple
+products the determinant expands into are accumulated at full width, and the
+verdict is the comparison of the positive and negative accumulators. No
+subtraction, product, or equality test in the decision is a floating operation,
+so the sign does not depend on the backend and a determinant far below the
+smallest normal is read as the ordinary number it is.
 
-- `dropped` is exactly zero whenever the whole evaluation was exact, so a genuine
-  tie (a crossing sitting exactly on a node, or a link compared with itself) is
-  *certified* rather than inferred from a threshold;
-- otherwise the true determinant is within `dropped` of the computed one, so a
-  sign is published only when it is certain.
+One property follows, and it is what the envelope relies on: a tie is published
+only for exact equality of the two rational lines. A crossing sitting exactly on
+a node, or a link compared with itself, is *certified*; a difference that
+underflowed is not, because nothing underflows.
 
-Two things can stop a sign being published, and they are not the same, so they
-are reported apart:
+- `UNRESOLVED_SIGN` — the comparison was refused rather than lost: an operand is
+  non-finite, or a width is not strictly positive. Nothing follows about the
+  geometry, which may be far apart, so a caller must fail loud rather than
+  choose.
 
-- `BELOW_RESOLUTION_SIGN` — the determinant was computed, but it is smaller than
-  its own error bound. The links are then within a rounding of each other, so no
-  state between them is demonstrably better and a caller may choose either,
-  provided it chooses deterministically.
-- `UNRESOLVED_SIGN` — no determinant worth reading was produced at all: an input
-  was non-finite, a product overflowed, an operand did not survive the scaling
-  intact, or a distance between two distinct abscissae was destroyed by the
-  subtraction that forms it. Nothing follows about the geometry, which may be far
-  apart, so a caller must fail loud rather than choose.
+`BELOW_RESOLUTION_SIGN` has no route out of an exact comparator — a determinant
+is nonzero or it is not — and remains only as the vocabulary its consumers read.
 
-A product that underflows is *not* one of those cases. It has a known magnitude
-bound — below the smallest normal — which the error bound carries, so a group
-spanning more of the exponent range than any one scaling can hold is still
-decided by whichever term is an ordinary number.
-
-Collapsing the two would be a fail-open: the second case is exactly the one where
-a large true margin can be reported as no margin. Callers must mask dead
-candidates and zero-width links before calling: a link of zero width has no
-affine value line, and this predicate does not invent one.
+Callers must mask dead candidates and zero-width links before calling: a link of
+zero width has no affine value line, and this predicate does not invent one.
 
 Correctness is the design constraint here, not throughput: one comparison costs a
 few hundred flops. The evaluation is branch-free and elementwise, so it stays
@@ -70,6 +59,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.typing import DTypeLike
 
+from _lcm.egm.upper_envelope._exact_affine import certified_affine_compare
 from _lcm.egm.upper_envelope.double_double import (
     DoubleDouble,
     dd_add,
@@ -126,239 +116,31 @@ def certified_margin_sign(
         x_query: Abscissa at which the two lines are compared.
 
     Returns:
-        `+1` where `A` is certainly above `B`, `-1` where it is certainly below,
-        `0` where the difference is certified exactly zero,
-        `BELOW_RESOLUTION_SIGN` where the determinant is under its own error
-        bound, and `UNRESOLVED_SIGN` where none could be computed (including any
-        non-finite input). Two cases are read straight off the operands and never
-        reach the determinant: two lines given by the same endpoints are one
-        line, and a query on an endpoint of both lines is decided by the two
-        stored values there.
+        `+1` where `A` is above `B`, `-1` where it is below, `0` where the two
+        rational lines determined by the stored operands are exactly equal at the
+        query, and `UNRESOLVED_SIGN` where an operand is non-finite or a width is
+        not strictly positive. The verdict is exact, so it is the same on every
+        backend and at every batch partition.
 
     """
-    operands = (a_x0, a_x1, a_v0, a_v1, b_x0, b_x1, b_v0, b_v1, x_query)
-    finite = reduce(operator.and_, (jnp.isfinite(term) for term in operands))
-
-    # A subnormal operand is not a small number here, it is an unreadable one.
-    # The backend flushes subnormals to zero in arithmetic and in comparison
-    # alike, so every difference formed from one is taken against zero rather
-    # than against the operand, and the determinant that results is a true
-    # statement about geometry the caller never supplied. It is not a bounded
-    # error either: with `x0 = 0`, `x1 = tiny` and a subnormal query the two
-    # numerators both collapse to exactly zero, `dropped` is exactly zero
-    # because nothing was discarded, and the predicate certifies an exact tie
-    # between lines that are strictly ordered — the one outcome that licenses a
-    # caller to choose freely.
-    #
-    # Nothing downstream can undo that, because the magnitude is gone before the
-    # first subtraction. So it is refused here, where a caller must fail loud,
-    # rather than bounded somewhere that would report it as a near-tie. Reading
-    # such an operand at all needs an arithmetic over significands and exponents
-    # rather than over floats.
-    #
-    # The refusal is silent at this point, so what a user sees is a NaN-bearing
-    # solution and a generic `InvalidValueFunctionError`. Naming itself is the
-    # ordinary poison-then-raise-at-debug strategy, but the trigger is a tracer,
-    # so the flag has to be returned from JIT and raised host-side after
-    # synchronization — and no function on the path from here to the solve
-    # boundary carries a logger to raise from. What such an operand would take
-    # to read, and why both halves are deferred rather than dropped, is recorded
-    # in https://github.com/OpenSourceEconomics/pylcm/issues/425.
-    readable = ~reduce(operator.or_, (is_subnormal(term) for term in operands))
-
-    # Two lines given by the same four endpoints are one line, and one line is
-    # exactly level with itself at every query. Read off the operands, this
-    # costs four comparisons and is exactly true.
-    #
-    # The determinant cannot reach that conclusion on its own. Its two products
-    # are then formed from identical operands, so they discard identical tails
-    # and the tails cancel with everything else — but `dropped` accumulates them
-    # as though they were independent errors, which is sound and, here, not
-    # tight. What comes back is a zero estimate carrying a positive bound, which
-    # is `BELOW_RESOLUTION_SIGN`: the arithmetic reporting it could not separate
-    # a line from itself. Callers that compare a set against one of its own
-    # members would then find no certified tie anywhere, including with the
-    # member they took the reference from.
-    same_line = (
-        _same_bits(a_x0, b_x0)
-        & _same_bits(a_x1, b_x1)
-        & _same_bits(a_v0, b_v0)
-        & _same_bits(a_v1, b_v1)
+    # The exact comparator settles every finite, positive-width case on its own,
+    # so no shortcut is read off the operands first. The bit-equality tests that
+    # used to precede the determinant — two links given by identical endpoints, a
+    # query sitting on a node of both — existed because the floating determinant
+    # could not separate a line from itself, and they are subsumed rather than
+    # dropped: exact equality of the two rational lines is precisely what returns
+    # zero here.
+    return certified_affine_compare(
+        a_x0=a_x0,
+        a_x1=a_x1,
+        a_v0=a_v0,
+        a_v1=a_v1,
+        b_x0=b_x0,
+        b_x1=b_x1,
+        b_v0=b_v0,
+        b_v1=b_v1,
+        x_query=x_query,
     )
-
-    # A query sitting on an endpoint of both lines is settled by comparing the
-    # two stored values there. An affine line takes exactly its endpoint value at
-    # its own endpoint, so this is the difference itself rather than an estimate
-    # of it, and a comparison of two stored floats decides it without arithmetic.
-    #
-    # This is the common case, not a corner: every candidate is also a zero-width
-    # self-bracket at its own abscissa, and consecutive links share the node
-    # between them. It is also where the determinant is weakest, because the
-    # bound it carries is set by the largest operand in the group rather than by
-    # anything near the query — one steep link to a far-away neighbour widens the
-    # bound past a difference that is exactly zero.
-    # Whether the query *is* a node is asked of the bit patterns, not of the
-    # floats. Under flush-to-zero a subnormal query compares equal to a zero
-    # node while being a strictly interior point of the link, so the float test
-    # fires where the shortcut does not apply and then reads the wrong pair of
-    # endpoint values — publishing a confident tie for lines that are strictly
-    # ordered. Bit equality cannot say that. It declines two representations of
-    # zero, which costs only the shortcut and falls back to the determinant.
-    a_at_low = _same_bits(x_query, a_x0)
-    b_at_low = _same_bits(x_query, b_x0)
-    a_node_value = jnp.where(a_at_low, a_v0, a_v1)
-    b_node_value = jnp.where(b_at_low, b_v0, b_v1)
-    both_at_node = (a_at_low | _same_bits(x_query, a_x1)) & (
-        b_at_low | _same_bits(x_query, b_x1)
-    )
-    # The values themselves are compared as floats, which is exact for an
-    # ordering: two stored floats that differ compare as they differ. Only the
-    # subnormal *magnitudes* are unreadable, and a magnitude is not what an
-    # ordering needs — but two distinct subnormals do compare equal, so a tie
-    # they report is not certified and is handed back to the determinant.
-    both_readable = ~is_subnormal(a_node_value) & ~is_subnormal(b_node_value)
-    node_sign = jnp.where(
-        a_node_value > b_node_value,
-        jnp.int32(1),
-        jnp.where(a_node_value < b_node_value, jnp.int32(-1), jnp.int32(0)),
-    )
-
-    # `D` is homogeneous of degree two in the abscissae and degree one in the
-    # values, so scaling each group by a power of two multiplies `D` by a
-    # positive power of two and leaves its sign alone. Pulling the operands into
-    # the binade around one is what keeps the products out of the range where the
-    # error-free transforms stop being error-free: a determinant that would
-    # underflow to zero in the caller's units is an ordinary number in these.
-    # The four values share one exponent because they enter the determinant only
-    # as stored magnitudes; the abscissae are handled per link, below, because
-    # what enters from them is a difference.
-    value_exponent = _shared_exponent(a_v0, a_v1, b_v0, b_v1)
-    source_values = (a_v0, a_v1, b_v0, b_v1)
-    scaled_values = tuple(
-        scale_by_power_of_two(term, -value_exponent) for term in source_values
-    )
-
-    # That homogeneity argument holds only while the scaling is exact. The shared
-    # exponent is chosen to keep every operand normal, so an operand far below the
-    # largest one ordinarily survives — but a backend that reads subnormals as zero
-    # can still flatten one, and a group spanning more than the whole exponent range
-    # leaves no exponent that suits every term. What follows from a flattened
-    # operand is a true statement about values the caller never supplied. Scaling
-    # back is exact whenever the scaling was, so the round trip tests that premise
-    # itself rather than any one way of breaking it.
-    scaling_exact = _round_trips(scaled_values, source_values, value_exponent)
-
-    a_v0, a_v1, b_v0, b_v1 = scaled_values
-
-    # The abscissae are not scaled as one group, because no single exponent
-    # serves two links at different places in the range: landing the widest
-    # operand near one leaves a link at the bottom of the range where it was,
-    # and there the spacing between neighbouring floats is itself subnormal, so
-    # the link's endpoints stay readable while every difference between them
-    # flushes. That is the worst shape the certificate can be handed — the
-    # transforms discard nothing when subtracting two equal-looking numbers, so
-    # a determinant of exactly zero arrives carrying an error bound of exactly
-    # zero, which is the certificate for an exact tie, for links that are
-    # strictly ordered by an ordinary margin.
-    #
-    # `D` is bilinear in the two links' distances: every term it is built from
-    # multiplies one distance taken from `A` by one taken from `B`. So each link
-    # may be measured on its own scale — the two factors multiply `D` by a
-    # positive constant and leave its sign alone. The query enters only inside
-    # one link's distances at a time, so it too may be scaled per link.
-    distances_a, a_on_scale = _link_distances(x0=a_x0, x1=a_x1, x_query=x_query)
-    distances_b, b_on_scale = _link_distances(x0=b_x0, x1=b_x1, x_query=x_query)
-    # Each of those four products pairs a distance with an endpoint value, and
-    # either factor may be ordinary while the product is not. What underflows is
-    # bounded rather than refused: the term is below the smallest normal exactly
-    # when its product is, so an estimate of zero carrying that threshold as its
-    # discarded tail is a true statement about a term the caller did supply.
-    terms = tuple(
-        _bounded_mul_float(distance, endpoint_value)
-        for distance, endpoint_value in (
-            (distances_a[0], a_v0),
-            (distances_a[1], a_v1),
-            (distances_b[0], b_v0),
-            (distances_b[1], b_v1),
-        )
-    )
-    numerator_a = dd_add(terms[0][0], terms[1][0])
-    numerator_b = dd_add(terms[2][0], terms[3][0])
-    width_a, width_b = distances_a[2], distances_b[2]
-
-    # A floored bound is a fallback rather than a measurement: it says the term
-    # is somewhere below the smallest normal, not how far below. Where the
-    # determinant clears it the verdict is unaffected — the bound is a valid
-    # upper bound either way. Where it does not, the two links are *not* thereby
-    # within a rounding of each other, which is what `BELOW_RESOLUTION_SIGN`
-    # promises its callers, so such a case abstains as unresolved instead. That
-    # keeps the weaker code meaning what the consumers read it as, and it is the
-    # only reason the distinction is tracked at all.
-    bound_is_a_fallback = reduce(
-        operator.or_,
-        (
-            *(floored for _term, floored in terms),
-            _any_bound_floored(distances_a),
-            _any_bound_floored(distances_b),
-        ),
-    )
-
-    product_a = _bounded_product(numerator_a, width_b)
-    product_b = _bounded_product(numerator_b, width_a)
-    determinant = dd_add(product_a, dd_negate(product_b))
-
-    # The two products may each be ordinary while their difference is not: two
-    # links crossing inside their own span, read beside the crossing, leave
-    # products separated by less than the smallest normal. That difference is
-    # destroyed rather than rounded, so `dropped` is honestly zero — the
-    # transform discarded nothing, the backend removed the result underneath it —
-    # and an exact zero carrying an exact-zero bound is the certificate for a tie.
-    #
-    # The test is an equality, not a magnitude. Any expression of how far apart
-    # the products are is the same subtraction that just vanished, so it would be
-    # handed the zero it is meant to detect; float equality needs no subtraction
-    # and cannot underflow. Products that are identical vanish for the honest
-    # reason and keep their tie, which is what two links on one line rely on.
-    products_identical = reduce(
-        operator.and_,
-        (left == right for left, right in zip(product_a, product_b, strict=True)),
-    )
-    determinant_vanished = ((determinant[0] + determinant[1]) == 0.0) & (
-        determinant[2] == 0.0
-    )
-    difference_read = products_identical | ~determinant_vanished
-
-    # A product that leaves the top of the range says nothing about the determinant
-    # it was meant to contribute to, so it stays unresolved. The bottom of the range
-    # is not symmetric with it and is handled inside `_bounded_product`.
-    products_finite = jnp.isfinite(product_a[0]) & jnp.isfinite(product_b[0])
-
-    # What remains reports a quantity the *backend* destroyed, not one the format
-    # cannot hold. Where subnormals survive, nothing was destroyed: the operands
-    # are readable, the distances between them are readable, and the products are
-    # the numbers they claim to be. Consulting the clause there would refuse
-    # comparisons the arithmetic can settle exactly — the mirror of the defect it
-    # exists to prevent, and one a battery run only where the flush happens
-    # cannot see.
-    #
-    # Only the determinant's own difference is asked about. What each *term*
-    # discarded is carried as a bound instead, all the way to the comparison, so
-    # a flushed distance or an underflowing product costs the margin it could
-    # actually account for rather than the whole verdict.
-    everything_read = (
-        readable & difference_read
-        if backend_flushes_subnormals(a_x0.dtype)
-        else jnp.ones_like(finite)
-    )
-    sign = _certified_sign_of(
-        determinant,
-        finite=finite & products_finite & scaling_exact & a_on_scale & b_on_scale,
-        readable=everything_read,
-        bound_is_a_fallback=bound_is_a_fallback,
-    )
-    exact = jnp.where(same_line, jnp.int32(0), node_sign)
-    settled_off_the_operands = same_line | (both_at_node & both_readable)
-    return jnp.where(finite & settled_off_the_operands, exact, sign).astype(jnp.int32)
 
 
 class QuotientMargin(NamedTuple):
