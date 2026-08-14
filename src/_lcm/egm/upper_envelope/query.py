@@ -699,19 +699,25 @@ def envelope_at_query(
 def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> BoolND:
     """Report, per query, whether an operand the backend cannot read is in play.
 
-    XLA flushes subnormals to zero, in both directions and in both precisions: a
-    subnormal operand compares equal to zero and every arithmetic operation on
-    it yields zero. Its magnitude is therefore not merely rounded on the way
-    through the affine read — it is gone before the read begins, and no
-    rearrangement of the arithmetic downstream can recover it. A link from `0` to
-    the smallest normal, read at a subnormal query, has an exact affine value of
-    `2**-23` at float32 and `2**-52` at float64; the compiled program publishes
-    zero, and a rival at half the exact value then wins a comparison it loses.
+    Whether a subnormal operand is readable belongs to the backend, not to the
+    format, so the predicate asks before it refuses. On a backend that reads the
+    whole band every stored operand arrives intact, nothing is lost on the way
+    into the read, and refusing would withhold a verdict the arithmetic reached
+    correctly — so the refusal leaves the compiled program entirely.
 
-    Only the bit pattern survives, so that is what is inspected. A query carrying
-    one is refused on its own; one anywhere in the row refuses every query,
-    because which segment a query ends up owned by is not known here and the
-    affected link may be any of them.
+    Where the backend flushes, a subnormal operand compares equal to zero and
+    every arithmetic operation on it yields zero. Its magnitude is then not
+    merely rounded on the way through the affine read — it is gone before the
+    read begins, and no rearrangement of the arithmetic downstream can recover
+    it. A link from `0` to the smallest normal, read at a subnormal query, has an
+    exact affine value of `2**-23` at float32 and `2**-52` at float64; the
+    compiled program publishes zero, and a rival at half the exact value then
+    wins a comparison it loses.
+
+    Only the bit pattern survives a flush, so that is what is inspected. A query
+    carrying one is refused on its own; one anywhere in the row refuses every
+    query, because which segment a query ends up owned by is not known here and
+    the affected link may be any of them.
 
     Refusing is not the repair. The repair is an arithmetic that reads operands
     through their significands and exponents rather than as floats, which is a
@@ -719,6 +725,8 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     the failure loud, so a wrong number is never published in place of one the
     format holds perfectly well.
     """
+    if not backend_flushes_subnormals(row[0].dtype):
+        return jnp.zeros_like(jnp.asarray(query), dtype=bool)
     in_row = jnp.any(jnp.stack([jnp.any(is_subnormal(term)) for term in row]))
     return in_row | is_subnormal(query)
 
