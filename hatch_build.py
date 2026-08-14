@@ -52,13 +52,20 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
 
     Returns:
         List of shared-object paths written, CPU first. The CUDA entry is absent
-        where `nvcc` is not on the path.
+        where `nvcc` is not on the path, and the list is empty on Windows.
 
     Raises:
         RuntimeError: If no C++ compiler is available, if the FFI headers cannot
             be located, or if a compile fails.
 
     """
+    if sys.platform == "win32":
+        # The compile flags and library names here are the Unix ones, and a
+        # MinGW artifact under a `.so` name loads only where its toolchain's
+        # runtime is present. Building nothing leaves the certified path to
+        # report its own absence, which names what is missing.
+        return []
+
     source_dir = root / PACKAGE_DIR
     include_dir = jax_include_dir or _find_jax_include_dir()
 

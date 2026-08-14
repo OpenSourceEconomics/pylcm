@@ -16,7 +16,9 @@ envelope:
   grouping and nothing else.
 
 The kernels live in shared objects built at install time from the C++ and CUDA
-sources beside this module. Importing this module loads them; it never compiles.
+sources beside this module. They are loaded when a verdict is first requested,
+not at import, so a platform that never asks for one needs no kernel; nothing
+here ever compiles.
 """
 
 import ctypes
@@ -25,6 +27,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
+from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import FloatND, IntND
 
 # Returned where an operand is non-finite, a width is not positive, or an exact
@@ -54,24 +57,57 @@ def _register_platform(*, library: Path, platform: str) -> None:
         )
 
 
-if not _CPU_LIBRARY.is_file():
-    _MESSAGE = (
-        f"The exact-affine kernel is not built: {_CPU_LIBRARY} is missing. It is "
-        "compiled when pylcm is installed; after editing its C++ sources, or in a "
-        "checkout installed before the kernel existed, rebuild it with "
-        "`pixi run build-exact-affine`."
-    )
-    raise ImportError(_MESSAGE)
-
-_register_platform(library=_CPU_LIBRARY, platform="cpu")
-
 # CUDA is optional: without it the certified path runs on CPU only. Building it
 # needs `nvcc` and the target architecture, e.g. NVCCFLAGS='-arch=sm_80'.
-# Whether the certified path has a kernel registered for the CUDA platform.
+# Whether a kernel for the CUDA platform exists to be registered.
 CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
 
-if CUDA_AVAILABLE:
-    _register_platform(library=_CUDA_LIBRARY, platform="CUDA")
+# Whether the targets have been registered with XLA in this process.
+_REGISTERED: bool = False
+
+
+def _ensure_registered() -> None:
+    """Register the FFI targets with XLA, once per process.
+
+    Registration is deferred to the first request for a verdict rather than run
+    at import. A platform that never asks for one — and a checkout whose kernel
+    has not been compiled yet — imports the upper envelope like any other
+    module, so a build that is absent costs the caller who needs it and nobody
+    else.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the CPU library is missing, or is
+            present but cannot be loaded by this interpreter.
+
+    """
+    global _REGISTERED  # noqa: PLW0603
+    if _REGISTERED:
+        return
+
+    if not _CPU_LIBRARY.is_file():
+        msg = (
+            f"The exact-affine kernel is not built: {_CPU_LIBRARY} is missing. It "
+            "is compiled when pylcm is installed; after editing its C++ sources, "
+            "or in a checkout installed before the kernel existed, rebuild it "
+            "with `pixi run build-exact-affine`."
+        )
+        raise ExactAffineKernelUnavailableError(msg)
+
+    try:
+        _register_platform(library=_CPU_LIBRARY, platform="cpu")
+        if CUDA_AVAILABLE:
+            _register_platform(library=_CUDA_LIBRARY, platform="CUDA")
+    except OSError as error:
+        msg = (
+            f"The exact-affine kernel at {_CPU_LIBRARY} exists but could not be "
+            f"loaded: {error}. A library built by one toolchain and loaded by "
+            "another commonly fails this way, missing the first toolchain's "
+            "runtime. Rebuild it in this environment with "
+            "`pixi run build-exact-affine`."
+        )
+        raise ExactAffineKernelUnavailableError(msg) from error
+
+    _REGISTERED = True
 
 
 def certified_affine_compare(
@@ -110,10 +146,12 @@ def certified_affine_compare(
         strictly positive.
 
     Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
         TypeError: If the operands do not share one floating dtype, or that dtype
             is neither `float32` nor `float64`.
 
     """
+    _ensure_registered()
     operands = _broadcast(a_x0, a_x1, a_v0, a_v1, b_x0, b_x1, b_v0, b_v1, x_query)
     target = _target_for(
         operands=operands,
@@ -156,10 +194,12 @@ def exact_affine_read(
         mask every channel together.
 
     Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
         TypeError: If the operands do not share one floating dtype, or that dtype
             is neither `float32` nor `float64`.
 
     """
+    _ensure_registered()
     operands = _broadcast(x0, x1, v0, v1, x_query)
     target = _target_for(
         operands=operands, f32="ExactAffineReadF32", f64="ExactAffineReadF64"

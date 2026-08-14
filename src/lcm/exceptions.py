@@ -82,6 +82,17 @@ class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
 
 
+class ExactAffineKernelUnavailableError(PyLCMError):
+    """Raised when the certified upper envelope is used without its kernel.
+
+    The certified path decides candidate ownership in exact integer arithmetic
+    over the stored operand bits, which a compiled shared object provides. Where
+    that object is absent or cannot be loaded, the path states so at the moment
+    it is asked for a verdict rather than falling back to floating arithmetic
+    that cannot make the guarantee.
+    """
+
+
 class ScaledLotteryDifferentiationError(PyLCMError):
     """Raised when a scaled certainty-equivalent reduction is differentiated.
 
