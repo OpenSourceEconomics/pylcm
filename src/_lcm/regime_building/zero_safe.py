@@ -162,7 +162,11 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.probability import scaled_down_by_power_of_two
-from _lcm.zero_safe import zero_safe_weighted_term
+from _lcm.zero_safe import (
+    relative_scales,
+    scaled_weighted_terms,
+    zero_safe_weighted_term,
+)
 from lcm.typing import FloatND, IntND
 
 
@@ -214,14 +218,17 @@ def zero_safe_average(
     - the **mass** lowers each weight onto the common scale before summing. A
       live node too far below that scale to register contributes no share of a
       total of order one, which is the right answer for a denominator;
-    - the **numerator** forms ``w * a`` first and applies the node's relative
-      scale to the product. A tiny probability meeting a large value makes an
-      ordinary contribution, and scaling the weight first would flush it before
-      the value supplied its binades.
+    - the **numerator** goes through `scaled_weighted_terms`, the engine's one
+      scaled contraction, which splits the relative scale between the
+      coefficient and the product. All of it on the coefficient would flush a
+      tiny probability before the value supplied its binades; all of it on the
+      product would overflow an ordinary coefficient meeting a value near the
+      top of the range, which no later scaling recovers.
 
-    The common scale is the smallest shift — the largest node — so every
-    relative scale is a power of two no greater than one and the lowering
-    cannot overflow.
+    Both read the relative scale from `relative_scales`, so numerator and mass
+    are lowered onto the same one and their ratio is the mean. The common scale
+    is the smallest shift — the largest node — so every relative scale is a
+    power of two no greater than one and the lowering cannot overflow.
 
     Unlike `jnp.average`, only `axis=None` or a single `int` `axis` is
     supported — every call site here reduces at most one axis at a time; pass
@@ -266,21 +273,16 @@ def zero_safe_average(
             shifts_arr = jnp.reshape(shifts_arr, new_shape)
 
     if shifts_arr is None:
-        relative_scale = None
         lowered_weights = weights_arr
     else:
-        common_shift = (
-            jnp.min(shifts_arr)
-            if axis is None
-            else jnp.min(shifts_arr, axis=axis, keepdims=True)
-        )
-        # `common_shift` is the SMALLEST shift, so every relative scale is
-        # non-positive — which is exactly `scaled_down_by_power_of_two`'s
+        # `relative_scales` returns the SMALLEST shift's offset, so every entry
+        # is non-positive — which is exactly `scaled_down_by_power_of_two`'s
         # precondition. It agrees with `jnp.ldexp` bit-for-bit on that domain and
         # skips the general `frexp` graph, which here would run twice over the
         # whole value surface.
-        relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
-        lowered_weights = scaled_down_by_power_of_two(weights_arr, relative_scale)
+        lowered_weights = scaled_down_by_power_of_two(
+            weights_arr, relative_scales(shifts=shifts_arr, axis=axis)
+        )
 
     total_weight = jnp.sum(lowered_weights, axis=axis)
     _raise_if_concretely_zero(total_weight, context="zero_safe_average")
@@ -298,19 +300,21 @@ def zero_safe_average(
     # extra reductions. NB the float64 bit-identity is a property of THIS single
     # vectorised reduction; the SEQUENTIAL regime-mixture fold in `Q_and_F` is a
     # different reduction order and is not made bit-portable by float64.
-    terms = zero_safe_weighted_term(
-        weight=weights_arr,
-        value=a_arr,
-        # With scales in hand the weights are `scaled_joint_weight` coefficients,
-        # every one of them normal by construction, so the term needs no exponent
-        # move. Without them they are whatever the model supplied.
-        subnormal_is_accounted_for=shifts_arr is not None,
-    )
-    if relative_scale is not None:
-        # The product, not the weight: see the docstring. `zero_safe_weighted_term`
-        # has already made a zero-weight `+-inf` an exact zero, and scaling down
-        # returns a zero unchanged.
-        terms = scaled_down_by_power_of_two(terms, relative_scale)
+    if shifts_arr is None:
+        # Weights on one scale already: whatever size the model supplied them
+        # at, and nothing upstream has accounted for a small one.
+        terms = zero_safe_weighted_term(
+            weight=weights_arr, value=a_arr, subnormal_is_accounted_for=False
+        )
+    else:
+        # Scaled weights share their contraction with every other scaled
+        # weighted sum in the engine, which is what splits the downscale
+        # between the coefficient and the product so that neither a rare node
+        # against a large value nor an ordinary node against a near-max value
+        # leaves the format on the way.
+        terms = scaled_weighted_terms(
+            coefficients=weights_arr, shifts=shifts_arr, values=a_arr, axis=axis
+        )
     numerator = jnp.sum(terms, axis=axis)
     return numerator / total_weight
 
