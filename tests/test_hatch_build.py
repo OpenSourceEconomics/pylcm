@@ -16,6 +16,8 @@ Two properties the build owes its caller:
 
 from pathlib import Path
 
+import pytest
+
 import hatch_build
 
 
@@ -71,3 +73,43 @@ def test_the_build_states_that_it_produced_nothing_on_windows(monkeypatch, capsy
     hatch_build.build_exact_affine(root=Path("/nowhere"))
 
     assert "no kernel" in capsys.readouterr().out
+
+
+def test_the_opt_out_builds_no_kernel(monkeypatch):
+    """`LCM_SKIP_EXACT_AFFINE=1` installs pylcm without compiling anything."""
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    assert hatch_build.build_exact_affine(root=Path("/nowhere")) == []
+
+
+def test_the_opt_out_names_what_it_gave_up(monkeypatch, capsys):
+    """Skipping the build says which capability the install will not have."""
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    hatch_build.build_exact_affine(root=Path("/nowhere"))
+
+    assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
+
+
+def test_the_opt_out_is_off_unless_asked_for(monkeypatch):
+    """`LCM_SKIP_EXACT_AFFINE=0` builds the kernel; the variable is not a mere flag."""
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "0")
+    monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("CXX", raising=False)
+
+    with pytest.raises(RuntimeError, match="No C\\+\\+ compiler"):
+        hatch_build.build_exact_affine(
+            root=Path("/nowhere"), jax_include_dir="/nowhere"
+        )
+
+
+def test_a_missing_compiler_fails_loudly_without_the_opt_out(monkeypatch):
+    """An install that cannot build the kernel fails at build time, not at solve."""
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("CXX", raising=False)
+
+    with pytest.raises(RuntimeError, match="No C\\+\\+ compiler"):
+        hatch_build.build_exact_affine(
+            root=Path("/nowhere"), jax_include_dir="/nowhere"
+        )
