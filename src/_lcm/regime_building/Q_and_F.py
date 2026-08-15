@@ -139,7 +139,12 @@ def _sum_regime_mixture(
     prob_shape = jnp.broadcast_shapes(*(p.shape for p in prob_list))
     if len(value_shape) < len(prob_shape):
         value_shape = jnp.broadcast_shapes(value_shape, prob_shape)
-    probs = jnp.stack(prob_list, axis=0)
+    # `jnp.stack` needs one shape. The values are lifted to their common shape
+    # below; the probabilities are lifted to theirs for the same reason, so a
+    # target whose probability arrives at a lower rank than its siblings' aligns
+    # on the target axis the right-padding further down assumes, rather than
+    # making the stack raise.
+    probs = jnp.stack([jnp.broadcast_to(p, prob_shape) for p in prob_list], axis=0)
     values = jnp.stack([jnp.broadcast_to(v, value_shape) for v in value_list], axis=0)
     # Right-pad the probability rank to the value rank so the per-target weight
     # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
@@ -165,6 +170,42 @@ def _sum_regime_mixture(
         weight=probs, value=values, subnormal_is_accounted_for=False
     )
     return sum_in_value_order(contributions, axis=0)
+
+
+def _normalized_regime_mixture(
+    *,
+    mixture: FloatND,
+    probability_mass: FloatND,
+    has_negative_probability: BoolND,
+) -> FloatND:
+    """Divide a summed regime mixture by the mass that was summed into it.
+
+    A route that accumulates `Σ p·E[V]` has to divide by the represented mass to
+    state the same quantity as `LinearExpectation.aggregate`. Regime-transition
+    validation accepts any mass within `jnp.allclose` of one, and at the top of
+    that tolerance the undivided sum reverses the Bellman argmax. Dividing is
+    exact whenever the mass is exactly one, so a well-formed lottery keeps its
+    floating-point association.
+
+    Weights that are not a distribution — a mass away from one, or a negative
+    probability — publish NaN rather than a finite value, at every log level:
+    the arithmetic states it, so `log_level="off"` cannot skip it.
+
+    Args:
+        mixture: The summed mixture `Σ p·E[V]` over the retained targets.
+        probability_mass: Those targets' probabilities, summed.
+        has_negative_probability: Whether any of them carried the sign bit on a
+            nonzero magnitude.
+
+    Returns:
+        The mixture divided by its mass, or NaN where the weights are not a
+        probability distribution.
+
+    """
+    return mixture / _unit_regime_mass_or_nan(
+        probability_mass=probability_mass,
+        has_negative_probability=has_negative_probability,
+    )
 
 
 def get_Q_and_F(
@@ -509,8 +550,11 @@ def get_Q_and_F_terminal_collective(
     byte-identical; this builder is used only at the collective solve site.
 
     Builds one `U^s`-and-`F` closure per stakeholder from its own `utility_<s>`
-    DAG target (feasibility is regime-level, so it is identical across
-    stakeholders — the first one is kept). The returned `Q_and_F` stacks the
+    DAG target. Feasibility is regime-level: `_get_U_and_F` builds `feasibility`
+    from the regime's constraints and function pool alone and `utility_<s>` only
+    selects a second target, so every closure carries the identical node and
+    returns the identical mask — the first stakeholder's is returned and the
+    others are discarded. The returned `Q_and_F` stacks the
     per-stakeholder utilities on a trailing stakeholder axis: for a scalar
     (state, action) cell it returns `U` of shape `(n_stakeholders,)` and a scalar
     `F`. After the action product-map in `get_max_Q_over_a`, `U` has shape
@@ -564,13 +608,14 @@ def get_Q_and_F_terminal_collective(
             stakeholder axis) and the shared feasibility mask.
 
         """
-        U_arrays: list[FloatND] = []
-        F_arr: BoolND | None = None
-        for u_and_f in U_and_F_by_stakeholder.values():
-            U_s, F_arr = u_and_f(**states_actions_params)
-            U_arrays.append(jnp.asarray(U_s))
-        U_stack = jnp.stack(U_arrays, axis=-1)
-        return U_stack, jnp.asarray(F_arr)
+        stakeholder_flows = [
+            u_and_f(**states_actions_params)
+            for u_and_f in U_and_F_by_stakeholder.values()
+        ]
+        U_stack = jnp.stack([jnp.asarray(U_s) for U_s, _ in stakeholder_flows], axis=-1)
+        # The stakeholders share one `feasibility` node and evaluate it on the
+        # same arguments, so every entry is the same mask; the first is returned.
+        return U_stack, jnp.asarray(stakeholder_flows[0][1])
 
     return Q_and_F
 
@@ -850,10 +895,14 @@ def get_Q_and_F_collective(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     period_targets: tuple[RegimeName, ...],
+    scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    same_period_v_interpolation_info: (
+        MappingProxyType[RegimeName, VInterpolationInfo] | None
+    ) = None,
     koopmans_aggregator: EconFunction,
     stakeholders: tuple[str, ...],
     co_map_state_names: tuple[StateName, ...] = (),
@@ -893,17 +942,32 @@ def get_Q_and_F_collective(
             `utility`, plus the shared `H`.
         constraints: Immutable mapping of constraint names to internal user
             functions.
-        period_targets: Target regimes whose continuation enters E[V^s] this
-            period (all collective with the identical stakeholder tuple).
+        period_targets: Carry targets whose continuation enters E[V^s] this
+            period (all collective with the identical stakeholder tuple), read
+            at the next states their laws produce.
+        scalar_targets: Graph targets active next period that carry no state.
+            Their value function has the stakeholder axis alone, so there is no
+            next state to interpolate at and each enters E[V^s] as a single
+            degenerate node weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition
             functions.
-        stochastic_transition_names: Frozenset of stochastic transition function
-            names.
+        transition_laws: Immutable mapping of target regime names to their
+            transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve (stakeholder-independent — per-stakeholder gates are E3').
         regime_to_v_interpolation_info: Mapping of regime names to
-            V-interpolation info (state axes only; the stakeholder axis is not
-            an interpolation axis).
+            V-interpolation info of the CONTINUATION, i.e. of next period's
+            value arrays (state axes only; the stakeholder axis is not an
+            interpolation axis).
+        same_period_v_interpolation_info: Mapping of regime names to
+            V-interpolation info at THIS period, for the `same_period_refs`
+            readers — they interpolate a reference regime's current-period V, so
+            they read the grids that regime is tabulated on now, not the ones it
+            will carry next period. `None` falls back to
+            `regime_to_v_interpolation_info`, which states the same grids only
+            for a model whose reference regimes carry no age-specialized state.
+        koopmans_aggregator: The regime's Bellman aggregator, combining each
+            stakeholder's utility and certainty equivalent into `Q^s`.
         stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
         co_map_state_names: Tuple of state names co-mapped with the continuation
             V (see `get_Q_and_F`).
@@ -1027,11 +1091,19 @@ def get_Q_and_F_collective(
     # value-constraint evaluators once; their engine-supplied arguments —
     # `Q_<s>` and the reference-value names — are excluded from the kernel
     # signature and bound per (state, action) cell inside `Q_and_F`.
+    #
+    # The readers interpolate a reference regime's CURRENT-period V, so they take
+    # this period's interpolation info; `regime_to_v_interpolation_info` describes
+    # next period's arrays and belongs to the continuation alone.
     value_constraint_machinery = _build_value_constraint_machinery(
         value_constraints=value_constraints,
         same_period_refs=same_period_refs,
         stakeholders=stakeholders,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        same_period_v_interpolation_info=(
+            regime_to_v_interpolation_info
+            if same_period_v_interpolation_info is None
+            else same_period_v_interpolation_info
+        ),
         functions=functions,
     )
 
@@ -1071,17 +1143,39 @@ def get_Q_and_F_collective(
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
             compute_regime_transition_probs(**states_actions_params)
         )
-        U_arrays: list[FloatND] = []
-        F_arr: BoolND | None = None
-        for u_and_f in U_and_F_by_stakeholder.values():
-            U_s, F_arr = u_and_f(**states_actions_params)
-            U_arrays.append(jnp.asarray(U_s))
-        U_stack = jnp.stack(U_arrays, axis=-1)
+        stakeholder_flows = [
+            u_and_f(**states_actions_params)
+            for u_and_f in U_and_F_by_stakeholder.values()
+        ]
+        U_stack = jnp.stack([jnp.asarray(U_s) for U_s, _ in stakeholder_flows], axis=-1)
+        # The stakeholders share one `feasibility` node and evaluate it on the
+        # same arguments, so every entry is the same mask; the first is kept.
+        F_arr: BoolND = jnp.asarray(stakeholder_flows[0][1])
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in period_targets}
+            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
         )
 
-        mixture_terms: list[tuple[RegimeName, FloatND, FloatND]] = []
+        # The accumulators are seeded with the stateless targets: they carry no
+        # node axis of their own, but they carry mass, a sign, and one
+        # degenerate continuation node each. A collective regime declares no
+        # nonlinear certainty equivalent, so the seed is the linear one.
+        #
+        # The mass is stakeholder-independent — the regime transition is — so it
+        # accumulates at the cell shape rather than at the stacked shape.
+        (
+            mixture_terms,
+            _lottery_values,
+            _lottery_weights,
+            _lottery_shifts,
+            probability_mass,
+            has_negative_probability,
+        ) = _scalar_target_contribution(
+            scalar_targets=scalar_targets,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            active_regime_probs=active_regime_probs,
+            as_lottery=False,
+            zero=jnp.zeros_like(U_stack[..., 0]),
+        )
         for target_regime_name in period_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -1089,10 +1183,6 @@ def get_Q_and_F_collective(
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
             ](**states_actions_params)
-            # `_get_joint_weights_function` returns the node weights together with
-            # the one base-two scale they are held at. The scale is dropped here
-            # and only here: this branch reduces with `zero_safe_average`, which
-            # divides by the weight sum, and a scale common to every node of the
             # `_get_joint_weights_function` returns each node's weight together
             # with the base-two scale that node's own product needed. The scales
             # are per NODE, not one per lottery, so they are carried into the
@@ -1131,14 +1221,31 @@ def get_Q_and_F_collective(
                 weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
                 shifts=jnp.asarray(joint_next_stochastic_states_shifts).reshape(-1),
             )
+            # Unit mass alone does not make a collection of weights a
+            # distribution: 1.5 and -0.5 sum to one. The sum and the sign are
+            # tracked side by side, and each target's sign is read off its own
+            # bits, while it still has them — a negative probability the dtype
+            # cannot hold as a normal number arrives at an arithmetic test as
+            # `-0` and passes it.
+            target_probability = active_regime_probs[target_regime_name]
+            probability_mass = probability_mass + target_probability
+            has_negative_probability = has_negative_probability | is_negative(
+                target_probability
+            )
             mixture_terms.append(
                 (
                     target_regime_name,
-                    active_regime_probs[target_regime_name],
+                    target_probability,
                     next_V_expected_arr,
                 )
             )
         CE = _sum_regime_mixture(mixture_terms, like=U_stack)
+        if period_targets or scalar_targets:
+            CE = _normalized_regime_mixture(
+                mixture=CE,
+                probability_mass=probability_mass,
+                has_negative_probability=has_negative_probability,
+            )
 
         # W applied on the stacked arrays is W per stakeholder: `utility` and
         # `CE` share the trailing stakeholder axis and the aggregator's
@@ -1201,7 +1308,7 @@ def _build_value_constraint_machinery(
     value_constraints: ConstraintFunctionsMapping,
     same_period_refs: Mapping[str, ResolvedSamePeriodRef],
     stakeholders: tuple[str, ...],
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    same_period_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     functions: EconFunctionsMapping,
 ) -> _ValueConstraintMachinery:
     """Build the E2 reference readers and value-constraint evaluators once.
@@ -1214,14 +1321,33 @@ def _build_value_constraint_machinery(
 
     A value constraint is evaluated at this period's states and actions, so no
     transition enters its pool: `next_<state>` is reserved for a transition's
-    output and rejected outside one.
+    output and rejected outside one. For the same reason each reader takes the
+    reference regime's interpolation info at THIS period: it reads a
+    current-period value array, tabulated on the grids that regime carries now.
+
+    Args:
+        value_constraints: Immutable mapping of value-constraint names to
+            predicates (params already renamed to qnames).
+        same_period_refs: Immutable mapping of reference-value names to resolved
+            same-period reference declarations.
+        stakeholders: Ordered stakeholder names; fixes which `Q_<s>` argument
+            reads which slice of the trailing stakeholder axis.
+        same_period_v_interpolation_info: Mapping of regime names to their
+            V-interpolation info at this period.
+        functions: Immutable mapping of function names to internal user
+            functions.
+
+    Returns:
+        The prebuilt readers, evaluators, and the argument bookkeeping the
+        kernel needs to bind them per cell.
+
     """
     reference_readers: dict[str, Callable[..., FloatND]] = {}
     reference_reader_args: dict[str, tuple[str, ...]] = {}
     for ref_name, ref in same_period_refs.items():
         reader = _build_same_period_ref_reader(
             ref=ref,
-            v_interpolation_info=regime_to_v_interpolation_info[ref.regime],
+            v_interpolation_info=same_period_v_interpolation_info[ref.regime],
             functions=functions,
         )
         reference_readers[ref_name] = reader
@@ -1670,19 +1796,10 @@ def _get_compute_CE(
         CE = _sum_regime_mixture(mixture_terms, like=zero)
 
         if reduces_per_target and (period_targets or scalar_targets):
-            # The per-target route accumulates `Σ p·E[V]`, so it has to divide by
-            # the represented mass to state the same quantity as
-            # `LinearExpectation.aggregate`. Regime-transition validation accepts
-            # any mass within `jnp.allclose` of one, and at the top of that
-            # tolerance the undivided sum reverses the Bellman argmax. Dividing is
-            # exact whenever the mass is exactly one, so a well-formed lottery
-            # keeps its floating-point association.
-            CE = CE / jnp.where(
-                _regime_mass_is_a_distribution(
-                    probability_mass, has_negative_probability
-                ),
-                probability_mass,
-                jnp.nan,
+            CE = _normalized_regime_mixture(
+                mixture=CE,
+                probability_mass=probability_mass,
+                has_negative_probability=has_negative_probability,
             )
         elif certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
@@ -2125,6 +2242,8 @@ def _scalar_target_contribution(
             transition probabilities.
         as_lottery: Whether a nonlinear certainty equivalent aggregates the
             continuation, so the nodes must be handed over unaggregated.
+        zero: Zero at the shape and dtype the mass accumulates in — the caller's
+            cell shape, which the sign flags are shaped after as well.
 
     Returns:
         Tuple of the linear mixture terms, the lottery values, their weights,
