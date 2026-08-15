@@ -1,11 +1,10 @@
 """Complete the fold-before-gate guard: F1/F2/F3/F4 (fold-review round).
 
-`test_fold_gate_guard.py` pins the INTERIM guard
-(`_fail_if_folded_collective_regime_is_gate_target_or_ref`) that rejects a
-COLLECTIVE regime folding a shock while being another regime's gated-edge
-TARGET or same-period REFERENCE. An outside audit proved that guard's
-enumerated prohibition was incomplete in three ways, plus a false positive in
-a different (regime-local) fold guard:
+`test_fold_gate_guard.py` pins the cross-regime endpoint guard on a regime
+that folds a shock while another regime's gated-edge TARGET or same-period
+REFERENCE reads it nodewise. This module covers the roles and the negative
+controls that one does not, each of which the guard's enumerated prohibition
+once missed:
 
 - F1 (serious): the guard's reference set was built from `same_period_refs` +
   gated-edge `gate_refs` only — it omitted every `leg.fallback.regime` of a
