@@ -29,13 +29,14 @@ gate refs / leg fallbacks as ordinary projected references. The per-cell fold is
 product-mapped over the target regime's state grid.
 """
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Container, Iterable, Mapping
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions, rename_arguments, with_signature
+from dags.tree import qname_from_tree_path
 
 from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
@@ -47,7 +48,9 @@ from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.typing import (
     ConstraintFunction,
     EconFunctionsMapping,
+    FunctionName,
     RegimeName,
+    StateName,
     TransitionFunction,
     TransitionFunctionName,
     _ParamsLeaf,
@@ -91,6 +94,86 @@ TARGET_PARAMS = "target"
 # distinct in the first place.
 _TARGET_PARAM_PREFIX = "__target_param__"
 _SOURCE_PARAM_PREFIX = "__source_param__"
+
+# Template-entry name of an edge's gate predicate. An edge callable's free
+# scalars are ordinary model parameters of the SOURCE regime, and they carry the
+# flat name `<target>__<entry>__<param>` there — the qualification is what keeps
+# them apart from the source's own parameters, which share that one flat
+# namespace: a runtime irregular grid's helper is named after the STATE alone
+# (`x__points`), and two edges of one source would otherwise collide on any
+# parameter name they happen to share.
+EDGE_GATE_ENTRY: FunctionName = "gate"
+
+
+def edge_gate_ref_entry(*, ref_name: str, state_name: StateName) -> FunctionName:
+    """Return the template-entry name of one gate-reference projection.
+
+    Args:
+        ref_name: Key of the reference in the edge's `gate_refs`.
+        state_name: State of the reference regime this projection supplies.
+
+    Returns:
+        The entry name the projection's parameters are collected under.
+
+    """
+    return f"gate_ref_{ref_name}_{state_name}"
+
+
+def edge_leg_fallback_entry(
+    *, fallback_regime: RegimeName, state_name: StateName
+) -> FunctionName:
+    """Return the template-entry name of one leg-fallback projection.
+
+    The leg is named by the regime it falls back to rather than by its key in
+    the edge's `legs`: the simulate-side projector
+    (`build_fallback_state_projector`) is handed the leg's resolved fallback
+    reference and nothing else, so the fallback regime is the one leg identity
+    both sides of the solve/simulate seam can spell. Two legs of one edge
+    falling back to the same regime therefore share one parameter namespace,
+    which is what a single flat source namespace gives them anyway.
+
+    Args:
+        fallback_regime: Regime the leg falls back to.
+        state_name: State of the fallback regime this projection supplies.
+
+    Returns:
+        The entry name the projection's parameters are collected under.
+
+    """
+    return f"leg_fallback_{fallback_regime}_{state_name}"
+
+
+def edge_param_qname(*, target: RegimeName, entry: FunctionName, param: str) -> str:
+    """Return the flat name one edge callable's parameter carries in the source.
+
+    Args:
+        target: Regime the edge lands on.
+        entry: Entry name of the callable within the edge.
+        param: Name the callable declares the parameter under.
+
+    Returns:
+        The parameter's qname in the source regime's flat params.
+
+    """
+    return qname_from_tree_path((target, entry, param))
+
+
+def is_target_value_operand(arg_name: str) -> bool:
+    """Return whether an edge callable's argument names a target value component.
+
+    A gate reads the target regime's value as `V_target` for a singleton target
+    and as `V_target_<stakeholder>` for a collective one. The whole `V_target`
+    vocabulary is reserved to the engine, so a name in it is an operand the fold
+    binds rather than a parameter the user supplies.
+
+    Args:
+        arg_name: Argument name of a gate or projection.
+
+    Returns:
+        Whether the name belongs to the reserved `V_target` vocabulary.
+
+    """
+    return arg_name == "V_target" or arg_name.startswith("V_target_")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,7 +314,9 @@ class ResolvedGatedEdge:
     """Name of the target regime whose grid the fold lands on."""
 
     gate: ConstraintFunction
-    """Boolean gate predicate (params already renamed to qnames)."""
+    """Boolean gate predicate, exactly as the user declared it. The builders
+    below rename its parameters to their flat source-regime names
+    (`_with_qualified_params`) after the fences have read it as declared."""
 
     gate_refs: Mapping[str, ResolvedSamePeriodRef]
     """Extra same-period references the gate reads (projected from the target grid)."""
@@ -322,6 +407,124 @@ def _projection_seed_args(ref: ResolvedSamePeriodRef) -> frozenset[str]:
     for projection in ref.projection.values():
         leaves |= set(get_union_of_args([projection]))
     return frozenset(leaves)
+
+
+def _with_qualified_params(
+    *,
+    func: Callable[..., FloatND],
+    target: RegimeName,
+    entry: FunctionName,
+    wired_names: Container[str],
+) -> Callable[..., FloatND]:
+    """Return `func` with every parameter it declares renamed to its flat name.
+
+    An edge callable is written in the target regime's vocabulary, so what it
+    declares is a mix of engine-wired names — the target's states, and for a gate
+    the injected value operands — and its own free parameters. Only the latter
+    are renamed, to `edge_param_qname`'s `<target>__<entry>__<param>`, which is
+    the name the params template gives them in the source regime's flat params.
+    Renaming BEFORE the callable is concatenated with the target DAG is what
+    keeps the two sides one name: the fold, the simulate gate evaluator, and the
+    leg projector each build their signature out of the renamed callable, so
+    `backward_induction._evaluate_edge_fold`'s name match and the router's
+    provenance lookup both hit the template's own spelling.
+
+    Args:
+        func: A gate predicate or one projection of a reference.
+        target: Regime the edge lands on.
+        entry: Entry name of this callable within the edge.
+        wired_names: Names the engine binds itself, which are left alone.
+
+    Returns:
+        The callable with its parameters renamed, or `func` when it declares
+        none.
+
+    """
+    mapper = {
+        arg: edge_param_qname(target=target, entry=entry, param=arg)
+        for arg in get_union_of_args([func])
+        if arg not in wired_names and not is_target_value_operand(arg)
+    }
+    return rename_arguments(func, mapper=mapper) if mapper else func
+
+
+def _gate_ref_with_qualified_params(
+    *,
+    ref: ResolvedSamePeriodRef,
+    ref_name: str,
+    target: RegimeName,
+    state_names: Container[str],
+) -> ResolvedSamePeriodRef:
+    """Return a gate reference whose projections declare their flat param names."""
+    return _ref_with_qualified_params(
+        ref=ref,
+        target=target,
+        entry_by_state={
+            state_name: edge_gate_ref_entry(ref_name=ref_name, state_name=state_name)
+            for state_name in ref.projection
+        },
+        state_names=state_names,
+    )
+
+
+def _leg_fallback_with_qualified_params(
+    *,
+    ref: ResolvedSamePeriodRef,
+    target: RegimeName,
+    state_names: Container[str],
+) -> ResolvedSamePeriodRef:
+    """Return a leg fallback whose projections declare their flat param names."""
+    return _ref_with_qualified_params(
+        ref=ref,
+        target=target,
+        entry_by_state={
+            state_name: edge_leg_fallback_entry(
+                fallback_regime=ref.regime, state_name=state_name
+            )
+            for state_name in ref.projection
+        },
+        state_names=state_names,
+    )
+
+
+def _ref_with_qualified_params(
+    *,
+    ref: ResolvedSamePeriodRef,
+    target: RegimeName,
+    entry_by_state: Mapping[StateName, FunctionName],
+    state_names: Container[str],
+) -> ResolvedSamePeriodRef:
+    """Return `ref` with each projection's parameters renamed to their flat names.
+
+    A projection is evaluated on the TARGET regime's grid, so the target's own
+    state names are the engine-wired half of its signature and everything else
+    is a parameter of the source that declared the edge.
+
+    Args:
+        ref: The resolved reference whose projections are rewritten.
+        target: Regime the edge lands on.
+        entry_by_state: Entry name to collect each projection's parameters under,
+            keyed by the reference-regime state the projection supplies.
+        state_names: The target regime's state names.
+
+    Returns:
+        A copy of `ref` carrying the renamed projections.
+
+    """
+    return replace(
+        ref,
+        projection=MappingProxyType(
+            {
+                state_name: _with_qualified_params(
+                    func=projection,
+                    target=target,
+                    entry=entry_by_state[state_name],
+                    wired_names=state_names,
+                )
+                for state_name, projection in ref.projection.items()
+            }
+        ),
+    )
 
 
 def _reject_target_function_params(
@@ -558,9 +761,14 @@ def get_edge_fold(
     Returns a callable whose keyword arguments are the target regime's state
     grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
     V, its float dissolution flag, and every reference regime's V) and the gate's
-    flat params. It returns ``Wbar`` of shape ``(*target_state_axes,
-    n_source_components)`` for a collective source, or ``(*target_state_axes,)``
-    for a singleton source (a single leg with no trailing axis).
+    and projections' flat params. Those params carry the qualified spelling
+    `<target>__<entry>__<param>` (`edge_param_qname`), which is the name the
+    source regime's params template gives them, so
+    `backward_induction._evaluate_edge_fold` binds them by a plain name match
+    against `flat_params[source]`. It returns ``Wbar`` of shape
+    ``(*target_state_axes, n_source_components)`` for a collective source, or
+    ``(*target_state_axes,)`` for a singleton source (a single leg with no
+    trailing axis).
 
     The fold does NOT return its raw grid-level boolean ``gate`` array; it is
     computed INTERNALLY below, for ``Wbar``'s own ``jnp.where``, and stays
@@ -605,64 +813,6 @@ def get_edge_fold(
     """
     state_names = target_v_info.state_names
 
-    def _grid_reader(reader: Callable[..., FloatND]) -> Callable[..., FloatND]:
-        """Product-map an off-grid reference reader over the target grid.
-
-        `productmap` derives its OWN
-        outward-facing signature from the wrapped function's own parameters
-        (`_lcm.utils.dispatchers.productmap` -> `allow_only_kwargs`), and
-        silently DROPS any caller-supplied kwarg not in that signature. A
-        same-period-ref projection frequently reads only a STRICT SUBSET of
-        the target's `state_names` (e.g. a gate ref projected from a single
-        newly-drawn state, ignoring a carried-along one) — but `_grid_reader`
-        always maps over the FULL `state_names` (every target-grid axis), and
-        `batched_vmap`'s internal closure unconditionally needs every one of
-        them present in its call kwargs. Left alone, the unused axes get
-        dropped by the signature filter before `batched_vmap` ever sees them,
-        raising a `KeyError` on the first unused axis. Padding the reader's
-        exposed signature to the full `state_names` (ignoring the padding
-        args internally) fixes the mismatch without touching `productmap`
-        itself, which is shared far beyond gated edges.
-        """
-        return productmap(
-            func=_pad_reader_to_state_names(reader, state_names=state_names),
-            variables=state_names,
-            batch_sizes=dict.fromkeys(state_names, 0),
-        )
-
-    gate_ref_readers = {
-        name: _grid_reader(
-            _build_same_period_ref_reader(
-                ref=ref,
-                v_interpolation_info=reference_v_info[ref.regime],
-                functions=target_functions,
-                deterministic_transitions=target_deterministic_transitions,
-            )
-        )
-        for name, ref in edge.gate_refs.items()
-    }
-    fallback_readers = [
-        _grid_reader(
-            _build_same_period_ref_reader(
-                ref=leg.fallback,
-                v_interpolation_info=reference_v_info[leg.fallback.regime],
-                functions=target_functions,
-                deterministic_transitions=target_deterministic_transitions,
-            )
-        )
-        for leg in edge.legs
-    ]
-    # `get_union_of_args` reflects each reader's EXPOSED signature, which —
-    # thanks to `_pad_reader_to_state_names` inside `_grid_reader` — already
-    # spans the full `state_names` plus any genuine extra params (e.g.
-    # runtime grid points for an irregular-grid projection); no separate
-    # union with `state_names` is needed here.
-    gate_ref_args = {
-        name: tuple(get_union_of_args([reader]))
-        for name, reader in gate_ref_readers.items()
-    }
-    fallback_args = [tuple(get_union_of_args([reader])) for reader in fallback_readers]
-
     # The gate evaluator: the predicate concatenated with the target DAG, so it
     # may read target states / helper functions; its injected leaves (the
     # `V_target_<s>` components, `D_target`, and the gate-ref names) are bound
@@ -676,7 +826,7 @@ def get_edge_fold(
         if target_stakeholders is not None
         else ["V_target"]
     )
-    injected_names = frozenset({*target_component_names, "D_target", *gate_ref_readers})
+    injected_names = frozenset({*target_component_names, "D_target", *edge.gate_refs})
     # An injected operand name that also names a target-DAG node would
     # be captured by that node in the concatenation below.
     _reject_injected_name_collision(
@@ -741,8 +891,89 @@ def get_edge_fold(
             seed_args=_projection_seed_args(leg.fallback),
             context="get_edge_fold (solve-side leg fallback projection)",
         )
+
+    # Every fence above reads the callables AS DECLARED, so the qualification
+    # below runs after them: it renames a free parameter to a name no target-DAG
+    # node can carry, which is exactly the collision the fences exist to detect.
+    qualified_gate = _with_qualified_params(
+        func=edge.gate,
+        target=edge.target,
+        entry=EDGE_GATE_ENTRY,
+        wired_names=injected_names | set(state_names),
+    )
+    qualified_gate_refs = {
+        ref_name: _gate_ref_with_qualified_params(
+            ref=ref, ref_name=ref_name, target=edge.target, state_names=state_names
+        )
+        for ref_name, ref in edge.gate_refs.items()
+    }
+    qualified_fallbacks = [
+        _leg_fallback_with_qualified_params(
+            ref=leg.fallback, target=edge.target, state_names=state_names
+        )
+        for leg in edge.legs
+    ]
+
+    def _grid_reader(reader: Callable[..., FloatND]) -> Callable[..., FloatND]:
+        """Product-map an off-grid reference reader over the target grid.
+
+        `productmap` derives its OWN
+        outward-facing signature from the wrapped function's own parameters
+        (`_lcm.utils.dispatchers.productmap` -> `allow_only_kwargs`), and
+        silently DROPS any caller-supplied kwarg not in that signature. A
+        same-period-ref projection frequently reads only a STRICT SUBSET of
+        the target's `state_names` (e.g. a gate ref projected from a single
+        newly-drawn state, ignoring a carried-along one) — but `_grid_reader`
+        always maps over the FULL `state_names` (every target-grid axis), and
+        `batched_vmap`'s internal closure unconditionally needs every one of
+        them present in its call kwargs. Left alone, the unused axes get
+        dropped by the signature filter before `batched_vmap` ever sees them,
+        raising a `KeyError` on the first unused axis. Padding the reader's
+        exposed signature to the full `state_names` (ignoring the padding
+        args internally) fixes the mismatch without touching `productmap`
+        itself, which is shared far beyond gated edges.
+        """
+        return productmap(
+            func=_pad_reader_to_state_names(reader, state_names=state_names),
+            variables=state_names,
+            batch_sizes=dict.fromkeys(state_names, 0),
+        )
+
+    gate_ref_readers = {
+        ref_name: _grid_reader(
+            _build_same_period_ref_reader(
+                ref=ref,
+                v_interpolation_info=reference_v_info[ref.regime],
+                functions=target_functions,
+                deterministic_transitions=target_deterministic_transitions,
+            )
+        )
+        for ref_name, ref in qualified_gate_refs.items()
+    }
+    fallback_readers = [
+        _grid_reader(
+            _build_same_period_ref_reader(
+                ref=ref,
+                v_interpolation_info=reference_v_info[ref.regime],
+                functions=target_functions,
+                deterministic_transitions=target_deterministic_transitions,
+            )
+        )
+        for ref in qualified_fallbacks
+    ]
+    # `get_union_of_args` reflects each reader's EXPOSED signature, which —
+    # thanks to `_pad_reader_to_state_names` inside `_grid_reader` — already
+    # spans the full `state_names` plus any genuine extra params (e.g.
+    # runtime grid points for an irregular-grid projection); no separate
+    # union with `state_names` is needed here.
+    gate_ref_args = {
+        name: tuple(get_union_of_args([reader]))
+        for name, reader in gate_ref_readers.items()
+    }
+    fallback_args = [tuple(get_union_of_args([reader])) for reader in fallback_readers]
+
     gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": edge.gate},
+        functions={**dag_pool, "__gate__": qualified_gate},
         targets="__gate__",
         enforce_signature=False,
         set_annotations=True,
@@ -961,9 +1192,12 @@ def get_edge_simulate_gate_evaluator(
           helpers internally;
         - the params named by the returned `EdgeArgProvenance`, exposed under
           NAMESPACE-QUALIFIED leaves (`__target_param__x__points` vs
-          `__source_param__x__points`).
+          `__source_param__x__points`). A source param's own qname is the
+          edge-qualified `<target>__<entry>__<param>` the params template gives
+          it (`edge_param_qname`), so the router finds it in
+          `flat_params[source]` under exactly that name.
 
-        The qualification is load-bearing: a runtime grid
+        The namespace qualification is load-bearing: a runtime grid
         helper is named after the STATE alone (`x__points`), so a source and
         a target that both declare a state `x` contribute the same qname. One
         keyword cannot carry two regimes' arrays, so no merge ORDER is
@@ -973,27 +1207,6 @@ def get_edge_simulate_gate_evaluator(
         the signature (disjoint and complete).
     """
     state_names = target_v_info.state_names
-
-    # Gate-ref readers: the IDENTICAL per-cell construction `get_edge_fold`
-    # uses for its own `gate_ref_readers`, but WITHOUT that function's
-    # `_grid_reader` product-map wrap — `get_edge_fold` maps these over the
-    # full target GRID (solve time, one evaluation per grid cell); here each
-    # reader is called directly at ONE realized point (vmapped by the
-    # caller over subjects), exactly the off-grid idiom
-    # `_build_same_period_ref_reader` is built for everywhere else.
-    gate_ref_readers = {
-        name: _build_same_period_ref_reader(
-            ref=ref,
-            v_interpolation_info=reference_v_info[ref.regime],
-            functions=target_functions,
-            deterministic_transitions=target_deterministic_transitions,
-        )
-        for name, ref in edge.gate_refs.items()
-    }
-    gate_ref_args = {
-        name: tuple(get_union_of_args([reader]))
-        for name, reader in gate_ref_readers.items()
-    }
 
     target_component_interpolator = get_V_interpolator(
         v_interpolation_info=target_v_info,
@@ -1031,7 +1244,7 @@ def get_edge_simulate_gate_evaluator(
         if target_stakeholders is not None
         else ["V_target"]
     )
-    injected_names = frozenset({*target_component_names, "D_target", *gate_ref_readers})
+    injected_names = frozenset({*target_component_names, "D_target", *edge.gate_refs})
     # Same fences as `get_edge_fold`, applied to
     # the IDENTICAL dag_pool and gate so solve and simulate reject the exact same
     # topologies (simulate has no fallback readers of its own -- the fallback
@@ -1085,8 +1298,44 @@ def get_edge_simulate_gate_evaluator(
                 f"get_edge_simulate_gate_evaluator (gate-ref '{ref_name}' projection)"
             ),
         )
+
+    # The SAME qualification `get_edge_fold` applies, in the same place (after
+    # the fences, which read the callables as declared), so the two sides ask
+    # `flat_params[source]` for one spelling of each parameter.
+    qualified_gate = _with_qualified_params(
+        func=edge.gate,
+        target=edge.target,
+        entry=EDGE_GATE_ENTRY,
+        wired_names=injected_names | set(state_names),
+    )
+    # Gate-ref readers: the IDENTICAL per-cell construction `get_edge_fold`
+    # uses for its own `gate_ref_readers`, but WITHOUT that function's
+    # `_grid_reader` product-map wrap — `get_edge_fold` maps these over the
+    # full target GRID (solve time, one evaluation per grid cell); here each
+    # reader is called directly at ONE realized point (vmapped by the
+    # caller over subjects), exactly the off-grid idiom
+    # `_build_same_period_ref_reader` is built for everywhere else.
+    gate_ref_readers = {
+        ref_name: _build_same_period_ref_reader(
+            ref=_gate_ref_with_qualified_params(
+                ref=ref,
+                ref_name=ref_name,
+                target=edge.target,
+                state_names=state_names,
+            ),
+            v_interpolation_info=reference_v_info[ref.regime],
+            functions=target_functions,
+            deterministic_transitions=target_deterministic_transitions,
+        )
+        for ref_name, ref in edge.gate_refs.items()
+    }
+    gate_ref_args = {
+        name: tuple(get_union_of_args([reader]))
+        for name, reader in gate_ref_readers.items()
+    }
+
     gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": edge.gate},
+        functions={**dag_pool, "__gate__": qualified_gate},
         targets="__gate__",
         enforce_signature=False,
         set_annotations=True,
@@ -1302,14 +1551,19 @@ def build_fallback_state_projector(
     target params to the solve-side fold) would lift the fence; it is deferred.
 
     Unlike `get_edge_simulate_gate_evaluator`, this callable exposes both kinds
-    of argument under their PLAIN names: it holds no interpolator of its own, so
-    the target-params namespace (the source of the identically-named-leaf
-    problem there) is empty here and nothing can collide.
+    of argument without a namespace prefix: it holds no interpolator of its own,
+    so the target-params namespace (the source of the identically-named-leaf
+    problem there) is empty here and nothing can collide. A parameter still
+    carries the edge-qualified qname `<target>__<entry>__<param>`
+    (`edge_leg_fallback_entry`), which is both what the params template emits and
+    what the solve-side fold's reader for this leg declares.
 
     Args:
         ref: The leg's resolved fallback reference (`ResolvedEdgeLeg.fallback`).
         fallback_v_info: V-interpolation info of the FALLBACK regime (`ref.regime`),
             fixing which state names to project.
+        target_regime_name: The regime the gated edge lands on, which qualifies
+            the projections' parameter names and names the fenced target.
         target_state_names: The TARGET regime's own state names, i.e. exactly
             those arguments the router binds from the realized candidate target
             states rather than from a params namespace.
@@ -1328,22 +1582,6 @@ def build_fallback_state_projector(
         **dict(target_deterministic_transitions),
         **{k: v for k, v in target_functions.items() if k != "H"},
     }
-    projection_funcs: dict[str, Callable[..., FloatND]] = {}
-    projection_args: dict[str, tuple[str, ...]] = {}
-    for state_name in fallback_v_info.state_names:
-        target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
-        projection_funcs[state_name] = concatenate_functions(
-            functions={**dag_pool, target: ref.projection[state_name]},
-            targets=target,
-            enforce_signature=False,
-            set_annotations=True,
-        )
-        projection_args[state_name] = tuple(
-            get_union_of_args([projection_funcs[state_name]])
-        )
-    arg_names = tuple(
-        sorted({arg for args in projection_args.values() for arg in args})
-    )
     # `dag_pool` is the GATED TARGET's nodes (`target_functions` /
     # `target_deterministic_transitions`), so the fence's `edge_target` names the gated
     # target whose node would capture a projection arg -- NOT `ref.regime`, which is the
@@ -1365,6 +1603,29 @@ def build_fallback_state_projector(
         seed_args=_projection_seed_args(ref),
         edge_target=target_regime_name,
         context="build_fallback_state_projector",
+    )
+
+    # The same qualification the solve-side fold applies to this very leg's
+    # fallback reader, from the same helper, so the coordinate simulate projects
+    # is read off the parameter the fold projected it with.
+    qualified_ref = _leg_fallback_with_qualified_params(
+        ref=ref, target=target_regime_name, state_names=target_state_names
+    )
+    projection_funcs: dict[str, Callable[..., FloatND]] = {}
+    projection_args: dict[str, tuple[str, ...]] = {}
+    for state_name in fallback_v_info.state_names:
+        target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
+        projection_funcs[state_name] = concatenate_functions(
+            functions={**dag_pool, target: qualified_ref.projection[state_name]},
+            targets=target,
+            enforce_signature=False,
+            set_annotations=True,
+        )
+        projection_args[state_name] = tuple(
+            get_union_of_args([projection_funcs[state_name]])
+        )
+    arg_names = tuple(
+        sorted({arg for args in projection_args.values() for arg in args})
     )
 
     provenance_builder = _ProvenanceBuilder(

@@ -108,6 +108,14 @@ _SOURCE_POINTS = (0.0, 10.0)
 #     coordinate 0.06 -> V = 1.12 < 2.0 -> gate CLOSED (misroute).
 _GATE_THRESHOLD = 2.0
 
+# The name the gate's own parameter carries in `flat_params["src"]`: an edge
+# callable's parameters are qualified by the edge's target regime and by the
+# callable within it (`<target>__<entry>__<param>`). The source's `x__points`
+# below is a runtime-grid helper of the source ITSELF, not an edge entry, so it
+# keeps its bare name — which is what leaves it collidable with the target's, the
+# collision this fixture is built on.
+_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+
 
 @categorical(ordered=True)
 class Work:
@@ -198,7 +206,7 @@ def _solve_f2_fixture():
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "gate_threshold": jnp.asarray(_GATE_THRESHOLD),
+                    _GATE_THRESHOLD_QNAME: jnp.asarray(_GATE_THRESHOLD),
                     # The collision: the SOURCE's own `x` grid points, named
                     # exactly like the target's.
                     "x__points": jnp.asarray(_SOURCE_POINTS),
@@ -281,7 +289,7 @@ def test_gate_evaluator_provenance_partitions_its_signature():
         evaluator, qname="x__points", namespace=TARGET_PARAMS
     )
     threshold = exposed_param_name(
-        evaluator, qname="gate_threshold", namespace=SOURCE_PARAMS
+        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
     assert target_points != threshold
 
@@ -353,7 +361,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
         evaluator, qname="x__points", namespace=TARGET_PARAMS
     )
     threshold_arg = exposed_param_name(
-        evaluator, qname="gate_threshold", namespace=SOURCE_PARAMS
+        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
 
     def _gate(points) -> bool:

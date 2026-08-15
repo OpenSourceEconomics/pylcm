@@ -112,6 +112,11 @@ _BETA = 0.95
 _X2 = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)  # nodes {0.0, 1.0}
 _AGES = AgeGrid(start=0, stop=2, step="Y")
 
+# The name the curved fixture's gate parameter carries in `flat_params["src"]`:
+# an edge callable's parameters are qualified by the edge's target regime and by
+# the callable within it (`<target>__<entry>__<param>`).
+_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+
 
 @categorical(ordered=True)
 class Work:
@@ -408,7 +413,7 @@ def _solve_curved_fixture(*, gate_threshold: float):
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "gate_threshold": jnp.asarray(gate_threshold),
+                    _GATE_THRESHOLD_QNAME: jnp.asarray(gate_threshold),
                 }
             ),
             "target": MappingProxyType({}),
@@ -458,7 +463,7 @@ def _measure_gate_value_read(*, x: float) -> float:
     # namespace-qualified leaf — ask the published provenance for the name
     # rather than hard-coding the qualification scheme here.
     threshold_arg = exposed_param_name(
-        evaluator, qname="gate_threshold", namespace=SOURCE_PARAMS
+        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
 
     def _gate_open(threshold: float) -> bool:

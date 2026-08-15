@@ -163,6 +163,13 @@ def _same_period_mappings(regimes, flat_params, solution):
 # The contested qname. The SOURCE declares the projection, so `shift` is the
 # source's parameter; the target's identically named one exists only to make the
 # target-bound misbinding SILENT rather than a crash (both halves are asserted below).
+#
+# An edge callable's parameters are qualified by the edge's target regime and by
+# the callable within it (`<target>__<entry>__<param>`), which is the name the
+# source's params template emits and the name both the fold and the simulate
+# evaluator declare. The TARGET's competing entry is spelled identically here so
+# the contest stays a contest: two namespaces, one qname, different values.
+_SHIFT_QNAME = "target__gate_ref_ref_v_x__shift"
 _SRC_SHIFT = 0.1
 _TARGET_SHIFT = 0.9
 
@@ -240,14 +247,14 @@ def _make_shift_regimes() -> dict[str, Regime]:
 
 def _shift_flat_params(*, target_declares_shift: bool = True):
     target_params = (
-        {"shift": jnp.asarray(_TARGET_SHIFT)} if target_declares_shift else {}
+        {_SHIFT_QNAME: jnp.asarray(_TARGET_SHIFT)} if target_declares_shift else {}
     )
     return MappingProxyType(
         {
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "shift": jnp.asarray(_SRC_SHIFT),
+                    _SHIFT_QNAME: jnp.asarray(_SRC_SHIFT),
                 }
             ),
             "target": MappingProxyType(target_params),
@@ -280,12 +287,19 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     # The provenance attributes `shift` to the SOURCE, and to nothing else.
-    shift_arg = exposed_param_name(evaluator, qname="shift", namespace=SOURCE_PARAMS)
-    assert (TARGET_PARAMS, "shift") not in evaluator.arg_provenance.params.values()
+    shift_arg = exposed_param_name(
+        evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
+    )
+    assert (
+        TARGET_PARAMS,
+        _SHIFT_QNAME,
+    ) not in evaluator.arg_provenance.params.values()
 
     # The fixture is a genuine counterexample only if the two namespaces
     # disagree about the contested qname.
-    assert float(flat_params["src"]["shift"]) != float(flat_params["target"]["shift"])
+    assert float(flat_params["src"][_SHIFT_QNAME]) != float(
+        flat_params["target"][_SHIFT_QNAME]
+    )
 
     def _gate(shift_value: float) -> bool:
         return bool(
@@ -359,8 +373,10 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
     evaluator = src.gated_edge_simulate_gate_evaluators["target"]
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
-    assert "shift" not in flat_params["target"]
-    shift_arg = exposed_param_name(evaluator, qname="shift", namespace=SOURCE_PARAMS)
+    assert _SHIFT_QNAME not in flat_params["target"]
+    shift_arg = exposed_param_name(
+        evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
+    )
 
     # The target-namespace binding, on the production evaluator: `shift` filtered
     # out of the target's (empty) params is simply not passed, and the call dies.
@@ -430,6 +446,11 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
 # F3: the fallback projector must project the coordinate the FOLD projected.
 # ----------------------------------------------------------------------------------
 
+# The leg fallback's projection parameter, qualified by the edge's target regime
+# and by the leg — which the params template and both sides of the solve/simulate
+# seam name by the regime the leg falls back to. The target's competing entry is
+# spelled identically so the two namespaces still contest one qname.
+_PROJ_SHIFT_QNAME = "target__leg_fallback_fallback_z__shift"
 _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
@@ -512,10 +533,12 @@ def _projector_flat_params():
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "shift": jnp.asarray(_PROJ_SRC_SHIFT),
+                    _PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_SRC_SHIFT),
                 }
             ),
-            "target": MappingProxyType({"shift": jnp.asarray(_PROJ_TARGET_SHIFT)}),
+            "target": MappingProxyType(
+                {_PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_TARGET_SHIFT)}
+            ),
             "fallback": MappingProxyType({}),
         }
     )
@@ -537,7 +560,9 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     projector = regimes["src"].gated_edge_leg_projectors["target"][0]
 
     # The two namespaces genuinely disagree about `shift`.
-    assert float(flat_params["src"]["shift"]) != float(flat_params["target"]["shift"])
+    assert float(flat_params["src"][_PROJ_SHIFT_QNAME]) != float(
+        flat_params["target"][_PROJ_SHIFT_QNAME]
+    )
 
     # What SOLVE projected, read off the fold's own output: Wbar on the target's
     # {0, 1} grid.
@@ -2135,7 +2160,10 @@ def test_source_param_near_engine_name_still_solves():
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "same_period_regime_to_params_user": jnp.asarray(0.1),
+                    # The gate declares it, so it is an edge parameter and carries
+                    # the edge-qualified spelling; the near-miss the control is
+                    # about is in the name the GATE reads.
+                    "target__gate__same_period_regime_to_params_user": jnp.asarray(0.1),
                 }
             ),
             "target": MappingProxyType({}),
