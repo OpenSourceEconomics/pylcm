@@ -33,6 +33,41 @@ pixi add pylcm --pypi --git https://github.com/OpenSourceEconomics/pylcm.git --r
 uv add pylcm --git https://github.com/OpenSourceEconomics/pylcm.git --rev main
 ```
 
+## The compiled kernel, and installing without a C++ compiler
+
+Installing pylcm compiles a small C++ library, the *exact-affine kernel*. It backs the
+`"exact"` upper envelope, which is the **default** for DC-EGM — so this is not an
+optional extra: without it, DC-EGM cannot run on its defaults. Brute-force backward
+induction never touches it and is unaffected.
+
+The build needs a C++ compiler (`c++` or `g++` on the path, or `CXX` set). It also
+builds a CUDA variant when `nvcc` is present; where it is not, the certified envelope
+runs on CPU only, and the build says so as it runs. Windows builds no kernel at all.
+
+If no compiler is found, **the install fails with a message naming what is missing.**
+That is deliberate: an install that quietly dropped the kernel would look fine and then
+fail hours later inside a solve.
+
+To install without a compiler on purpose, say so:
+
+```bash
+LCM_SKIP_EXACT_AFFINE=1 pip install pylcm
+```
+
+The build then compiles nothing and prints which capability the install will not have.
+Any other value, including `0`, builds the kernel as usual. You can check afterwards
+whether an install has one:
+
+```python
+from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_built
+
+print(kernel_built())  # False in a skipped install
+```
+
+A skipped install still imports, and the certified path reports its own absence when
+something reaches for it, rather than returning a silently different answer. To get the
+capability back, unset the variable and reinstall.
+
 ## GPU Acceleration (optional, but then this is the whole point of it)
 
 pylcm uses [JAX](https://jax.readthedocs.io/) for numerical computation. By default, JAX
@@ -151,6 +186,12 @@ import lcm
 
 - **Python version too old**: pylcm requires Python 3.14+. Check with
   `python --version`.
+- **`No C++ compiler found` during install**: install one, or install without the
+  certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1` (see above), accepting that
+  DC-EGM will not run on its defaults.
+- **`The exact-affine kernel is not built`, or `exists but could not be loaded`, at
+  solve time**: the install skipped the kernel, or carries one built by a different
+  toolchain. Rebuild in the current environment with `pixi run build-exact-affine`.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).

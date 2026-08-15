@@ -61,6 +61,33 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
+      - name: Restore JAX compilation cache
+        # `cpu.yml` caches this and deferred doing so here, on the reasoning that a
+        # GPU runner's home directory might already persist between runs. The runner
+        # name differs on every job, which is what an ephemeral runner looks like, so
+        # the premise is doubtful and every GPU run may be compiling from cold — on
+        # the device where compilation is most expensive. The step below measures it.
+        #
+        # The other objection in that note does not apply here: a shared cache is what
+        # a multi-worker run races on, and these run `-n0`.
+        #
+        # Only `gpu32` carries this for now. Adding it to both at once would leave no
+        # unchanged arm to compare against, and the cache would claim twice the share
+        # of the repository's cache budget before its size is known.
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/jax
+          key: >-
+            jax-gpu32-${{ hashFiles('pixi.lock') }}-${{ github.sha }}
+          restore-keys: |
+            jax-gpu32-${{ hashFiles('pixi.lock') }}-
+            jax-gpu32-
+      - name: Report the compilation cache this job starts from
+        # A run showing no speedup and a run whose cache never restored are the same
+        # wall time. This separates them, and gives the size the budget question needs.
+        run: |
+          du -sh ~/.cache/jax 2>/dev/null || echo "cache absent"
+          find ~/.cache/jax -type f 2>/dev/null | wc -l
       - name: Run Mahler & Yum on GPU
         if: matrix.suite == 'rest'
         shell: bash {0}
@@ -73,7 +100,7 @@ jobs:
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py
-          --precision=32 -n0
+          --precision=32 -n0 -v
           --junitxml=reports/junit-gpu-fp32-mahler.xml
       - name: Run pytest on GPU
         shell: bash {0}
@@ -81,6 +108,11 @@ jobs:
         # starved of host CPU/memory by parallel JAX AOT compiles, and parallel
         # workers sharing one persistent-cache directory race on its autotune
         # scratch files, which fails the run at collection.
+        #
+        # `-v` streams one line per test as it completes. The JUnit report is
+        # written when the run ends, so a job that is cancelled or reclaimed
+        # part-way publishes nothing at all; the streamed lines are then the
+        # only record of what ran and how far it got.
         #
         # The suite drops JAX's in-memory compiled-program cache at every module
         # boundary by default. A worker's resident memory otherwise grows with
@@ -90,7 +122,7 @@ jobs:
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
-          --precision=32 -n0
+          --precision=32 -n0 -v
           --junitxml=reports/junit-gpu-fp32-${{ matrix.suite }}.xml
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how

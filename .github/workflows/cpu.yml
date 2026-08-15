@@ -145,14 +145,23 @@ jobs:
         # certified` across `tests/solution` matches every id containing the
         # word — 535 tests, not 2 — and would hand all of them the flag, which
         # is the same harm as setting it suite-wide.
+        #
+        # `-v` and `--max-worker-restart` are what a killed run leaves behind.
+        # The JUnit report and `--durations` are both written at the end, so a job
+        # that hits the 6-hour ceiling produces neither, and dot-mode output
+        # attributes nothing to a test name. `-v` streams one line per test, which
+        # is the only record of a run that does not finish. `--max-worker-restart`
+        # bounds the other half: past its limit xdist ends the session instead of
+        # waiting on a worker that will not come back, turning a four-hour silence
+        # into a failure that names how many workers died.
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
           && pixi run -e tests-cpu pytest tests/solution -m "slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-solution-slow.xml \
             --cov=./ --cov-append --cov-report= -n 2 \
           && XLA_FLAGS=--xla_backend_optimization_level=0 \
@@ -164,7 +173,7 @@ jobs:
             --cov=./ --cov-append --cov-report= -n 0 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             -m "slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
             --cov=./ --cov-append --cov-report=xml -n 2
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -263,17 +272,17 @@ jobs:
           mkdir -p reports
           pixi run -e tests-cpu pytest tests --precision=32 \
             -m "not slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
           && pixi run -e tests-cpu pytest tests/solution --precision=32 \
             -m "slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-solution-slow.xml \
             -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision=32 -m "slow and not manual" \
-            --timeout=600 --timeout-method=thread \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
