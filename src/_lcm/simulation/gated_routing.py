@@ -90,12 +90,12 @@ from _lcm.regime_building.gated_edges import (
     ResolvedEdgeLeg,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
+    edge_may_fold_at_period,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.backward_induction import _evaluate_edge_fold, _states_for_period
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
-from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -135,22 +135,18 @@ def substitute_gated_edge_continuations(
     single "one-shot" period) folds at every period it is active, including
     the source's own last active period — whose `period + 1` may not include
     the target at all, e.g. a self-looping edge whose target IS the source,
-    past the source's own `active` boundary. Skip (no substitution, no gate)
-    for a target — and hence the whole edge — not solved at `period + 1`:
-    mirrors the identical guard the SOLVE-side roll already applies
-    (`backward_induction._roll_gated_edges`'s
-    `if target_name not in period_solution: continue`). A one-shot edge's
-    target is always present at `period + 1` (that is the whole point of a
-    one-shot edge), so this is byte-identical for every existing test.
+    past the source's own `active` boundary.
 
-    By contrast, a reference regime (a leg's `fallback` or a `gate_refs`
-    entry) missing at `period + 1` while the TARGET is present is not a
-    legitimate boundary no-op — the edge is genuinely active there and
-    declares that reference, so its absence means the model is
-    misconfigured (the reference regime is not solved when it needs to be).
-    Raises `ModelInitializationError` rather than silently falling back to
-    the raw (ungated) target V, which would leave the edge's routing
-    undetectably disabled.
+    Whether each edge fires is `edge_may_fold_at_period`'s answer, the same
+    one backward induction's roll consults. A target not solved at
+    `period + 1` skips (no substitution, no gate) — a one-shot edge's target
+    is always present there, that being the point of a one-shot edge. A
+    reference regime (a leg's `fallback` or a `gate_refs` entry) missing
+    while the target is present is rejected rather than silently falling back
+    to the raw (ungated) target V, which would leave the edge's routing
+    undetectably disabled. Backward induction tolerates that same absence at
+    a period whose ``Wbar`` no source reads; this call site never can, because
+    the source reading it is the very regime being simulated at `period`.
 
     The fold lands on the target regime's grid at the period whose value it
     folds, `period + 1`. For a target carrying an `AgeSpecializedGrid` state
@@ -201,22 +197,19 @@ def substitute_gated_edge_continuations(
     substituted = dict(next_regime_to_V_arr)
     same_period_mappings: dict[RegimeName, MappingProxyType[RegimeName, FloatND]] = {}
     for target_name, edge in regime.gated_edges.items():
-        if target_name not in next_period_V:
+        if not edge_may_fold_at_period(
+            edge=edge,
+            source_name=regime_name,
+            fold_period=period + 1,
+            solved_regimes=next_period_V,
+            # `_simulate_regime_in_period` reaches this only for a regime active
+            # at `period`, so the source is always there to read the `period + 1`
+            # fold. Backward induction has to ask whether its own consumer exists;
+            # here the caller IS that consumer, which is why an unsolved reference
+            # can never be the boundary no-op it is on the solve side.
+            source_reads_wbar=True,
+        ):
             continue
-        missing_refs = tuple(
-            ref for ref in edge.reference_regimes if ref not in next_period_V
-        )
-        if missing_refs:
-            msg = (
-                f"Regime '{regime_name}', gated_edges['{target_name}']: the "
-                f"target regime '{target_name}' is solved at period {period + 1}, "
-                f"but the edge's reference regime(s) {missing_refs} are not — "
-                "a malformed ACTIVE edge (a fallback or gate reference regime "
-                "must be solved at the same period as the target whenever the "
-                "target itself is). Declare the missing reference regime "
-                f"active at period {period + 1}, or drop the reference."
-            )
-            raise ModelInitializationError(msg)
         same_period_mapping = build_same_period_mapping_for_fold(
             edge=edge,
             period_solution=next_period_V,

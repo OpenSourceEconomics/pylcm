@@ -1877,6 +1877,96 @@ def _assemble_gate_kwargs(
     return gate_kwargs
 
 
+def source_reads_folded_wbar(
+    *,
+    source_active_periods: Container[int],
+    fold_period: int,
+) -> bool:
+    """Say whether the ``Wbar`` folded at ``fold_period`` is read by anyone.
+
+    A gated edge's ``Wbar`` lands on the TARGET regime's grid at the period the
+    target's value function was tabulated on, and the SOURCE consumes it one
+    period earlier, as the continuation of its own decision. So the fold at
+    period ``t`` is read exactly when the source is active at ``t - 1``. A
+    target-active period with no source one period earlier — a self-loop edge
+    at the target's earliest active period, say — produces a ``Wbar`` no
+    decision ever reads.
+
+    That distinction is what separates a boundary no-op from a misconfigured
+    edge: at an unread period a reference regime may legitimately be unsolved,
+    at a read period it may not (`edge_may_fold_at_period`).
+    """
+    return (fold_period - 1) in source_active_periods
+
+
+def edge_may_fold_at_period(
+    *,
+    edge: ResolvedGatedEdge,
+    source_name: RegimeName,
+    fold_period: int,
+    solved_regimes: Container[RegimeName],
+    source_reads_wbar: bool,
+) -> bool:
+    """Answer whether one gated edge's ``Wbar`` may be folded on this period.
+
+    The single answer both phases consult — backward induction rolling an
+    edge forward through the periods, and forward simulation substituting
+    ``Wbar`` for the raw target V. A fold needs every array it reads to be
+    solved at ``fold_period``: the target's own V, and each reference regime's
+    (`ResolvedGatedEdge.reference_regimes` — leg fallbacks and gate refs).
+    Three outcomes:
+
+    - the target is unsolved ⇒ `False`. The edge does not exist at this period
+      (a repeating edge past its target's activity boundary, e.g.), so the
+      caller keeps whatever value it already holds.
+    - the target and every reference are solved ⇒ `True`.
+    - the target is solved and a reference is not ⇒ `False` when no source
+      reads this period's ``Wbar``, and a rejection when one does. An
+      unread ``Wbar`` may be left at its previous value; a read one cannot,
+      because the source would silently consume a stale later-period value
+      instead of the reference the edge declares.
+
+    ``source_reads_wbar`` is the caller's answer to `source_reads_folded_wbar`
+    — the one fact the two phases do not share. Backward induction folds
+    period ``t`` for a consumer at ``t - 1`` that may not exist and has to
+    ask; forward simulation folds ``period + 1`` on behalf of the very source
+    it is simulating at ``period``, so it is the consumer and passes `True`.
+
+    Args:
+        edge: The resolved edge whose ``Wbar`` would be folded.
+        source_name: Name of the regime declaring the edge, for the message.
+        fold_period: The period whose value arrays the fold reads.
+        solved_regimes: Names of the regimes solved at ``fold_period``.
+        source_reads_wbar: Whether the source consumes this period's ``Wbar``.
+
+    Raises:
+        ModelInitializationError: A reference regime is unsolved at a period
+            whose ``Wbar`` the source reads.
+    """
+    if edge.target not in solved_regimes:
+        return False
+    missing = tuple(
+        regime_name
+        for regime_name in edge.reference_regimes
+        if regime_name not in solved_regimes
+    )
+    if not missing:
+        return True
+    if not source_reads_wbar:
+        return False
+    msg = (
+        f"Regime '{source_name}', gated_edges['{edge.target}']: the target "
+        f"regime '{edge.target}' is solved at period {fold_period}, but the "
+        f"edge's reference regime(s) {missing} are not — a malformed ACTIVE "
+        "edge (a fallback or gate reference regime must be solved at the same "
+        "period as the target whenever the target itself is, and this period's "
+        f"Wbar is read by '{source_name}' at period {fold_period - 1}). "
+        f"Declare the missing reference regime active at period {fold_period}, "
+        "or drop the reference."
+    )
+    raise ModelInitializationError(msg)
+
+
 def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,

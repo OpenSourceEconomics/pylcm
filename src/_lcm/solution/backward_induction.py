@@ -16,6 +16,8 @@ from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.regime_building.gated_edges import (
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
+    edge_may_fold_at_period,
+    source_reads_folded_wbar,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.solution.contract import (
@@ -601,6 +603,14 @@ def _roll_gated_edges(
     ``Wbar`` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
     set so the pytree structure stays JIT-stable.
 
+    Which of the two an edge gets is `edge_may_fold_at_period`'s answer, the
+    same one forward simulation consults. The fold at period ``t`` is read by
+    the source at ``t - 1``, so whether a source exists there decides what an
+    unsolved reference regime means: at an unread period it is the legitimate
+    boundary no-op of a self-loop edge at its target's earliest active period,
+    and the previous ``Wbar`` stands; at a read period it is a misconfigured
+    edge, and the fold refuses rather than feed the source a stale value.
+
     The gate and the projections are evaluated on the target's grid nodes at
     ``period`` — the same nodes the target's value function being folded was
     tabulated on. An `AgeSpecializedGrid` keeps `n_points` fixed while its
@@ -612,22 +622,16 @@ def _roll_gated_edges(
     rolled: dict[_EdgeKey, FloatND] = dict(next_edge_to_V_arr)
     for source_name, source in regimes.items():
         for target_name, edge in source.gated_edges.items():
-            if target_name not in period_solution:
-                continue
-            if any(ref not in period_solution for ref in edge.reference_regimes):
-                # The target was solved this period
-                # but a reference regime it reads was not — so its same-period V
-                # does not exist and this edge's Wbar cannot be folded here. This
-                # is reached ONLY at an unconsumed boundary: the construction-time
-                # guard `_fail_if_gated_edge_references_inactive` rejects any model
-                # where a reference is absent in a period whose Wbar is actually
-                # consumed (target active at t AND source active at t-1). What
-                # survives to here is a target-active period with no source one
-                # period earlier (e.g. a self-loop edge at the target's earliest
-                # active period), whose rolled Wbar is never read — so keeping the
-                # previous value is correct, not a stale-value bug. (Simulate
-                # tolerates the same boundary; see
-                # test_repeating_self_loop_gated_edge_simulates_past_activity_boundary.)
+            if not edge_may_fold_at_period(
+                edge=edge,
+                source_name=source_name,
+                fold_period=period,
+                solved_regimes=period_solution,
+                source_reads_wbar=source_reads_folded_wbar(
+                    source_active_periods=source.active_periods,
+                    fold_period=period,
+                ),
+            ):
                 continue
             fold = source.gated_edge_folds[target_name]
             same_period_mapping = build_same_period_mapping_for_fold(
