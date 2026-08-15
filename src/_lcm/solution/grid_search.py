@@ -230,15 +230,21 @@ class _GridSearchPeriodKernel:
         (`edge_target_regimes` non-empty) each edge target's continuation is
         lowered with its ``Wbar`` template (target grid + source stakeholder
         axis), substituted for the raw target V.
+
+        The two slots stay independent when a regime both references and gates
+        into the SAME regime: the solve loop passes that regime's own V under
+        the same-period slot and its ``Wbar`` under the continuation slot, and
+        for a collective source the two differ in rank. So the same-period
+        templates read the raw mapping, never the edge-substituted one.
         """
-        next_regime_to_V_arr = self._with_edge_substitution(
+        edge_substituted_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=next_regime_to_V_arr,
             edge_regime_to_V_arr=edge_regime_to_V_arr,
         )
         lower_args: dict[str, object] = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
-            "next_regime_to_V_arr": next_regime_to_V_arr,
+            "next_regime_to_V_arr": edge_substituted_V_arr,
             **dict(flat_params[self.regime_name]),
             "period": jnp.int32(period),
             "age": ages.values[period],
