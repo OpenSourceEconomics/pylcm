@@ -793,6 +793,283 @@ def _reject_gate_operand_state_name_collision(
         raise ModelInitializationError("".join(parts))
 
 
+def _build_target_dag_pool(
+    *,
+    target_functions: EconFunctionsMapping,
+    target_deterministic_transitions: Mapping[
+        TransitionFunctionName, TransitionFunction
+    ],
+) -> dict[str, Callable[..., FloatND]]:
+    """Return the target-regime nodes a gate or projection resolves against.
+
+    A gated-edge callable is written in the target regime's vocabulary and is
+    compiled by concatenating it with these nodes, so the pool fixes which names
+    the DAG can bind for it: the target's merged deterministic ``next_<state>``
+    laws (an edge projects INTO the target's state space, a transition role) and
+    the target's own processed functions. The collective Koopmans aggregator
+    ``H`` is left out: it consumes engine-injected continuation values
+    (`Q^s = H(u^s, E[V'^s])`), not target-grid quantities, so it is not a node an
+    edge callable may read.
+
+    Args:
+        target_functions: The target regime's processed functions.
+        target_deterministic_transitions: The target regime's merged
+            deterministic `next_<state>` laws.
+
+    Returns:
+        Dict of node name to callable, the DAG pool every edge-side consumer of
+        this target is concatenated with.
+
+    """
+    return {
+        **dict(target_deterministic_transitions),
+        **{k: v for k, v in target_functions.items() if k != "H"},
+    }
+
+
+def _fence_edge_consumer(
+    *,
+    dag_pool: Mapping[str, Callable[..., FloatND]],
+    seed_args: Iterable[str],
+    state_names: frozenset[str],
+    edge_target: RegimeName,
+    context: str,
+) -> None:
+    """Reject both ways a target DAG node can capture one edge consumer's argument.
+
+    Runs on EVERY target-DAG-concatenating consumer — the gate predicate and each
+    gate-ref / leg-fallback projection — ancestry-aware from that consumer's own
+    declared args:
+
+    - `_reject_target_function_params` rejects reaching a target-owned DYNAMIC
+      param, which the edge would bind from the source's namespace.
+    - `_reject_gate_projection_target_node_read` closes what the first leaves
+      open: a consumer arg naming a STATE-ONLY target node reaches no dynamic
+      leaf, so the first fence stays silent while concatenation still rebinds the
+      arg to the node and drops a same-named source parameter.
+
+    Args:
+        dag_pool: The target regime's DAG nodes (`_build_target_dag_pool`).
+        seed_args: The consumer's OWN declared arguments, before concatenation.
+        state_names: The target regime's state names.
+        edge_target: Regime the edge lands on, named in the diagnostic.
+        context: Label of the builder and consumer the fence fired on.
+
+    """
+    _reject_target_function_params(
+        dag_pool=dag_pool,
+        seed_args=seed_args,
+        state_names=state_names,
+        edge_target=edge_target,
+        context=context,
+    )
+    _reject_gate_projection_target_node_read(
+        dag_pool=dag_pool,
+        seed_args=seed_args,
+        edge_target=edge_target,
+        context=context,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _EdgeGateFenceContexts:
+    """Diagnostic labels naming which builder and consumer a gate fence fired on.
+
+    Every fence takes a `context` string that prefixes its message. The two gate
+    builders compile the identical predicate but are reached from different call
+    paths, so they label their fences differently while sharing every check.
+    """
+
+    gate: str
+    """Label for the gate predicate itself and for the operand-name fences."""
+
+    gate_ref: str
+    """`str.format` template for one gate-ref projection, taking `ref_name`."""
+
+    leg_fallback: str | None
+    """Label for the leg-fallback projections, or `None` to fence none of them.
+
+    `None` says this builder constructs no fallback reader, so it has no consumer
+    to fence — not that the topology is unchecked. `build_fallback_state_projector`
+    runs the identical `_fence_edge_consumer` over the identical projections, for
+    every leg of every edge.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CompiledEdgeGate:
+    """One edge's compiled gate predicate and the names its operands carry.
+
+    Produced by `_compile_edge_gate` and shared verbatim by the solve-side fold
+    and the simulate-side gate evaluator, so the two apply the same predicate to
+    the same operand vocabulary and reject the same topologies. Only how the
+    operands are OBTAINED differs between them.
+    """
+
+    target_component_names: tuple[str, ...]
+    """The injected target-value operand names, in stakeholder order."""
+
+    injected_names: frozenset[str]
+    """Every engine-bound gate operand: the value components, `D_target`, the
+    gate-ref keys."""
+
+    qualified_gate_refs: Mapping[str, ResolvedSamePeriodRef]
+    """The gate references with their projections' free params renamed to the
+    flat spelling the source's params template gives them."""
+
+    gate_evaluator: Callable[..., BoolND]
+    """The gate predicate concatenated with the target regime's DAG nodes."""
+
+    gate_arg_names: tuple[str, ...]
+    """`gate_evaluator`'s arguments: the injected operands it reads, the target
+    states it reads, and its own free params under their qualified names."""
+
+
+def _compile_edge_gate(
+    *,
+    edge: ResolvedGatedEdge,
+    state_names: tuple[StateName, ...],
+    target_functions: EconFunctionsMapping,
+    target_deterministic_transitions: Mapping[
+        TransitionFunctionName, TransitionFunction
+    ],
+    target_stakeholders: tuple[str, ...] | None,
+    fence_contexts: _EdgeGateFenceContexts,
+) -> _CompiledEdgeGate:
+    """Compile and fence one edge's gate predicate against the target DAG.
+
+    The single source of the gate both phases evaluate. Solve
+    (`get_edge_fold`) and simulate (`get_edge_simulate_gate_evaluator`) call this
+    with the same edge and target, so they compile the identical predicate over
+    the identical DAG pool from the identical qualified gate references.
+
+    The fences run over each consumer the CALLING builder constructs, which is
+    where the two differ: solve builds a reader per leg fallback and fences them
+    here, simulate builds none and fences none. Every leg-fallback projection is
+    fenced regardless, by the same `_fence_edge_consumer` inside
+    `build_fallback_state_projector`.
+
+    Args:
+        edge: The resolved edge declaration.
+        state_names: The target regime's state names.
+        target_functions: The target regime's processed functions.
+        target_deterministic_transitions: The target regime's merged
+            deterministic `next_<state>` laws.
+        target_stakeholders: The target regime's stakeholders, or `None` for a
+            singleton target, which fixes the injected value-operand names.
+        fence_contexts: Labels the fences report themselves under, and whether
+            the leg-fallback projections are fenced here.
+
+    Returns:
+        The compiled gate and its operand vocabulary.
+
+    Raises:
+        ModelInitializationError: On any rejected gate / projection topology.
+
+    """
+    dag_pool = _build_target_dag_pool(
+        target_functions=target_functions,
+        target_deterministic_transitions=target_deterministic_transitions,
+    )
+    target_component_names = (
+        tuple(f"V_target_{s}" for s in target_stakeholders)
+        if target_stakeholders is not None
+        else ("V_target",)
+    )
+    injected_names = frozenset({*target_component_names, "D_target", *edge.gate_refs})
+    reserved_operand_names = frozenset({*target_component_names, "D_target"})
+    # An injected operand name that also names a target-DAG node would
+    # be captured by that node in the concatenation below.
+    _reject_injected_name_collision(
+        injected_names=injected_names,
+        dag_pool=dag_pool,
+        edge_target=edge.target,
+        context=fence_contexts.gate,
+    )
+    # A gate-ref KEY aliasing a built-in injected operand (V_target /
+    # D_target) is silently preempted by that operand -- the injected categories
+    # must be disjoint, which `_reject_injected_name_collision` does not check.
+    _reject_gate_ref_operand_alias(
+        gate_ref_names=edge.gate_refs,
+        reserved_operand_names=reserved_operand_names,
+        edge_target=edge.target,
+        context=fence_contexts.gate,
+    )
+    # A target STATE name aliasing a built-in value/D operand or a gate-ref
+    # key is silently preempted by `_assemble_gate_kwargs` precedence (value/D and
+    # gate-ref both resolve before the state mesh) -- the gate reads the wrong operand.
+    _reject_gate_operand_state_name_collision(
+        state_names=state_names,
+        reserved_operand_names=reserved_operand_names,
+        gate_ref_names=edge.gate_refs,
+        edge_target=edge.target,
+        context=fence_contexts.gate,
+    )
+
+    _fence_edge_consumer(
+        dag_pool=dag_pool,
+        seed_args=get_union_of_args([edge.gate]),
+        state_names=frozenset(state_names),
+        edge_target=edge.target,
+        context=fence_contexts.gate,
+    )
+    for ref_name, ref in edge.gate_refs.items():
+        _fence_edge_consumer(
+            dag_pool=dag_pool,
+            seed_args=_projection_seed_args(ref),
+            state_names=frozenset(state_names),
+            edge_target=edge.target,
+            context=fence_contexts.gate_ref.format(ref_name=ref_name),
+        )
+    if fence_contexts.leg_fallback is not None:
+        for leg in edge.legs:
+            _fence_edge_consumer(
+                dag_pool=dag_pool,
+                seed_args=_projection_seed_args(leg.fallback),
+                state_names=frozenset(state_names),
+                edge_target=edge.target,
+                context=fence_contexts.leg_fallback,
+            )
+
+    # Every fence above reads the callables AS DECLARED, so the qualification
+    # below runs after them: it renames a free parameter to a name no target-DAG
+    # node can carry, which is exactly the collision the fences exist to detect.
+    qualified_gate = _with_qualified_params(
+        func=edge.gate,
+        target=edge.target,
+        entry=EDGE_GATE_ENTRY,
+        wired_names=injected_names | set(state_names),
+    )
+    qualified_gate_refs = {
+        ref_name: _gate_ref_with_qualified_params(
+            ref=ref, ref_name=ref_name, target=edge.target, state_names=state_names
+        )
+        for ref_name, ref in edge.gate_refs.items()
+    }
+
+    gate_evaluator = concatenate_functions(
+        functions={**dag_pool, "__gate__": qualified_gate},
+        targets="__gate__",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
+    _reject_d_target_read_on_singleton_target(
+        gate_arg_names=gate_arg_names,
+        target_stakeholders=target_stakeholders,
+        edge_target=edge.target,
+        context=fence_contexts.gate,
+    )
+
+    return _CompiledEdgeGate(
+        target_component_names=target_component_names,
+        injected_names=injected_names,
+        qualified_gate_refs=MappingProxyType(qualified_gate_refs),
+        gate_evaluator=gate_evaluator,
+        gate_arg_names=gate_arg_names,
+    )
+
+
 def get_edge_fold(
     *,
     edge: ResolvedGatedEdge,
@@ -865,96 +1142,25 @@ def get_edge_fold(
     # may read target states / helper functions; its injected leaves (the
     # `V_target_<s>` components, `D_target`, and the gate-ref names) are bound
     # from the elementwise grid arrays below.
-    dag_pool = {
-        **dict(target_deterministic_transitions),
-        **{k: v for k, v in target_functions.items() if k != "H"},
-    }
-    target_component_names = (
-        [f"V_target_{s}" for s in target_stakeholders]
-        if target_stakeholders is not None
-        else ["V_target"]
-    )
-    injected_names = frozenset({*target_component_names, "D_target", *edge.gate_refs})
-    # An injected operand name that also names a target-DAG node would
-    # be captured by that node in the concatenation below.
-    _reject_injected_name_collision(
-        injected_names=injected_names,
-        dag_pool=dag_pool,
-        edge_target=edge.target,
-        context="get_edge_fold (solve-side gate)",
-    )
-    # A gate-ref KEY aliasing a built-in injected operand (V_target /
-    # D_target) is silently preempted by that operand -- the injected categories
-    # must be disjoint, which `_reject_injected_name_collision` does not check.
-    _reject_gate_ref_operand_alias(
-        gate_ref_names=edge.gate_refs,
-        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
-        edge_target=edge.target,
-        context="get_edge_fold (solve-side gate)",
-    )
-    # A target STATE name aliasing a built-in value/D operand or a gate-ref
-    # key is silently preempted by `_assemble_gate_kwargs` precedence (value/D and
-    # gate-ref both resolve before the state mesh) -- the gate reads the wrong operand.
-    _reject_gate_operand_state_name_collision(
+    compiled = _compile_edge_gate(
+        edge=edge,
         state_names=state_names,
-        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
-        gate_ref_names=edge.gate_refs,
-        edge_target=edge.target,
-        context="get_edge_fold (solve-side gate)",
+        target_functions=target_functions,
+        target_deterministic_transitions=target_deterministic_transitions,
+        target_stakeholders=target_stakeholders,
+        # This builder constructs the fallback readers, so it fences them; the
+        # simulate-side gate evaluator has none of its own.
+        fence_contexts=_EdgeGateFenceContexts(
+            gate="get_edge_fold (solve-side gate)",
+            gate_ref="get_edge_fold (solve-side gate-ref '{ref_name}' projection)",
+            leg_fallback="get_edge_fold (solve-side leg fallback projection)",
+        ),
     )
+    target_component_names = compiled.target_component_names
+    injected_names = compiled.injected_names
+    gate_evaluator = compiled.gate_evaluator
+    gate_arg_names = compiled.gate_arg_names
 
-    # Fence EVERY target-DAG-concatenating consumer
-    # (the gate and each gate-ref / fallback projection), ancestry-aware from each
-    # consumer's own declared args -- rejects reaching a target-owned DYNAMIC param.
-    # A consumer arg naming a STATE-ONLY target node reaches no dynamic
-    # leaf, so that fence stays silent while concatenation still rebinds the arg to
-    # the node and drops a same-named source parameter. The second fence closes that
-    # by rejecting any direct target-node read. Both run on every consumer.
-    def _fence_consumer(*, seed_args: Iterable[str], context: str) -> None:
-        _reject_target_function_params(
-            dag_pool=dag_pool,
-            seed_args=seed_args,
-            state_names=frozenset(state_names),
-            edge_target=edge.target,
-            context=context,
-        )
-        _reject_gate_projection_target_node_read(
-            dag_pool=dag_pool,
-            seed_args=seed_args,
-            edge_target=edge.target,
-            context=context,
-        )
-
-    _fence_consumer(
-        seed_args=get_union_of_args([edge.gate]),
-        context="get_edge_fold (solve-side gate)",
-    )
-    for ref_name, ref in edge.gate_refs.items():
-        _fence_consumer(
-            seed_args=_projection_seed_args(ref),
-            context=f"get_edge_fold (solve-side gate-ref '{ref_name}' projection)",
-        )
-    for leg in edge.legs:
-        _fence_consumer(
-            seed_args=_projection_seed_args(leg.fallback),
-            context="get_edge_fold (solve-side leg fallback projection)",
-        )
-
-    # Every fence above reads the callables AS DECLARED, so the qualification
-    # below runs after them: it renames a free parameter to a name no target-DAG
-    # node can carry, which is exactly the collision the fences exist to detect.
-    qualified_gate = _with_qualified_params(
-        func=edge.gate,
-        target=edge.target,
-        entry=EDGE_GATE_ENTRY,
-        wired_names=injected_names | set(state_names),
-    )
-    qualified_gate_refs = {
-        ref_name: _gate_ref_with_qualified_params(
-            ref=ref, ref_name=ref_name, target=edge.target, state_names=state_names
-        )
-        for ref_name, ref in edge.gate_refs.items()
-    }
     qualified_fallbacks = [
         _leg_fallback_with_qualified_params(
             ref=leg.fallback, target=edge.target, state_names=state_names
@@ -996,7 +1202,7 @@ def get_edge_fold(
                 deterministic_transitions=target_deterministic_transitions,
             )
         )
-        for ref_name, ref in qualified_gate_refs.items()
+        for ref_name, ref in compiled.qualified_gate_refs.items()
     }
     fallback_readers = [
         _grid_reader(
@@ -1019,20 +1225,6 @@ def get_edge_fold(
         for name, reader in gate_ref_readers.items()
     }
     fallback_args = [tuple(get_union_of_args([reader])) for reader in fallback_readers]
-
-    gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": qualified_gate},
-        targets="__gate__",
-        enforce_signature=False,
-        set_annotations=True,
-    )
-    gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
-    _reject_d_target_read_on_singleton_target(
-        gate_arg_names=gate_arg_names,
-        target_stakeholders=target_stakeholders,
-        edge_target=edge.target,
-        context="get_edge_fold (solve-side gate)",
-    )
 
     # Outer signature: the target state grids, the same-period value mapping, and
     # any non-injected params/extras the gate or the reference readers need.
@@ -1286,122 +1478,53 @@ def get_edge_simulate_gate_evaluator(
         if arg != _SIMULATE_D_ARR_NAME
     )
 
-    # The SAME gate predicate `get_edge_fold` builds (identical DAG pool,
-    # identical `concatenate_functions` call) — solve and simulate must
-    # apply the exact same function, only the operands feeding it differ.
-    dag_pool = {
-        **dict(target_deterministic_transitions),
-        **{k: v for k, v in target_functions.items() if k != "H"},
-    }
-    target_component_names = (
-        [f"V_target_{s}" for s in target_stakeholders]
-        if target_stakeholders is not None
-        else ["V_target"]
-    )
-    injected_names = frozenset({*target_component_names, "D_target", *edge.gate_refs})
-    # Same fences as `get_edge_fold`, applied to
-    # the IDENTICAL dag_pool and gate so solve and simulate reject the exact same
-    # topologies (simulate has no fallback readers of its own -- the fallback
-    # projector is fenced separately in `build_fallback_state_projector`).
-    _reject_injected_name_collision(
-        injected_names=injected_names,
-        dag_pool=dag_pool,
-        edge_target=edge.target,
-        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
-    )
-    _reject_gate_ref_operand_alias(
-        gate_ref_names=edge.gate_refs,
-        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
-        edge_target=edge.target,
-        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
-    )
-    # Same disjointness the solve builder enforces -- a target state name
-    # aliasing a value/D operand or a gate-ref key is silently preempted by
-    # `_assemble_gate_kwargs` precedence, so solve and simulate reject it identically.
-    _reject_gate_operand_state_name_collision(
+    # The SAME gate predicate `get_edge_fold` builds, from the same builder, so
+    # solve and simulate apply the exact same function and reject the exact same
+    # topologies; only the operands feeding it differ.
+    compiled = _compile_edge_gate(
+        edge=edge,
         state_names=state_names,
-        reserved_operand_names=frozenset({*target_component_names, "D_target"}),
-        gate_ref_names=edge.gate_refs,
-        edge_target=edge.target,
-        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
-    )
-
-    def _fence_consumer(*, seed_args: Iterable[str], context: str) -> None:
-        _reject_target_function_params(
-            dag_pool=dag_pool,
-            seed_args=seed_args,
-            state_names=frozenset(state_names),
-            edge_target=edge.target,
-            context=context,
-        )
-        _reject_gate_projection_target_node_read(
-            dag_pool=dag_pool,
-            seed_args=seed_args,
-            edge_target=edge.target,
-            context=context,
-        )
-
-    _fence_consumer(
-        seed_args=get_union_of_args([edge.gate]),
-        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
-    )
-    for ref_name, ref in edge.gate_refs.items():
-        _fence_consumer(
-            seed_args=_projection_seed_args(ref),
-            context=(
-                f"get_edge_simulate_gate_evaluator (gate-ref '{ref_name}' projection)"
+        target_functions=target_functions,
+        target_deterministic_transitions=target_deterministic_transitions,
+        target_stakeholders=target_stakeholders,
+        # No leg-fallback context: this builder constructs no fallback reader.
+        # Those projections are fenced by the identical `_fence_edge_consumer`
+        # inside `build_fallback_state_projector`, which processing builds for
+        # every leg of every edge alongside this evaluator.
+        fence_contexts=_EdgeGateFenceContexts(
+            gate="get_edge_simulate_gate_evaluator (simulate-side gate)",
+            gate_ref=(
+                "get_edge_simulate_gate_evaluator (gate-ref '{ref_name}' projection)"
             ),
-        )
-
-    # The SAME qualification `get_edge_fold` applies, in the same place (after
-    # the fences, which read the callables as declared), so the two sides ask
-    # `flat_params[source]` for one spelling of each parameter.
-    qualified_gate = _with_qualified_params(
-        func=edge.gate,
-        target=edge.target,
-        entry=EDGE_GATE_ENTRY,
-        wired_names=injected_names | set(state_names),
+            leg_fallback=None,
+        ),
     )
+    target_component_names = compiled.target_component_names
+    injected_names = compiled.injected_names
+    gate_evaluator = compiled.gate_evaluator
+    gate_arg_names = compiled.gate_arg_names
+    reads_d_target = "D_target" in gate_arg_names
+
     # Gate-ref readers: the IDENTICAL per-cell construction `get_edge_fold`
-    # uses for its own `gate_ref_readers`, but WITHOUT that function's
-    # `_grid_reader` product-map wrap — `get_edge_fold` maps these over the
-    # full target GRID (solve time, one evaluation per grid cell); here each
-    # reader is called directly at ONE realized point (vmapped by the
-    # caller over subjects), exactly the off-grid idiom
-    # `_build_same_period_ref_reader` is built for everywhere else.
+    # uses for its own `gate_ref_readers` (the same qualified refs, off the
+    # same builder), but WITHOUT that function's `_grid_reader` product-map
+    # wrap — `get_edge_fold` maps these over the full target GRID (solve time,
+    # one evaluation per grid cell); here each reader is called directly at ONE
+    # realized point (vmapped by the caller over subjects), exactly the
+    # off-grid idiom `_build_same_period_ref_reader` is built for everywhere else.
     gate_ref_readers = {
         ref_name: _build_same_period_ref_reader(
-            ref=_gate_ref_with_qualified_params(
-                ref=ref,
-                ref_name=ref_name,
-                target=edge.target,
-                state_names=state_names,
-            ),
+            ref=ref,
             v_interpolation_info=reference_v_info[ref.regime],
             functions=target_functions,
             deterministic_transitions=target_deterministic_transitions,
         )
-        for ref_name, ref in edge.gate_refs.items()
+        for ref_name, ref in compiled.qualified_gate_refs.items()
     }
     gate_ref_args = {
         name: tuple(get_union_of_args([reader]))
         for name, reader in gate_ref_readers.items()
     }
-
-    gate_evaluator = concatenate_functions(
-        functions={**dag_pool, "__gate__": qualified_gate},
-        targets="__gate__",
-        enforce_signature=False,
-        set_annotations=True,
-    )
-    gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
-    reads_d_target = "D_target" in gate_arg_names
-    _reject_d_target_read_on_singleton_target(
-        gate_arg_names=gate_arg_names,
-        target_stakeholders=target_stakeholders,
-        edge_target=edge.target,
-        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
-    )
 
     # PROVENANCE. Every non-engine argument is attributed to exactly
     # one namespace, and exposed under a namespace-QUALIFIED name, because the
@@ -1638,29 +1761,19 @@ def build_fallback_state_projector(
         regime's own state-coordinate arrays. It carries an `arg_provenance`
         attribute (`EdgeArgProvenance`) saying which namespace resolves each.
     """
-    dag_pool = {
-        **dict(target_deterministic_transitions),
-        **{k: v for k, v in target_functions.items() if k != "H"},
-    }
-    # `dag_pool` is the GATED TARGET's nodes (`target_functions` /
-    # `target_deterministic_transitions`), so the fence's `edge_target` names the gated
-    # target whose node would capture a projection arg -- NOT `ref.regime`, which is the
-    # FALLBACK regime the projection maps INTO; naming that one would mislabel the
-    # diagnostic.
-    _reject_target_function_params(
+    dag_pool = _build_target_dag_pool(
+        target_functions=target_functions,
+        target_deterministic_transitions=target_deterministic_transitions,
+    )
+    # The same fences the solve-side fold runs over this very leg's fallback
+    # projections, from the same helper. `dag_pool` is the GATED TARGET's nodes, so
+    # the fence's `edge_target` names the gated target whose node would capture a
+    # projection arg -- NOT `ref.regime`, which is the FALLBACK regime the projection
+    # maps INTO; naming that one would mislabel the diagnostic.
+    _fence_edge_consumer(
         dag_pool=dag_pool,
         seed_args=_projection_seed_args(ref),
         state_names=frozenset(target_state_names),
-        edge_target=target_regime_name,
-        context="build_fallback_state_projector",
-    )
-    # A projection arg naming a STATE-ONLY target node reaches no dynamic
-    # leaf, so the fence above stays silent while concatenation still rebinds it to
-    # the node and writes the wrong projected fallback state. Reject any direct
-    # target-node read.
-    _reject_gate_projection_target_node_read(
-        dag_pool=dag_pool,
-        seed_args=_projection_seed_args(ref),
         edge_target=target_regime_name,
         context="build_fallback_state_projector",
     )
