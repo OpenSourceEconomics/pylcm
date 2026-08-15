@@ -93,6 +93,7 @@ def test_the_opt_out_names_what_it_gave_up(monkeypatch, capsys):
 
 def test_the_opt_out_is_off_unless_asked_for(monkeypatch):
     """`LCM_SKIP_EXACT_AFFINE=0` builds the kernel; the variable is not a mere flag."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
     monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "0")
     monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
     monkeypatch.delenv("CXX", raising=False)
@@ -105,6 +106,7 @@ def test_the_opt_out_is_off_unless_asked_for(monkeypatch):
 
 def test_a_missing_compiler_fails_loudly_without_the_opt_out(monkeypatch):
     """An install that cannot build the kernel fails at build time, not at solve."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
     monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
     monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
     monkeypatch.delenv("CXX", raising=False)
@@ -113,3 +115,18 @@ def test_a_missing_compiler_fails_loudly_without_the_opt_out(monkeypatch):
         hatch_build.build_exact_affine(
             root=Path("/nowhere"), jax_include_dir="/nowhere"
         )
+
+
+def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsys):
+    """On a platform that builds nothing anyway, the opt-out still names itself.
+
+    The two early returns are not interchangeable: one reports a deliberate choice
+    and the other reports a platform limit, and an install that asked to skip should
+    be told that is why, wherever it runs.
+    """
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    hatch_build.build_exact_affine(root=Path("/nowhere"))
+
+    assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
