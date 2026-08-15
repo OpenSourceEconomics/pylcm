@@ -266,12 +266,11 @@ def test_strictly_ordered_lines_are_never_certified_level_at_a_subnormal_query(
     That is the one outcome licensing a caller to choose freely, and it is what
     this pins shut.
 
-    How the predicate avoids it depends on what the backend can read, so the
-    mechanism is asserted per capability and the invariant is asserted for both.
-    Where the operand is unreadable the comparison is refused before the
-    determinant; where it is read exactly there is nothing to refuse. Whether a
-    predicate *should* refuse uniformly rather than answer where it can is an
-    open design question, so neither behaviour is frozen further than measured.
+    The predicate avoids it the same way on every backend: the abscissa is
+    decoded as an exact dyadic and the determinant is taken in integers, so a
+    backend that would flush the operand in floating arithmetic never gets the
+    chance to. There is nothing to refuse and no capability to branch on — the
+    verdict is the true sign wherever it is asked.
 
     Only the *abscissa* is unreadable, and the values it is read against are
     ordinary. One halving puts the query at `tiny/2`, where the two lines read
@@ -308,13 +307,11 @@ def test_strictly_ordered_lines_are_never_certified_level_at_a_subnormal_query(
     )
 
     assert int(sign) != 0, "strictly ordered lines were certified exactly level"
-    if _backend_reads_subnormals():
-        # The operand carries its magnitude into the determinant, so the sign is
-        # the true one. A refusal would be permissible but pessimistic here, and
-        # which of the two the guard ought to do is the open question above.
-        assert int(sign) == 1
-    else:
-        assert int(sign) == UNRESOLVED_SIGN
+    # The predicate decodes the stored abscissa as an exact dyadic and never
+    # multiplies it, so whether the backend's floating arithmetic would flush it
+    # does not reach the verdict. It answers the true sign on either kind of
+    # backend rather than refusing on one of them.
+    assert int(sign) == 1
 
 
 @pytest.mark.parametrize("halvings", [1, 2, 20])
