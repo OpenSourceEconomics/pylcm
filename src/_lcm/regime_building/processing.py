@@ -549,6 +549,15 @@ def process_regimes(
         same_period_ref_regimes = tuple(
             dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
         )
+        # One resolution, both phases: the value-aware feasibility mask the
+        # solved value function applied is the mask the simulated argmax
+        # chooses under, so the two phases share the object rather than each
+        # re-deriving it from the user spec.
+        value_aware_feasibility = _resolve_value_aware_feasibility(
+            user_regime=user_regime,
+            user_regimes=representative_user_regimes,
+            regime_params_template=regime_params_template,
+        )
         # Folded IID-process states — collected purely from this regime's own
         # states and grids, so (unlike `co_map_state_names`) the caller can
         # compute it before `_build_solution_phase` builds `core.transitions`.
@@ -589,6 +598,7 @@ def process_regimes(
             solver=user_regime.solver,
             is_egm_carry_target=regime_name in egm_child_regimes,
             has_taste_shocks=user_regime.taste_shocks is not None,
+            value_aware_feasibility=value_aware_feasibility,
             stakeholders=stakeholders,
             weights=weights,
             same_period_ref_regimes=same_period_ref_regimes,
@@ -601,7 +611,6 @@ def process_regimes(
             spec=spec,
             user_regime=user_regime,
             regime_name=regime_name,
-            user_regimes=user_regimes,
             solution_reachability=reachability.solution,
             simulation_reachability=reachability.simulation,
             nested_transitions=simulate_nested_transitions[regime_name],
@@ -630,6 +639,7 @@ def process_regimes(
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
+            value_aware_feasibility=value_aware_feasibility,
             stakeholders=stakeholders,
             weights=weights,
             fold_only_regimes=fold_only_regimes,
@@ -964,6 +974,71 @@ def _fail_if_collective_regime_targets_unsupported(
                     "is not yet implemented. Declare a `GatedEdge` instead."
                 )
                 raise NotImplementedError(msg)
+
+
+@dataclass(frozen=True)
+class _ValueAwareFeasibility:
+    """A regime's value-aware feasibility declarations in engine vocabulary.
+
+    Both phases apply the identical mask: the solved value function excludes
+    an action, so the simulated argmax must not be able to pick it. Resolving
+    the declarations once and handing the same object to both phase builders
+    is what makes that structural rather than a synchronization duty.
+
+    A singleton regime declares neither (`Regime.__post_init__` rejects both
+    unless `stakeholders` is set), so both mappings are empty there.
+    """
+
+    value_constraints: ConstraintFunctionsMapping = MappingProxyType({})
+    """Immutable mapping of value-constraint names to predicates whose params
+    are renamed to their qualified names."""
+
+    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = MappingProxyType(
+        {}
+    )
+    """Immutable mapping of reference-value names to resolved same-period
+    reference declarations."""
+
+
+def _resolve_value_aware_feasibility(
+    *,
+    user_regime: UserRegime,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_params_template: RegimeParamsTemplate,
+) -> _ValueAwareFeasibility:
+    """Resolve one regime's value-aware feasibility declarations for both phases.
+
+    Value-constraint predicates carry user params exactly like ordinary
+    constraints, so they are renamed to their qnames; the user's same-period
+    reference declarations become the engine-side form (the stakeholder name
+    becomes the index on the reference V's trailing stakeholder axis).
+
+    Args:
+        user_regime: The finalized user regime whose declarations are resolved.
+        user_regimes: Mapping of regime names to finalized user regimes, read
+            for each reference regime's stakeholder layout.
+        regime_params_template: The regime's parameter template, supplying the
+            qname prefix of each predicate's params.
+
+    Returns:
+        The regime's value constraints and resolved same-period references.
+
+    """
+    return _ValueAwareFeasibility(
+        value_constraints=MappingProxyType(
+            {
+                name: _rename_params_to_qnames(
+                    func=func,
+                    regime_params_template=regime_params_template,
+                    param_key=name,
+                )
+                for name, func in user_regime.value_constraints.items()
+            }
+        ),
+        same_period_refs=_resolve_same_period_refs(
+            user_regime=user_regime, user_regimes=user_regimes
+        ),
+    )
 
 
 def _resolve_same_period_refs(
@@ -1772,6 +1847,7 @@ def _build_solution_phase(
     solver: Solver,
     is_egm_carry_target: bool,
     has_taste_shocks: bool,
+    value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
@@ -1817,6 +1893,9 @@ def _build_solution_phase(
             closed-form carry it interpolates.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
+        value_aware_feasibility: The regime's value constraints and resolved
+            same-period references, resolved once for both phases so the two
+            apply the identical mask. Empty for a singleton regime.
 
     Returns:
         Complete solve functions container.
@@ -1935,25 +2014,6 @@ def _build_solution_phase(
             )
             for state in co_map_state_names
         )
-        # Value-constraint predicates carry user params
-        # exactly like ordinary constraints — rename them to their qnames; the
-        # user's same-period reference declarations are resolved to the
-        # engine-side form (the stakeholder name becomes the index on the
-        # reference V's trailing stakeholder axis).
-        user_regime = user_regimes[regime_name]
-        value_constraints = MappingProxyType(
-            {
-                name: _rename_params_to_qnames(
-                    func=func,
-                    regime_params_template=regime_params_template,
-                    param_key=name,
-                )
-                for name, func in user_regime.value_constraints.items()
-            }
-        )
-        same_period_refs = _resolve_same_period_refs(
-            user_regime=user_regime, user_regimes=user_regimes
-        )
         Q_and_F_functions = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             phase_reachability=phase_reachability,
@@ -1970,8 +2030,8 @@ def _build_solution_phase(
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
-            value_constraints=value_constraints,
-            same_period_refs=same_period_refs,
+            value_constraints=value_aware_feasibility.value_constraints,
+            same_period_refs=value_aware_feasibility.same_period_refs,
             grid_schedule=grid_schedule,
         )
         if stakeholders is not None:
@@ -2415,12 +2475,11 @@ def _build_egm_child_carry_producer(
     return producer, template
 
 
-def _build_simulation_phase(  # noqa: PLR0915
+def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
     regime_name: RegimeName,
-    user_regimes: Mapping[RegimeName, UserRegime],
     solution_reachability: PhaseReachability,
     simulation_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
@@ -2447,6 +2506,7 @@ def _build_simulation_phase(  # noqa: PLR0915
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
+    value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
@@ -2474,13 +2534,6 @@ def _build_simulation_phase(  # noqa: PLR0915
         user_regime: The finalized user regime, scanned for `Phased`
             declarations by the policy-replay gate.
         regime_name: The name of the regime.
-        user_regimes: Mapping of regime names to user-provided `Regime`
-            instances. only consulted for a
-            collective regime, to resolve its `value_constraints` and
-            `same_period_refs` exactly as the solve phase does — the
-            simulate-phase Q_and_F must apply the identical value-aware
-            feasibility mask so the simulated argmax never picks an action
-            the solved value function excluded.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -2515,6 +2568,11 @@ def _build_simulation_phase(  # noqa: PLR0915
             gets the synthesized intrinsic budget constraint.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        value_aware_feasibility: The regime's value constraints and resolved
+            same-period references — the SAME object the solve phase was
+            built with, so the simulate-phase Q_and_F masks exactly the
+            actions the solved value function excluded and the simulated
+            argmax can never pick one of them. Empty for a singleton regime.
         stakeholders: Ordered stakeholder names for a collective regime, or
             `None` (the singleton default).
         weights: Household Pareto weights per stakeholder; required (and only
@@ -2649,28 +2707,6 @@ def _build_simulation_phase(  # noqa: PLR0915
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
-        if collective:
-            # Resolve the same value_constraints /
-            # same_period_refs the solve phase reads, so simulate applies the
-            # identical value-aware feasibility mask (E2's `Q_<s>`-conditioned
-            # IR predicates, and same-period reference reads).
-            assert user_regime is not None  # noqa: S101
-            value_constraints = MappingProxyType(
-                {
-                    name: _rename_params_to_qnames(
-                        func=func,
-                        regime_params_template=regime_params_template,
-                        param_key=name,
-                    )
-                    for name, func in user_regime.value_constraints.items()
-                }
-            )
-            same_period_refs = _resolve_same_period_refs(
-                user_regime=user_regime, user_regimes=user_regimes
-            )
-        else:
-            value_constraints = MappingProxyType({})
-            same_period_refs = MappingProxyType({})
         # Q is built from two phase-closed halves — the agent acts on its beliefs
         # about the future and lives in the truth now:
         #   flow         = simulate transitions + simulate pool (`functions`)
@@ -2719,8 +2755,8 @@ def _build_simulation_phase(  # noqa: PLR0915
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
-            value_constraints=value_constraints,
-            same_period_refs=same_period_refs,
+            value_constraints=value_aware_feasibility.value_constraints,
+            same_period_refs=value_aware_feasibility.same_period_refs,
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
         )

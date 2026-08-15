@@ -117,6 +117,21 @@ type PeriodToRegimeToSimulationPolicy = MappingProxyType[
 type PeriodToRegimeToDissolutionFlags = MappingProxyType[
     int, MappingProxyType[RegimeName, BoolND]
 ]
+# What `Model.solve` returns: the value functions, plus whatever its two opt-in
+# flags append, in the order `return_simulation_policy` then
+# `return_dissolution_flags`. The precise member per flag combination is what
+# `Model.solve`'s `@overload`s select; this names the whole space once, for the
+# catch-all overload and the implementation signature.
+type ModelSolveReturn = (
+    PeriodToRegimeToVArr
+    | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
+    | tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]
+)
 
 
 @runtime_checkable

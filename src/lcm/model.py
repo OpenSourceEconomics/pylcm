@@ -69,6 +69,7 @@ from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
+    ModelSolveReturn,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
@@ -470,16 +471,7 @@ class Model:
         log_keep_n_latest: int = ...,
         return_simulation_policy: bool,
         return_dissolution_flags: bool,
-    ) -> (
-        PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
-        | tuple[
-            PeriodToRegimeToVArr,
-            PeriodToRegimeToSimulationPolicy,
-            PeriodToRegimeToDissolutionFlags,
-        ]
-    ): ...
+    ) -> ModelSolveReturn: ...
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -492,16 +484,7 @@ class Model:
         log_keep_n_latest: int = 3,
         return_simulation_policy: bool = False,
         return_dissolution_flags: bool = False,
-    ) -> (
-        PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
-        | tuple[
-            PeriodToRegimeToVArr,
-            PeriodToRegimeToSimulationPolicy,
-            PeriodToRegimeToDissolutionFlags,
-        ]
-    ):
+    ) -> ModelSolveReturn:
         """Solve the model by backward induction, using each regime's solver.
 
         Args:
@@ -790,18 +773,31 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
-            own_stakeholder: For a model with a COLLECTIVE dissolution `GatedEdge`,
-                the row's own fixed role (a source stakeholder name, e.g. `"f"` for
-                an all-women synthetic-partner population, `"m"` for all-men): the
-                leg whose `source_stakeholder` matches it decides each dissolutiond
-                row's own continuing regime membership (ROW-SPLIT "synthetic mode",
-                EKL Appendix F's two independent single-gender cohorts). `None`
-                (the default) falls back to the FIRST declared leg — correct for a
-                singleton source, but for a collective source it silently picks
-                one partner's role, so a collective-simulate caller should set it.
-                A value matching no leg of a collective source's edge raises
-                `ValueError`. Genuinely mixed populations with differing per-row
-                roles, or two linked rows that unlink on dissolution, remain the
+            own_stakeholder: For a collective source `own_stakeholder` is
+                required and names the role the simulated population carries;
+                a singleton source's sole leg carries no role and needs none.
+                A collective source declares one dissolution leg per
+                stakeholder, and each leg sends the row into *that*
+                stakeholder's own continuing regime under *that* stakeholder's
+                own state projection — so the role decides which leg governs
+                every row (ROW-SPLIT "synthetic mode": `"f"` for an all-women
+                cohort tracking synthetic husbands, `"m"` for an all-men one;
+                EKL Appendix F's two independent single-gender cohorts). On a
+                collective source, both `None` and a value naming no declared
+                leg raise `ValueError`; a singleton source ignores the
+                argument entirely, so `None` (the default) is right there.
+
+                The requirement is **per call, not per row**: the routing step
+                runs for every ACTIVE collective source, and which rows it
+                would touch is a traced array rather than a Python value. So a
+                cohort initialized entirely into some other regime of a model
+                that merely *contains* a collective source must still declare
+                a role — the alternative, a raise conditioned on occupancy,
+                would cost a device sync and would make the error depend on
+                the seed.
+
+                Genuinely mixed populations with differing per-row roles, or
+                two linked rows that unlink on dissolution, remain the
                 deferred "linked mode".
 
         Returns:
