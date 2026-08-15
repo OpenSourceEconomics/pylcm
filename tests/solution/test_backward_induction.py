@@ -24,6 +24,13 @@ class MockSolutionPhase:
     period_kernels: dict[int, PeriodKernel]
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
+    state_names: tuple[StateOrActionName, ...]
+    """Solve-phase state names, mirroring the real `SolutionPhase` property.
+
+    Sizes the stored value function, so it must name exactly the states of the
+    `StateActionSpace` this mock hands out — a mock that claims axes the space
+    does not carry makes the V topology and the rank rule disagree.
+    """
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     continuation_template: None = None
     period_state_axes: (
@@ -152,6 +159,7 @@ def test_backward_induction():
             ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
+            state_names=("lazy", "wealth"),
         ),
         active_periods=[0, 1],
     )
@@ -216,6 +224,7 @@ def test_backward_induction_single_period_Qc_arr():
             ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
+            state_names=(),
         ),
         active_periods=[0, 1],
     )
