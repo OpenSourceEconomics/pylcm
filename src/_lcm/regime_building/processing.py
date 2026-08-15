@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 import jax
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
@@ -47,7 +47,10 @@ from _lcm.grids import (
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.processing import get_flat_param_names
-from _lcm.params.regime_template import create_regime_params_template
+from _lcm.params.regime_template import (
+    _gated_edge_entries,
+    create_regime_params_template,
+)
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.processes.ar1 import TauchenAR1Process
 from _lcm.processes.iid import NormalIIDProcess
@@ -453,9 +456,17 @@ def process_regimes(
     # docstring.
     _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
 
-    model_has_egm_regime = any(
-        user_regime.solver.requires_continuation
-        for user_regime in user_regimes.values()
+    # The regimes an endogenous-grid regime can transition into. Only these owe
+    # a continuation carry, so only these get the engine-side carry producer
+    # composed around their period kernels. A regime no such solver reaches
+    # keeps whatever kernel its own solver built, however its states are
+    # shaped — a `GridSearch` regime whose first declared state happens to be
+    # continuous is not thereby anyone's endogenous-grid child.
+    egm_child_regimes = frozenset(
+        target
+        for regime_name, user_regime in user_regimes.items()
+        if user_regime.solver.requires_continuation
+        for target in reachability.solution.union_targets(source=regime_name)
     )
 
     # Each regime's flat param names in the engine's binding vocabulary, keyed
@@ -503,11 +514,14 @@ def process_regimes(
     )
     regime_to_flat_param_names = MappingProxyType(
         {
-            regime_name: _engine_flat_param_names(
-                regime_params_template=regime_to_params_template[regime_name],
-                granular_param_expansions=regime_to_granular_param_expansions[
-                    regime_name
-                ],
+            regime_name: _without_gated_edge_params(
+                names=_engine_flat_param_names(
+                    regime_params_template=regime_to_params_template[regime_name],
+                    granular_param_expansions=regime_to_granular_param_expansions[
+                        regime_name
+                    ],
+                ),
+                user_regime=representative_user_regimes[regime_name],
             )
             for regime_name in user_regimes
         }
@@ -572,7 +586,7 @@ def process_regimes(
             enable_jit=enable_jit,
             certainty_equivalent=user_regime.certainty_equivalent,
             solver=user_regime.solver,
-            model_has_egm_regime=model_has_egm_regime,
+            is_egm_carry_target=regime_name in egm_child_regimes,
             has_taste_shocks=user_regime.taste_shocks is not None,
             stakeholders=stakeholders,
             weights=weights,
@@ -1751,7 +1765,7 @@ def _build_solution_phase(
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None,
     solver: Solver,
-    model_has_egm_regime: bool,
+    is_egm_carry_target: bool,
     has_taste_shocks: bool,
     stakeholders: tuple[str, ...] | None = None,
     weights: Mapping[str, float] | None = None,
@@ -1793,9 +1807,9 @@ def _build_solution_phase(
             regime, or `None`.
         solver: The regime's solver; the engine calls `validate` then
             `build_period_kernels` on it to obtain the per-period kernels.
-        model_has_egm_regime: Whether any regime of the model uses a solver
-            that reads continuation carries (an endogenous-grid solver);
-            terminal regimes then produce their closed-form carries.
+        is_egm_carry_target: Whether an endogenous-grid regime of the model can
+            transition into this one, so this regime owes that parent the
+            closed-form carry it interpolates.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
 
@@ -1972,13 +1986,20 @@ def _build_solution_phase(
                 transitions=core.transitions,
                 transition_laws=core.transition_laws,
                 compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                # The same stripped info the solve kernel reads. Both partition
+                # the graph targets into stateful and scalar ones off this
+                # mapping, so handing the diagnostics the unstripped info would
+                # make them classify a folded-only target as stateful, demand a
+                # continuation coordinate for an axis its scalar V does not
+                # have, and report a `map_coordinates` shape error in place of
+                # the NaN they were built to localize.
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
                 state_action_space=state_action_space,
                 grids=all_grids[regime_name],
                 enable_jit=enable_jit,
                 koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
                 certainty_equivalent=certainty_equivalent,
-                # F4: diagnostics recompute on the SAME period-specific target
+                # Diagnostics recompute on the SAME period-specific target
                 # grid as the primary solve (not the representative grid).
                 grid_schedule=grid_schedule,
                 period_to_regime_v_interp=period_to_regime_v_interp,
@@ -2028,8 +2049,8 @@ def _build_solution_phase(
     solver_kernels = solver.build_period_kernels(context=context)
 
     # The terminal continuation publisher is a cross-solver concern, not the
-    # grid search's: a terminal regime in a model with a DC-EGM regime must
-    # publish a closed-form carry so a DC-EGM parent can interpolate its value
+    # grid search's: a terminal regime a DC-EGM regime transitions into must
+    # publish a closed-form carry so that parent can interpolate its value
     # and marginal utility. Build the producer engine-side and compose it as an
     # output decorator around each period adapter, so the solver stays unaware
     # of the continuation it is being asked to emit.
@@ -2038,7 +2059,7 @@ def _build_solution_phase(
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
-        model_has_egm_regime=model_has_egm_regime,
+        is_egm_carry_target=is_egm_carry_target,
         solver_produces_carry=solver_kernels.continuation_template is not None,
         enable_jit=enable_jit,
     )
@@ -2178,9 +2199,15 @@ class _TerminalCarryPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> Mapping[str, object]:
         """Build the base core's lowering arguments (the carry producer is jitted
-        separately at build time, so it is not part of the AOT-compiled core)."""
+        separately at build time, so it is not part of the AOT-compiled core).
+
+        The wrapped regime keeps whatever the base kernel is: a gated-edge
+        source stays one when a carry producer is composed around it, so its
+        ``Wbar`` templates pass straight through.
+        """
         return self.base.build_lower_args(
             core_key=core_key,
             state_action_space=state_action_space,
@@ -2189,6 +2216,10 @@ class _TerminalCarryPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            **_edge_and_same_period_kwargs(
+                edge_regime_to_V_arr=edge_regime_to_V_arr,
+                same_period_regime_to_V_arr=None,
+            ),
         )
 
     def __call__(
@@ -2201,6 +2232,8 @@ class _TerminalCarryPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
+        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
         result = self.base(
@@ -2211,6 +2244,10 @@ class _TerminalCarryPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            **_edge_and_same_period_kwargs(
+                edge_regime_to_V_arr=edge_regime_to_V_arr,
+                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+            ),
         )
         carry = self.carry_producer(
             V_arr=result.V_arr,
@@ -2230,13 +2267,35 @@ class _TerminalCarryPeriodKernel:
         )
 
 
+def _edge_and_same_period_kwargs(
+    *,
+    edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
+    same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
+) -> dict[str, object]:
+    """Relay only the optional kernel arguments the caller actually supplied.
+
+    The solve loop passes `edge_regime_to_V_arr` to a source declaring
+    `gated_edges` and `same_period_regime_to_V_arr` to one declaring
+    `same_period_refs`, and neither to any other regime. A decorator around a
+    period kernel forwards what it was handed rather than always naming both,
+    so a base kernel whose signature declares neither is called exactly as the
+    solve loop would have called it directly.
+    """
+    kwargs: dict[str, object] = {}
+    if edge_regime_to_V_arr is not None:
+        kwargs["edge_regime_to_V_arr"] = edge_regime_to_V_arr
+    if same_period_regime_to_V_arr is not None:
+        kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
+    return kwargs
+
+
 def _build_egm_child_carry_producer(
     *,
     user_regime: UserRegime,
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
-    model_has_egm_regime: bool,
+    is_egm_carry_target: bool,
     solver_produces_carry: bool,
     enable_jit: bool,
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
@@ -2260,11 +2319,11 @@ def _build_egm_child_carry_producer(
 
     Returns:
         Tuple of the producer and the regime's carry template, both `None` for
-        models without an endogenous-grid regime, for regimes whose own solver
-        already produces a carry, and for unsupported shapes.
+        a regime no endogenous-grid regime transitions into, for regimes whose
+        own solver already produces a carry, and for unsupported shapes.
 
     """
-    if not model_has_egm_regime or solver_produces_carry:
+    if not is_egm_carry_target or solver_produces_carry:
         return None, None
     producer: EGMCarryProducer
     discrete_state_names = tuple(
@@ -2616,7 +2675,7 @@ def _build_simulation_phase(  # noqa: PLR0915
         # transitively. The contract, and its one exception for carried states, is
         # documented on `lcm.phased.Phased`.
         #
-        # fold-round6/round7 simulate parity: a folded-only target's stored V is a
+        # A folded-only target's stored V is a
         # scalar with its folded axes integrated out, while its `VInterpolationInfo`
         # still lists them — so the unstripped info makes the continuation read demand
         # a `next_<shock>` coordinate the source never realises. Strip those folded
@@ -3156,61 +3215,28 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    # Transitions of continuous stochastic processes bypass the stub pipeline
-    # entirely. Build weight and next functions for reachable target regimes
-    # from each target's grid. Scope to genuinely reachable targets to avoid
-    # spurious entries for unreachable regimes.
-    #
-    # A target is reachable if it is DECLARED by the regime transition
-    # (`nested_transitions` keys — declared reachability is the
-    # single source of truth, not state laws), OR if a PER-TARGET regime
-    # transition names it explicitly, OR if it is a coarse candidate. Deriving
-    # from `flat_nested_transitions` alone — i.e. from ordinary (non-process)
-    # state laws — was the historical defect on both counts: a target whose sole
-    # content is a process state has an empty state-law bundle, so it was left
-    # with no process transitions and silently dropped from the continuation,
-    # and hence its continuation from E[V].
-    #
-    # The components are UNIONed rather than one replacing the others. The
-    # asymmetry is spelled out below and runs one way: a spurious candidate
-    # carries zero regime-transition probability and contributes nothing to E[V],
-    # whereas omitting a genuinely-routed one silently drops a whole
-    # continuation. Note this keeps `_fail_if_coarse_candidate_folds_ambiguously`
-    # reachable, which a straight `reachable_targets = frozenset(nested_
-    # transitions)` would have bypassed along with the fold-round4 F2 guarantee.
-    #
     # A coarse `transition=func` emits a `next_regime` cell for EVERY regime
     # (the routing is decided at runtime from the returned id), so its cell keys
-    # are the candidate UNIVERSE, not the transition's actual support -- which is
-    # unknowable at build time. Each candidate CAN be routed to (INCLUDING the
-    # source itself: a coarse transition may legitimately return its own regime
-    # when that regime is still active next period), so its continuation must be
-    # built: a candidate the function never returns simply carries zero
-    # regime-transition probability and contributes nothing to E[V], whereas
-    # OMITTING a genuinely-routed candidate silently drops its whole continuation
-    # (fold-round3 F1). So the source is NOT excluded (fold-round4 F1: excluding
-    # it by name erased real coarse self-transitions).
+    # are the candidate UNIVERSE, not the transition's actual support — which is
+    # unknowable at build time. A candidate the function never returns simply
+    # carries zero regime-transition probability and contributes nothing to
+    # E[V], so a spurious one is harmless.
     #
-    # The one thing `target != source` cannot stand in for is transition SUPPORT,
-    # and support is load-bearing for a FOLDED process: `_fail_if_folded_state_
+    # The one thing candidacy cannot stand in for is transition SUPPORT, and
+    # support is load-bearing for a FOLDED process: `_fail_if_folded_state_
     # persists` is STRUCTURAL (it inspects built `next_<process>` edges, not
-    # transition probability), so if we built a `next_<process>` continuation for
-    # a folded candidate we would either accept a real persisting self-fold that
+    # transition probability), so building a `next_<process>` continuation for a
+    # folded candidate would either accept a real persisting self-fold that
     # deletes the fold axis or reject a folded candidate the function never
-    # returns (fold-round4 F2). We therefore (a) do NOT build a continuation for a
-    # candidate's FOLDED process -- a folded process is consumed in its own period
-    # and its stored `V` has no such axis, so no continuation is needed; and
-    # (b) REJECT the ambiguous case at build time: a coarse candidate that folds a
-    # process AND is active in a period immediately after the source (so the
-    # coarse edge could carry that fold into a period where it persists) must be
-    # declared with explicit PER-TARGET transition cells, whose support IS known,
-    # so the persistence guard can validate it exactly.
+    # returns. So (a) no continuation is built for a candidate's FOLDED process
+    # — a folded process is consumed in its own period and its stored `V` has no
+    # such axis, so none is needed; and (b) the ambiguous case is REJECTED at
+    # build time: a coarse candidate that folds a process AND is active in a
+    # period immediately after the source (so the coarse edge could carry that
+    # fold into a period where it persists) must be declared with explicit
+    # PER-TARGET transition cells, whose support IS known, so the persistence
+    # guard can validate it exactly.
     process_names = variables.process_names
-    per_target_regime_targets = {
-        target
-        for target, cell in next_regime_cells_by_target.items()
-        if not isinstance(cell, _CoarseTransitionCell)
-    }
     coarse_candidate_targets = {
         target
         for target, cell in next_regime_cells_by_target.items()
@@ -3223,20 +3249,8 @@ def _process_regime_core(
         all_grids=all_grids,
         active_periods_by_regime=active_periods_by_regime,
     )
-    # The per-target process grids below are scoped to the processes the *source*
-    # carries: an intrinsic law is a transition from this period's value of the
-    # process, so a target-only process has no from-value here to condition on.
-    reachable_targets = (
-        frozenset(nested_transitions)
-        | {
-            tree_path_from_qname(k)[0]
-            for k in flat_nested_transitions
-            if QNAME_DELIMITER in k
-        }
-        | per_target_regime_targets
-        | coarse_candidate_targets
-    )
 
+    # Transitions of continuous stochastic processes bypass the stub pipeline
     # entirely. Build weight and next functions for every graph-retained
     # continuation target's state grid. Scope to the phase reachability graph's
     # retained targets for this source — not to whichever targets happen to
@@ -3274,7 +3288,9 @@ def _process_regime_core(
         # processes outright disarms the guard -- measured: it silences
         # test_fold_on_persisting_shock_is_rejected_at_model_processing and
         # test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected.
-        # The coarse half is fold-round4 F2, unchanged.
+        # The coarse half is the same statement about an unknown support: a
+        # candidate the transition may never return must not get an edge whose
+        # existence the persistence guard would read as evidence.
         if not (
             getattr(grid, "fold", False)
             and (
@@ -3406,7 +3422,7 @@ def _process_regime_core(
     )
 
     nested_transitions_by_target = unflatten_regime_namespace(internal_transition)
-    # A reachable target whose ONLY state is a
+    # A graph-retained target whose ONLY state is a
     # target-local folded IID process has no ordinary state law and no
     # source-carried process edge, so it is absent from
     # `nested_transitions_by_target` and would be silently dropped from
@@ -3418,7 +3434,7 @@ def _process_regime_core(
     # `_build_solution_phase`). Scoped strictly to folded-only targets; the
     # general non-folded empty-bundle hole (an ordinary state reached only via
     # the regime transition) stays deferred.
-    for target in reachable_targets:
+    for target in continuation_targets:
         if target in fold_only_regimes and target not in nested_transitions_by_target:
             nested_transitions_by_target[target] = {}
     transitions = _wrap_transitions(nested_transitions_by_target)
@@ -3841,6 +3857,47 @@ def _engine_flat_param_names(
         else:
             names.add(name)
     return frozenset(names)
+
+
+def _without_gated_edge_params(
+    *, names: frozenset[str], user_regime: UserRegime
+) -> frozenset[str]:
+    """Drop the flat names a source's gated-edge callables bind their params under.
+
+    A gate predicate and the projections of an edge's gate references and leg
+    fallbacks are evaluated by the edge fold on the TARGET regime's grid, bound
+    by name from `flat_params[source]` (`_evaluate_edge_fold`). No regime's own
+    kernel reads them, so they do not belong in the vocabulary a kernel builder
+    is told a regime may bind — an endogenous-grid parent, which is allowed to
+    reach its target's parameters, would otherwise accept a target function
+    reading a name nothing supplies there.
+
+    Their template entries nest under the edge's target regime, so their flat
+    names are `<target>__<entry>__<param>`; the `<target>__<entry>` prefixes are
+    collected off the same builder the params template files them with, so the
+    two spellings cannot drift apart.
+
+    Args:
+        names: The regime's flat param names in the engine's vocabulary.
+        user_regime: The finalized user regime, read for its `gated_edges`.
+
+    Returns:
+        Frozenset of the names, less every gated-edge callable's parameters.
+
+    """
+    if not user_regime.gated_edges:
+        return names
+    edge_prefixes = {
+        # The template key is `<entry>__<target>`; the params it collects nest
+        # the other way round, under the target regime.
+        qname_from_tree_path(tuple(reversed(tree_path_from_qname(template_key))))
+        for template_key, _func in _gated_edge_entries(user_regime).values()
+    }
+    return frozenset(
+        name
+        for name in names
+        if qname_from_tree_path(tree_path_from_qname(name)[:2]) not in edge_prefixes
+    )
 
 
 def _granular_param_expansions(
@@ -5117,14 +5174,14 @@ def _fail_if_coarse_candidate_folds_ambiguously(
     genuinely persists across the coarse edge -- which `_fail_if_folded_state_
     persists` must decide STRUCTURALLY, without seeing probabilities -- depends
     on the unknown support. Admitting such a candidate would either accept a real
-    persisting self-fold (fold-round4 F1) or reject a folded candidate the
-    function never returns (fold-round4 F2). So a coarse candidate that folds a
+    persisting self-fold or reject a folded candidate the function never
+    returns. So a coarse candidate that folds a
     process AND is active in a period immediately after the source (so the coarse
     edge could carry that fold into a period where it persists) is rejected here:
     the modeller must declare it with explicit per-target transition cells, whose
     support IS known, so the persistence guard can validate it exactly.
 
-    fold-round5 F1: persistence across the coarse edge is only POSSIBLE for a
+    Persistence across the coarse edge is only POSSIBLE for a
     folded process the SOURCE itself carries -- the continuation builder auto-wires
     an intrinsic `next_<process>` edge only for the source's own `process_names`
     (see the `target_process_grids` comprehension above and the `next_<name>`
@@ -5398,15 +5455,22 @@ def _build_Q_and_F_per_period(
                 ),
                 # The stateful targets: the ones whose continuation is actually
                 # interpolated this period, which is what this branch's
-                # `period_targets` has always meant. Upstream's
+                # `period_targets` has always meant.
                 # `partition_continuation_targets` splits the graph targets into
-                # exactly that set and the stateless one; the collective builder
-                # takes no stateless targets, as before.
+                # exactly that set and the stateless one, whose rank-zero value
+                # enters `E[V^s]` weighted by the regime transition alone.
                 period_targets=stateful_targets,
+                scalar_targets=scalar_targets,
                 transitions=transitions,
                 transition_laws=transition_laws,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 regime_to_v_interpolation_info=continuation_info(representative_period),
+                # A same-period reference reads a regime's value at THIS period,
+                # so it is interpolated on that regime's period-`t` grid, while
+                # `continuation_info(p)` answers for period `p + 1`.
+                same_period_v_interpolation_info=continuation_info(
+                    representative_period - 1
+                ),
                 stakeholders=stakeholders,
                 co_map_state_names=co_map_state_names,
                 value_constraints=value_constraints,

@@ -8,11 +8,11 @@ import time
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
+from typing import cast
 
 import jax
-import jax.numpy as jnp
 
-from _lcm.engine import Regime, StateActionSpace
+from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.regime_building.gated_edges import (
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
@@ -33,6 +33,7 @@ from _lcm.solution.diagnostics import (
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
+    _RegimeVTopology,
 )
 from _lcm.typing import FlatParams, RegimeName
 from _lcm.utils.logging import (
@@ -85,6 +86,19 @@ def solve(  # noqa: C901, PLR0915
         empty dissolution mapping.
 
     """
+    # The state-action spaces and the fence that reads them depend only on
+    # `regimes` and `flat_params`, so a colliding model is rejected before a
+    # single kernel is compiled rather than after every regime-period has been
+    # AOT-compiled.
+    base_state_action_spaces = _build_base_state_action_spaces(
+        regimes=regimes, flat_params=flat_params
+    )
+    _reject_edge_fold_state_param_collisions(
+        regimes=regimes,
+        base_state_action_spaces=base_state_action_spaces,
+        flat_params=flat_params,
+    )
+
     next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
         _build_continuation_templates(regimes=regimes, flat_params=flat_params)
     )
@@ -149,16 +163,6 @@ def solve(  # noqa: C901, PLR0915
 
     logger.info("Starting solution")
     total_start = time.monotonic()
-
-    # backwards induction loop
-    base_state_action_spaces = _build_base_state_action_spaces(
-        regimes=regimes, flat_params=flat_params
-    )
-    _reject_edge_fold_state_param_collisions(
-        regimes=regimes,
-        base_state_action_spaces=base_state_action_spaces,
-        flat_params=flat_params,
-    )
 
     # A published simulation policy is a solve *output*, accumulated for
     # every period; no backward step reads it. Its buffers can alias the
@@ -276,6 +280,7 @@ def solve(  # noqa: C901, PLR0915
         # existing next_regime_to_V_arr threading.
         next_edge_to_V_arr = _roll_gated_edges(
             regimes=regimes,
+            period=period,
             period_solution=period_solution,
             period_dissolution_flags=period_dissolution_flags,
             base_state_action_spaces=base_state_action_spaces,
@@ -461,16 +466,13 @@ def _run_period_kernel(
                 for ref_regime_name in regime.same_period_ref_regimes
             }
         )
-    if regime.gated_edges:
-        # Hand the source its own rolled Wbar arrays,
-        # keyed by target regime name; the grid-search kernel substitutes them
-        # for the raw target V in `next_regime_to_V_arr`.
-        same_period_kwargs["edge_regime_to_V_arr"] = MappingProxyType(
-            {
-                target_name: next_edge_to_V_arr[(regime_name, target_name)]
-                for target_name in regime.gated_edges
-            }
+    same_period_kwargs.update(
+        _edge_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
         )
+    )
     return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
@@ -583,6 +585,7 @@ type _EdgeKey = tuple[RegimeName, RegimeName]
 def _roll_gated_edges(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
     period_solution: dict[RegimeName, FloatND],
     period_dissolution_flags: dict[RegimeName, BoolND],
     base_state_action_spaces: dict[RegimeName, StateActionSpace],
@@ -597,6 +600,12 @@ def _roll_gated_edges(
     store it; edges whose target is inactive this period keep their previous
     ``Wbar`` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
     set so the pytree structure stays JIT-stable.
+
+    The gate and the projections are evaluated on the target's grid nodes at
+    ``period`` — the same nodes the target's value function being folded was
+    tabulated on. An `AgeSpecializedGrid` keeps `n_points` fixed while its
+    bounds move with age, so reading the representative axis instead passes
+    every shape check and folds the value at the wrong coordinates.
     """
     if not next_edge_to_V_arr:
         return next_edge_to_V_arr
@@ -628,14 +637,24 @@ def _roll_gated_edges(
             )
             wbar = _evaluate_edge_fold(
                 fold=fold,
-                target_states=base_state_action_spaces[target_name].states,
+                target_states=cast(
+                    "Mapping[str, ContinuousState | DiscreteState]",
+                    _states_for_period(
+                        regime=regimes[target_name],
+                        state_action_space=base_state_action_spaces[target_name],
+                        period=period,
+                    ),
+                ),
                 same_period_mapping=same_period_mapping,
                 source_flat_params=flat_params[source_name],
                 reference_flat_params=build_reference_params_mapping_for_fold(
                     edge=edge, flat_params=flat_params
                 ),
             )
-            rolled[(source_name, target_name)] = wbar
+            rolled[(source_name, target_name)] = _match_leaf_template_sharding(
+                leaf=wbar,
+                template_leaf=next_edge_to_V_arr[(source_name, target_name)],
+            )
     return MappingProxyType(rolled)
 
 
@@ -646,7 +665,7 @@ def _reject_edge_fold_state_param_collisions(
     flat_params: FlatParams,
 ) -> None:
     """Reject a gated edge whose fold binds one leaf as BOTH a target state and a
-    source param (simulate-round8 F1).
+    source param.
 
     A gate / gate-ref projection / fallback projection declares its arguments by
     bare name. `get_edge_fold` exposes the target's state grids and the source's
@@ -695,7 +714,7 @@ def _reject_edge_fold_state_param_collisions(
                 raise ModelInitializationError(msg)
             # A source flat-param key (or target state) that shadows one of the
             # internal ENGINE argument names is a second solve/simulate divergence
-            # of the same class (simulate-round9 F1): on the solve side
+            # of the same class: on the solve side
             # `_evaluate_edge_fold` binds `SAME_PERIOD_V_ARG` to the value mapping
             # and `SAME_PERIOD_PARAMS_ARG` to the reference params, then overwrites
             # those slots with any same-named source flat-param; on the simulate
@@ -878,8 +897,8 @@ def _build_continuation_templates(
     )
     next_edge_to_V_arr = MappingProxyType(
         {
-            (source_name, target_name): jnp.zeros(shape)
-            for source_name, target_name, shape in _iter_edge_shapes(
+            (source_name, target_name): _build_zero_V_arr(topology=topology)
+            for source_name, target_name, topology in _iter_edge_topologies(
                 regimes=regimes, flat_params=flat_params
             )
         }
@@ -887,13 +906,19 @@ def _build_continuation_templates(
     return next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr
 
 
-def _edge_lower_kwargs(
+def _edge_kwargs(
     *,
     regime: Regime,
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> dict[str, object]:
-    """Lowering kwargs for a source kernel's gated-edge Wbar templates."""
+    """Build a source kernel's gated-edge ``Wbar`` argument, keyed by target.
+
+    The kernel substitutes each entry for the raw target V in
+    `next_regime_to_V_arr`. Lowering and execution both go through this one
+    function, so the pytree the kernel is compiled against is the pytree it is
+    called with. Empty for a regime declaring no gated edge.
+    """
     if not regime.gated_edges:
         return {}
     return {
@@ -906,12 +931,21 @@ def _edge_lower_kwargs(
     }
 
 
-def _iter_edge_shapes(
+def _iter_edge_topologies(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-) -> Iterator[tuple[RegimeName, RegimeName, tuple[int, ...]]]:
-    """Yield ``(source, target, Wbar_shape)`` for every declared gated edge."""
+) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
+    """Yield ``(source, target, Wbar topology)`` for every declared gated edge.
+
+    ``Wbar`` lands on the target regime's state grid, so its axes — and the
+    device sharding a `distributed=True` target state asks for — are the
+    target's, built by the same sharding plan the target's own V template goes
+    through. A collective source folds one leg per stakeholder onto a trailing
+    axis, which is replicated: the fold's legs differ in their gate and
+    fallback, not in which slice of the target grid they read.
+    """
+    n_devices = len(jax.devices())
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
@@ -921,9 +955,25 @@ def _iter_edge_shapes(
                 regime_params=flat_params[target_name]
             ).states
             shape = tuple(len(v) for v in target_states.values())
+            sharding_plan = _build_regime_sharding(
+                grids=target.solution.grids, n_devices=n_devices
+            )
+            sharding = (
+                sharding_plan.V_arr_sharding(tuple(target_states))
+                if sharding_plan is not None
+                else None
+            )
             if source.stakeholders is not None:
                 shape = (*shape, len(source.stakeholders))
-            yield source_name, target_name, shape
+                if sharding is not None:
+                    sharding = jax.NamedSharding(
+                        mesh=sharding.mesh, spec=jax.P(*sharding.spec, None)
+                    )
+            yield (
+                source_name,
+                target_name,
+                _RegimeVTopology(shape=shape, sharding=sharding),
+            )
 
 
 def _build_base_state_action_spaces(
@@ -1056,7 +1106,7 @@ def _compile_all_functions(
         unique.items(), 1
     ):
         regime = regimes[regime_name]
-        edge_kwargs = _edge_lower_kwargs(
+        edge_kwargs = _edge_kwargs(
             regime=regime,
             regime_name=regime_name,
             next_edge_to_V_arr=next_edge_to_V_arr,
