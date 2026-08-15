@@ -92,6 +92,50 @@ ffi::Error ReadImpl(ffi::Buffer<DType> x0, ffi::Buffer<DType> x1,
   return ffi::Error::Success();
 }
 
+template <typename T, ffi::DataType DType>
+ffi::Error QueryWinnerImpl(ffi::Buffer<DType> left_grid,
+                           ffi::Buffer<DType> right_grid,
+                           ffi::Buffer<DType> left_value,
+                           ffi::Buffer<DType> right_value,
+                           ffi::Buffer<ffi::S32> live,
+                           ffi::Buffer<DType> query,
+                           ffi::ResultBuffer<ffi::S32> winner,
+                           ffi::ResultBuffer<ffi::S32> status) {
+  const size_t n_segment = left_grid.element_count();
+  if (n_segment == 0 || n_segment > INT32_MAX ||
+      right_grid.element_count() != n_segment ||
+      left_value.element_count() != n_segment ||
+      right_value.element_count() != n_segment ||
+      live.element_count() != n_segment) {
+    return ffi::Error::InvalidArgument(
+        "exact-query segment buffers must be nonempty and match");
+  }
+  const size_t n_query = query.element_count();
+  if ((*winner).element_count() != n_query ||
+      (*status).element_count() != n_query) {
+    return ffi::Error::InvalidArgument(
+        "exact-query outputs must match the query buffer");
+  }
+  const T* p_left_grid = left_grid.typed_data();
+  const T* p_right_grid = right_grid.typed_data();
+  const T* p_left_value = left_value.typed_data();
+  const T* p_right_value = right_value.typed_data();
+  const int32_t* p_live = live.typed_data();
+  const T* p_query = query.typed_data();
+  int32_t* p_winner = (*winner).typed_data();
+  int32_t* p_status = (*status).typed_data();
+  const int32_t count = static_cast<int32_t>(n_segment);
+  for (size_t i = 0; i < n_query; ++i) {
+    int32_t selected = 0;
+    const bool ok = core::ExactQueryWinner(
+        p_left_grid, p_right_grid, p_left_value, p_right_value, p_live,
+        count, p_query[i], &selected);
+    p_winner[i] = selected;
+    p_status[i] = ok ? 0 : core::kUnresolved;
+  }
+  return ffi::Error::Success();
+}
+
 ffi::Error CompareF32Impl(ffi::Buffer<ffi::F32> ax0,
                           ffi::Buffer<ffi::F32> ax1,
                           ffi::Buffer<ffi::F32> av0,
@@ -138,6 +182,29 @@ ffi::Error ReadF64Impl(ffi::Buffer<ffi::F64> x0,
                        ffi::ResultBuffer<ffi::F64> output,
                        ffi::ResultBuffer<ffi::S32> status) {
   return ReadImpl<double, ffi::F64>(x0, x1, v0, v1, query, output, status);
+}
+
+
+ffi::Error QueryWinnerF32Impl(
+    ffi::Buffer<ffi::F32> left_grid, ffi::Buffer<ffi::F32> right_grid,
+    ffi::Buffer<ffi::F32> left_value, ffi::Buffer<ffi::F32> right_value,
+    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F32> query,
+    ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerImpl<float, ffi::F32>(
+      left_grid, right_grid, left_value, right_value, live, query, winner,
+      status);
+}
+
+ffi::Error QueryWinnerF64Impl(
+    ffi::Buffer<ffi::F64> left_grid, ffi::Buffer<ffi::F64> right_grid,
+    ffi::Buffer<ffi::F64> left_value, ffi::Buffer<ffi::F64> right_value,
+    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F64> query,
+    ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerImpl<double, ffi::F64>(
+      left_grid, right_grid, left_value, right_value, live, query, winner,
+      status);
 }
 
 
@@ -372,6 +439,31 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F64>>()
         .Arg<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerF32, QueryWinnerF32Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerF64, QueryWinnerF64Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
 
 

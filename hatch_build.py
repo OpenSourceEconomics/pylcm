@@ -28,6 +28,7 @@ inferred later from a library that is not there.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,29 +49,75 @@ PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
 CPU_LIBRARY = "libcertified_affine_ffi_cpu.so"
 CUDA_LIBRARY = "libcertified_affine_ffi_cuda.so"
 
-# Architectures the CUDA build emits ready code for, plus one virtual target so
-# an architecture not listed can still be translated at load. Naming none would
-# leave translation the only route, and a driver older than the toolchain that
-# emitted the intermediate form refuses it — the kernel fails to launch rather
-# than running slowly.
-_DEFAULT_CUDA_TARGETS = (
-    "arch=compute_75,code=sm_75",
-    "arch=compute_80,code=sm_80",
-    "arch=compute_86,code=sm_86",
-    "arch=compute_90,code=sm_90",
-    "arch=compute_90,code=compute_90",
-)
+# Architectures the CUDA build emits ready code for. The oldest entry is the
+# oldest card the project supports; a toolchain that has retired it drops it
+# from this set rather than failing the compile over a target it rejects.
+_DEFAULT_CUDA_ARCHITECTURES = (70, 75, 80, 86, 90)
 
 
-def cuda_arch_flags(*, nvcc_flags: tuple[str, ...]) -> list[str]:
+def parse_gpu_architectures(*, listing: str) -> frozenset[int] | None:
+    """Return the capabilities named in an `nvcc --list-gpu-arch` listing.
+
+    Args:
+        listing: The compiler's own output, one `compute_NN` per line.
+
+    Returns:
+        Frozenset of capability numbers, or `None` where the listing names none
+        — an unreadable probe means "unknown", not "supports nothing", so the
+        caller emits its full target set rather than an empty one.
+
+    """
+    found = {int(number) for number in re.findall(r"compute_(\d+)", listing)}
+    return frozenset(found) or None
+
+
+def probe_gpu_architectures(*, nvcc: str) -> frozenset[int] | None:
+    """Return the capabilities a CUDA toolchain can target, by asking it.
+
+    Args:
+        nvcc: Path to the CUDA compiler to interrogate.
+
+    Returns:
+        Frozenset of capability numbers, or `None` where the compiler could not
+        be asked — one predating the flag, or one that fails to run.
+
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            [nvcc, "--list-gpu-arch"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_gpu_architectures(listing=result.stdout)
+
+
+def cuda_arch_flags(
+    *,
+    nvcc_flags: tuple[str, ...],
+    supported_architectures: frozenset[int] | None = None,
+) -> list[str]:
     """Return the `-gencode` targets to add to a CUDA compile.
+
+    The last target is virtual, so a card matching no ready-code entry can still
+    have one translated for it at load. It sits at the *oldest* architecture
+    emitted, not the newest, because intermediate code is forward-compatible
+    only: emitted for capability `X` it translates onto any device at `X` or
+    above and onto nothing below. At the newest architecture it would cover only
+    hardware newer than every ready entry — the one case ready code already
+    handles — leaving every older unlisted card with no image at all.
 
     Args:
         nvcc_flags: Flags the caller supplied, via `NVCCFLAGS`.
+        supported_architectures: Capabilities the toolchain can target. `None`
+            means unknown, and every default target is emitted.
 
     Returns:
-        List of `-gencode` argument pairs, flattened, and empty where the caller
-        already names an architecture — two sets of targets would conflict.
+        List of `-gencode` argument pairs, flattened. Empty where the caller
+        already names an architecture — two sets of targets would conflict — or
+        where the toolchain supports none of the defaults, which leaves `nvcc`
+        to pick its own rather than failing over a target it rejects.
 
     """
     if any(
@@ -78,9 +125,18 @@ def cuda_arch_flags(*, nvcc_flags: tuple[str, ...]) -> list[str]:
         for flag in nvcc_flags
     ):
         return []
+    architectures = sorted(
+        architecture
+        for architecture in _DEFAULT_CUDA_ARCHITECTURES
+        if supported_architectures is None or architecture in supported_architectures
+    )
+    if not architectures:
+        return []
     flags = []
-    for target in _DEFAULT_CUDA_TARGETS:
-        flags += ["-gencode", target]
+    for architecture in architectures:
+        flags += ["-gencode", f"arch=compute_{architecture},code=sm_{architecture}"]
+    oldest = architectures[0]
+    flags += ["-gencode", f"arch=compute_{oldest},code=compute_{oldest}"]
     return flags
 
 
@@ -127,6 +183,19 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
             be located, or if a compile fails.
 
     """
+    if os.environ.get("LCM_SKIP_EXACT_AFFINE", "") not in ("", "0"):
+        # An install without a C++ compiler is a deliberate choice, not a fallback:
+        # `"exact"` is the default upper envelope, so an install that skips the
+        # kernel cannot run DC-EGM on its defaults. Missing the compiler by
+        # accident still raises below, so the capability is never dropped quietly.
+        sys.stdout.write(
+            "exact-affine: LCM_SKIP_EXACT_AFFINE is set, so no kernel is built. "
+            "The certified upper envelope is unavailable in this install, and "
+            "with it the default DC-EGM envelope; brute-force backward induction "
+            "is unaffected. Unset the variable and reinstall to get it back.\n"
+        )
+        return []
+
     if sys.platform == "win32":
         # The compile flags and library names here are the Unix ones, and a
         # MinGW artifact under a `.so` name loads only where its toolchain's
@@ -181,7 +250,10 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                     "-O3",
                     "--shared",
                     "-Xcompiler=-fPIC",
-                    *cuda_arch_flags(nvcc_flags=nvcc_flags),
+                    *cuda_arch_flags(
+                        nvcc_flags=nvcc_flags,
+                        supported_architectures=probe_gpu_architectures(nvcc=nvcc),
+                    ),
                     *nvcc_flags,
                     f"-I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cuda.cu"),
