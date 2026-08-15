@@ -22,6 +22,16 @@ two phases -- `continuation_functions` -- plus the complementary requirement tha
 flow be built from `functions` and NOT from the continuation pool. The invariant is
 generic over `PHASE_ARGS`, so it re-arms automatically if a future role is added.
 
+The two twins share one continuation builder, `_get_compute_CE`, which takes the
+stakeholder axis as a parameter; the collective twin no longer holds a copy of the
+per-target continuation. So the pool now travels two hops, and the invariant follows
+it over both: the twins are pinned to hand `continuation_pool` to the aggregator, and
+the shared `_build_target_continuation` is pinned to resolve BOTH continuation roles --
+the state law and the stochastic weights -- against the pool it was handed. The
+per-role guard moved one frame down rather than going away, because the two roles did
+not merge when the two builders did, and a single-role bypass is still constructible
+there.
+
 The mutation catalogue below is the evidence that the checker has teeth: each
 mutation is one member of the counterexample class (drop the argument from the
 signature, drop it at the dispatch, pair a role with the wrong pool, skip age
@@ -211,13 +221,40 @@ def assert_the_collective_builders_route_each_role(
     assert_name(u_kw["functions"], "functions")
     assert_name(u_kw["constraints"], "constraints")
 
-    # The CONTINUATION -- the per-target state laws and stochastic weights -- prices
-    # the target's V under the perceived law, so both read `continuation_pool`.
-    next_calls = call_named(collective, "get_next_state_function_for_solution")
-    weight_calls = call_named(collective, "get_next_stochastic_weights_function")
+    # The CONTINUATION prices the target's V under the perceived law. Both twins
+    # reach it through the one aggregator, `_get_compute_CE`, so this pins the
+    # SINGLETON call as well: a twin-level divergence in which pool the
+    # continuation reads is then impossible by construction rather than checked.
+    # What the shared aggregator does with the pool is a separate assertion --
+    # `assert_the_shared_continuation_builder_reads_its_own_pool` below -- because
+    # the two ROLES did not merge when the two BUILDERS did.
+    ce_calls = call_named(collective, "_get_compute_CE")
+    singleton_ce_calls = call_named(qdefs["get_Q_and_F"], "_get_compute_CE")
+    assert len(ce_calls) == len(singleton_ce_calls) == 1
+    assert_name(keyword_map(ce_calls[0])["functions"], "continuation_pool")
+    assert_name(keyword_map(singleton_ce_calls[0])["functions"], "continuation_pool")
+
+
+def assert_the_shared_continuation_builder_reads_its_own_pool(
+    qdefs: dict[str, ast.FunctionDef],
+) -> None:
+    """Each continuation ROLE reads the pool the aggregator was handed.
+
+    The state law and the stochastic weights are two roles, and the pool has to
+    reach each of them. Handing the pool to `_get_compute_CE` and checking no
+    further would accept a builder that resolves the state law against it and the
+    weights against something else -- a SINGLE-role bypass, the harder half of the
+    counterexample class.
+
+    `_build_target_continuation` receives exactly one pool, so the rule here is
+    that both roles name that parameter and nothing else.
+    """
+    builder = qdefs["_build_target_continuation"]
+    next_calls = call_named(builder, "get_next_state_function_for_solution")
+    weight_calls = call_named(builder, "get_next_stochastic_weights_function")
     assert len(next_calls) == len(weight_calls) == 1
-    assert_name(keyword_map(next_calls[0])["functions"], "continuation_pool")
-    assert_name(keyword_map(weight_calls[0])["functions"], "continuation_pool")
+    assert_name(keyword_map(next_calls[0])["functions"], "functions")
+    assert_name(keyword_map(weight_calls[0])["functions"], "functions")
 
 
 def assert_every_dispatch_threads_every_role(
@@ -300,6 +337,7 @@ def check_class_invariant(
 
     assert_every_twin_exposes_its_singleton_s_phase_roles(qdefs)
     assert_the_collective_builders_route_each_role(qdefs)
+    assert_the_shared_continuation_builder_reads_its_own_pool(qdefs)
     assert_every_dispatch_threads_every_role(pdefs)
     assert_no_hidden_builder_in_a_stakeholder_branch(other_trees)
 
@@ -347,16 +385,31 @@ def replace_assignment(name: str, expression: str) -> Callable:
     return mutate
 
 
-def replace_call_keyword_in_collective(
-    callee: str, keyword: str, expression: str
+def replace_call_keyword_in(
+    func_name: str, callee: str, keyword: str, expression: str
 ) -> Callable:
+    """Rebind one keyword of one call inside one function of `Q_and_F.py`.
+
+    Takes the enclosing function by name because a role-level bypass now lives in
+    the shared `_build_target_continuation`, one frame below the twin whose
+    behaviour it changes.
+    """
+
     def mutate(q_tree, _p_tree, _others):
-        func = functions(q_tree)["get_Q_and_F_collective"]
+        func = functions(q_tree)[func_name]
         call = call_named(func, callee)[0]
         kw = next(kw for kw in call.keywords if kw.arg == keyword)
         kw.value = ast.parse(expression, mode="eval").body
 
     return mutate
+
+
+def replace_call_keyword_in_collective(
+    callee: str, keyword: str, expression: str
+) -> Callable:
+    return replace_call_keyword_in(
+        "get_Q_and_F_collective", callee, keyword, expression
+    )
 
 
 def drop_age_specialization(_q_tree, p_tree, _others):
@@ -419,16 +472,36 @@ def mutation_catalog() -> list[Mutation]:
                     "_get_U_and_F", "constraints", "continuation_pool"
                 ),
             ),
+            # Three bypasses, at the two levels the pool now travels through.
+            # The aggregator-level one prices the WHOLE continuation under the
+            # flow pool; the two role-level ones bypass a SINGLE role while the
+            # other still reads the pool, which is the harder half of the class
+            # and the half an aggregator-level check alone cannot see. Inside
+            # `_build_target_continuation` the wrong pool is spelled `bundle` --
+            # the target's transitions, the one other mapping in scope -- because
+            # that builder is handed a single pool and has no flow pool to name.
+            Mutation(
+                "bypass_continuation_pool_at_the_aggregator",
+                replace_call_keyword_in_collective(
+                    "_get_compute_CE", "functions", "functions"
+                ),
+            ),
             Mutation(
                 "bypass_continuation_pool_at_state_law",
-                replace_call_keyword_in_collective(
-                    "get_next_state_function_for_solution", "functions", "functions"
+                replace_call_keyword_in(
+                    "_build_target_continuation",
+                    "get_next_state_function_for_solution",
+                    "functions",
+                    "bundle",
                 ),
             ),
             Mutation(
                 "bypass_continuation_pool_at_weights",
-                replace_call_keyword_in_collective(
-                    "get_next_stochastic_weights_function", "functions", "functions"
+                replace_call_keyword_in(
+                    "_build_target_continuation",
+                    "get_next_stochastic_weights_function",
+                    "functions",
+                    "bundle",
                 ),
             ),
             Mutation("drop_collective_age_specialization", drop_age_specialization),

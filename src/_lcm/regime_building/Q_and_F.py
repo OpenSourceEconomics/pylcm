@@ -27,11 +27,11 @@ from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 
 # `zero_safe_average` only, and only because it is the reduction that takes an
-# `axis`: the collective site keeps its trailing stakeholder axis, which
-# `_expectation_over_stochastic_nodes` reduces away. Every weighted TERM in this
-# file comes from `_lcm.zero_safe` below -- including the one inside
-# `zero_safe_average` itself -- so one implementation carries the scale and
-# subnormal rules for the whole engine.
+# `axis`: a collective regime's node reduction has to leave the trailing
+# stakeholder axis standing, which `_expectation_over_stochastic_nodes` reduces
+# away. Every weighted TERM in this file comes from `_lcm.zero_safe` below --
+# including the one inside `zero_safe_average` itself -- so one implementation
+# carries the scale and subnormal rules for the whole engine.
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.transition_laws import (
     TransitionLaws,
@@ -900,9 +900,7 @@ def get_Q_and_F_collective(
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    same_period_v_interpolation_info: (
-        MappingProxyType[RegimeName, VInterpolationInfo] | None
-    ) = None,
+    same_period_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
     stakeholders: tuple[str, ...],
     co_map_state_names: tuple[StateName, ...] = (),
@@ -912,9 +910,11 @@ def get_Q_and_F_collective(
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
-    Separate from `get_Q_and_F` so the
-    singleton path is byte-identical; this builder is used only at the
-    collective solve site.
+    Separate from `get_Q_and_F` for the flow alone: a collective regime carries a
+    per-stakeholder `utility_<s>` rather than one `utility`, and its feasibility
+    mask is value-aware, so it is built AFTER `Q^s` rather than before and
+    independently of it. The continuation is not separate — both builders call
+    `_get_compute_CE`, which takes the stakeholder axis as a parameter.
 
     Per stakeholder `s`, computes `Q^s = H(u^s, E[V'^s])` with the shared
     Bellman aggregator `H` (the default `H_linear` applies `u + beta * E[V']`
@@ -963,9 +963,9 @@ def get_Q_and_F_collective(
             V-interpolation info at THIS period, for the `same_period_refs`
             readers — they interpolate a reference regime's current-period V, so
             they read the grids that regime is tabulated on now, not the ones it
-            will carry next period. `None` falls back to
-            `regime_to_v_interpolation_info`, which states the same grids only
-            for a model whose reference regimes carry no age-specialized state.
+            will carry next period. Required, and distinct from
+            `regime_to_v_interpolation_info` as soon as a reference regime
+            carries an age-specialized state.
         koopmans_aggregator: The regime's Bellman aggregator, combining each
             stakeholder's utility and certainty equivalent into `Q^s`.
         stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
@@ -999,11 +999,10 @@ def get_Q_and_F_collective(
 
     """
     # Phase split, mirroring get_Q_and_F: in the solve phase the two roles
-    # coincide (`None`), so this is byte-identical to the prior single-pool
-    # build; only the simulate phase passes them apart. The continuation prices
-    # the target V under the perceived law, pairing `transitions` with
-    # `continuation_pool`. Dropping that — as the collective branch did — yields
-    # a sub-DAG that is neither phase and can reverse the household argmax.
+    # coincide (`None`); only the simulate phase passes them apart. The
+    # continuation prices the target V under the perceived law, pairing
+    # `transitions` with `continuation_pool`; a sub-DAG resolved against the
+    # other pool is neither phase and can reverse the household argmax.
     #
     # The flow needs no pool of its own: `next_<state>` is reserved for a
     # transition's output, so no per-stakeholder utility, feasibility or E2 value
@@ -1021,71 +1020,26 @@ def get_Q_and_F_collective(
     }
     n_stakeholders = len(stakeholders)
 
-    state_transitions = {}
-    next_stochastic_states_weights = {}
-    joint_weights_from_marginals = {}
-    next_V = {}
-
-    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
-
-    for target_regime_name in period_targets:
-        bundle = transitions[target_regime_name]
-        # Continuation helpers read `continuation_pool` (the perceived / solve pool),
-        # NOT `functions`: the continuation is priced under the agent's perceived law,
-        # helpers included — mirroring get_Q_and_F.
-        state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=continuation_pool,
-            transitions=bundle,
-        )
-        next_stochastic_states_weights[target_regime_name] = (
-            get_next_stochastic_weights_function(
-                functions=continuation_pool,
-                transitions=bundle,
-                transition_laws=transition_laws,
-                regime_name=target_regime_name,
-            )
-        )
-        # `_get_joint_weights_function` now takes the ORDERED tuple of lottery
-        # variables rather than re-deriving it from the laws, so that the axes of
-        # the weights and the axes the value surface is productmapped over are
-        # fixed by one and the same ordering. The collective builder derives it
-        # exactly as `_build_target_continuation` does on the singleton path.
-        lottery_variables = tuple(
-            key
-            for key in bundle
-            if is_stochastic(transition_laws, target_regime_name, key)
-        )
-        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            regime_name=target_regime_name,
-            variables=lottery_variables,
-        )
-        V_arr_name = "next_V_arr"
-        next_V_interpolator = get_V_interpolator(
-            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
-            state_prefix="next_",
-            V_arr_name=V_arr_name,
-            co_map_state_names=co_map_state_names,
-        )
-        next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
-        )
-        stochastic_variables = tuple(
-            key
-            for key in bundle
-            if is_stochastic(transition_laws, target_regime_name, key)
-        )
-        next_V[target_regime_name] = productmap(
-            func=_get_stakeholder_sliced_interpolator(
-                base_interpolator=next_V_interpolator,
-                V_arr_name=V_arr_name,
-                n_stakeholders=n_stakeholders,
-            ),
-            variables=stochastic_variables,
-            batch_sizes=dict.fromkeys(stochastic_variables, 0),
-        )
+    # The engine's one continuation-aggregation site, told that every target's V
+    # leaf carries a trailing stakeholder axis. `certainty_equivalent=None`
+    # because a collective regime rejects a nonlinear one at construction.
+    #
+    # `continuation_pool`, NOT `functions`: the continuation is priced under the
+    # agent's perceived law, helpers included — mirroring `get_Q_and_F`.
+    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
+        functions=continuation_pool,
+        period_targets=period_targets,
+        scalar_targets=scalar_targets,
+        transitions=transitions,
+        transition_laws=transition_laws,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        certainty_equivalent=None,
+        co_map_state_names=co_map_state_names,
+        n_stakeholders=n_stakeholders,
+    )
 
     _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
-    _co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
     # Build the same-period reference readers and the
     # value-constraint evaluators once; their engine-supplied arguments —
@@ -1099,24 +1053,22 @@ def get_Q_and_F_collective(
         value_constraints=value_constraints,
         same_period_refs=same_period_refs,
         stakeholders=stakeholders,
-        same_period_v_interpolation_info=(
-            regime_to_v_interpolation_info
-            if same_period_v_interpolation_info is None
-            else same_period_v_interpolation_info
-        ),
+        same_period_v_interpolation_info=same_period_v_interpolation_info,
         functions=functions,
     )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
             *list(U_and_F_by_stakeholder.values()),
-            compute_regime_transition_probs,
-            *list(state_transitions.values()),
-            *list(next_stochastic_states_weights.values()),
+            *continuation_deps,
             *list(value_constraint_machinery.evaluators.values()),
             *list(value_constraint_machinery.reference_readers.values()),
         ],
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        include=frozenset(
+            {"next_regime_to_V_arr", "period", "age"}
+            | flat_param_names
+            | continuation_arg_names
+        ),
         exclude=value_constraint_machinery.engine_supplied_names,
     )
 
@@ -1140,9 +1092,6 @@ def get_Q_and_F_collective(
             (trailing stakeholder axis) and the shared feasibility mask.
 
         """
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-            compute_regime_transition_probs(**states_actions_params)
-        )
         stakeholder_flows = [
             u_and_f(**states_actions_params)
             for u_and_f in U_and_F_by_stakeholder.values()
@@ -1151,101 +1100,15 @@ def get_Q_and_F_collective(
         # The stakeholders share one `feasibility` node and evaluate it on the
         # same arguments, so every entry is the same mask; the first is kept.
         F_arr: BoolND = jnp.asarray(stakeholder_flows[0][1])
-        active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
-        )
 
-        # The accumulators are seeded with the stateless targets: they carry no
-        # node axis of their own, but they carry mass, a sign, and one
-        # degenerate continuation node each. A collective regime declares no
-        # nonlinear certainty equivalent, so the seed is the linear one.
-        #
-        # The mass is stakeholder-independent — the regime transition is — so it
-        # accumulates at the cell shape rather than at the stacked shape.
-        (
-            mixture_terms,
-            _lottery_values,
-            _lottery_weights,
-            _lottery_shifts,
-            probability_mass,
-            has_negative_probability,
-        ) = _scalar_target_contribution(
-            scalar_targets=scalar_targets,
+        # The mass is stakeholder-independent — the regime transition is — so the
+        # accumulator zero carries the cell shape, and the aggregator puts the
+        # stakeholder axis back on the value it builds.
+        CE, _ = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
-            active_regime_probs=active_regime_probs,
-            as_lottery=False,
             zero=jnp.zeros_like(U_stack[..., 0]),
+            states_actions_params=states_actions_params,
         )
-        for target_regime_name in period_targets:
-            next_states = state_transitions[target_regime_name](
-                **states_actions_params,
-            )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](**states_actions_params)
-            # `_get_joint_weights_function` returns each node's weight together
-            # with the base-two scale that node's own product needed. The scales
-            # are per NODE, not one per lottery, so they are carried into the
-            # average rather than dropped: two nodes' coefficients say nothing
-            # about their relative probability until both are on one scale.
-            (
-                joint_next_stochastic_states_weights,
-                joint_next_stochastic_states_shifts,
-            ) = joint_weights_from_marginals[target_regime_name](
-                **marginal_next_stochastic_states_weights
-            )
-
-            extra_kw = {
-                k: states_actions_params[k]
-                for k in next_V_extra_param_names[target_regime_name]
-            }
-            # Shape (*stochastic_axes, n_stakeholders): the product-map stacks
-            # the stochastic-node axes at the front, the stakeholder axis stays
-            # trailing.
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **{
-                    name: val
-                    for name, val in next_states.items()
-                    if name not in _co_map_next_names
-                },
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
-                **extra_kw,
-            )
-
-            # Per-stakeholder weighted average over the stochastic nodes only —
-            # never over the trailing stakeholder axis. Zero-safe: see the
-            # guards in `get_Q_and_F` above.
-            next_V_expected_arr = zero_safe_average(
-                next_V_at_stochastic_states_arr.reshape(-1, n_stakeholders),
-                axis=0,
-                weights=jnp.asarray(joint_next_stochastic_states_weights).reshape(-1),
-                shifts=jnp.asarray(joint_next_stochastic_states_shifts).reshape(-1),
-            )
-            # Unit mass alone does not make a collection of weights a
-            # distribution: 1.5 and -0.5 sum to one. The sum and the sign are
-            # tracked side by side, and each target's sign is read off its own
-            # bits, while it still has them — a negative probability the dtype
-            # cannot hold as a normal number arrives at an arithmetic test as
-            # `-0` and passes it.
-            target_probability = active_regime_probs[target_regime_name]
-            probability_mass = probability_mass + target_probability
-            has_negative_probability = has_negative_probability | is_negative(
-                target_probability
-            )
-            mixture_terms.append(
-                (
-                    target_regime_name,
-                    target_probability,
-                    next_V_expected_arr,
-                )
-            )
-        CE = _sum_regime_mixture(mixture_terms, like=U_stack)
-        if period_targets or scalar_targets:
-            CE = _normalized_regime_mixture(
-                mixture=CE,
-                probability_mass=probability_mass,
-                has_negative_probability=has_negative_probability,
-            )
 
         # W applied on the stacked arrays is W per stakeholder: `utility` and
         # `CE` share the trailing stakeholder axis and the aggregator's
@@ -1506,6 +1369,7 @@ def _get_compute_CE(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...],
+    n_stakeholders: int | None = None,
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
@@ -1513,11 +1377,11 @@ def _get_compute_CE(
 ]:
     """Build the closure that aggregates next period's value into `CE`.
 
-    The single continuation-aggregation site of the engine: both the Bellman
-    `Q` and the NaN diagnostics call the closure this returns, so they cannot
-    disagree. The continuation is a lottery over the stochastic nodes of every
-    reachable target regime, weighted by that target's regime-transition
-    probability:
+    The single continuation-aggregation site of the engine: the Bellman `Q` of a
+    singleton regime, the per-stakeholder `Q^s` of a collective one, and the NaN
+    diagnostics all call the closure this returns, so they cannot disagree. The
+    continuation is a lottery over the stochastic nodes of every reachable target
+    regime, weighted by that target's regime-transition probability:
 
     - Without a certainty equivalent, it is aggregated as the linear
       expectation `Σ_r p_r · E_w[V'_r]`.
@@ -1548,8 +1412,15 @@ def _get_compute_CE(
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
+            regime, or `None` for the linear expectation. A collective regime
+            rejects a nonlinear one at construction, so it always passes `None`.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
+        n_stakeholders: Length of the trailing stakeholder axis the continuation
+            carries, or `None` for a singleton regime. It is the only structural
+            difference a collective regime makes to the aggregation: every
+            target's V leaf, and hence `CE`, gains one trailing axis, while the
+            regime-transition probabilities — which are stakeholder-independent —
+            keep the plain cell shape and broadcast across it.
 
     Returns:
         Tuple of the closure returning `(CE, active_regime_probs)`, the
@@ -1566,6 +1437,7 @@ def _get_compute_CE(
             transition_laws=transition_laws,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
+            n_stakeholders=n_stakeholders,
         )
         for target_regime_name in period_targets
     }
@@ -1603,7 +1475,11 @@ def _get_compute_CE(
         Args:
             next_regime_to_V_arr: Immutable mapping of target regime names to
                 next period's value function arrays.
-            zero: Zero at the shape and dtype of the value being built up.
+            zero: Zero at the shape and dtype the regime-transition mass
+                accumulates in — the caller's cell shape, without the trailing
+                stakeholder axis, since the regime transition is
+                stakeholder-independent. The value being built up carries that
+                axis on top of it.
             states_actions_params: Mapping of states, actions, age, period, and
                 flat regime params. Forwarded verbatim to the transition and
                 probability functions, so it carries whatever the caller
@@ -1720,27 +1596,13 @@ def _get_compute_CE(
             )
 
             if reduces_per_target:
-                # Weighted average of the next value function at the stochastic
-                # states. Zero-safe: a zero-probability stochastic node beside an
-                # admissible on-path `-inf` must not turn the average into a `nan`
-                # -- ordinary on the collective branch, where dissolution makes
-                # `-inf` continuations routine rather than exotic. The reducer
-                # stays `zero_safe_average` because that one takes an `axis`: the
-                # collective site above reduces the node axis while keeping the
-                # trailing stakeholder axis, which `_expectation_over_stochastic_
-                # nodes` reduces away. The two now agree on the numerics --
-                # upstream masks the value on a represented-zero weight as well,
-                # and `zero_safe_average` follows its scale handling. The
-                # predicate is upstream's `continuation.has_lottery_axes`, which
-                # replaced the `next_V_has_stochastic_states` mapping.
-                if continuation.has_lottery_axes:
-                    next_V_expected_arr = zero_safe_average(
-                        next_V_at_stochastic_states_arr,
-                        weights=joint_next_stochastic_states_weights,
-                        shifts=target_node_shifts[target_regime_name],
-                    )
-                else:
-                    next_V_expected_arr = jnp.average(next_V_at_stochastic_states_arr)
+                next_V_expected_arr = _expected_continuation_over_nodes(
+                    values=next_V_at_stochastic_states_arr,
+                    weights=joint_next_stochastic_states_weights,
+                    shifts=target_node_shifts[target_regime_name],
+                    has_lottery_axes=continuation.has_lottery_axes,
+                    n_stakeholders=n_stakeholders,
+                )
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
                 # reduced ONCE by `_sum_regime_mixture` -- stack the operands, one
                 # zero-safe contraction, value-ordered sum. See that helper for why
@@ -1793,7 +1655,12 @@ def _get_compute_CE(
         # regime LABELS. Empty on the lottery route, where
         # `_sum_regime_mixture` returns `zeros_like(like)` -- the same zero the
         # upstream accumulator started from, so the branches below compose.
-        CE = _sum_regime_mixture(mixture_terms, like=zero)
+        # `like` is the shape of a VALUE, so collectively it carries the trailing
+        # stakeholder axis the mass-shaped `zero` does not.
+        CE = _sum_regime_mixture(
+            mixture_terms,
+            like=_value_shaped_zero(zero=zero, n_stakeholders=n_stakeholders),
+        )
 
         if reduces_per_target and (period_targets or scalar_targets):
             CE = _normalized_regime_mixture(
@@ -2090,6 +1957,7 @@ def _build_target_continuation(
     transition_laws: TransitionLaws,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
+    n_stakeholders: int | None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -2108,6 +1976,12 @@ def _build_target_continuation(
             transition laws.
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
+        n_stakeholders: Length of the trailing stakeholder axis each target's
+            `next_V_arr` leaf carries, or `None` for a singleton regime whose
+            leaves carry no such axis. It is not an interpolation axis: the
+            interpolator is evaluated once per stakeholder slice and the results
+            are re-stacked last, so the axis rides through the node product-map
+            (which stacks its mapped axes at the front) by construction.
 
     Returns:
         The target's continuation machinery.
@@ -2185,6 +2059,19 @@ def _build_target_continuation(
             node_values=node_values,
         )
 
+    # The stakeholder axis is put on last, after every coordinate question has
+    # been settled, so the slicing wrapper sees the same interpolator a singleton
+    # regime gets and the two cannot drift apart.
+    mapped_interpolator = (
+        next_V_interpolator
+        if n_stakeholders is None
+        else _get_stakeholder_sliced_interpolator(
+            base_interpolator=next_V_interpolator,
+            V_arr_name=V_arr_name,
+            n_stakeholders=n_stakeholders,
+        )
+    )
+
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
             functions=functions,
@@ -2197,7 +2084,7 @@ def _build_target_continuation(
         ),
         lottery_axis_names=lottery_variables,
         next_V=productmap(
-            func=next_V_interpolator,
+            func=mapped_interpolator,
             variables=node_variables,
             batch_sizes=dict.fromkeys(node_variables, 0),
         ),
@@ -2305,6 +2192,81 @@ def _scalar_target_contribution(
         probability_mass,
         has_negative_probability,
     )
+
+
+def _value_shaped_zero(*, zero: FloatND, n_stakeholders: int | None) -> FloatND:
+    """Return the zero a continuation VALUE has, given the mass-shaped one.
+
+    The regime-transition mass is stakeholder-independent, so it accumulates at
+    the plain cell shape; a continuation value carries one trailing axis on top
+    of that whenever the regime is collective.
+
+    Args:
+        zero: Zero at the shape and dtype the mass accumulates in.
+        n_stakeholders: Length of the trailing stakeholder axis, or `None` for a
+            singleton regime, whose value and mass share one shape.
+
+    Returns:
+        Zero at the shape and dtype of a continuation value.
+
+    """
+    if n_stakeholders is None:
+        return zero
+    zero_arr = jnp.asarray(zero)
+    return jnp.zeros((*zero_arr.shape, n_stakeholders), dtype=zero_arr.dtype)
+
+
+def _expected_continuation_over_nodes(
+    *,
+    values: FloatND,
+    weights: FloatND,
+    shifts: IntND,
+    has_lottery_axes: bool,
+    n_stakeholders: int | None,
+) -> FloatND:
+    """Reduce one target's continuation over its lottery nodes.
+
+    Zero-safe throughout: a zero-probability node beside an admissible on-path
+    `-inf` must not turn the average into a `nan`, which dissolution makes
+    routine rather than exotic on a collective regime.
+
+    Which reduction states that depends only on whether a trailing stakeholder
+    axis has to survive it:
+
+    - **collective.** The node axes are flattened into one leading axis and
+      reduced away, leaving the stakeholder axis. This covers a target with no
+      lottery at all as well: the empty product is the weight `1.0` at scale
+      `0`, and the reduction is then bitwise identity on the values, so the
+      no-lottery case needs no branch of its own.
+    - **singleton, with a lottery.** The whole array is the node surface, so it
+      is reduced at once (`axis=None`) — the spelling whose bits
+      `zero_safe_average` is tested against.
+    - **singleton, without one.** There is no node axis and no weight to apply.
+
+    Args:
+        values: Next period's value at this target's lottery nodes, the node
+            axes leading and (collectively) the stakeholder axis trailing.
+        weights: The nodes' scaled joint weights, one per node.
+        shifts: Each node's own base-two scale.
+        has_lottery_axes: Whether the target's transition draws any stochastic
+            state, and so whether `values` carries node axes at all.
+        n_stakeholders: Length of the trailing stakeholder axis, or `None` for a
+            singleton regime.
+
+    Returns:
+        The weighted mean over the nodes, keeping any trailing stakeholder axis.
+
+    """
+    if n_stakeholders is not None:
+        return zero_safe_average(
+            jnp.asarray(values).reshape(-1, n_stakeholders),
+            axis=0,
+            weights=jnp.asarray(weights).reshape(-1),
+            shifts=jnp.asarray(shifts).reshape(-1),
+        )
+    if has_lottery_axes:
+        return zero_safe_average(values, weights=weights, shifts=shifts)
+    return jnp.average(values)
 
 
 def _expectation_over_stochastic_nodes(
