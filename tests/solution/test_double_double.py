@@ -116,6 +116,33 @@ def test_a_product_is_exact_up_to_the_top_of_the_range() -> None:
     assert Fraction(float(high)) + Fraction(float(low)) == exact
 
 
+def test_a_product_is_exact_down_to_the_bottom_of_the_range() -> None:
+    """`two_prod` is exact where the split's lower half lands among the subnormals.
+
+    Splitting an operand just above the smallest normal puts the lower half of
+    its significand below the smallest normal. That half is still a real part of
+    the operand, and against a large second operand its contribution is an
+    ordinary number — so a transform that loses it returns a decomposition that
+    is not the product, while reporting nothing.
+
+    The cell envelope reads its operands exactly and does not depend on this, but
+    `query.py` still forms its products here, so the primitive owes exactness on
+    its own account rather than on its busiest caller's.
+    """
+    dtype = jnp.float64 if X64_ENABLED else jnp.float32
+    info = np.finfo(np.float64 if X64_ENABLED else np.float32)
+    small = float(np.nextafter(info.tiny, np.float64(np.inf)))
+    large = float(np.ldexp(1.0, int(info.maxexp) - 1))
+
+    left = jnp.asarray(small, dtype=dtype)
+    right = jnp.asarray(large, dtype=dtype)
+    high, low = two_prod(left, right)
+    exact = Fraction(float(left)) * Fraction(float(right))
+
+    assert np.isfinite(float(low)), "the split's lower half poisoned the tail"
+    assert Fraction(float(high)) + Fraction(float(low)) == exact
+
+
 def test_cell_hull_resolves_a_handover_at_the_bottom_of_the_range() -> None:
     """The production owner walk does not inherit Dekker's subnormal split limit.
 
