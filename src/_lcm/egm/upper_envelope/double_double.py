@@ -46,17 +46,54 @@ def two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
 
 
 def two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Return Dekker's product pair inside the transform's normal-range domain.
+    """Return `(p, e)` with `a * b == p + e` exactly (Dekker).
 
-    This primitive does not certify that domain. Structural consumers needing a
-    full-range exact result must either establish it before calling or use the
-    fixed-width exact kernels in ``_exact_affine``.
+    An operand within a significand's width of the smallest normal has the lower
+    half of its own split below that threshold, and a subnormal half is read as
+    zero by the very multiplications the error term is assembled from — while its
+    true contribution against a large second operand is an ordinary number. The
+    transform then returns a decomposition that is not the product, reports
+    nothing, and every bound downstream inherits an exactness it does not have.
+
+    The operands are moved apart before splitting, one up by as much as the other
+    goes down. `a * b` is the same real number afterwards, so `p` and `e` are the
+    numbers the caller asked for; only the halves change, and they change into
+    ones the format can multiply. Where both operands are that small the shifts
+    cancel — correctly, since the product is then below the range anyway and its
+    caller bounds it.
+
+    `_split` already borrows range at the top for the same reason. This is the
+    same borrowing at the bottom, and the pair is what makes the transform exact
+    across the whole normal range rather than in its middle.
     """
-    p = a * b
-    a_hi, a_lo = _split(a)
-    b_hi, b_lo = _split(b)
+    shift = _shift_clear_of_the_split_floor(a) - _shift_clear_of_the_split_floor(b)
+    lifted, lowered = scale_by_power_of_two(a, shift), scale_by_power_of_two(b, -shift)
+    # Scaling by a power of two is exact only while the result stays normal, and
+    # a pair that cannot be moved keeps the operands it came with rather than a
+    # silently altered product.
+    moved = (scale_by_power_of_two(lifted, -shift) == a) & (
+        scale_by_power_of_two(lowered, shift) == b
+    )
+    left = jnp.where(moved, lifted, a)
+    right = jnp.where(moved, lowered, b)
+
+    p = left * right
+    a_hi, a_lo = _split(left)
+    b_hi, b_lo = _split(right)
     error = ((a_hi * b_hi - p) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo
     return p, error
+
+
+def _shift_clear_of_the_split_floor(value: FloatND) -> IntND:
+    """Return how far `value` must rise for its split's lower half to stay normal.
+
+    The split puts the lower half of the significand a whole precision below the
+    leading bit, so an operand needs that much room above the smallest normal.
+    Zero for anything that already has it, which is every ordinary operand.
+    """
+    info = jnp.finfo(value.dtype)
+    _mantissa, exponent = jnp.frexp(jnp.where(value == 0.0, 1.0, jnp.abs(value)))
+    return jnp.maximum(exponent * 0, info.minexp + 1 + info.nmant - exponent)
 
 
 def scale_by_power_of_two(value: FloatND, exponent: IntND) -> FloatND:

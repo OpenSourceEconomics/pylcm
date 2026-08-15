@@ -127,6 +127,19 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
             be located, or if a compile fails.
 
     """
+    if os.environ.get("LCM_SKIP_EXACT_AFFINE", "") not in ("", "0"):
+        # An install without a C++ compiler is a deliberate choice, not a fallback:
+        # `"exact"` is the default upper envelope, so an install that skips the
+        # kernel cannot run DC-EGM on its defaults. Missing the compiler by
+        # accident still raises below, so the capability is never dropped quietly.
+        sys.stdout.write(
+            "exact-affine: LCM_SKIP_EXACT_AFFINE is set, so no kernel is built. "
+            "The certified upper envelope is unavailable in this install, and "
+            "with it the default DC-EGM envelope; brute-force backward induction "
+            "is unaffected. Unset the variable and reinstall to get it back.\n"
+        )
+        return []
+
     if sys.platform == "win32":
         # The compile flags and library names here are the Unix ones, and a
         # MinGW artifact under a `.so` name loads only where its toolchain's
