@@ -146,6 +146,7 @@ def _same_period_mappings(regimes, flat_params, solution):
     _substituted, mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -609,6 +610,7 @@ def _same_period_wbar(regimes, flat_params, solution):
     substituted, _mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces={

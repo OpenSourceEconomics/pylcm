@@ -675,13 +675,13 @@ def _solve_dissolution():
     return ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags
 
 
-def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
+def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     """D=True at wage=2 (slice-3 IR empties the mask there, see solve test).
 
-    The married household's row is routed to the FIRST declared leg's
-    fallback ("f" -> `single_f`) instead of `married_ir` — a real regime
-    membership change, not merely a value-side fold. wage=1 and wage=3 stay
-    married (`married_ir`, D=False there).
+    The cohort declares itself the wives, so the dissolving household's row is
+    routed to that role's leg ("f" -> `single_f`) instead of `married_ir` — a
+    real regime membership change, not merely a value-side fold. wage=1 and
+    wage=3 stay married (`married_ir`, D=False there).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
@@ -710,6 +710,7 @@ def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
+        own_stakeholder="f",
     )
 
     married_ir = result.raw_results["married_ir"][1]
@@ -717,8 +718,9 @@ def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
     single_m = result.raw_results["single_m"][1]
     np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, False, True])
     np.testing.assert_array_equal(np.asarray(single_f.in_regime), [False, True, False])
-    # single_m never becomes this row's OWN continuing membership — the
-    # documented scope fence (primary-leg convention); see module docstring.
+    # single_m never becomes this row's OWN continuing membership — this cohort
+    # tracks the wives, and the husband's leg is his own row's; see the module
+    # docstring's scope fence.
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
     # The dissolutiond household's (wage=2) value under its routed regime matches
@@ -733,9 +735,9 @@ def test_dissolution_edge_routes_primary_leg_to_own_single_regime():
 def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
     """Unit-level: the SECOND leg's ("m") own fallback projector is correct.
 
-    Not exercised by the end-to-end assertion above (the primary-leg
-    convention means `single_m` never becomes the row's own continuing
-    membership in that scenario) — this directly calls the resolved
+    Not exercised by the end-to-end assertion above (that cohort declares the
+    wife's role, so `single_m` never becomes the row's own continuing
+    membership there) — this directly calls the resolved
     projector the value router builds and consumes, confirming it maps the
     target-grid wage coordinate onto `single_m`'s own state coordinate
     exactly like the fallback the solve-side fold reads for the SAME leg.
@@ -795,6 +797,9 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
+        # The model carries a collective source, so the call declares which
+        # role it simulates even though no subject starts in that regime.
+        own_stakeholder="f",
     )
     married_ir = result.raw_results["married_ir"][1]
     np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, True, True])
@@ -1101,8 +1106,8 @@ def test_public_model_solve_return_dissolution_flags_matches_internal_solve():
     """`Model.solve(return_dissolution_flags=True)` surfaces the same `D` array.
 
     Same hand-computed cell as the internal-harness test
-    (`test_dissolution_edge_routes_primary_leg_to_own_single_regime`): D=True only
-    at wage=2 for `married_ir` in period 1.
+    (`test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`):
+    D=True only at wage=2 for `married_ir` in period 1.
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
@@ -1143,10 +1148,10 @@ def test_public_model_solve_default_return_shape_is_byte_identical():
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     """End-to-end: a dissolution `GatedEdge` whose gate reads `D_target` simulates.
 
-    Reproduces `test_dissolution_edge_routes_primary_leg_to_own_single_regime`
+    Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
     through the public `Model` API: wage=2 (D=True) is routed to `single_f`
-    (the first declared leg's fallback) instead of `married_ir`; wage=1 and
-    wage=3 (D=False) stay married.
+    (the wife's leg, the role this cohort declares) instead of `married_ir`;
+    wage=1 and wage=3 (D=False) stay married.
     """
     model = _make_dissolution_model()
     solution, dissolution_flags = model.solve(
@@ -1168,6 +1173,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="debug",
         seed=0,
+        own_stakeholder="f",
     )
 
     married_ir = result.raw_results["married_ir"][1]
@@ -1228,6 +1234,10 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="debug",
         seed=0,
+        # The guard runs before any row is routed and reads no leg, so which
+        # role the cohort declares cannot change whether it fires; the source
+        # is collective and so must declare one, and this is its first.
+        own_stakeholder="f",
     )
     assert calls, (
         "the edge-fold collision guard was not invoked on the precomputed-value "

@@ -237,6 +237,7 @@ def _f2_same_period_mappings(regimes, flat_params, solution):
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -558,6 +559,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=src,
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -604,6 +606,7 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=src,
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -672,32 +675,54 @@ def test_one_leg_collective_source_raises_on_unknown_own_stakeholder():
     legs = (_leg("f", "single_f"),)
 
     with pytest.raises(ValueError, match="does not match any"):
-        _select_own_leg(legs, "typo")
+        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
 
     # The arity-only guard, for contrast: `len(legs) > 1` is False, so the
     # typo falls through to legs[0] silently.
     assert _arity_only_select_own_leg(legs, "typo") is legs[0]
 
 
-def test_one_leg_singleton_source_still_falls_back_without_raising():
-    """Regression pin (F4b): the LEGITIMATE sole-leg exemption survives.
+def test_one_leg_singleton_source_needs_no_role_and_accepts_any():
+    """A singleton source's sole leg is the row's own, role or no role.
 
-    A SINGLETON source's one leg carries `source_stakeholder=None` and so
-    structurally never matches a non-`None` `own_stakeholder`; that is the
-    common, correct case, not an error.
+    That leg carries `source_stakeholder=None`, so it matches no named role
+    and there is no second leg to confuse it with. This is what keeps the
+    role requirement scoped to collective sources: a singleton source routes
+    with `own_stakeholder=None` exactly as it always has.
     """
     legs = (_leg(None, "single"),)
-    assert _select_own_leg(legs, "f") is legs[0]
-    assert _select_own_leg(legs, None) is legs[0]
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="single_f")
+        is legs[0]
+    )
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="single_f")
+        is legs[0]
+    )
 
 
 def test_one_leg_collective_source_selects_the_matching_leg():
-    """Regression pin (F4c): a MATCHING own-role on a one-leg collective
-    source selects that leg (the raise does not over-fire)."""
+    """A matching own-role on a one-leg collective source selects that leg.
+
+    The refusal of an unknown role does not over-fire onto the role the
+    source does declare.
+    """
     legs = (_leg("f", "single_f"),)
-    assert _select_own_leg(legs, "f") is legs[0]
-    # `own_stakeholder=None` keeps the legacy first-declared-leg convention.
-    assert _select_own_leg(legs, None) is legs[0]
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="married")
+        is legs[0]
+    )
+
+
+def test_one_leg_collective_source_without_a_role_raises():
+    """A one-leg collective source still needs the row's role named.
+
+    Its sole leg carries a role, so the source is collective and there is
+    nothing for a role-less call to resolve to — arity is not what decides.
+    """
+    legs = (_leg("f", "single_f"),)
+    with pytest.raises(ValueError, match="own_stakeholder"):
+        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="married")
 
 
 def test_multi_leg_collective_source_unknown_own_stakeholder_still_raises():
@@ -706,5 +731,8 @@ def test_multi_leg_collective_source_unknown_own_stakeholder_still_raises():
     The role-keyed guard widens the arity-only one; it does not replace it."""
     legs = (_leg("f", "single_f"), _leg("m", "single_m"))
     with pytest.raises(ValueError, match="does not match any"):
-        _select_own_leg(legs, "typo")
-    assert _select_own_leg(legs, "m") is legs[1]
+        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder="m", source_regime_name="married")
+        is legs[1]
+    )

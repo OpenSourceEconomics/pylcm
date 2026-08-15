@@ -48,13 +48,12 @@ have started at" is complete and correct for every stakeholder), and then
 picks ONE of them as the row's OWN continuing regime membership: the leg
 whose `source_stakeholder` matches `own_stakeholder` — the row's own,
 call-level-fixed role (e.g. "f" for an all-women simulate() population
-tracking synthetic male partners, "m" for an all-men population) — or, when
-`own_stakeholder` is `None` (the default: a singleton source, or a caller
-that never declares one), the FIRST declared leg (source stakeholder order),
-exactly as before. `own_stakeholder` is a single value for the whole
-`simulate()` call, not a per-subject array: this is the "synthetic partner"
-mode (EKL Appendix F's two independent, single-gender cohorts), which needs
-no cross-row linkage. A genuinely mixed population where individual rows
+tracking synthetic male partners, "m" for an all-men population). A
+collective source must be given that role; a singleton source's sole leg
+carries none and needs none. `own_stakeholder` is a single value for the
+whole `simulate()` call, not a per-subject array: this is the "synthetic
+partner" mode (EKL Appendix F's two independent, single-gender cohorts),
+which needs no cross-row linkage. A genuinely mixed population where individual rows
 have DIFFERING own-roles, or two TRACKED (linked) rows that must unlink into
 each other's rows on dissolution, remains the deferred "linked mode".
 
@@ -94,16 +93,24 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.transitions import _advance_states_for_subjects
-from _lcm.solution.backward_induction import _evaluate_edge_fold
+from _lcm.solution.backward_induction import _evaluate_edge_fold, _states_for_period
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import Bool1D, BoolND, FloatND, Int1D
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    Int1D,
+)
 
 
 def substitute_gated_edge_continuations(
     *,
     regime: Regime,
     regime_name: RegimeName,
+    regimes: Mapping[RegimeName, Regime],
     period: int,
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
@@ -144,6 +151,30 @@ def substitute_gated_edge_continuations(
     Raises `ModelInitializationError` rather than silently falling back to
     the raw (ungated) target V, which would leave the edge's routing
     undetectably disabled.
+
+    The fold lands on the target regime's grid at the period whose value it
+    folds, `period + 1`. For a target carrying an `AgeSpecializedGrid` state
+    that grid moves with age while keeping its number of nodes, so the
+    representative axis of `base_state_action_spaces` has the right shape at
+    every period and the wrong nodes at all but one: gate and projection would
+    be evaluated at coordinates the target was never solved on, and every
+    shape check would still pass. `_states_for_period` overrides the
+    age-varying axes with period `t + 1`'s nodes, exactly as backward
+    induction does for its own fold.
+
+    Args:
+        regime: The source regime declaring the edges.
+        regime_name: Name of the source regime.
+        regimes: Every regime, for the target's own period-`t + 1` state axes.
+        period: The source's period; the fold reads `period + 1`'s arrays.
+        next_regime_to_V_arr: The continuation values the source's decision
+            reads, whose edge targets are substituted.
+        base_state_action_spaces: Every regime's params-completed state-action
+            space.
+        period_to_regime_to_V_arr: Value arrays per period and regime.
+        period_to_regime_to_dissolution_flags: Each collective regime's
+            dissolution flag `D` per period.
+        flat_params: Model parameters for all regimes.
 
     Raises:
         ModelInitializationError: A declared edge's target is solved at
@@ -193,7 +224,14 @@ def substitute_gated_edge_continuations(
         )
         wbar = _evaluate_edge_fold(
             fold=regime.gated_edge_folds[target_name],
-            target_states=base_state_action_spaces[target_name].states,
+            target_states=cast(
+                "Mapping[str, ContinuousState | DiscreteState]",
+                _states_for_period(
+                    regime=regimes[target_name],
+                    state_action_space=base_state_action_spaces[target_name],
+                    period=period + 1,
+                ),
+            ),
             same_period_mapping=same_period_mapping,
             source_flat_params=flat_params[regime_name],
             reference_flat_params=build_reference_params_mapping_for_fold(
@@ -302,7 +340,10 @@ def _call_vmapped_with_accepted_kwargs(
 
 
 def _select_own_leg(
-    legs: tuple[ResolvedEdgeLeg, ...], own_stakeholder: str | None
+    *,
+    legs: tuple[ResolvedEdgeLeg, ...],
+    own_stakeholder: str | None,
+    source_regime_name: RegimeName,
 ) -> ResolvedEdgeLeg:
     """Pick the leg whose fallback IS this row's own continuing regime.
 
@@ -310,46 +351,62 @@ def _select_own_leg(
     stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
     `simulate()` call's fixed own-role (e.g. "f" for an all-women
     population), so the matching leg's fallback is the row's own single
-    regime on dissolution — not unconditionally the first declared leg.
+    regime on dissolution.
 
-    Falls back to the first declared leg (`legs[0]`) in two LEGITIMATE
-    cases: `own_stakeholder` is `None` (the legacy default — a caller that
-    never opted into row-split), or the source is a SINGLETON, whose sole
-    leg carries `source_stakeholder=None` and so structurally never matches
-    a non-`None` `own_stakeholder` — the common, correct case, not an error.
+    A COLLECTIVE source therefore REQUIRES a role. Each stakeholder's leg
+    carries its own fallback regime and its own state projection, so a
+    population routed without a role would follow one partner's dissolution
+    path for every row — each divorced husband simulated as his wife, in her
+    regime and at her state. That is a caller error, not a default: both a
+    missing `own_stakeholder` and one matching no declared leg raise.
 
-    A non-`None` `own_stakeholder` that matches NO leg of a COLLECTIVE
-    source is a caller error — a typo'd or stale role name — not tolerated
-    silently: raises `ValueError` rather than routing the row through an
-    arbitrary leg.
+    A SINGLETON source's sole leg carries `source_stakeholder=None`. It
+    offers no choice between roles, so it neither needs nor accepts one and
+    is returned for any `own_stakeholder` — the common, correct case.
 
-    The singleton exemption keys on `legs[0].source_stakeholder is None`,
-    NOT on `len(legs) == 1`. Arity is the wrong test: the validator accepts
-    a ONE-element `stakeholders` tuple, and `processing.py`'s
+    Collective-vs-singleton keys on `legs[0].source_stakeholder is None`, NOT
+    on `len(legs) == 1`. Arity is the wrong test: the validator accepts a
+    ONE-element `stakeholders` tuple, and `processing.py`'s
     `leg_order = [(s, s) for s in source_stakeholders]` then gives that sole
-    leg `source_stakeholder="f"` — not `None`. Keying on arity let a typo'd
-    `own_stakeholder` fall through to that leg silently on exactly the
-    single-stakeholder collective source the raise exists to protect.
+    leg `source_stakeholder="f"` — not `None`. Keying on arity lets a typo'd
+    or missing `own_stakeholder` fall through to that leg silently on exactly
+    the single-stakeholder collective source the raise exists to protect.
+
+    Args:
+        legs: The edge's resolved legs, in source stakeholder order.
+        own_stakeholder: This `simulate()` call's fixed own-role, or `None`.
+        source_regime_name: Regime declaring the edge, named in the error.
+
+    Returns:
+        The leg whose fallback this row's own membership follows.
 
     Raises:
-        ValueError: `own_stakeholder` is not `None`, the source is
-            collective (its legs carry roles), and no leg's
-            `source_stakeholder` matches it.
+        ValueError: The source is collective (its legs carry roles) and
+            `own_stakeholder` is either `None` or matches no leg.
     """
-    if own_stakeholder is not None:
-        for leg in legs:
-            if leg.source_stakeholder == own_stakeholder:
-                return leg
-        if legs[0].source_stakeholder is not None:
-            available = tuple(leg.source_stakeholder for leg in legs)
-            msg = (
-                f"own_stakeholder={own_stakeholder!r} does not match any "
-                f"leg's source_stakeholder (available: {available}). "
-                "This routes a collective source's dissolution edge, so a "
-                "row's own-role must name one of the declared stakeholders."
-            )
-            raise ValueError(msg)
-    return legs[0]
+    if legs[0].source_stakeholder is None:
+        return legs[0]
+    available = tuple(leg.source_stakeholder for leg in legs)
+    for leg in legs:
+        if leg.source_stakeholder == own_stakeholder:
+            return leg
+    if own_stakeholder is None:
+        msg = (
+            f"Simulating regime '{source_regime_name}' needs an explicit "
+            f"own_stakeholder, one of {available}. It is collective and its "
+            "gated edge declares one dissolution leg per stakeholder, each "
+            "with its own fallback regime and its own state projection, so "
+            "without a role every row would follow one partner's path. Pass "
+            "`own_stakeholder=...` to `simulate()`."
+        )
+        raise ValueError(msg)
+    msg = (
+        f"own_stakeholder={own_stakeholder!r} does not match any leg's "
+        f"source_stakeholder (available: {available}) of the collective "
+        f"regime '{source_regime_name}'. A row's own-role must name one of "
+        "the declared stakeholders."
+    )
+    raise ValueError(msg)
 
 
 def route_gated_edges(
@@ -381,27 +438,39 @@ def route_gated_edges(
     fold's baked boolean `gate` array and thresholding the result, which does
     not commute with a nonlinear predicate (see
     `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
-    docstring). Then for every subject `subjects_in_regime` AND whose
-    ORDINARY next-regime draw (`new_subject_regime_ids`, snapshotted before
-    any edge is processed) actually selected this edge's target: writes
-    every leg's own fallback state coordinates into its fallback regime's
-    state slot, and sets this row's own continuing regime membership to the
-    target (gate open) or its OWN leg's fallback (gate closed, selected via
-    `own_stakeholder` — see `_select_own_leg` and the module docstring's
-    scope fence for a collective (multi-leg) source). A row whose ordinary
-    draw selected a different regime — this edge's target was never reached
-    — keeps that draw untouched by this edge: this is also what makes
-    several gated edges declared on one source order-independent, since each
-    edge's eligibility is decided from the same pre-loop snapshot rather
-    than from the (successively overwritten) routing result of an
-    earlier-processed edge.
+    docstring). A subject is eligible for the edge when it is
+    `subjects_in_regime` AND its ORDINARY next-regime draw
+    (`new_subject_regime_ids`, snapshotted before any edge is processed)
+    selected this edge's target. For each eligible subject the router then:
+
+    - sets its own continuing regime membership to the target (gate open) or
+      to its OWN leg's fallback (gate closed, selected via `own_stakeholder`
+      — see `_select_own_leg` and the module docstring's scope fence for a
+      collective (multi-leg) source);
+    - writes every leg's own projected fallback state coordinates into that
+      leg's fallback regime, for the eligible subjects the gate TURNED AWAY
+      only. A gate-open row continues in the target and enters no fallback
+      regime, so its fallback state slots keep the values they held.
+
+    A row whose ordinary draw selected a different regime — this edge's
+    target was never reached — keeps that draw untouched by this edge: this
+    is also what makes several gated edges declared on one source
+    order-independent, since each edge's eligibility is decided from the same
+    pre-loop snapshot rather than from the (successively overwritten) routing
+    result of an earlier-processed edge.
 
     Args:
         own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
             synthetic mode), e.g. "f"/"m" for an all-women/all-men
-            population tracking synthetic partners. `None` (default)
-            preserves the original "first declared leg" convention exactly
-            — byte-identical for any caller that does not pass it.
+            population tracking synthetic partners. Required whenever the
+            regime is a collective source: its legs carry roles, and picking
+            one for the whole population is the caller's decision, not the
+            engine's. A singleton source's sole leg carries no role and
+            ignores this argument.
+
+    Raises:
+        ValueError: `regime` is a collective source and `own_stakeholder` is
+            `None` or names no declared stakeholder.
     """
     if not regime.gated_edges:
         return next_states, new_subject_regime_ids
@@ -488,10 +557,23 @@ def route_gated_edges(
         edge_mask = subjects_in_regime & (ordinary_draw_ids == target_id)
 
         legs = edge.legs
-        own_leg = _select_own_leg(legs, own_stakeholder)
+        own_leg = _select_own_leg(
+            legs=legs,
+            own_stakeholder=own_stakeholder,
+            source_regime_name=regime.name,
+        )
         own_fallback_id = regime_names_to_ids[own_leg.fallback.regime]
         candidate_id = jnp.where(gate_bool, target_id, own_fallback_id)
         routed_ids = jnp.where(edge_mask, candidate_id, routed_ids)
+
+        # The rows this edge sends into a leg's fallback regime: eligible for
+        # the edge AND turned away by the gate. A row whose gate OPENED
+        # continues in the target regime and dissolves into nothing, so no
+        # leg's projected coordinates belong in its record — its fallback
+        # slots keep whatever they held. Making the write itself gated keeps
+        # that invariant local, rather than resting on a later regime-draw
+        # overwrite that never reaches the state slots.
+        dissolving_mask = edge_mask & jnp.logical_not(gate_bool)
 
         projectors = regime.gated_edge_leg_projectors[target_name]
         for leg, projector in zip(legs, projectors, strict=True):
@@ -504,31 +586,33 @@ def route_gated_edges(
             # writes the row into the right fallback REGIME at a STATE the
             # solved policy never priced, and carries it into the next period.
             projector_provenance = projector.arg_provenance  # ty: ignore[unresolved-attribute]
+            # A projection is an ordinary model function, written for ONE
+            # household's scalar state — the solve-side fold evaluates it at one
+            # target grid cell — so the population is mapped over, exactly as the
+            # gate evaluator above is. Handing it the whole state column instead
+            # agrees only for an elementwise projection; a table lookup
+            # (`settlement[health]`) or any other rank-changing read returns one
+            # number for the whole cohort.
             fallback_states = cast(
                 "Mapping[str, FloatND]",
-                projector(
-                    **{
-                        name: candidate_target_states[name]
-                        for name in projector_provenance.states
-                    },
-                    **_bind_provenance_params(
+                _call_vmapped_with_accepted_kwargs(
+                    projector,
+                    batched_kwargs=candidate_target_states,
+                    static_kwargs=_bind_provenance_params(
                         projector_provenance,
                         flat_params=flat_params,
                         source_name=regime.name,
                         target_name=target_name,
                     ),
+                    axis_size=int(subjects_in_regime.shape[0]),
                 ),
             )
-            # Likewise, a row not eligible for this edge (its
-            # ordinary draw isn't this edge's target) must not have this
-            # edge's fallback-leg state written into its record either —
-            # that state slot belongs to a row this edge never routes.
             states = _advance_states_for_subjects(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
                     {leg.fallback.regime: MappingProxyType(dict(fallback_states))}
                 ),
-                subject_indices=edge_mask,
+                subject_indices=dissolving_mask,
             )
 
     return states, routed_ids

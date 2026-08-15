@@ -176,6 +176,25 @@ def is_target_value_operand(arg_name: str) -> bool:
     return arg_name == "V_target" or arg_name.startswith("V_target_")
 
 
+def gate_reads_dissolution_flag(*, edge: ResolvedGatedEdge) -> bool:
+    """Return whether an edge's gate predicate reads the target's flag `D`.
+
+    The gate's own declared arguments are the complete answer: a gate argument
+    may not name a node of the target's DAG
+    (`_reject_gate_projection_target_node_read`), so concatenating the predicate
+    with the target functions adds no argument to it and `D_target` reaches the
+    gate only by being declared on it.
+
+    Args:
+        edge: The resolved edge declaration.
+
+    Returns:
+        Whether the gate declares the `D_target` operand.
+
+    """
+    return "D_target" in get_union_of_args([edge.gate])
+
+
 @dataclass(frozen=True, kw_only=True)
 class EdgeArgProvenance:
     """Where each exposed argument of an edge-side simulate callable comes from.
@@ -667,6 +686,35 @@ def _reject_gate_projection_target_node_read(
         raise ModelInitializationError(msg)
 
 
+def _reject_d_target_read_on_singleton_target(
+    *,
+    gate_arg_names: Iterable[str],
+    target_stakeholders: tuple[str, ...] | None,
+    edge_target: str,
+    context: str,
+) -> None:
+    """Fence a gate reading `D_target` on a target that publishes no flag.
+
+    The dissolution flag `D` marks the cells where a COLLECTIVE regime's
+    household argmax was taken over an empty feasible set; a singleton regime's
+    kernel publishes none. A gate that reads `D_target` on such a target names
+    an operand no solved model can supply, and no argument to `solve` or
+    `simulate` can repair it — so the declaration is rejected while the model is
+    built, where the user can still change it.
+    """
+    if target_stakeholders is not None or "D_target" not in set(gate_arg_names):
+        return
+    msg = (
+        f"{context}: the edge to regime '{edge_target}' declares a gate reading "
+        f"'D_target', but '{edge_target}' is a singleton regime and publishes no "
+        "dissolution flag. Only a collective regime — one declaring "
+        "`stakeholders` — has a flag `D`, so no argument to `solve` or "
+        "`simulate` can supply one for this target. Drop the 'D_target' operand "
+        f"from the gate, or declare `stakeholders` on '{edge_target}'."
+    )
+    raise ModelInitializationError(msg)
+
+
 def _reject_gate_ref_operand_alias(
     *,
     gate_ref_names: Iterable[str],
@@ -979,6 +1027,12 @@ def get_edge_fold(
         set_annotations=True,
     )
     gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
+    _reject_d_target_read_on_singleton_target(
+        gate_arg_names=gate_arg_names,
+        target_stakeholders=target_stakeholders,
+        edge_target=edge.target,
+        context="get_edge_fold (solve-side gate)",
+    )
 
     # Outer signature: the target state grids, the same-period value mapping, and
     # any non-injected params/extras the gate or the reference readers need.
@@ -1342,6 +1396,12 @@ def get_edge_simulate_gate_evaluator(
     )
     gate_arg_names = tuple(get_union_of_args([gate_evaluator]))
     reads_d_target = "D_target" in gate_arg_names
+    _reject_d_target_read_on_singleton_target(
+        gate_arg_names=gate_arg_names,
+        target_stakeholders=target_stakeholders,
+        edge_target=edge.target,
+        context="get_edge_simulate_gate_evaluator (simulate-side gate)",
+    )
 
     # PROVENANCE. Every non-engine argument is attributed to exactly
     # one namespace, and exposed under a namespace-QUALIFIED name, because the
@@ -1682,23 +1742,16 @@ def _assemble_gate_kwargs(
             gate_kwargs[arg] = target_components[arg]
         elif arg == "D_target":
             if d_value is None:
-                # Solve always publishes a dissolution
-                # flag for every active collective regime, so this branch is
-                # unreachable there; it fires only when a SIMULATE caller
-                # invoked the internal `simulate()` without threading
-                # `period_to_regime_to_dissolution_flags`. `Model.simulate`
-                # surfaces the flags publicly (via the auto-solve path or the
-                # `period_to_regime_to_dissolution_flags` argument), so this is
-                # reachable only when the flags were neither auto-solved nor
-                # supplied. Fail clearly instead of `None > 0.5`.
+                # A mapping from `build_same_period_mapping_for_fold` always
+                # carries a flag entry for the target, and that builder refuses
+                # a gate reading `D_target` with no flag to read, so this
+                # guards a hand-assembled mapping only. Fail clearly instead of
+                # `None > 0.5`.
                 msg = (
-                    "This gate reads 'D_target', but no dissolution-flag array "
-                    "was supplied for the target regime at this period. Forward "
-                    "simulation needs `period_to_regime_to_dissolution_flags` "
-                    "(the `dissolution_flags` field of `solve`'s result). Either "
-                    "let `Model.simulate` solve first (auto-solve threads them), "
-                    "or pass `Model.solve(return_dissolution_flags=True)`'s flags "
-                    "to `Model.simulate(period_to_regime_to_dissolution_flags=...)`."
+                    "This gate reads 'D_target', but the same-period value "
+                    "mapping carries no dissolution-flag array for the target "
+                    "regime. Build it with `build_same_period_mapping_for_fold`, "
+                    "passing the `dissolution_flags` field of `solve`'s result."
                 )
                 raise NotImplementedError(msg)
             gate_kwargs[arg] = d_value > _D_THRESHOLD
@@ -1745,11 +1798,54 @@ def build_same_period_mapping_for_fold(
     Carries the target regime's V, its dissolution flag cast to float (under the
     reserved `D_KEY_SUFFIX` key), and every reference regime's V — all
     period-``t`` arrays, still live at the fold site.
+
+    The key set does not depend on whether a flag was supplied: the mapping is
+    an argument of one jitted fold that both backward induction and forward
+    simulation call, and a key present on one side and absent on the other
+    traces that fold twice. A target with no flag this period gets an unread
+    stand-in of the shape a flag would have — unread because a gate that
+    consumes `D_target` without a flag to consume is refused below.
+
+    Raises:
+        NotImplementedError: The edge's gate reads `D_target` but no dissolution
+            flag was supplied for the target regime at this period.
     """
-    mapping: dict[RegimeName, FloatND] = {edge.target: period_solution[edge.target]}
+    target_V = period_solution[edge.target]
     d_flag = period_dissolution_flags.get(edge.target)
-    if d_flag is not None:
-        mapping[f"{edge.target}{D_KEY_SUFFIX}"] = jnp.asarray(d_flag, dtype=float)
+    if d_flag is None and gate_reads_dissolution_flag(edge=edge):
+        msg = (
+            f"The gated edge into '{edge.target}' has a gate reading 'D_target', "
+            "but no dissolution-flag array was supplied for that regime at this "
+            "period. Forward simulation needs "
+            "`period_to_regime_to_dissolution_flags` (the `dissolution_flags` "
+            "field of `solve`'s result). Either let `Model.simulate` solve first "
+            "(auto-solve threads them), or pass "
+            "`Model.solve(return_dissolution_flags=True)`'s flags to "
+            "`Model.simulate(period_to_regime_to_dissolution_flags=...)`."
+        )
+        raise NotImplementedError(msg)
+    mapping: dict[RegimeName, FloatND] = {
+        edge.target: target_V,
+        f"{edge.target}{D_KEY_SUFFIX}": (
+            jnp.asarray(d_flag, dtype=float)
+            if d_flag is not None
+            else _unsupplied_dissolution_flag(edge=edge, target_V=target_V)
+        ),
+    }
     for regime_name in edge.reference_regimes:
         mapping[regime_name] = period_solution[regime_name]
     return MappingProxyType(mapping)
+
+
+def _unsupplied_dissolution_flag(
+    *, edge: ResolvedGatedEdge, target_V: FloatND
+) -> FloatND:
+    """Return the stand-in flag array for a target that supplied none.
+
+    Shaped like the flag the target would publish — the target's state axes,
+    which for a collective target is its V without the trailing stakeholder
+    axis — so the fold is traced once whether or not a flag was supplied.
+    """
+    collective_target = any(leg.target_component_index is not None for leg in edge.legs)
+    shape = target_V.shape[:-1] if collective_target else target_V.shape
+    return jnp.zeros(shape)

@@ -11,8 +11,9 @@ path (`_lcm.simulation.gated_routing`, `_lcm.simulation.result_dataframe`,
 - F4: two legs of one gated edge sharing the same fallback regime -- the
   later leg's projected state silently overwrites the earlier leg's in
   `route_gated_edges`. Rejected at model construction instead.
-- F5: `_select_own_leg` returning `legs[0]` for an `own_stakeholder` that
-  matches no leg of a genuinely multi-leg (collective) source.
+- F5: `_select_own_leg` returning `legs[0]` for an `own_stakeholder` a
+  genuinely multi-leg (collective) source does not declare, or for none at
+  all.
 - F6: `to_dataframe()` on a result where every populated regime is
   collective (no scalar `value` column anywhere) raising `KeyError`.
 - F7: a STATELESS collective regime's simulated `V_arr` / argmax index
@@ -22,7 +23,7 @@ path (`_lcm.simulation.gated_routing`, `_lcm.simulation.result_dataframe`,
 Each test pins the required behaviour and fails loudly on the defect it
 guards. Byte-identical regression coverage for the untouched paths (stateful
 collective, stateless singleton, mixed-topology dataframe, distinct-
-fallback dissolution, `own_stakeholder=None`/matching-leg routing) is
+fallback dissolution, matching-leg routing) is
 already carried by `test_collective_regime_simulate.py` and
 `test_row_split_synthetic.py`; this file focuses on the five guards
 themselves plus their required negative controls.
@@ -105,6 +106,7 @@ def test_missing_reference_regime_at_target_period_raises():
         substitute_gated_edge_continuations(
             regime=married,
             regime_name="married",
+            regimes=regimes,
             period=0,
             next_regime_to_V_arr=solution[1],
             base_state_action_spaces=base_state_action_spaces,
@@ -135,6 +137,7 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     substituted, gate_arrays = substitute_gated_edge_continuations(
         regime=married,
         regime_name="married",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -150,9 +153,10 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
 
 def test_dissolution_fixture_with_all_references_present_is_unaffected():
     """Regression pin: the ordinary (fully-solved) dissolution fixture never
-    hits the new raise -- `test_dissolution_edge_routes_primary_leg_to_own_
-    single_regime` (test_collective_regime_simulate.py) still passes end to
-    end through `simulate()`, exercised again here at the kernel level.
+    hits the reference-regime raise --
+    `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
+    (test_collective_regime_simulate.py) still passes end to end through
+    `simulate()`, exercised again here at the kernel level.
     """
     _ages, regimes, _ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
@@ -165,6 +169,7 @@ def test_dissolution_fixture_with_all_references_present_is_unaffected():
     _substituted, gate_arrays = substitute_gated_edge_continuations(
         regime=married,
         regime_name="married",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -295,8 +300,8 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
 
 
 # ------------------------------------------------------------------------------
-# F5: an own_stakeholder that matches no leg of a multi-leg source must raise,
-# not silently fall back to legs[0].
+# F5: an own_stakeholder that a multi-leg source does not declare — a typo, or
+# none at all — must raise, not silently fall back to legs[0].
 # ------------------------------------------------------------------------------
 
 
@@ -313,36 +318,64 @@ def _leg(source_stakeholder: str | None) -> ResolvedEdgeLeg:
 
 
 def test_select_own_leg_unmatched_role_on_multi_leg_source_raises():
-    """Reviewer's exact counterexample: a typo'd `own_stakeholder` on a
-    two-leg (collective) source must raise, not silently return `legs[0]`.
+    """A role naming no leg of a collective source is refused.
+
+    Each leg sends the row into one stakeholder's own regime, so a typo'd or
+    stale role has no leg to resolve to and must not resolve to an arbitrary
+    one.
     """
     legs = (_leg("f"), _leg("m"))
     with pytest.raises(ValueError, match="typo"):
-        _select_own_leg(legs, "typo")
+        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
 
 
-def test_select_own_leg_none_still_returns_first_leg():
-    """Negative control: `own_stakeholder=None` (the legacy default) is
-    untouched -- still `legs[0]`.
+def test_select_own_leg_without_a_role_on_a_collective_source_raises():
+    """A collective source cannot be routed without the row's own role.
+
+    Its legs differ in the regime they land in and the state they project, so
+    picking one for the whole population is the caller's decision.
     """
     legs = (_leg("f"), _leg("m"))
-    assert _select_own_leg(legs, None) is legs[0]
+    with pytest.raises(ValueError, match="own_stakeholder"):
+        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="married")
 
 
 def test_select_own_leg_matching_role_still_returns_matching_leg():
-    """Negative control: a genuinely matching role still resolves correctly."""
+    """A genuinely matching role resolves to that stakeholder's own leg."""
     legs = (_leg("f"), _leg("m"))
-    assert _select_own_leg(legs, "m") is legs[1]
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder="m", source_regime_name="married")
+        is legs[1]
+    )
 
 
 def test_select_own_leg_singleton_source_with_non_none_role_returns_sole_leg():
-    """Negative control: a singleton source's sole leg (`source_stakeholder=
-    None`) never matches a non-`None` own_stakeholder -- this is the common,
-    correct case (an all-women/all-men cohort routing through a SINGLETON
-    source's gated edge) and must keep returning the sole leg, not raise.
+    """A singleton source's sole leg is the row's own whatever role is named.
+
+    That leg carries `source_stakeholder=None` and so matches no named role,
+    but it is the only regime the edge can send a row to — the common case of
+    an all-women or all-men cohort routing through a singleton source's gated
+    edge, which must not be refused.
     """
     legs = (_leg(None),)
-    assert _select_own_leg(legs, "f") is legs[0]
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="single_f")
+        is legs[0]
+    )
+
+
+def test_select_own_leg_singleton_source_without_a_role_returns_sole_leg():
+    """A singleton source needs no role at all.
+
+    This is what keeps the requirement scoped to collective sources: a role is
+    demanded exactly where the legs differ, and a singleton source simulates
+    unchanged without one.
+    """
+    legs = (_leg(None),)
+    assert (
+        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="single_f")
+        is legs[0]
+    )
 
 
 # ------------------------------------------------------------------------------

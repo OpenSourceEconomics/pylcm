@@ -4,9 +4,8 @@ pylcm's forward simulation tracks INDIVIDUALS, not households: a married
 individual's row carries its own state plus a DRAWN (synthetic) partner
 block (slice-5/6 machinery). On dissolution (`~gate`), the row must revert to
 `single_<own role>` with its OWN projected state — the leg whose
-`source_stakeholder` matches the row's own role — not unconditionally the
-FIRST declared leg (`_lcm.simulation.gated_routing.route_gated_edges`'s
-prior "primary leg" convention, still the `own_stakeholder=None` default).
+`source_stakeholder` matches the row's own role. A cohort that names no role
+is refused rather than routed through some declared leg.
 
 This is EKL Appendix F's design: two independent, single-gender cohorts
 (all-women, all-men), each simulated with a synthetic opposite-gender
@@ -26,6 +25,7 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.simulation.simulate import simulate
 from _lcm.utils.logging import get_logger
@@ -100,21 +100,16 @@ def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m():
     )
 
 
-def test_synthetic_dissolution_default_still_takes_first_declared_leg():
-    """`own_stakeholder=None` (the default) is byte-identical to the prior behavior.
+def test_synthetic_dissolution_without_a_role_is_refused():
+    """Simulating this cohort without a role is refused, not defaulted.
 
-    Regression pin: omitting `own_stakeholder` must keep routing the dissolutiond
-    row to the FIRST declared leg's fallback (`single_f`, since `married`'s
-    legs are declared in stakeholder order `("f", "m")`) -- exactly the
-    pre-row-split convention `test_collective_regime_simulate.py`'s
-    `test_dissolution_edge_routes_primary_leg_to_own_single_regime` pins.
+    `married`'s legs are declared in stakeholder order `("f", "m")`, and
+    picking the first of them for a cohort that never said which partner it
+    tracks would simulate every divorced husband as his wife. The choice
+    belongs to the caller, so omitting it is an error.
     """
-    result, _solution = _simulate_dissolution_cohort(own_stakeholder=None)
-
-    single_f = result.raw_results["single_f"][1]
-    single_m = result.raw_results["single_m"][1]
-    np.testing.assert_array_equal(np.asarray(single_f.in_regime), [False, True, False])
-    np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
+    with pytest.raises(ValueError, match="own_stakeholder"):
+        _simulate_dissolution_cohort(own_stakeholder=None)
 
 
 # ----------------------------------------------------------------------------------

@@ -91,6 +91,7 @@ def _same_period_mappings_for(
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=next(n for n, r in regimes.items() if r is regime),
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,

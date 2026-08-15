@@ -360,6 +360,7 @@ def _simulate_subject_chunk(
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=regime,
+                    regimes=regimes,
                     base_state_action_space=base_state_action_spaces[regime_name],
                     period=period,
                     age=age,
@@ -523,6 +524,7 @@ def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
     regime: Regime,
+    regimes: Mapping[RegimeName, Regime],
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
@@ -556,6 +558,9 @@ def _simulate_regime_in_period(
     Args:
         regime_name: Name of the current regime.
         regime: Internal representation of the regime.
+        regimes: Every regime of the model, keyed by name. A gated edge folds
+            its target's value on that target's own period-`t + 1` state axes,
+            which are read off the target regime itself.
         base_state_action_space: The regime's params-completed state-action
             space, built once per simulate call.
         base_state_action_spaces: Every regime's params-completed state-action
@@ -637,6 +642,7 @@ def _simulate_regime_in_period(
     next_regime_to_V_arr, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=regime_name,
+        regimes=regimes,
         period=period,
         next_regime_to_V_arr=next_regime_to_V_arr,
         base_state_action_spaces=base_state_action_spaces,

@@ -290,6 +290,7 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=src,
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -450,6 +451,7 @@ def _measure_gate_value_read(*, x: float) -> float:
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=src,
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
@@ -579,6 +581,7 @@ def test_offgrid_residual_flips_routing_of_the_real_router():
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=src,
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,

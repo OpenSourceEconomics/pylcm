@@ -168,6 +168,7 @@ def _route_three_households() -> MappingProxyType:
     _substituted, same_period_mappings = substitute_gated_edge_continuations(
         regime=married,
         regime_name="married",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=bi_result.value_functions[1],
         base_state_action_spaces={

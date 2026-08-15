@@ -218,6 +218,7 @@ def _fold_output(*, regimes, flat_params, solution):
     substituted, mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
         regime_name="src",
+        regimes=regimes,
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces=base_state_action_spaces,
