@@ -1,30 +1,27 @@
-"""F3 interim guard: `fold=True` on a regime a gate reads nodewise.
+"""`fold=True` on a regime that another regime's gate reads nodewise.
 
-`fold=True` integrates a shock's node axis out of a regime's stored V — and,
-for a collective regime, collapses its dissolution flag `D` by `jnp.any` —
-immediately after that regime's OWN period solve
-(`_wrap_with_fold_reduction` in `regime_building/max_Q_over_a.py`). E3'
-gated-edge routing and E2 same-period reads both require gate-THEN-integrate:
-each realized shock node must be routed through its own gate / consent
-decision before any node is averaged away. If the folding regime is itself
-read nodewise by ANOTHER regime's gate (as a gated-edge target) or same-period
-reference (`same_period_refs` / a gate's `gate_refs`), that ordering is
-violated: the reader only ever sees the already-averaged V and the
-already-`jnp.any`-reduced D.
+`fold=True` integrates a shock's node axis out of a regime's stored V
+immediately after that regime's own period solve (`_wrap_with_fold_reduction`
+in `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
+reads both require gate-THEN-integrate: each realized shock node must be
+routed through its own gate / consent decision before any node is averaged
+away. If the folding regime is itself read nodewise by ANOTHER regime's gate
+(as a gated-edge target) or same-period reference (`same_period_refs` / a
+gate's `gate_refs`), that ordering is violated — the reader only ever sees
+the already-averaged V.
 
-`_validate_fold_declarations` (regime-local) already rejects a regime's own
+`_validate_fold_declarations` (regime-local) rejects a regime's own
 same-period gate / value-constraint reading a fold name IT declares; this
-module pins the cross-regime gap the audit found — a DIFFERENT regime's gate
-reading a folded TARGET or REFERENCE — which is caught by
+module pins the cross-regime case — a DIFFERENT regime's gate reading a
+folded TARGET or REFERENCE — which
 `_fail_if_folded_regime_is_same_period_endpoint` in
-`regime_building/processing.py`.
+`regime_building/processing.py` catches.
 
-A follow-up audit found this collective-only guard's enumerated prohibition
-was incomplete (it omitted gated-edge leg fallbacks, and skipped singleton
-folding regimes entirely) plus a false positive in a different, regime-local
-fold guard; see `test_fold_guard_complete.py` for the completed guard's
-coverage and the singleton-vs-collective negative controls this
-module's cases don't exercise.
+Only a singleton regime folds at all: a collective regime declaring a folded
+state is refused when the model is built, because its `-inf` dissolution
+sentinel is not a value quadrature can average. So every folding endpoint
+here is a singleton, and the collective fixtures serve as the unfolded pins.
+`test_fold_guard_complete.py` covers the guard's remaining roles.
 """
 
 from types import MappingProxyType
@@ -144,16 +141,12 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     return {"source": source, "source_terminal": source_terminal, "target": target}
 
 
-def test_folded_collective_gated_edge_target_is_rejected():
-    """A collective, folded gated-edge TARGET is rejected at model processing."""
-    with pytest.raises(ModelInitializationError, match="gated_edges"):
-        process_regimes(
-            **_solve_kwargs(_make_gated_target_regimes(fold=True), ages=_AGES_2P)
-        )
-
-
 def test_unfolded_collective_gated_edge_target_still_constructs():
-    """Pin: the SAME topology with `fold=False` is untouched (byte-identical path)."""
+    """An unfolded collective gated-edge TARGET constructs.
+
+    Nothing here is averaged before the gate reads it, so the ordering the
+    guard protects is not at stake and the topology is built as declared.
+    """
     process_regimes(
         **_solve_kwargs(_make_gated_target_regimes(fold=False), ages=_AGES_2P)
     )
@@ -207,17 +200,12 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     }
 
 
-def test_folded_collective_same_period_reference_is_rejected():
-    """A collective, folded `same_period_refs` REFERENCE is rejected at model
-    processing."""
-    with pytest.raises(ModelInitializationError, match="same_period_refs"):
-        process_regimes(
-            **_solve_kwargs(_make_same_period_ref_regimes(fold=True), ages=_AGES_2P)
-        )
-
-
 def test_unfolded_collective_same_period_reference_still_constructs():
-    """Pin: the SAME topology with `fold=False` is untouched."""
+    """An unfolded collective `same_period_refs` REFERENCE constructs.
+
+    The reader sees the reference regime's per-node value, which is what a
+    same-period read needs, so the declaration is built as written.
+    """
     process_regimes(
         **_solve_kwargs(_make_same_period_ref_regimes(fold=False), ages=_AGES_2P)
     )
@@ -229,10 +217,11 @@ def test_unfolded_collective_same_period_reference_still_constructs():
 
 
 def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
-    """`source`'s gate reads `gate_refs['V_ref']` -> `ref_target` (collective, folded).
+    """`source`'s gate reads `gate_refs['V_ref']` -> `ref_target` (singleton, folded).
 
-    `target` (the gated-edge TARGET) is a plain, unfolded collective regime —
-    isolates case 2b (the `gate_refs` reference) from case 1 (the edge target).
+    `target` (the gated-edge TARGET) is a plain, unfolded collective regime, so
+    the `gate_refs` reference is the only thing under test — the edge target
+    plays no part in the ordering this fixture exercises.
     """
     source = Regime(
         transition={"target": MarkovTransition(_prob_one)},
@@ -251,7 +240,6 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
                 gate_refs={
                     "V_ref": SamePeriodRef(
                         regime="ref_target",
-                        stakeholder="f",
                         projection={"wage_shock": lambda: 0.0},
                     )
                 },
@@ -273,10 +261,9 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     ref_target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_f, "utility_m": _u_m},
+        functions={"utility": _u_work},
     )
     return {
         "source": source,
@@ -286,34 +273,23 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     }
 
 
-def test_folded_collective_gate_ref_reference_is_rejected():
-    """A collective, folded `gate_refs` REFERENCE is rejected at model processing."""
+def test_folded_gate_ref_reference_is_rejected():
+    """A folded `gate_refs` REFERENCE is rejected when the model is processed.
+
+    The gate reads the reference regime's value at each of its own nodes, so a
+    reference whose node axis has already been averaged away cannot answer the
+    question the gate asks.
+    """
     with pytest.raises(ModelInitializationError, match=r"gate_refs|same_period_refs"):
         process_regimes(
             **_solve_kwargs(_make_gate_refs_regimes(fold=True), ages=_AGES_2P)
         )
 
 
-def test_unfolded_collective_gate_ref_reference_still_constructs():
-    """Pin: the SAME topology with `fold=False` is untouched."""
+def test_unfolded_gate_ref_reference_still_constructs():
+    """An unfolded `gate_refs` REFERENCE constructs.
+
+    Its per-node value is intact, which is what the gate reads, so the same
+    topology is built as declared.
+    """
     process_regimes(**_solve_kwargs(_make_gate_refs_regimes(fold=False), ages=_AGES_2P))
-
-
-# --------------------------------------------------------------------------------------
-# Negative control: a folded collective regime that is NEITHER a gated-edge
-# target NOR a same-period reference stays allowed.
-# --------------------------------------------------------------------------------------
-
-_AGES_1P = AgeGrid(start=0, stop=1, step="Y")
-
-
-def test_untargeted_unreferenced_folded_collective_regime_still_constructs():
-    """A collective regime may still fold a shock when nothing gates into it."""
-    couple = Regime(
-        transition=None,
-        stakeholders=("f", "m"),
-        states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_f, "utility_m": _u_m},
-    )
-    process_regimes(**_solve_kwargs({"couple": couple}, ages=_AGES_1P))

@@ -241,16 +241,17 @@ def test_unfolded_singleton_same_period_reference_still_constructs():
 
 
 # --------------------------------------------------------------------------------------
-# F1: a COLLECTIVE folded regime used as a gated-edge leg FALLBACK — neither
-# the edge's target nor a `gate_refs`/`same_period_refs` name.
+# F1: a folded regime used as a gated-edge leg FALLBACK — neither the edge's
+# target nor a `gate_refs`/`same_period_refs` name.
 # --------------------------------------------------------------------------------------
 
 
 def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (plain, unfolded, collective).
 
-    The edge's leg `fallback` names `fallback_regime` (collective, folds
-    `wage_shock`) — a role the OLD guard's reference set never enumerated.
+    The edge's leg `fallback` names `fallback_regime` (singleton, folds
+    `wage_shock`), which is a distinct role from the edge's target and from
+    either kind of reference name.
     """
     source = Regime(
         transition={"target": MarkovTransition(_prob_one)},
@@ -265,7 +266,6 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
                         target_stakeholder="f",
                         fallback=SamePeriodRef(
                             regime="fallback_regime",
-                            stakeholder="f",
                             projection={"wage_shock": lambda: 0.0},
                         ),
                     )
@@ -276,10 +276,9 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     fallback_regime = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_f, "utility_m": _u_m},
+        functions={"utility": _u_work},
     )
     target = Regime(
         transition=None,
@@ -291,18 +290,21 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     return {"source": source, "fallback_regime": fallback_regime, "target": target}
 
 
-def test_folded_collective_gated_edge_fallback_is_rejected():
-    """F1: a collective, folded gated-edge leg FALLBACK is rejected — the
-    edge routing reads it nodewise (`jnp.where(gate, V_target, V_fallback)`)
-    before any integration, exactly like a folded target or `gate_refs`
-    reference."""
+def test_folded_gated_edge_leg_fallback_is_rejected():
+    """F1: a folded gated-edge leg FALLBACK is rejected.
+
+    The edge routing reads the fallback nodewise
+    (`jnp.where(gate, V_target, V_fallback)`) before any integration, exactly
+    like a folded target or `gate_refs` reference, so a fallback whose node
+    axis is already averaged away cannot supply what the route needs.
+    """
     with pytest.raises(ModelInitializationError, match="gated_edges"):
         process_regimes(
             **_solve_kwargs(_make_edge_fallback_regimes(fold=True), ages=_AGES_2P)
         )
 
 
-def test_unfolded_collective_gated_edge_fallback_still_constructs():
+def test_unfolded_gated_edge_leg_fallback_still_constructs():
     """Pin: the SAME topology with `fold=False` is untouched."""
     process_regimes(
         **_solve_kwargs(_make_edge_fallback_regimes(fold=False), ages=_AGES_2P)

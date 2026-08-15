@@ -105,12 +105,12 @@ def get_max_Q_over_a(
             when `stakeholders` is set.
         fold_state_names: IID-process states declared `fold=True`, or empty (the
             default). Each is still an ordinary inner (non-co-mapped) productmap
-            axis THROUGH the max-over-actions / collective readout — every node is
-            evaluated exactly as today — but its axis is then weighted-averaged
-            away (with `fold_weights[name]`) before the result is returned, so the
-            caller never sees it. A collective regime's dissolution flag `D` is
-            folded by `jnp.any` instead (stays strictly boolean; see
-            `_wrap_with_fold_reduction`).
+            axis THROUGH the max-over-actions — every node is evaluated — but its
+            axis is then weighted-averaged away (with `fold_weights[name]`)
+            before the result is returned, so the caller never sees it. Only a
+            singleton regime may fold: a collective regime's `-inf` dissolution
+            sentinel is not a value quadrature can average, so the combination
+            is rejected at model build.
         fold_weights: Quadrature weights per name in `fold_state_names` (each a
             1-D array matching that state's node count, summing to 1). Must be
             CONCRETE (not traced) — `_select_fold_reducer` reads them at
@@ -232,15 +232,17 @@ def get_max_Q_over_a(
     )
 
     if fold_state_names:
+        _fail_if_collective(
+            fold_state_names=fold_state_names, stakeholders=stakeholders
+        )
         mapped = _wrap_with_fold_reduction(
-            mapped,
+            cast("Callable[..., FloatND]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
             extra_param_names=extra_param_names,
-            stakeholders=stakeholders,
         )
 
     if not co_map_state_names:
@@ -268,7 +270,7 @@ def get_max_Q_over_a(
 
 
 def _wrap_with_fold_reduction(
-    mapped: Callable[..., FloatND | tuple[FloatND, BoolND]],
+    mapped: Callable[..., FloatND],
     *,
     fold_state_names: tuple[StateName, ...],
     fold_weights: Mapping[StateName, FloatND],
@@ -276,30 +278,21 @@ def _wrap_with_fold_reduction(
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     extra_param_names: list[str],
-    stakeholders: tuple[str, ...] | None,
-) -> Callable[..., FloatND | tuple[FloatND, BoolND]]:
+) -> Callable[..., FloatND]:
     """Wrap the (still fold-axis-carrying) inner productmap with the fold average.
 
     `mapped`'s output axes are exactly `inner_state_names`, in order (the
     `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
-    so no co-map axis is present yet. A collective `mapped` additionally
-    carries a TRAILING stakeholder axis on `V` only (not on `D`); since it is
-    trailing, it never shifts a fold axis's position. Fold axes are reduced
-    from the highest inner-position down, so removing one axis never shifts
-    the position of a not-yet-reduced one. The wrapper re-declares EXACTLY
-    `mapped`'s own call signature (`with_signature`, matching
-    `max_Q_over_a`'s pre-productmap signature, which `productmap` preserves)
-    so it composes transparently with the co-map `vmap_1d` wrapping that may
-    follow.
+    so no co-map axis is present yet. Fold axes are reduced from the highest
+    inner-position down, so removing one axis never shifts the position of a
+    not-yet-reduced one. The wrapper re-declares EXACTLY `mapped`'s own call
+    signature (`with_signature`, matching `max_Q_over_a`'s pre-productmap
+    signature, which `productmap` preserves) so it composes transparently with
+    the co-map `vmap_1d` wrapping that may follow.
 
-    The dissolution flag `D` (collective only) stays strictly boolean — reduced
-    by `jnp.any` ("dissolutioned at any folded node"), not a weighted average — so
-    it keeps its `BoolND` contract for every downstream reader (the gated-edge
-    fold, `KernelResult.dissolution`). This is a conservative, not an exact,
-    reduction; `_validate_fold_declarations` already rejects a fold state a
-    same-period gate reads DIRECTLY, and the completed fold-before-gate
-    endpoint guard now also catches a gate reading `D` itself on a regime
-    that folds an unrelated state.
+    `mapped` is a singleton regime's value kernel: a collective regime may not
+    declare a folded state at all, so there is no stakeholder axis here and no
+    dissolution flag to reduce (`_fail_if_collective`).
 
     The per-axis reducer is bound HERE, at kernel-build time, from the axis's
     own quadrature weights — see `_select_fold_reducer`.
@@ -315,30 +308,46 @@ def _wrap_with_fold_reduction(
 
     @with_signature(
         args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
-        return_annotation=(
-            "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
-        ),
+        return_annotation="FloatND",
         enforce=False,
     )
     def folded(
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
-    ) -> FloatND | tuple[FloatND, BoolND]:
-        out = mapped(next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params)
-        if stakeholders is not None:
-            V_arr, dissolution = cast("tuple[FloatND, BoolND]", out)
-            for name, axis in fold_axis_positions:
-                V_arr = fold_reducers[name](
-                    V_arr, axis=axis, weights=fold_weights[name]
-                )
-                dissolution = jnp.any(dissolution, axis=axis)
-            return V_arr, dissolution
-        V_arr = cast("FloatND", out)
+    ) -> FloatND:
+        V_arr = mapped(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
+        )
         for name, axis in fold_axis_positions:
             V_arr = fold_reducers[name](V_arr, axis=axis, weights=fold_weights[name])
         return V_arr
 
     return folded
+
+
+def _fail_if_collective(
+    *, fold_state_names: tuple[StateName, ...], stakeholders: tuple[str, ...] | None
+) -> None:
+    """Refuse to build a fold reduction for a collective regime.
+
+    A collective regime's value carries a dissolution flag beside it: where no
+    action satisfies every stakeholder's participation constraint the cell is
+    flagged and written `-inf`, a not-sustainable sentinel a gated edge
+    resolves to the outside option. Quadrature cannot average a sentinel, so
+    the combination is refused at model build by
+    `_fail_if_collective_regime_folds`. Reaching here means that guarantee was
+    bypassed.
+    """
+    if stakeholders is not None:
+        msg = (
+            f"fold=True on state(s) {sorted(fold_state_names)} reached the "
+            f"value kernel of a collective regime (stakeholders "
+            f"{list(stakeholders)}). Folding a shock out of a collective "
+            "regime's stored value is not supported — the combination is "
+            "rejected at model build, so reaching here means that rejection "
+            "was bypassed."
+        )
+        raise ValueError(msg)
 
 
 def _select_fold_reducer(*, weight: FloatND, name: StateName) -> Callable[..., FloatND]:

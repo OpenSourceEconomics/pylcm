@@ -22,7 +22,10 @@ from dags.annotations import ensure_annotations_are_strings
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
-from _lcm.user_regime_validation import _validate_completeness
+from _lcm.user_regime_validation import (
+    _fail_if_collective_regime_folds,
+    _validate_completeness,
+)
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
@@ -73,6 +76,7 @@ def finalize_regimes(
             prefixed.
 
     """
+    _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(user_regimes, "koopmans_aggregator")
     _fail_if_continuation_slot_is_mixed(user_regimes, "certainty_equivalent")
     # The published frame is one table over every regime, so the names its

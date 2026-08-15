@@ -25,7 +25,7 @@ from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
@@ -1457,6 +1457,57 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     ]
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fail_if_collective_regime_folds(
+    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> None:
+    """Reject a collective regime that declares a folded state.
+
+    A collective regime publishes a dissolution flag beside its value: where no
+    action satisfies every stakeholder's participation constraint it flags the
+    cell and writes `-inf`, a sentinel meaning "not sustainable, take the
+    outside option" that a gated edge resolves against the outside option. That
+    sentinel is not a number on the household's own scale, and quadrature over
+    it is not an expectation — `w * -inf` is `-inf` for any positive weight, so
+    one dissolving node sets the whole sum to `-inf`, while the flag is set by
+    any dissolving node at all. A state that dissolves with small probability
+    would be stored as dissolving with certainty.
+
+    `Regime.stakeholders` lists transient-node shock folding among the
+    deliberately deferred parts of the collective envelope; this is where that
+    deferral is enforced. The regime name lives in the model's `regimes` dict
+    rather than on the regime, so the check runs at model build rather than in
+    the regime-local `_validate_fold_declarations` — which lets the message
+    name the regime the author has to edit.
+
+    Args:
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
+
+    Raises:
+        ModelInitializationError: Naming every collective regime that folds,
+            together with the folded state(s) it declares.
+
+    """
+    error_messages = [
+        f"Regime '{regime_name}' declares stakeholders "
+        f"{list(regime.stakeholders)} and fold=True on "
+        f"state(s) {sorted(fold_names)}. Folding a shock out of a collective "
+        "regime's stored value is not supported: a cell where no action "
+        "satisfies every stakeholder's participation constraint carries -inf "
+        "as a not-sustainable sentinel, which a gated edge resolves to the "
+        "outside option rather than reading as a value. Averaging that "
+        "sentinel over the shock's nodes would price a household that "
+        "dissolves at one node as dissolving at all of them. Transient-node "
+        "shock folding is deliberately deferred for collective regimes (see "
+        "`Regime.stakeholders`). Drop `fold=True` on the shock, or drop "
+        "`stakeholders` on the regime."
+        for regime_name, regime in user_regimes.items()
+        if regime.stakeholders is not None and (fold_names := _fold_state_names(regime))
+    ]
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
 
 
 def _fold_scope_errors(

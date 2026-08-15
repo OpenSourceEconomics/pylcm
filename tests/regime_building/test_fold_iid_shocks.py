@@ -284,69 +284,6 @@ def _utility_m(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (6.0 + wage_shock)
 
 
-def test_fold_collective_composition_matches_unfolded_then_averaged():
-    """A collective regime's folded per-stakeholder V equals the per-stakeholder
-    unfolded V weighted-averaged over the shock axis — same weights, applied
-    AFTER `collective_argmax_and_readout` (the argmax is computed at the
-    REALIZED node; only the readout is folded)."""
-
-    def _make(*, fold: bool) -> dict[str, Regime]:
-        couple = Regime(
-            transition=None,
-            stakeholders=("f", "m"),
-            states={"wage_shock": _shock(fold=fold, sigma=3.0)},
-            actions={"work": DiscreteGrid(Work)},
-            functions={"utility_f": _utility_f, "utility_m": _utility_m},
-        )
-        return {"couple": couple}
-
-    def _solve_one(regimes: dict[str, Regime]) -> FloatND:
-        processed = process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes=regimes,
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=_AGES,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-            regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),
-            enable_jit=False,
-        )
-        _bi_result = solve(
-            flat_params=MappingProxyType({"couple": MappingProxyType({})}),
-            ages=_AGES,
-            regimes=processed,
-            logger=get_logger(log_level="off"),
-            enable_jit=False,
-        )
-        solution = _bi_result.value_functions
-        _sim_policies = _bi_result.simulation_policies
-        _dissolution_flags = _bi_result.dissolution_flags
-        return solution[0]["couple"]
-
-    V_unfolded = _solve_one(_make(fold=False))
-    V_folded = _solve_one(_make(fold=True))
-
-    assert V_unfolded.shape == (5, 2)  # (shock nodes, stakeholders)
-    assert V_folded.shape == (2,)  # stakeholders only
-
-    weights = _shock(fold=False, sigma=3.0).get_transition_probs()[0]
-    manual = jnp.average(V_unfolded, axis=0, weights=weights)
-    np.testing.assert_allclose(np.asarray(V_folded), np.asarray(manual), rtol=1e-6)
-    # The two stakeholders' folded values genuinely differ (real composition,
-    # not a scalarization collapse).
-    assert not np.allclose(np.asarray(V_folded[0]), np.asarray(V_folded[1]))
-
-
 def test_fold_on_ar1_process_is_rejected_by_the_type_system():
     """A persistent (non-IID) process has no `fold` field at all."""
     with pytest.raises(TypeError, match="fold"):
