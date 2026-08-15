@@ -10,10 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.certified_sign import (
-    backend_flushes_subnormals,
-    is_subnormal,
-)
+from _lcm.egm.upper_envelope.certified_sign import is_subnormal
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import X64_ENABLED
 
@@ -91,12 +88,14 @@ def test_a_small_row_mate_does_not_withhold_a_representable_read(segment_block_s
 
 @pytest.mark.parametrize("segment_block_size", [0, 1])
 def test_a_stored_subnormal_channel_is_published_or_refused(segment_block_size):
-    """A channel that is constant at a subnormal is owed that constant, or NaN.
+    """A channel that is constant at a subnormal is owed that constant.
 
     Every read of a constant channel is the constant itself, so the represented
     result is a stored input and no arithmetic can have lost anything on the way
-    to it. A backend that cannot carry a subnormal through the read owes an
-    abstention; a finite zero claims the channel is zero, which it is not.
+    to it. The certified reader decodes the stored operands rather than computing
+    with them in the working format, so whether the backend flushes subnormals
+    does not reach this answer. A finite zero would claim the channel is zero,
+    which it is not.
     """
     dtype = np.float64 if X64_ENABLED else np.float32
     jax_dtype = jnp.float64 if X64_ENABLED else jnp.float32
@@ -119,16 +118,10 @@ def test_a_stored_subnormal_channel_is_published_or_refused(segment_block_size):
         arithmetic="certified",
     )
     observed = tuple(np.asarray(channel)[0] for channel in (value, policy, marginal))
-    if backend_flushes_subnormals(jax_dtype):
-        assert all(np.isnan(item) for item in observed), (
-            "a backend that cannot carry a subnormal through the read has only "
-            f"one honest answer left, and it published {observed}"
-        )
-    else:
-        assert _same_bits(observed[2], small), (
-            "a backend that reads the subnormal band owes the stored value, "
-            f"and it published {observed[2]!r} instead of {small!r}"
-        )
+    assert _same_bits(observed[2], small), (
+        "a constant channel is owed its constant, "
+        f"and it published {observed[2]!r} instead of {small!r}"
+    )
 
 
 def _same_bits(left, right) -> bool:
