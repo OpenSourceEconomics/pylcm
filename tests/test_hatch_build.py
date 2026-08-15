@@ -32,8 +32,43 @@ def test_the_default_cuda_build_keeps_a_forward_compatible_fallback():
     """A virtual target is kept, so an architecture not listed can still run."""
     flags = hatch_build.cuda_arch_flags(nvcc_flags=())
 
-    virtual = [flag for flag in flags if flag.endswith(",code=compute_90")]
+    virtual = [flag for flag in flags if ",code=compute_" in flag]
     assert virtual, f"no virtual target among {flags}"
+
+
+def _architectures(*, flags: list[str], kind: str) -> list[int]:
+    """Return the capability numbers of every `code={kind}_NN` target, ascending."""
+    return sorted(
+        int(flag.rsplit(f"code={kind}_", 1)[1])
+        for flag in flags
+        if f",code={kind}_" in flag
+    )
+
+
+def test_the_cuda_build_emits_ready_code_for_the_oldest_supported_card():
+    """A Volta card gets ready code, not only a translation target.
+
+    Its capability is below every later architecture, so a virtual target emitted
+    for a newer one cannot be translated onto it and the kernel does not launch.
+    """
+    flags = hatch_build.cuda_arch_flags(nvcc_flags=())
+
+    assert 70 in _architectures(flags=flags, kind="sm")
+
+
+def test_the_virtual_target_sits_at_the_lowest_architecture():
+    """The translation target names the oldest architecture the build supports.
+
+    Intermediate code is forward-compatible only: emitted for capability `X` it
+    can be translated onto any device at `X` or above, and onto nothing below. A
+    virtual target at the newest architecture therefore serves only hardware newer
+    than everything already listed, which is the one case ready code covers — and
+    leaves every unlisted older card with no image at all.
+    """
+    flags = hatch_build.cuda_arch_flags(nvcc_flags=())
+
+    virtual = _architectures(flags=flags, kind="compute")
+    assert virtual == [min(_architectures(flags=flags, kind="sm"))]
 
 
 def test_an_explicit_arch_suppresses_the_defaults():

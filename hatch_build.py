@@ -53,12 +53,20 @@ CUDA_LIBRARY = "libcertified_affine_ffi_cuda.so"
 # leave translation the only route, and a driver older than the toolchain that
 # emitted the intermediate form refuses it — the kernel fails to launch rather
 # than running slowly.
+#
+# The virtual target sits at the *oldest* architecture, not the newest, because
+# intermediate code is forward-compatible only: emitted for capability `X` it
+# translates onto any device at `X` or above and onto nothing below. At the
+# newest architecture it would cover only hardware newer than every entry above
+# it — which is the one case ready code already handles — while any older card
+# not named here would have no image at all and fail to launch.
 _DEFAULT_CUDA_TARGETS = (
+    "arch=compute_70,code=sm_70",
     "arch=compute_75,code=sm_75",
     "arch=compute_80,code=sm_80",
     "arch=compute_86,code=sm_86",
     "arch=compute_90,code=sm_90",
-    "arch=compute_90,code=compute_90",
+    "arch=compute_70,code=compute_70",
 )
 
 
