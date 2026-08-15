@@ -1,60 +1,24 @@
 """Exact query-side upper envelope of an EGM candidate correspondence.
 
-The query-side counterpart of the full-row refiners (`fues`, `rfc`, `ltm`,
-`mss`). Those materialise the whole refined envelope row and the caller then
-reads it at a query; this evaluates the envelope *directly* at a set of query
-abscissae without ever building the row.
+The query backend evaluates every live consecutive branch link, plus every live
+candidate as a zero-width self-bracket, directly at the requested abscissae.
+The certified mode delegates the complete ownership reduction to one opaque
+native operation. Stored IEEE operands are decoded as exact dyadics and ordered
+lexicographically by exact affine value, right extension, exact slope, and the
+stable stored-link index. Only after one winner and one status have been returned
+does Python invoke the exact affine reader, exactly once for each of value,
+policy, and marginal. Those channels publish together or all become NaN.
 
-For one query the value is the maximum, over every live branch segment that
-brackets it, of the segment's linear value; the policy and marginal are the
-winning segment's. A folded branch contributes several bracketing segments, so
-the maximum is exact for the piecewise-linear correspondence. Topology is
-explicit: a segment is the link between two consecutive candidates carrying the
-same `segment_id`, so unrelated branches are never bridged — the contract the
-host oracle enforces.
+This boundary is deliberate. Same-format double-double words cannot encode every
+nonzero residual of normal operands, so neither a zero product tail nor two equal
+rounded slope words is an equality certificate. The native winner avoids that
+representability limit and keeps the integer arithmetic outside the JAX trace.
+An array of queries is handled by one custom call; an outer ``vmap`` is lowered
+sequentially around that opaque call. ``segment_block_size`` therefore has no
+numerical effect in certified mode, giving exact dense/blocked identity.
 
-Which segment wins is a decision, not a reported quantity, so it is not settled
-between separate reads. However well each segment's own value is read, the error
-that read carries is proportional to its magnitude, and a decision needs a bound
-proportional to the *gap* — otherwise a common value level, which moves no
-crossing and reverses no ordering, decides the ownership.
-
-So ownership is settled on differences, and by the *sign* of one — never by how
-near two reads are. One bracketing segment is carried as the reference line, and
-every segment is compared with it by `certified_sign`, which cross-multiplies
-before dividing so the common level cancels in arithmetic that loses nothing. A
-strict sign orders the two outright: a segment certified above the reference
-replaces it, and a bounded number of such promotions is followed by a validation
-round that no remaining bracketing segment beats the one about to be published.
-Each promotion strictly raises the true value at the query, so the sequence
-cannot cycle.
-
-An interval, by contrast, cannot order anything it overlaps. Deciding among
-candidates whose error bounds overlap would promote "not separated" to "equal",
-and the tie-break — which prefers the larger value-slope — would then hand the
-query to whichever strict loser happens to be steeper. So overlap is not a tie:
-only a sign certified *exactly zero* reaches the documented right-continuous
-tie-break, which chooses among genuine ties deterministically. Value, policy,
-and marginal are all published from the one segment it names.
-
-Two segments the arithmetic cannot separate are therefore not level, and the
-query abstains. That case and the one where no comparison could be computed at
-all — a product leaving the range in which the error-free transforms are exact,
-so that nothing follows about the geometry and the segments may be far apart —
-both publish NaN in all three channels rather than a guess, identically in both
-backends below. Between "these two are equally good" and "which of these two is
-better is beyond this arithmetic" only the first has an answer to publish, and
-a query is answered only when every segment bracketing it was decided.
-
-By default the evaluation is a fixed-shape `(n_query, n_segment)`
-bracket-and-reduce: no sequential scan, no NaN-padded refined row,
-branch-parallel and reduction-heavy, which is the shape an accelerator runs
-fastest. This is the backend asset-row mode wants — one query per Euler node, no
-full envelope to refine. For a large `(n_query, n_segment)` that dense matrix is
-itself the memory wall; `segment_block_size` swaps it for a blocked scan over
-segment blocks (the reference line, then the promotions, then the winner among
-the segments certified level with it), which peaks at `(n_query, block)` instead
-of `(n_query, n_segment)` and returns the identical result.
+The ordinary mode remains a dense working-format interpolation and maximum. It
+is cheaper, but it carries no exact ownership guarantee.
 """
 
 from collections.abc import Callable
@@ -63,6 +27,10 @@ from typing import Literal, NamedTuple
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    exact_affine_read,
+    exact_query_winner,
+)
 from _lcm.egm.upper_envelope.certified_sign import (
     BELOW_RESOLUTION_SIGN,
     UNRESOLVED_SIGN,
@@ -612,16 +580,14 @@ def envelope_at_query(
         segment_id: Per-candidate branch label. A segment is a consecutive-pair
             link whose endpoints share a label, so unrelated branches never join.
         x_query: Abscissae at which to evaluate the envelope.
-        segment_block_size: When `0` (or at least the number of segments), the
-            dense `(n_query, n_segment)` reduction. A positive value below the
-            segment count instead runs the two-pass blocked scan, peaking at
-            `(n_query, segment_block_size)`; the result is identical.
+        segment_block_size: Partition hint retained for API compatibility. The
+            certified path is one native exact reduction and is bit-identical for
+            every value. The ordinary path remains dense-only.
         arithmetic: Which arithmetic decides ownership.
-            - `"certified"` compares candidates in double-double precision and
-              publishes NaN wherever no candidate is separated, so a reported
-              winner is one the arithmetic could prove. Ordering survives the
-              cancellation between endpoint values that a nearly-tied crossing
-              produces.
+            - `"certified"` compares the stored affine candidates in native
+              fixed-width integer arithmetic, using exact value, right extension,
+              exact slope, and stable segment index. It performs three exact reads
+              only after the winner is known and publishes all channels together.
             - `"ordinary"` reads each link in the working format and takes the
               largest. It decides every bracketed query — there is no certificate
               to abstain on — and costs roughly an order of magnitude less per
@@ -677,16 +643,18 @@ def envelope_at_query(
 
     query = jnp.asarray(x_query)
     n_segment = links.left_grid.shape[0]
+    if arithmetic == "certified":
+        # The exact kernel owns the whole segment reduction. A block size is now
+        # a partition request with no numerical effect: the native operation
+        # streams the same stored segments and returns one winner/status per
+        # query, so dense and blocked calls are identical by construction.
+        return _envelope_exact(links=links, query=query).published
+
     if 0 < segment_block_size < n_segment:
         _fail_if_blocked_scan_cannot_serve(arithmetic=arithmetic)
-        published = _envelope_blocked(
-            links=links, query=query, block_size=segment_block_size
-        ).published
-    else:
-        published = _envelope_dense(
-            links=links, query=query, arithmetic=arithmetic
-        ).published
-
+    published = _envelope_dense(
+        links=links, query=query, arithmetic=arithmetic
+    ).published
     unreadable = _subnormal_operand_present(
         row=(endog_grid, value, policy, marginal), query=query
     ) | _derived_subnormal_possible(links=links, query=query)
@@ -889,6 +857,79 @@ class _EnvelopeReduction(NamedTuple):
 
     published: tuple[FloatND, FloatND, FloatND]
     """Value, policy, and marginal of the winning candidate at each query."""
+
+
+def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReduction:
+    """Resolve one exact winner and read only its three published channels.
+
+    The native winner operation compares exact stored affine values under the
+    documented total order: value, right extension, exact slope, then stable
+    segment index. Its status is coupled to the three exact affine reads below;
+    a query either publishes all channels from one winner or NaN in all three.
+    """
+    if links.left_grid.shape[0] == 0:
+        empty = jnp.full_like(query, jnp.nan)
+        return _EnvelopeReduction(published=(empty, empty, empty))
+
+    winner, winner_status = exact_query_winner(
+        left_grid=links.left_grid,
+        right_grid=links.right_grid,
+        left_value=links.left_value,
+        right_value=links.right_value,
+        live=links.live,
+        x_query=query,
+    )
+    flat_query = query.reshape(-1)
+    flat_winner = winner.reshape(-1)
+
+    def _take(column: FloatND) -> FloatND:
+        return jnp.take(column, flat_winner, axis=0)
+
+    stored_left_grid = _take(links.left_grid)
+    stored_right_grid = _take(links.right_grid)
+    descending = stored_left_grid > stored_right_grid
+    zero_width = stored_left_grid == stored_right_grid
+    left_grid = jnp.where(descending, stored_right_grid, stored_left_grid)
+    right_grid = jnp.where(descending, stored_left_grid, stored_right_grid)
+    # The exact reader intentionally retains its positive-width public contract.
+    # A zero-width winner has no affine line; the query reduction defined it as
+    # the stored left endpoint. Canonicalize that selected point to a flat unit
+    # line and read it at zero, so all three channels still pass through exactly
+    # one winner-only native reader without broadening the reader's API.
+    read_x0 = jnp.where(zero_width, jnp.zeros_like(left_grid), left_grid)
+    read_x1 = jnp.where(zero_width, jnp.ones_like(right_grid), right_grid)
+    read_query = jnp.where(zero_width, jnp.zeros_like(flat_query), flat_query)
+
+    def _read(*, left: FloatND, right: FloatND) -> tuple[FloatND, IntND]:
+        stored_left = _take(left)
+        stored_right = _take(right)
+        lower_value = jnp.where(descending, stored_right, stored_left)
+        upper_value = jnp.where(descending, stored_left, stored_right)
+        upper_value = jnp.where(zero_width, lower_value, upper_value)
+        return exact_affine_read(
+            x0=read_x0,
+            x1=read_x1,
+            v0=lower_value,
+            v1=upper_value,
+            x_query=read_query,
+        )
+
+    value, value_status = _read(left=links.left_value, right=links.right_value)
+    policy, policy_status = _read(left=links.left_policy, right=links.right_policy)
+    marginal, marginal_status = _read(
+        left=links.left_marginal, right=links.right_marginal
+    )
+    coupled_status = (
+        winner_status.reshape(-1) | value_status | policy_status | marginal_status
+    )
+    decided = coupled_status == 0
+
+    def _published(channel: FloatND) -> FloatND:
+        return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
+
+    return _EnvelopeReduction(
+        published=(_published(value), _published(policy), _published(marginal))
+    )
 
 
 def _envelope_dense(
