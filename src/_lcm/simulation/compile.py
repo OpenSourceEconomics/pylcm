@@ -23,10 +23,12 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
 from _lcm.engine import Regime
+from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.backward_induction import (
     _func_dedup_key,
+    _iter_edge_topologies,
     _resolve_compilation_workers,
 )
 from _lcm.solution.v_topology import (
@@ -178,6 +180,20 @@ def _collect_unique_simulation_callables(
     unique: dict[Hashable, tuple[Callable, dict | None, str]] = {}
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable] = {}
 
+    # One zero `Wbar` per declared gated edge, shaped like the target's state
+    # grid plus the source's stakeholder axis — the same templates the solve
+    # side lowers its source kernels against. A source regime's own decision
+    # reads `Wbar` in place of the raw target V, so its continuation slot is
+    # lowered against this and not against the target's own topology.
+    edge_to_V_arr = MappingProxyType(
+        {
+            (source_name, target_name): _build_zero_V_arr(topology=topology)
+            for source_name, target_name, topology in _iter_edge_topologies(
+                regimes=regimes, flat_params=flat_params
+            )
+        }
+    )
+
     for regime_name, regime in regimes.items():
         regime_params = flat_params.get(regime_name, MappingProxyType({}))
         sf = regime.simulation
@@ -199,11 +215,16 @@ def _collect_unique_simulation_callables(
                     period=period, source=regime_name
                 )
             )
-            next_regime_to_V_arr = MappingProxyType(
-                {
-                    name: _build_zero_V_arr(topology=regime_V_topology[name])
-                    for name in continuation_targets
-                }
+            next_regime_to_V_arr = _with_edge_substitution(
+                regime=regime,
+                regime_name=regime_name,
+                next_regime_to_V_arr=MappingProxyType(
+                    {
+                        name: _build_zero_V_arr(topology=regime_V_topology[name])
+                        for name in continuation_targets
+                    }
+                ),
+                edge_to_V_arr=edge_to_V_arr,
             )
             args = _build_argmax_args(
                 regime=regime,
@@ -212,6 +233,8 @@ def _collect_unique_simulation_callables(
                 period=period,
                 n_subjects=n_subjects,
                 next_regime_to_V_arr=next_regime_to_V_arr,
+                regime_V_topology=regime_V_topology,
+                flat_params=flat_params,
                 subject_sharding=subject_sharding,
             )
             key = ("argmax", _func_dedup_key(func=argmax_func), continuation_targets)
@@ -331,6 +354,39 @@ def _swap_in_compiled(
     return MappingProxyType(new_regimes)
 
 
+def _with_edge_substitution(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    edge_to_V_arr: Mapping[tuple[RegimeName, RegimeName], FloatND],
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Replace each gated-edge target's raw V template with its `Wbar`.
+
+    A regime declaring `gated_edges` chooses its own action against the gated
+    continuation `Wbar` — one stakeholder's leg of the target's value, on the
+    target's grid and carrying the SOURCE's stakeholder axis — which
+    `simulation.gated_routing.substitute_gated_edge_continuations` swaps into
+    the continuation mapping before the decision. Lowering against the target's
+    own V would size that slot by the target's topology instead, so the
+    compiled program would reject the array it is invoked with.
+
+    Returns `next_regime_to_V_arr` unchanged for a regime without gated edges.
+    """
+    if not regime.gated_edges:
+        return next_regime_to_V_arr
+    return MappingProxyType(
+        {
+            name: (
+                edge_to_V_arr[(regime_name, name)]
+                if name in regime.gated_edges
+                else arr
+            )
+            for name, arr in next_regime_to_V_arr.items()
+        }
+    )
+
+
 def _build_argmax_args(
     *,
     regime: Regime,
@@ -339,17 +395,45 @@ def _build_argmax_args(
     period: int,
     n_subjects: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    regime_V_topology: dict[RegimeName, _RegimeVTopology],
+    flat_params: FlatParams,
     subject_sharding: jax.NamedSharding | None,
 ) -> dict[str, object]:
+    """Build the argmax program's lowering arguments.
+
+    A regime declaring `same_period_refs` reads each reference regime's
+    THIS-period value inside its value-aware feasibility mask, and simulate
+    dispatches those arrays together with each reference regime's OWN flat
+    params (the reference V is interpolated over the reference regime's grid,
+    whose runtime grid points are that regime's parameters). Both ride along
+    here so the compiled program accepts them.
+
+    The same-period templates come from each reference regime's V topology, so
+    a reference regime that is ALSO a gated-edge target is lowered against its
+    own value function — not against the `Wbar` substituted into the
+    continuation slot, which simulate never passes here.
+    """
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
+    same_period_args: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        same_period_args[SAME_PERIOD_V_ARG] = MappingProxyType(
+            {
+                ref: _build_zero_V_arr(topology=regime_V_topology[ref])
+                for ref in regime.same_period_ref_regimes
+            }
+        )
+        same_period_args[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+        )
     return {
         **subject_states,
         **base.discrete_actions,
         **base.continuous_actions,
         "next_regime_to_V_arr": next_regime_to_V_arr,
+        **same_period_args,
         **regime_params,
         "period": jnp.int32(period),
         "age": ages.values[period],
