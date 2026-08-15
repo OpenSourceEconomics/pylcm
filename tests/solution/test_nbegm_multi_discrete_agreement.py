@@ -21,10 +21,11 @@ _NEEDS_OPT_OFF = pytest.mark.skipif(
     _BACKEND_OPT_OFF not in os.environ.get("XLA_FLAGS", ""),
     reason=(
         "The certified envelope's fused sign reduction does not leave XLA's backend"
-        f" optimizer in bounded time, so these cases need `XLA_FLAGS={_BACKEND_OPT_OFF}`."
-        " With it they take seconds; without it they exceed any CI timeout. The flag is"
-        " not set suite-wide because it collapses every vmap width onto one bit pattern,"
-        " which would mask the batch-width invariance the solve battery checks."
+        " optimizer in bounded time, so these cases need"
+        f" `XLA_FLAGS={_BACKEND_OPT_OFF}`. With it they take seconds; without it"
+        " they exceed any CI timeout. The flag is not set suite-wide because it"
+        " collapses every vmap width onto one bit pattern, which would mask the"
+        " batch-width invariance the solve battery checks."
     ),
 )
 _TAX_EXEMPTION = 12.0
