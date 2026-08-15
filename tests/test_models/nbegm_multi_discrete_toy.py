@@ -130,7 +130,7 @@ def utility_three_actions(
     claim_benefit: DiscreteAction,
     labor_supply: DiscreteAction,
 ) -> FloatND:
-    """CRRA consumption utility, the value of coverage and claiming, less leisure lost."""
+    """CRRA consumption, plus coverage and claiming value, less leisure lost."""
     return (
         crra_utility(consumption, crra)
         + COVERAGE_UTILITY * buy_private

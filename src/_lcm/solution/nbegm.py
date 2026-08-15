@@ -1911,6 +1911,32 @@ def _stacked_branch_codes(
     )
 
 
+def _branch_inputs(
+    *,
+    codes: IntND,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    extra_cont_value: FloatND | None,
+    cliff_savings: FloatND | None,
+) -> dict[str, Any]:
+    """Assemble the pytree `lax.map` streams over the branch axis.
+
+    The optional continuations enter only where the regime supplies them, so a
+    regime without child cliffs or an extra continuation maps a narrower tree
+    rather than one padded with sentinels that every branch would then carry.
+    """
+    inputs: dict[str, Any] = {
+        "codes": codes,
+        "cont_value": cont_value,
+        "cont_marginal": cont_marginal,
+    }
+    if extra_cont_value is not None:
+        inputs["extra_cont_value"] = extra_cont_value
+    if cliff_savings is not None:
+        inputs["cliff_savings"] = cliff_savings
+    return inputs
+
+
 def _branch_bindings(
     discrete_actions: DiscreteActionCodes,
 ) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -4021,7 +4047,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         inspect.signature(schedule_spec.utility_dag).parameters
     )
 
-    def envelope_core(  # noqa: C901
+    def envelope_core(
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -4044,7 +4070,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             else None
         )
 
-        def solve_one_cell(  # noqa: C901
+        def solve_one_cell(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
@@ -4220,18 +4246,16 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 # by default) — per-branch EGM intermediates never all sit in
                 # flight, and the branch axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
-                branch_inputs: dict[str, Any] = {
-                    "codes": _stacked_branch_codes(
+                branch_inputs = _branch_inputs(
+                    codes=_stacked_branch_codes(
                         branch_bindings=schedule_spec.branch_bindings,
                         action_names=branch_action_names,
                     ),
-                    "cont_value": cont_value,
-                    "cont_marginal": cont_marginal,
-                }
-                if extra_cont_value is not None:
-                    branch_inputs["extra_cont_value"] = extra_cont_value
-                if cliff_savings is not None:
-                    branch_inputs["cliff_savings"] = cliff_savings
+                    cont_value=cont_value,
+                    cont_marginal=cont_marginal,
+                    extra_cont_value=extra_cont_value,
+                    cliff_savings=cliff_savings,
+                )
 
                 def solve_one_branch(
                     inputs: dict[str, Any],
