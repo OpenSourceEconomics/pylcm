@@ -7,6 +7,7 @@ joint choice by the upper envelope over those branches, so the solved value
 matches a dense brute solve that maximises over the same product.
 """
 
+import os
 from collections.abc import Mapping
 
 import numpy as np
@@ -15,6 +16,18 @@ import pytest
 from tests.test_models import nbegm_multi_discrete_toy as toy
 
 _ALIVE = "alive"
+_BACKEND_OPT_OFF = "--xla_backend_optimization_level=0"
+_NEEDS_OPT_OFF = pytest.mark.skipif(
+    _BACKEND_OPT_OFF not in os.environ.get("XLA_FLAGS", ""),
+    reason=(
+        "The certified envelope's fused sign reduction does not leave XLA's backend"
+        " optimizer in bounded time, so these cases need"
+        f" `XLA_FLAGS={_BACKEND_OPT_OFF}`. With it they take seconds; without it"
+        " they exceed any CI timeout. The flag is not set suite-wide because it"
+        " collapses every vmap width onto one bit pattern, which would mask the"
+        " batch-width invariance the solve battery checks."
+    ),
+)
 _TAX_EXEMPTION = 12.0
 _LIQUID = np.linspace(0.1, 30.0, 40)
 _AWAY_FROM_KINK = (
@@ -40,7 +53,12 @@ def _solve(
 
 @pytest.mark.parametrize(
     ("n_actions", "n_branches", "envelope_arithmetic"),
-    [(2, 4, "certified"), (2, 4, "ordinary"), (3, 20, "ordinary")],
+    [
+        pytest.param(2, 4, "certified", marks=_NEEDS_OPT_OFF),
+        (2, 4, "ordinary"),
+        (3, 20, "ordinary"),
+        pytest.param(3, 20, "certified", marks=_NEEDS_OPT_OFF),
+    ],
 )
 def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
     n_actions: int, n_branches: int, envelope_arithmetic: str
