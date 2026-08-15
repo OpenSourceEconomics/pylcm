@@ -165,6 +165,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
+from lcm.regime import GatedEdge, SamePeriodRef
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM, Solver
 from lcm.transition import MarkovTransition
@@ -811,7 +812,7 @@ def _resolve_gated_edge(
     *,
     source_name: RegimeName,
     target_name: RegimeName,
-    edge: object,
+    edge: GatedEdge,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> ResolvedGatedEdge:
     """Resolve one user `GatedEdge` to its engine form.
@@ -822,7 +823,6 @@ def _resolve_gated_edge(
     OPEN-branch target component and its fallback stakeholder become trailing-
     axis indices.
     """
-    edge = cast("Any", edge)
     target_stakeholders = user_regimes[target_name].stakeholders
     source_stakeholders = user_regimes[source_name].stakeholders
 
@@ -834,8 +834,7 @@ def _resolve_gated_edge(
             return None
         return regime_stakeholders.index(cast("str", stakeholder))
 
-    def _resolve_ref(ref: object) -> ResolvedSamePeriodRef:
-        ref = cast("Any", ref)
+    def _resolve_ref(ref: SamePeriodRef) -> ResolvedSamePeriodRef:
         return ResolvedSamePeriodRef(
             regime=ref.regime,
             projection=ref.projection,
@@ -866,11 +865,20 @@ def _resolve_gated_edge(
             )
         )
     gate_refs = {name: _resolve_ref(ref) for name, ref in edge.gate_refs.items()}
+    # The target is excluded even when a fallback or gate ref names it (a
+    # self-referencing edge): every consumer already carries the target's own
+    # same-period V and params under the target's key
+    # (`build_same_period_mapping_for_fold` seeds it, and both the solve-side
+    # roll and the simulate-side router gate on the target being solved before
+    # they look at the references at all), so listing it here would only
+    # re-derive what those consumers hold.
     reference_regimes = tuple(
-        dict.fromkeys(
+        regime_name
+        for regime_name in dict.fromkeys(
             [leg.fallback.regime for leg in legs]
             + [ref.regime for ref in gate_refs.values()]
         )
+        if regime_name != target_name
     )
     return ResolvedGatedEdge(
         target=target_name,
@@ -1135,7 +1143,7 @@ def _fail_if_gated_edge_references_inactive(
     prefix: str,
     source_name: RegimeName,
     target_name: RegimeName,
-    edge: object,
+    edge: GatedEdge,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
     """Reject a gated edge whose fallback / gate reference is not co-active with
@@ -1159,7 +1167,6 @@ def _fail_if_gated_edge_references_inactive(
     Require every referenced regime to be active on every consumed period so the
     roll is well defined wherever its result is used.
     """
-    edge = cast("Any", edge)
     reference_regime_names = {leg.fallback.regime for leg in edge.legs.values()} | {
         ref.regime for ref in edge.gate_refs.values()
     }
@@ -1184,7 +1191,7 @@ def _fail_if_gated_edge_references_inactive(
             raise ModelInitializationError(msg)
 
 
-def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: object) -> None:
+def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None:
     """Reject an edge whose legs share a fallback regime.
 
     `route_gated_edges`
@@ -1199,7 +1206,6 @@ def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: object) -> None:
     corruption, not merely an unused branch. A singleton source (exactly one
     leg) can never trigger this; only a multi-leg (collective) source can.
     """
-    edge = cast("Any", edge)
     fallback_regimes = [leg.fallback.regime for leg in edge.legs.values()]
     seen: set[RegimeName] = set()
     duplicates: list[RegimeName] = []
@@ -1254,12 +1260,11 @@ def _fail_if_target_stakeholder_invalid(
 def _fail_if_ref_invalid(
     *,
     prefix: str,
-    ref: object,
+    ref: SamePeriodRef,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> None:
     """Reject an edge fallback / gate reference with an invalid endpoint."""
-    ref = cast("Any", ref)
     reference = user_regimes.get(ref.regime)
     if reference is None:
         msg = (

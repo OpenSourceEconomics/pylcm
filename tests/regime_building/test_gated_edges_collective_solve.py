@@ -15,7 +15,7 @@ IR mask empties, ``D=True``). The mixture is the strict ``jnp.where`` — never 
 linear ``kappa*V + (1-kappa)*V`` — so a ``-inf`` target cell never leaks NaN.
 """
 
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -841,16 +841,34 @@ def test_singleton_source_with_two_legs_is_rejected():
         )
 
 
-def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> object:
-    """A minimal stand-in for a user gated edge exposing only the attributes the
-    F4 co-activity guard reads: `.legs[*].fallback.regime` and
-    `.gate_refs[*].regime`.
+def _always_open_gate(V_target_f: FloatND) -> BoolND:
+    return jnp.ones_like(V_target_f, dtype=bool)
+
+
+def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
+    """A one-leg gated edge whose fallback and gate reference name given regimes.
+
+    The co-activity guard reads only `.legs[*].fallback.regime` and
+    `.gate_refs[*].regime`, so everything else here is filler that keeps the edge
+    a well-formed `GatedEdge`: the guard runs before any regime graph exists and
+    never evaluates the gate or the projections.
     """
-    leg = SimpleNamespace(fallback=SimpleNamespace(regime=fallback_regime))
-    ref = SimpleNamespace(regime=gate_ref_regime)
-    return SimpleNamespace(
-        legs=MappingProxyType({"f": leg}),
-        gate_refs=MappingProxyType({"g": ref}),
+    return GatedEdge(
+        gate=_always_open_gate,
+        legs={
+            "f": EdgeLeg(
+                fallback=SamePeriodRef(
+                    regime=fallback_regime,
+                    projection={"wage": _identity_wage},
+                )
+            )
+        },
+        gate_refs={
+            "g": SamePeriodRef(
+                regime=gate_ref_regime,
+                projection={"wage": _identity_wage},
+            )
+        },
     )
 
 
