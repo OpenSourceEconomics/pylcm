@@ -46,6 +46,25 @@ __global__ void ReadKernel(int64_t n, const T* x0, const T* x1, const T* v0,
 
 
 template <typename T>
+__global__ void QueryWinnerKernel(
+    int64_t n_query, int32_t n_segment, const T* left_grid,
+    const T* right_grid, const T* left_value, const T* right_value,
+    const int32_t* live, const T* query, int32_t* winner,
+    int32_t* status) {
+  for (int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+       i < n_query;
+       i += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+    int32_t selected = 0;
+    const bool ok = core::ExactQueryWinner(
+        left_grid, right_grid, left_value, right_value, live, n_segment,
+        query[i], &selected);
+    winner[i] = selected;
+    status[i] = ok ? 0 : core::kUnresolved;
+  }
+}
+
+
+template <typename T>
 __global__ void HandoverKernel(
     int64_t n, const T* ax0, const T* ax1, const T* av0, const T* av1,
     const T* bx0, const T* bx1, const T* bv0, const T* bv1,
@@ -145,6 +164,40 @@ ffi::Error ReadImpl(cudaStream_t stream, ffi::Buffer<DType> x0,
       n, x0.typed_data(), x1.typed_data(), v0.typed_data(), v1.typed_data(),
       query.typed_data(), (*output).typed_data(), (*status).typed_data());
   return LaunchError("exact affine read launch failed");
+}
+
+
+template <typename T, ffi::DataType DType>
+ffi::Error QueryWinnerImpl(
+    cudaStream_t stream, ffi::Buffer<DType> left_grid,
+    ffi::Buffer<DType> right_grid, ffi::Buffer<DType> left_value,
+    ffi::Buffer<DType> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<DType> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  const size_t n_segment_size = left_grid.element_count();
+  if (n_segment_size == 0 || n_segment_size > INT32_MAX ||
+      right_grid.element_count() != n_segment_size ||
+      left_value.element_count() != n_segment_size ||
+      right_value.element_count() != n_segment_size ||
+      live.element_count() != n_segment_size) {
+    return ffi::Error::InvalidArgument(
+        "exact-query segment buffers must be nonempty and match");
+  }
+  const int64_t n_query = static_cast<int64_t>(query.element_count());
+  if ((*winner).element_count() != static_cast<size_t>(n_query) ||
+      (*status).element_count() != static_cast<size_t>(n_query)) {
+    return ffi::Error::InvalidArgument(
+        "exact-query outputs must match the query buffer");
+  }
+  if (n_query == 0) return ffi::Error::Success();
+  const int32_t n_segment = static_cast<int32_t>(n_segment_size);
+  constexpr int threads = 32;
+  const int blocks = static_cast<int>((n_query + threads - 1) / threads);
+  QueryWinnerKernel<<<blocks, threads, 0, stream>>>(
+      n_query, n_segment, left_grid.typed_data(), right_grid.typed_data(),
+      left_value.typed_data(), right_value.typed_data(), live.typed_data(),
+      query.typed_data(), (*winner).typed_data(), (*status).typed_data());
+  return LaunchError("exact query winner launch failed");
 }
 
 
@@ -284,6 +337,29 @@ ffi::Error ReadF64Impl(cudaStream_t stream, ffi::Buffer<ffi::F64> x0,
 }
 
 
+ffi::Error QueryWinnerF32Impl(
+    cudaStream_t stream, ffi::Buffer<ffi::F32> left_grid,
+    ffi::Buffer<ffi::F32> right_grid, ffi::Buffer<ffi::F32> left_value,
+    ffi::Buffer<ffi::F32> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::F32> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerImpl<float, ffi::F32>(
+      stream, left_grid, right_grid, left_value, right_value, live, query,
+      winner, status);
+}
+
+ffi::Error QueryWinnerF64Impl(
+    cudaStream_t stream, ffi::Buffer<ffi::F64> left_grid,
+    ffi::Buffer<ffi::F64> right_grid, ffi::Buffer<ffi::F64> left_value,
+    ffi::Buffer<ffi::F64> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::F64> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerImpl<double, ffi::F64>(
+      stream, left_grid, right_grid, left_value, right_value, live, query,
+      winner, status);
+}
+
+
 ffi::Error HandoverF32Impl(
     cudaStream_t stream, ffi::Buffer<ffi::F32> ax0,
     ffi::Buffer<ffi::F32> ax1, ffi::Buffer<ffi::F32> av0,
@@ -389,6 +465,33 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::S32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerF32, QueryWinnerF32Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerF64, QueryWinnerF64Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     ExactAffineHandoverF32, HandoverF32Impl,

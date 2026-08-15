@@ -84,18 +84,17 @@ def test_a_segment_whose_value_gap_overflows_still_publishes_its_owner(dtype, bl
     assert published == (0.25, 0.0, 10.0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a link's width is formed as a raw difference of its endpoints, so a "
-    "span wider than the working dtype overflows to inf and the link reaches "
-    "the certificate with no divisor it can be read through",
-)
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_a_segment_whose_abscissa_span_overflows_still_publishes_its_owner(
     dtype, block
 ):
-    """`x1 - x0` is `+inf` here while both endpoints are finite normals."""
+    """`x1 - x0` is `+inf` here while both endpoints are finite normals.
+
+    The certified winner decodes the stored abscissae exactly rather than forming
+    their difference in the working format, so a span too wide to represent never
+    becomes the `inf` divisor that would leave this link unreadable.
+    """
     huge = _huge(dtype)
     published = _published_triple(
         grid=[-huge, huge, -huge, huge],
