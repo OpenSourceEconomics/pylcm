@@ -46,25 +46,19 @@ def two_sum(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
 
 
 def two_prod(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
-    """Return `(p, e)` with `a * b == p + e` exactly (Dekker).
+    """Return Dekker product words where the residual fits the working format.
 
-    An operand within a significand's width of the smallest normal has the lower
-    half of its own split below that threshold, and a subnormal half is read as
-    zero by the very multiplications the error term is assembled from — while its
-    true contribution against a large second operand is an ordinary number. The
-    transform then returns a decomposition that is not the product, reports
-    nothing, and every bound downstream inherits an exactness it does not have.
+    The scale separation below keeps a split half near the smallest normal from
+    being flushed before it contributes to the error word. Together with
+    `_split`'s corresponding protection at the top of the range, that closes the
+    transform's *intermediate-range* domain for ordinary normal operands.
 
-    The operands are moved apart before splitting, one up by as much as the other
-    goes down. `a * b` is the same real number afterwards, so `p` and `e` are the
-    numbers the caller asked for; only the halves change, and they change into
-    ones the format can multiply. Where both operands are that small the shifts
-    cancel — correctly, since the product is then below the range anyway and its
-    caller bounds it.
-
-    `_split` already borrows range at the top for the same reason. This is the
-    same borrowing at the bottom, and the pair is what makes the transform exact
-    across the whole normal range rather than in its middle.
+    It is not a universal exact-product certificate. Some finite normal products
+    have a nonzero exact residual smaller than the least subnormal, so no pair of
+    floats in the same format can represent `a * b == p + e`; in that case a
+    returned zero residual proves only that the residual is not representable.
+    Structural equality, sign, ownership, and publication decisions must use the
+    native exact-affine kernels (or fail loud), not infer exactness from `e == 0`.
     """
     shift = _shift_clear_of_the_split_floor(a) - _shift_clear_of_the_split_floor(b)
     lifted, lowered = scale_by_power_of_two(a, shift), scale_by_power_of_two(b, -shift)

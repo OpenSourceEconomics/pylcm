@@ -292,6 +292,53 @@ PYLCM_HD PYLCM_INLINE bool ExactGreater(T left, T right) {
   return left_mag < right_mag;
 }
 
+template <typename T>
+PYLCM_HD PYLCM_INLINE bool ExactEqual(T left, T right) {
+  return !ExactGreater(left, right) && !ExactGreater(right, left);
+}
+
+template <typename T>
+struct QueryLine {
+  T x0;
+  T x1;
+  T v0;
+  T v1;
+  T upper;
+};
+
+template <typename T>
+PYLCM_HD PYLCM_INLINE bool CanonicalQueryLine(
+    T left_x, T right_x, T left_value, T right_value, QueryLine<T>* line) {
+  const FloatParts px0 = Decode(left_x);
+  const FloatParts px1 = Decode(right_x);
+  const FloatParts pv0 = Decode(left_value);
+  const FloatParts pv1 = Decode(right_value);
+  if (!px0.finite || !px1.finite || !pv0.finite || !pv1.finite) {
+    return false;
+  }
+  const bool descending = ExactGreater(left_x, right_x);
+  const T lower = descending ? right_x : left_x;
+  const T upper = descending ? left_x : right_x;
+  const T at_lower = descending ? right_value : left_value;
+  const T at_upper = descending ? left_value : right_value;
+  line->upper = upper;
+  if (ExactEqual(lower, upper)) {
+    // A zero-width link is a self-bracket. Its value is the stored left
+    // endpoint and it has no right extension or slope; representing it as a
+    // flat unit-width line makes both exact comparisons say precisely that.
+    line->x0 = T{0};
+    line->x1 = T{1};
+    line->v0 = left_value;
+    line->v1 = left_value;
+  } else {
+    line->x0 = lower;
+    line->x1 = upper;
+    line->v0 = at_lower;
+    line->v1 = at_upper;
+  }
+  return true;
+}
+
 PYLCM_HD PYLCM_INLINE void MulBase16(const uint32_t* a, int na,
                                      const uint32_t* b, int nb,
                                      uint32_t* out, int nout) {
@@ -561,6 +608,115 @@ PYLCM_HD PYLCM_INLINE int32_t CertifiedAffineCompare(
   }
   if (!ok) return kUnresolved;
   return static_cast<int32_t>(Compare(positive, negative));
+}
+
+template <typename T>
+PYLCM_HD PYLCM_INLINE int32_t CertifiedSlopeCompare(
+    T ax0, T ax1, T av0, T av1, T bx0, T bx1, T bv0, T bv1) {
+  using Traits = FloatTraits<T>;
+  constexpr int N = Traits::kReadLimbs;
+  const FloatParts p[8] = {Decode(ax0), Decode(ax1), Decode(av0), Decode(av1),
+                           Decode(bx0), Decode(bx1), Decode(bv0), Decode(bv1)};
+  for (int i = 0; i < 8; ++i) {
+    if (!p[i].finite) return kUnresolved;
+  }
+  if (!ExactGreater(ax1, ax0) || !ExactGreater(bx1, bx0)) {
+    return kUnresolved;
+  }
+
+  // (av1-av0)/(ax1-ax0) - (bv1-bv0)/(bx1-bx0), with both
+  // positive widths cross-multiplied before any division.
+  struct PairTerm {
+    int coefficient;
+    int first;
+    int second;
+  };
+  const PairTerm terms[8] = {
+      {1, 3, 5}, {-1, 3, 4}, {-1, 2, 5}, {1, 2, 4},
+      {-1, 7, 1}, {1, 7, 0}, {1, 6, 1}, {-1, 6, 0}};
+  BigUInt<N> positive, negative;
+  Clear(&positive);
+  Clear(&negative);
+  constexpr int base = 2 * Traits::kMinSubnormalExponent;
+  bool ok = true;
+  for (const PairTerm& term : terms) {
+    ok &= AccumulateProduct2(&positive, &negative, p[term.first],
+                             p[term.second], term.coefficient, base);
+  }
+  if (!ok) return kUnresolved;
+  return static_cast<int32_t>(Compare(positive, negative));
+}
+
+template <typename T>
+PYLCM_HD PYLCM_INLINE bool ExactQueryWinner(
+    const T* left_grid, const T* right_grid, const T* left_value,
+    const T* right_value, const int32_t* live, int32_t n_segment, T query,
+    int32_t* winner) {
+  if (n_segment <= 0 || !Decode(query).finite) return false;
+
+  int32_t held_index = -1;
+  QueryLine<T> held{};
+  for (int32_t index = 0; index < n_segment; ++index) {
+    if (live[index] == 0) continue;
+
+    // Establish support from the abscissae before reading channel values. A
+    // non-finite value on a link that does not bracket this query is irrelevant;
+    // a non-finite abscissa cannot establish that and therefore fails loud.
+    if (!Decode(left_grid[index]).finite || !Decode(right_grid[index]).finite) {
+      return false;
+    }
+    const T lower = ExactGreater(left_grid[index], right_grid[index])
+                        ? right_grid[index]
+                        : left_grid[index];
+    const T upper = ExactGreater(left_grid[index], right_grid[index])
+                        ? left_grid[index]
+                        : right_grid[index];
+    const bool brackets = !ExactGreater(lower, query) &&
+                          !ExactGreater(query, upper);
+    if (!brackets) continue;
+
+    QueryLine<T> candidate;
+    if (!CanonicalQueryLine(left_grid[index], right_grid[index],
+                            left_value[index], right_value[index],
+                            &candidate)) {
+      return false;
+    }
+
+    if (held_index < 0) {
+      held_index = index;
+      held = candidate;
+      continue;
+    }
+
+    const int32_t value_order = CertifiedAffineCompare(
+        candidate.x0, candidate.x1, candidate.v0, candidate.v1, held.x0,
+        held.x1, held.v0, held.v1, query);
+    if (value_order == kUnresolved) return false;
+    bool replace = value_order > 0;
+    if (value_order == 0) {
+      const bool candidate_right = ExactGreater(candidate.upper, query);
+      const bool held_right = ExactGreater(held.upper, query);
+      if (candidate_right != held_right) {
+        replace = candidate_right;
+      } else {
+        const int32_t slope_order = CertifiedSlopeCompare(
+            candidate.x0, candidate.x1, candidate.v0, candidate.v1, held.x0,
+            held.x1, held.v0, held.v1);
+        if (slope_order == kUnresolved) return false;
+        replace = slope_order > 0;
+        // An exact slope tie keeps the earlier segment. Iterating in stored
+        // order therefore implements the stable-index final field.
+      }
+    }
+    if (replace) {
+      held_index = index;
+      held = candidate;
+    }
+  }
+
+  if (held_index < 0) return false;
+  *winner = held_index;
+  return true;
 }
 
 template <typename T>
