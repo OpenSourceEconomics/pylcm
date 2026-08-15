@@ -180,9 +180,15 @@ quantecon = "*"
 # required on GPU: it stops each of the 4 worker processes from preallocating ~75%
 # of the device and OOMing — they grow to their actual (small) per-test need
 # instead, and `loadfile` keeps the one heavy file (Mahler-Yum) on a single worker.
-tests = { cmd = "pytest tests -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-tests-32bit = { cmd = "pytest tests --precision=32 -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+#
+# `-v` and `--junitxml` are not decoration. The JUnit report is written when the run
+# ends, so a run that is killed part-way leaves none; `-v` has by then already streamed
+# one line per test, which is the only record such a run leaves behind. Together they
+# give a count that is complete by construction when the run finishes and an
+# attributable partial record when it does not. `reports/` is gitignored.
+tests = { cmd = "pytest tests -n 4 -v --junitxml=reports/tests.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-32bit = { cmd = "pytest tests --precision=32 -n 4 -v --junitxml=reports/tests-32bit.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junitxml=reports/tests-with-cov.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 [tool.pixi.feature.type-checking.dependencies]
 # The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
 # itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).

@@ -16,6 +16,8 @@ Two properties the build owes its caller:
 
 from pathlib import Path
 
+import pytest
+
 import hatch_build
 
 
@@ -30,8 +32,98 @@ def test_the_default_cuda_build_keeps_a_forward_compatible_fallback():
     """A virtual target is kept, so an architecture not listed can still run."""
     flags = hatch_build.cuda_arch_flags(nvcc_flags=())
 
-    virtual = [flag for flag in flags if flag.endswith(",code=compute_90")]
+    virtual = [flag for flag in flags if ",code=compute_" in flag]
     assert virtual, f"no virtual target among {flags}"
+
+
+def _architectures(*, flags: list[str], kind: str) -> list[int]:
+    """Return the capability numbers of every `code={kind}_NN` target, ascending."""
+    return sorted(
+        int(flag.rsplit(f"code={kind}_", 1)[1])
+        for flag in flags
+        if f",code={kind}_" in flag
+    )
+
+
+def test_the_cuda_build_emits_ready_code_for_the_oldest_supported_card():
+    """A Volta card gets ready code, not only a translation target.
+
+    Its capability is below every later architecture, so a virtual target emitted
+    for a newer one cannot be translated onto it and the kernel does not launch.
+    """
+    flags = hatch_build.cuda_arch_flags(nvcc_flags=())
+
+    assert 70 in _architectures(flags=flags, kind="sm")
+
+
+def test_the_virtual_target_sits_at_the_lowest_architecture():
+    """The translation target names the oldest architecture the build supports.
+
+    Intermediate code is forward-compatible only: emitted for capability `X` it
+    can be translated onto any device at `X` or above, and onto nothing below. A
+    virtual target at the newest architecture therefore serves only hardware newer
+    than everything already listed, which is the one case ready code covers — and
+    leaves every unlisted older card with no image at all.
+    """
+    flags = hatch_build.cuda_arch_flags(nvcc_flags=())
+
+    virtual = _architectures(flags=flags, kind="compute")
+    assert virtual == [min(_architectures(flags=flags, kind="sm"))]
+
+
+def test_an_architecture_the_toolkit_cannot_target_is_not_emitted():
+    """Targets the installed CUDA toolkit rejects are dropped, not passed to it.
+
+    A toolkit that has retired an architecture fails the whole compile on the
+    first `-gencode` naming it, so emitting one target no compiler can build
+    costs every other target too.
+    """
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({75, 80, 86, 90})
+    )
+
+    assert 70 not in _architectures(flags=flags, kind="sm")
+
+
+def test_the_virtual_target_follows_the_toolkit_floor():
+    """The translation target tracks the oldest architecture actually emitted.
+
+    Pinning it to an architecture the toolkit dropped would fail the build; the
+    fallback has to be the lowest one this compiler can still produce.
+    """
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({75, 80, 86, 90})
+    )
+
+    assert _architectures(flags=flags, kind="compute") == [75]
+
+
+def test_a_toolkit_that_keeps_the_oldest_card_still_gets_it():
+    """Where the toolkit supports the oldest card, its ready code is emitted."""
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({70, 75, 80, 86, 90})
+    )
+
+    assert 70 in _architectures(flags=flags, kind="sm")
+    assert _architectures(flags=flags, kind="compute") == [70]
+
+
+def test_the_supported_architectures_are_read_from_the_compiler():
+    """The supported set is what the compiler reports, not a hardcoded list."""
+    listing = "compute_75\ncompute_80\ncompute_86\n"
+
+    assert hatch_build.parse_gpu_architectures(listing=listing) == frozenset(
+        {75, 80, 86}
+    )
+
+
+def test_a_compiler_that_reports_nothing_leaves_the_targets_alone():
+    """An unreadable listing emits the full target set rather than none.
+
+    Dropping every target because a probe failed would silently produce a
+    library with no ready code at all, which fails at launch rather than here.
+    """
+    assert hatch_build.parse_gpu_architectures(listing="") is None
 
 
 def test_an_explicit_arch_suppresses_the_defaults():
@@ -71,3 +163,60 @@ def test_the_build_states_that_it_produced_nothing_on_windows(monkeypatch, capsy
     hatch_build.build_exact_affine(root=Path("/nowhere"))
 
     assert "no kernel" in capsys.readouterr().out
+
+
+def test_the_opt_out_builds_no_kernel(monkeypatch):
+    """`LCM_SKIP_EXACT_AFFINE=1` installs pylcm without compiling anything."""
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    assert hatch_build.build_exact_affine(root=Path("/nowhere")) == []
+
+
+def test_the_opt_out_names_what_it_gave_up(monkeypatch, capsys):
+    """Skipping the build says which capability the install will not have."""
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    hatch_build.build_exact_affine(root=Path("/nowhere"))
+
+    assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
+
+
+def test_the_opt_out_is_off_unless_asked_for(monkeypatch):
+    """`LCM_SKIP_EXACT_AFFINE=0` builds the kernel; the variable is not a mere flag."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "0")
+    monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("CXX", raising=False)
+
+    with pytest.raises(RuntimeError, match="No C\\+\\+ compiler"):
+        hatch_build.build_exact_affine(
+            root=Path("/nowhere"), jax_include_dir="/nowhere"
+        )
+
+
+def test_a_missing_compiler_fails_loudly_without_the_opt_out(monkeypatch):
+    """An install that cannot build the kernel fails at build time, not at solve."""
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("CXX", raising=False)
+
+    with pytest.raises(RuntimeError, match="No C\\+\\+ compiler"):
+        hatch_build.build_exact_affine(
+            root=Path("/nowhere"), jax_include_dir="/nowhere"
+        )
+
+
+def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsys):
+    """On a platform that builds nothing anyway, the opt-out still names itself.
+
+    The two early returns are not interchangeable: one reports a deliberate choice
+    and the other reports a platform limit, and an install that asked to skip should
+    be told that is why, wherever it runs.
+    """
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
+
+    hatch_build.build_exact_affine(root=Path("/nowhere"))
+
+    assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out

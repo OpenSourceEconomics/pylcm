@@ -30,8 +30,9 @@ import jax.numpy as jnp
 from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import BoolND, FloatND, IntND
 
-# Returned where an operand is non-finite, a width is not positive, or an exact
-# result overflows the target format. Callers must fail loud; nothing is known.
+# Returned where input geometry is invalid, an operand is non-finite, or an
+# exact result overflows the target format. Callers must fail loud; nothing is
+# known.
 UNRESOLVED_STATUS: int = 2
 
 _TARGETS = (
@@ -39,6 +40,8 @@ _TARGETS = (
     "CertifiedAffineCompareF64",
     "ExactAffineReadF32",
     "ExactAffineReadF64",
+    "ExactQueryWinnerF32",
+    "ExactQueryWinnerF64",
     "ExactAffineHandoverF32",
     "ExactAffineHandoverF64",
     "ExactCellHullF32",
@@ -241,6 +244,88 @@ def exact_affine_read(
         target, result_shapes, vmap_method="broadcast_all"
     )(*operands)
     return published, status
+
+
+def exact_query_winner(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Select the exact right-continuous owner of every query.
+
+    Each query is compared with every live segment that brackets it. The native
+    kernel orders the stored operands lexicographically by exact affine value,
+    whether the segment extends strictly to the right, exact value slope, and
+    finally the stable segment index. No candidate value is rounded before the
+    winner is chosen.
+
+    Segment operands are one-dimensional and shared by all elements of
+    ``x_query``. An outer :func:`jax.vmap` is supported with
+    ``vmap_method="sequential"``: the transformed program contains one loop
+    around this opaque call rather than exposing the integer representation to
+    XLA, while an unbatched array of queries is resolved by one call.
+
+    Args:
+        left_grid: Stored left abscissa of every segment.
+        right_grid: Stored right abscissa of every segment.
+        left_value: Stored value at ``left_grid``.
+        right_value: Stored value at ``right_grid``.
+        live: Whether each segment participates.
+        x_query: Query abscissae, of any shape.
+
+    Returns:
+        Winner indices and one coupled status per query. Status is zero only
+        where at least one valid segment brackets the query and the complete
+        total order was resolved; otherwise it is ``UNRESOLVED_STATUS``.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
+        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        ValueError: If segment operands are not nonempty matching vectors.
+
+    """
+    _ensure_registered()
+    floating = [
+        jnp.asarray(left_grid),
+        jnp.asarray(right_grid),
+        jnp.asarray(left_value),
+        jnp.asarray(right_value),
+    ]
+    if any(array.ndim != 1 for array in floating):
+        msg = (
+            "exact-query segment operands must be one-dimensional, got "
+            f"{[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    shape = floating[0].shape
+    if shape[0] == 0 or any(array.shape != shape for array in floating[1:]):
+        msg = (
+            "exact-query segment operands must be nonempty matching vectors, got "
+            f"{[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    query = jnp.asarray(x_query)
+    target = _target_for(
+        operands=[*floating, query],
+        f32="ExactQueryWinnerF32",
+        f64="ExactQueryWinnerF64",
+    )
+    live_array = jnp.asarray(live, dtype=jnp.int32)
+    if live_array.shape != shape:
+        msg = f"live must have segment shape {shape}, got {live_array.shape}."
+        raise ValueError(msg)
+    result_shapes = (
+        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+    )
+    winner, status = jax.ffi.ffi_call(target, result_shapes, vmap_method="sequential")(
+        *floating, live_array, query
+    )
+    return winner, status
 
 
 def exact_affine_handover(

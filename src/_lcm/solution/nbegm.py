@@ -682,6 +682,9 @@ class NBEGM(Solver):
                 ),
                 regime_name=context.regime_name,
                 int_arg_values=_int_probe_arg_values(context.grids),
+                annotated_int_arg_names=_annotated_int_arg_names(
+                    functions=context.functions
+                ),
                 array_float_arg_names=_array_float_arg_names(
                     functions=context.functions
                 ),
@@ -729,6 +732,9 @@ class NBEGM(Solver):
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
                     int_arg_values=_int_probe_arg_values(context.grids),
+                    annotated_int_arg_names=_annotated_int_arg_names(
+                        functions=context.functions
+                    ),
                     array_float_arg_names=_array_float_arg_names(
                         functions=context.functions
                     ),
@@ -1987,6 +1993,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -2018,7 +2025,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     arg_names = tuple(inspect.signature(coh_dag).parameters)
     if liquid_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _budget_of_liquid(
         liquid_value: FloatND,
@@ -2161,6 +2168,7 @@ def _fail_if_flow_not_single_power(
     regime_name: RegimeName,
     int_arg_values: Mapping[str, tuple[int, ...]],
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
     """Probe the flow's consumption elasticity for the single-power contract.
@@ -2186,7 +2194,7 @@ def _fail_if_flow_not_single_power(
     arg_names = tuple(inspect.signature(utility_dag).parameters)
     if consumption_action_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
     probe_consumptions = (0.5, 1.0, 2.0, 5.0)
     fill = 1.7
 
@@ -2336,6 +2344,36 @@ def _array_float_arg_names(
     return frozenset(array_args - scalar_args)
 
 
+def _annotated_int_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> frozenset[str]:
+    """Leaf parameter names that must be filled as integers, from annotations.
+
+    Backing a `DiscreteGrid` is one way for an argument to be integer-coded, not
+    the only one: a DAG intermediate can compute an integer code, and a flat
+    parameter can be an integer threshold such as an age. Neither has a grid, so
+    both are classified from the jaxtyping dtype their consumers annotate — the
+    same declaration the runtime type check enforces.
+
+    A name every annotation calls integer is filled as an integer; a name whose
+    annotations disagree keeps the float default, since an integer fill would
+    violate the float consumer and the disagreement is the model author's to
+    resolve rather than the probe's to guess.
+    """
+    int_args: set[str] = set()
+    other_args: set[str] = set()
+    for func in functions.values():
+        for arg_name, param in inspect.signature(func).parameters.items():
+            resolved = getattr(param.annotation, "__value__", param.annotation)
+            dtypes = getattr(resolved, "dtypes", None)
+            if dtypes is None:
+                continue
+            is_int = all(dtype.startswith("int") for dtype in dtypes)
+            (int_args if is_int else other_args).add(arg_name)
+    return frozenset(int_args - other_args)
+
+
 def _int_code_sweeps(
     *,
     arg_names: tuple[str, ...],
@@ -2379,6 +2417,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -2405,7 +2444,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     import inspect  # noqa: PLC0415
 
     tol = 1e-6
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
         constant_1 = tuple(1.0 for _ in range(n_args))
@@ -2680,6 +2719,7 @@ def _collect_nbegm_schedule_spec(
         ),
         regime_name=context.regime_name,
         int_arg_values=_int_probe_arg_values(context.grids),
+        annotated_int_arg_names=_annotated_int_arg_names(functions=context.functions),
         array_float_arg_names=_array_float_arg_names(functions=context.functions),
         probe_failure=probe_failure,
     )
