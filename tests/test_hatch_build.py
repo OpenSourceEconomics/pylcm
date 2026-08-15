@@ -71,6 +71,61 @@ def test_the_virtual_target_sits_at_the_lowest_architecture():
     assert virtual == [min(_architectures(flags=flags, kind="sm"))]
 
 
+def test_an_architecture_the_toolkit_cannot_target_is_not_emitted():
+    """Targets the installed CUDA toolkit rejects are dropped, not passed to it.
+
+    A toolkit that has retired an architecture fails the whole compile on the
+    first `-gencode` naming it, so emitting one target no compiler can build
+    costs every other target too.
+    """
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({75, 80, 86, 90})
+    )
+
+    assert 70 not in _architectures(flags=flags, kind="sm")
+
+
+def test_the_virtual_target_follows_the_toolkit_floor():
+    """The translation target tracks the oldest architecture actually emitted.
+
+    Pinning it to an architecture the toolkit dropped would fail the build; the
+    fallback has to be the lowest one this compiler can still produce.
+    """
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({75, 80, 86, 90})
+    )
+
+    assert _architectures(flags=flags, kind="compute") == [75]
+
+
+def test_a_toolkit_that_keeps_the_oldest_card_still_gets_it():
+    """Where the toolkit supports the oldest card, its ready code is emitted."""
+    flags = hatch_build.cuda_arch_flags(
+        nvcc_flags=(), supported_architectures=frozenset({70, 75, 80, 86, 90})
+    )
+
+    assert 70 in _architectures(flags=flags, kind="sm")
+    assert _architectures(flags=flags, kind="compute") == [70]
+
+
+def test_the_supported_architectures_are_read_from_the_compiler():
+    """The supported set is what the compiler reports, not a hardcoded list."""
+    listing = "compute_75\ncompute_80\ncompute_86\n"
+
+    assert hatch_build.parse_gpu_architectures(listing=listing) == frozenset(
+        {75, 80, 86}
+    )
+
+
+def test_a_compiler_that_reports_nothing_leaves_the_targets_alone():
+    """An unreadable listing emits the full target set rather than none.
+
+    Dropping every target because a probe failed would silently produce a
+    library with no ready code at all, which fails at launch rather than here.
+    """
+    assert hatch_build.parse_gpu_architectures(listing="") is None
+
+
 def test_an_explicit_arch_suppresses_the_defaults():
     """A caller naming its own architecture is not given conflicting targets."""
     flags = hatch_build.cuda_arch_flags(nvcc_flags=("-arch=sm_80",))
