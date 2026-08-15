@@ -1,14 +1,17 @@
 """The envelope's arithmetic is selectable, and the choice is a compile-time one.
 
-`envelope_at_query` decides which link owns each query. Deciding it in
-double-double arithmetic keeps the ordering right where two candidates' endpoint
-values nearly cancel, and costs roughly an order of magnitude more work per read.
-Not every solve needs that: a well-scaled problem is decided identically by the
-ordinary affine read.
+`envelope_at_query` decides which link owns each query. The certified mode
+decides it in exact arithmetic over the stored operands, which keeps the ordering
+right where two candidates' endpoint values nearly cancel. Not every solve needs
+that: a well-scaled problem is decided identically by the ordinary affine read.
 
 `arithmetic` selects between them. It is a Python-level choice, not a traced one,
-so the ordinary mode never emits the error-free transforms at all — a mask over
+so the ordinary mode never emits the certified machinery at all — a mask over
 both would pay for the arithmetic it was meant to avoid.
+
+The two are not ordered by program size. The certified mode delegates its whole
+reduction to a few opaque calls, so it compiles to fewer equations than the
+ordinary dense read while doing the more careful arithmetic inside them.
 """
 
 from functools import partial
@@ -53,10 +56,24 @@ def test_the_ordinary_read_decides_a_well_scaled_envelope_as_the_certified_one_d
     np.testing.assert_allclose(ordinary, certified, rtol=1e-12, atol=1e-12)
 
 
-def test_the_ordinary_read_emits_none_of_the_error_free_transforms():
-    """The ordinary mode compiles to strictly fewer operations."""
-    counts = {
-        mode: len(jax.make_jaxpr(partial(_envelope, mode))().jaxpr.eqns)
-        for mode in ("certified", "ordinary")
-    }
-    assert counts["ordinary"] < counts["certified"]
+def test_the_ordinary_read_emits_none_of_the_certified_machinery():
+    """Selecting the ordinary mode leaves the exact kernel out of the program.
+
+    The choice is made in Python rather than traced, so the certified path is
+    absent from the ordinary program rather than masked within it — a mask over
+    both would pay for the arithmetic it was meant to avoid.
+
+    An operation count cannot express this. The certified mode delegates the
+    whole reduction to a handful of opaque calls and so compiles to *fewer*
+    equations than the ordinary dense read, which says nothing about whether
+    either one dragged in the other's machinery.
+    """
+    certified = str(jax.make_jaxpr(partial(_envelope, "certified"))().jaxpr)
+    ordinary = str(jax.make_jaxpr(partial(_envelope, "ordinary"))().jaxpr)
+
+    assert "ExactQueryWinner" in certified, (
+        "the certified mode must reach the exact kernel, or this test cannot "
+        "detect the ordinary mode reaching it either"
+    )
+    assert "ExactQueryWinner" not in ordinary
+    assert "ExactAffineRead" not in ordinary
