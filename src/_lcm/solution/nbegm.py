@@ -13,10 +13,12 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
+import ast
 import functools
 import inspect
 import itertools
 import math
+import textwrap
 import warnings
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import dataclass, replace
@@ -28,6 +30,7 @@ import jax.numpy as jnp
 from beartype import beartype
 from dags import concatenate_functions
 
+import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.dtypes import canonical_float_dtype
@@ -43,6 +46,7 @@ from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
+from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
@@ -83,6 +87,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
+    ScalarBool,
     ScalarFloat,
     ScalarInt,
     StateName,
@@ -668,6 +673,7 @@ class NBEGM(Solver):
             int(context.grids[name].to_jax().shape[0])
             for name in schedule_spec.ride_along_state_names
         )
+        annotation_sources = _probe_annotation_sources(context=context)
         if _aggregates_nonlinearly(context.certainty_equivalent):
             _fail_if_flow_not_single_power(
                 utility_dag=schedule_spec.utility_dag,
@@ -677,10 +683,17 @@ class NBEGM(Solver):
                 regime_name=context.regime_name,
                 int_arg_values=_int_probe_arg_values(context.grids),
                 annotated_int_arg_names=_annotated_int_arg_names(
-                    functions=context.functions
+                    functions=annotation_sources
                 ),
                 array_float_arg_names=_array_float_arg_names(
-                    functions=context.functions
+                    functions=annotation_sources
+                ),
+                array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
+                annotated_bool_arg_names=_annotated_bool_arg_names(
+                    functions=annotation_sources
+                ),
+                annotated_mapping_leaf_arg_names=_annotated_mapping_leaf_arg_names(
+                    functions=annotation_sources
                 ),
                 probe_failure=self.probe_failure,
             )
@@ -727,10 +740,17 @@ class NBEGM(Solver):
                     regime_name=context.regime_name,
                     int_arg_values=_int_probe_arg_values(context.grids),
                     annotated_int_arg_names=_annotated_int_arg_names(
-                        functions=context.functions
+                        functions=annotation_sources
                     ),
                     array_float_arg_names=_array_float_arg_names(
-                        functions=context.functions
+                        functions=annotation_sources
+                    ),
+                    array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
+                    annotated_bool_arg_names=_annotated_bool_arg_names(
+                        functions=annotation_sources
+                    ),
+                    annotated_mapping_leaf_arg_names=(
+                        _annotated_mapping_leaf_arg_names(functions=annotation_sources)
                     ),
                     probe_failure=self.probe_failure,
                 )
@@ -1976,7 +1996,10 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
     annotated_int_arg_names: frozenset[str] = frozenset(),
+    annotated_bool_arg_names: frozenset[str] = frozenset(),
+    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -2015,6 +2038,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
         fill: float,
         *,
         array_floats: bool = False,
+        array_rank: int = 1,
+        leaf_rank: int = 1,
         int_overrides: Mapping[str, int] = MappingProxyType({}),
     ) -> FloatND:
         kwargs = {
@@ -2028,7 +2053,12 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                     fill,
                     int_arg_names,
                     array_float_arg_names,
+                    array_arg_ranks,
+                    bool_arg_names=annotated_bool_arg_names,
+                    mapping_leaf_arg_names=annotated_mapping_leaf_arg_names,
                     array_floats=array_floats,
+                    array_rank=array_rank,
+                    leaf_rank=leaf_rank,
                 )
             )
             for name in arg_names
@@ -2061,14 +2091,21 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
         ) from probe_error
 
     def _max_abs_second() -> float | None:
-        def _values(*, array_floats: bool) -> list[float]:
+        def _values(
+            *, array_floats: bool, array_rank: int, leaf_rank: int
+        ) -> list[float]:
             return [
                 abs(
                     float(
                         jax.grad(
                             jax.grad(
                                 lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                    a, f, array_floats=array_floats, int_overrides=o
+                                    a,
+                                    f,
+                                    array_floats=array_floats,
+                                    array_rank=array_rank,
+                                    leaf_rank=leaf_rank,
+                                    int_overrides=o,
                                 )
                             )
                         )(jnp.asarray(sample))
@@ -2082,22 +2119,26 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             ]
 
         try:
-            try:
-                values = _values(array_floats=False)
-            except Exception:  # noqa: BLE001
-                values = _values(array_floats=True)
+            values = _evaluate_on_first_workable_fill(_values)
         except Exception as probe_error:  # noqa: BLE001
             _fail_unprobeable(probe_error)
             return None
         return max(values)
 
     def _liquid_slopes() -> tuple[float, ...] | None:
-        def _slopes(*, array_floats: bool) -> tuple[float, ...]:
+        def _slopes(
+            *, array_floats: bool, array_rank: int, leaf_rank: int
+        ) -> tuple[float, ...]:
             return tuple(
                 float(
                     jax.grad(
                         lambda a, f=fill, o=overrides: _budget_of_liquid(
-                            a, f, array_floats=array_floats, int_overrides=o
+                            a,
+                            f,
+                            array_floats=array_floats,
+                            array_rank=array_rank,
+                            leaf_rank=leaf_rank,
+                            int_overrides=o,
                         )
                     )(jnp.asarray(x))
                 )
@@ -2108,10 +2149,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             )
 
         try:
-            try:
-                return _slopes(array_floats=False)
-            except Exception:  # noqa: BLE001
-                return _slopes(array_floats=True)
+            return _evaluate_on_first_workable_fill(_slopes)
         except Exception as probe_error:  # noqa: BLE001
             _fail_unprobeable(probe_error)
             return None
@@ -2144,6 +2182,18 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
         raise RegimeInitializationError(msg)
 
 
+@dataclass(frozen=True)
+class _FlowProbeReadings:
+    """One fill rung's readings of the period flow in the consumption action."""
+
+    flows: tuple[float, ...]
+    """Flow level at each probed consumption, over the discrete-code sweep."""
+    marginals: tuple[float, ...]
+    """Flow derivative in consumption, aligned with `flows`."""
+    elasticities: tuple[float, ...]
+    """`c q'(c) / q(c)`, aligned with `flows`."""
+
+
 def _fail_if_flow_not_single_power(
     *,
     utility_dag: Callable[..., object],
@@ -2151,7 +2201,10 @@ def _fail_if_flow_not_single_power(
     regime_name: RegimeName,
     int_arg_values: Mapping[str, tuple[int, ...]],
     array_float_arg_names: frozenset[str] = frozenset(),
+    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
     annotated_int_arg_names: frozenset[str] = frozenset(),
+    annotated_bool_arg_names: frozenset[str] = frozenset(),
+    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
     """Probe the flow's consumption elasticity for the single-power contract.
@@ -2182,7 +2235,12 @@ def _fail_if_flow_not_single_power(
     fill = 1.7
 
     def flow_of_consumption(
-        consumption: ScalarFloat, int_overrides: Mapping[str, int]
+        consumption: ScalarFloat,
+        int_overrides: Mapping[str, int],
+        *,
+        array_floats: bool,
+        array_rank: int,
+        leaf_rank: int,
     ) -> ScalarFloat:
         kwargs = {
             name: (
@@ -2190,14 +2248,28 @@ def _fail_if_flow_not_single_power(
                 if name == consumption_action_name
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
-                else _probe_fill(name, fill, int_arg_names, array_float_arg_names)
+                else _probe_fill(
+                    name,
+                    fill,
+                    int_arg_names,
+                    array_float_arg_names,
+                    array_arg_ranks,
+                    bool_arg_names=annotated_bool_arg_names,
+                    mapping_leaf_arg_names=annotated_mapping_leaf_arg_names,
+                    array_floats=array_floats,
+                    array_rank=array_rank,
+                    leaf_rank=leaf_rank,
+                )
             )
             for name in arg_names
         }
         return jnp.asarray(utility_dag(**kwargs)).reshape(())
 
     sweep_names = tuple(name for name in arg_names if name in int_arg_names)
-    try:
+
+    def _readings(
+        *, array_floats: bool, array_rank: int, leaf_rank: int
+    ) -> _FlowProbeReadings:
         flows: list[float] = []
         marginals: list[float] = []
         elasticities: list[float] = []
@@ -2205,13 +2277,28 @@ def _fail_if_flow_not_single_power(
             arg_names=sweep_names, int_arg_values=int_arg_values
         ):
             for probe_c in probe_consumptions:
-                flow = float(flow_of_consumption(jnp.asarray(probe_c), overrides))
-                marginal = float(
-                    jax.grad(flow_of_consumption)(jnp.asarray(probe_c), overrides)
-                )
+                args = (jnp.asarray(probe_c), overrides)
+                rung = {
+                    "array_floats": array_floats,
+                    "array_rank": array_rank,
+                    "leaf_rank": leaf_rank,
+                }
+                flow = float(flow_of_consumption(*args, **rung))
+                marginal = float(jax.grad(flow_of_consumption)(*args, **rung))
                 flows.append(flow)
                 marginals.append(marginal)
                 elasticities.append(probe_c * marginal / flow)
+        return _FlowProbeReadings(
+            flows=tuple(flows),
+            marginals=tuple(marginals),
+            elasticities=tuple(elasticities),
+        )
+
+    try:
+        readings = _evaluate_on_first_workable_fill(_readings)
+        flows = list(readings.flows)
+        marginals = list(readings.marginals)
+        elasticities = list(readings.elasticities)
     except Exception as probe_error:
         msg = (
             f"NBEGM could not verify that regime {regime_name!r}'s period flow "
@@ -2269,35 +2356,313 @@ def _fail_if_flow_not_single_power(
         raise RegimeInitializationError(msg)
 
 
+class _ConstantKeyMapping(Mapping[str, FloatND]):
+    """Mapping answering every key with the same value.
+
+    Which keys a grouped param carries is a property of the params, which arrive
+    long after the kernels are built, so the probe cannot enumerate them and
+    answers whatever the model's own code asks for. It reports itself as empty,
+    since there is no key set to iterate.
+    """
+
+    def __init__(self, value: FloatND) -> None:
+        self._value = value
+
+    def __getitem__(self, key: str) -> FloatND:
+        return self._value
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+class _ProbeMappingLeaf(MappingLeaf):
+    """A `MappingLeaf` whose every entry is the same probe fill.
+
+    Satisfies a grouped param's declared type so the DAG evaluates, at the cost
+    of flattening the group: a schedule probed this way has one bracket with one
+    rate, so the probe sees the budget's structure between breakpoints and not
+    the schedule's own shape. That is the region the affinity and constancy
+    preconditions are about — a genuine nonlinearity in the liquid state (a
+    square, a reciprocal) still shows up — but a defect that needs two distinct
+    entries to appear does not.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: FloatND) -> None:
+        self.value = value
+        self.data = _ConstantKeyMapping(value)
+
+
+# Registered in its own right: JAX matches a pytree node by exact type, so
+# inheriting `MappingLeaf`'s registration gains nothing and the fill would be
+# rejected as not-an-array by the first compiled DAG a probe reaches. One child,
+# the fill itself, so a traced round trip returns a leaf that still answers every
+# key.
+jax.tree_util.register_pytree_node(
+    _ProbeMappingLeaf,
+    lambda leaf: ((leaf.value,), None),
+    lambda _aux, children: _ProbeMappingLeaf(children[0]),
+)
+
+
+# The names a stringified parameter annotation is resolved against: the public
+# type aliases plus the grouped-param leaf types — the vocabulary model functions
+# annotate their parameters in, and so the whole of what a composed function's
+# stringified annotations can name.
+_PROBE_ANNOTATION_VOCABULARY: MappingProxyType[str, object] = MappingProxyType(
+    {
+        **{
+            name: value
+            for name, value in vars(lcm_typing).items()
+            if not name.startswith("_")
+        },
+        "MappingLeaf": MappingLeaf,
+        "UserMappingLeaf": UserMappingLeaf,
+    }
+)
+
+
+# Fill level at and above which a boolean-annotated argument reads `True`. The
+# probes evaluate at constant fills of 1.0 and 3.0 (and ramps spanning both), so
+# a gate on a declared flag is probed on each of its branches.
+_PROBE_FILL_HIGH = 2.0
+
+
 def _probe_fill(
     name: str,
     fill: float,
     int_arg_names: frozenset[str],
     array_float_arg_names: frozenset[str] = frozenset(),
+    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
     *,
+    bool_arg_names: frozenset[str] = frozenset(),
+    mapping_leaf_arg_names: frozenset[str] = frozenset(),
     array_floats: bool = False,
-) -> ScalarFloat | ScalarInt | Float1D:
+    array_rank: int = 1,
+    leaf_rank: int = 1,
+) -> ScalarFloat | ScalarInt | ScalarBool | FloatND | MappingLeaf:
     """Build a probe fill matching the argument's dtype contract.
 
     Integer-coded arguments — discrete states/actions (their grids are
-    `DiscreteGrid`s) and the period index — receive an int32 scalar fill so
-    runtime type contracts accept the probe. Every other argument receives the
-    float fill, at the rank its annotation declares:
+    `DiscreteGrid`s), the period index, and anything its consumers annotate with
+    an integer dtype — receive an int32 scalar fill so runtime type contracts
+    accept the probe. A boolean-annotated argument receives a boolean fill, taken
+    from whether `fill` is at the probes' high level, so the sweep the callers
+    already run puts every declared gate on both of its branches. Every other
+    argument receives the float fill, shaped by what its annotations declare:
 
     - a 0-d scalar by default (a scalar parameter such as a rate);
-    - a unit-length 1-D array when `name` is in `array_float_arg_names` (an
+    - an array of unit-length axes when `name` is in `array_float_arg_names` (an
       array-valued schedule parameter: JAX clamps a scalar index into a
-      unit-length table, and equal-length interpolation rows stay consistent).
+      unit-length axis, and equal-length interpolation rows stay consistent).
 
-    `array_floats` forces the unit-1D fill for every float argument — the
-    coarse whole-DAG fallback kept for a DAG whose per-argument annotations do
-    not resolve.
+    An array annotation says the argument is an array, not how many axes it has —
+    the rank-polymorphic aliases cover a schedule read with one index and a table
+    read with two alike. The axis count is therefore taken from
+    `array_arg_ranks`, which reads it off how the argument's consumers subscript
+    it, and raised to `array_rank` for an argument that mapping does not reach.
+
+    A grouped param's *contents* take `leaf_rank` instead, and escalate on their
+    own: what a group holds is reached through a local binding rather than
+    through the parameter's own name, so no subscript names it and nothing infers
+    its depth. Tying it to `array_rank` would over-rank the plain array
+    parameters, some of which are strict about their own — an interpolation table
+    has to stay 1-D.
+
+    `array_floats` forces the array fill on every float argument — the coarse
+    whole-DAG fallback kept for a DAG whose per-argument annotations do not
+    resolve, at the cost of violating any genuinely 0-d parameter.
     """
+    if name in mapping_leaf_arg_names:
+        return _ProbeMappingLeaf(jnp.full((1,) * leaf_rank, fill))
+    axes = (1,) * max(array_rank, array_arg_ranks.get(name, 1))
+    if name in bool_arg_names:
+        return jnp.asarray(fill >= _PROBE_FILL_HIGH, dtype=jnp.bool_)
     if name in int_arg_names or name == "period":
         return jnp.asarray(round(fill), dtype=jnp.int32)
     if array_floats or name in array_float_arg_names:
-        return jnp.full((1,), fill)
+        return jnp.full(axes, fill)
     return jnp.asarray(fill)
+
+
+# `(array_floats, array_rank, leaf_rank)` triples the probes try, in order.
+_PROBE_FILL_RUNGS: tuple[tuple[bool, int, int], ...] = (
+    (False, 1, 1),
+    (False, 1, 2),
+    (False, 1, 3),
+    (False, 2, 2),
+    (False, 3, 3),
+    (True, 1, 1),
+)
+
+
+def _evaluate_on_first_workable_fill[T](evaluate: Callable[..., T]) -> T:
+    """Evaluate a probe on the first fill shape its DAG accepts.
+
+    An array-typed parameter's *axis count* is not declared anywhere — the
+    rank-polymorphic aliases cover a schedule read with one index and a table
+    read with two alike — so the probe reads it off the consumers' subscripts
+    and keeps a ladder for whatever that misses:
+
+    - the per-argument inferred ranks, floored at one unit axis, then at two,
+      then at three, each rung leaving scalar-annotated arguments 0-d;
+    - a final coarse rung that drops the per-argument classification and gives
+      every float argument an array fill, which evaluates a DAG whose
+      annotations do not resolve at the cost of violating any genuinely 0-d
+      parameter.
+
+    Raise the *first* rung's error when no rung evaluates: the coarse rung
+    violates every 0-d parameter by construction, so its error names an argument
+    the model declares correctly and hides the failure that actually blocks the
+    probe.
+    """
+    errors: list[Exception] = []
+    for array_floats, array_rank, leaf_rank in _PROBE_FILL_RUNGS:
+        try:
+            return evaluate(
+                array_floats=array_floats,
+                array_rank=array_rank,
+                leaf_rank=leaf_rank,
+            )
+        except Exception as rung_error:  # noqa: BLE001
+            errors.append(rung_error)
+    raise errors[0]
+
+
+def _probe_annotation_sources(
+    *,
+    context: SolverBuildContext,
+) -> MappingProxyType[str, Callable[..., object]]:
+    """The functions whose signatures classify this regime's probe fills."""
+    return _annotation_source_functions(
+        functions=context.functions,
+        transitions=context.transitions,
+        user_regimes=context.user_regimes,
+        compute_regime_transition_probs=context.compute_regime_transition_probs,
+    )
+
+
+def _indexed_arg_ranks(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> MappingProxyType[str, int]:
+    """Axis count per leaf parameter, read off how its consumers subscript it.
+
+    An array annotation states that a parameter is an array, not how many axes it
+    has: the rank-polymorphic aliases cover a schedule row read with one index
+    and an age-by-status table read with two alike. Nothing else at build time
+    knows either — the values arrive with the params, long after the kernels are
+    compiled — so the probe reads the depth from the one place it is written
+    down, the subscripts in the consumers' own source.
+
+    A parameter read at several depths takes the deepest, which the shallower
+    reads survive: indexing a 2-D fill once yields a row. A parameter no consumer
+    subscripts is absent, leaving it to the caller's default.
+
+    Keys are signature names, so a parameter processing has qualified is matched
+    to the body's own spelling of it by suffix. A function whose source is
+    unavailable contributes nothing rather than failing the build: the fill-rank
+    ladder is what covers the gap.
+    """
+    ranks: dict[str, int] = {}
+    for func_name, func in functions.items():
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+        except OSError, TypeError, SyntaxError:
+            continue
+        param_names = tuple(inspect.signature(func).parameters)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Subscript):
+                continue
+            if not isinstance(node.value, ast.Name):
+                continue
+            read = node.value.id
+            n_indices = len(node.slice.elts) if isinstance(node.slice, ast.Tuple) else 1
+            for param in param_names:
+                if param != read and not param.endswith(f"__{read}"):
+                    continue
+                for spelling in _probe_arg_spellings(
+                    func_name=func_name, arg_name=param
+                ):
+                    ranks[spelling] = max(ranks.get(spelling, 1), n_indices)
+    return MappingProxyType(ranks)
+
+
+def _resolved_annotation(annotation: object) -> object | None:
+    """The annotation object a probe can read a fill contract off, or `None`.
+
+    A function composed for the DAG carries its parameters' types as names rather
+    than objects, and those parameters are exactly the leaves a probe fills — so
+    a name is looked up in the vocabulary the annotations are written in.
+
+    `None` means the annotation decides nothing: the parameter is unannotated, or
+    names something outside that vocabulary. Callers skip it rather than read it
+    as evidence of a different type, which would withdraw the classification
+    every other consumer of that parameter agrees on.
+    """
+    if annotation is inspect.Parameter.empty:
+        return None
+    if isinstance(annotation, str):
+        annotation = _PROBE_ANNOTATION_VOCABULARY.get(annotation)
+        if annotation is None:
+            return None
+    return getattr(annotation, "__value__", annotation)
+
+
+def _probe_arg_spellings(*, func_name: str, arg_name: str) -> tuple[str, str]:
+    """Both names a classified parameter can reach the probe under.
+
+    Processing qualifies a function's parameters with the function's own name,
+    so a classification read off an unprocessed function has to answer to the
+    qualified spelling too — the probe fills the composed DAG's leaves, which
+    carry whichever of the two that function contributed.
+    """
+    return (arg_name, f"{func_name}__{arg_name}")
+
+
+def _annotation_source_functions(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+    transitions: Mapping[str, Mapping[str, object]],
+    user_regimes: Mapping[str, object] = MappingProxyType({}),
+    compute_regime_transition_probs: Callable[..., object] | None = None,
+) -> MappingProxyType[str, Callable[..., object]]:
+    """Every function whose signature classifies a probe fill.
+
+    A probe differentiates a composed DAG, and `concatenate_functions` carries
+    neither its leaves' annotations nor their bodies onto the composed signature
+    — so the fill contract has to be read off the functions the DAG was built
+    from. Three sources beyond the regime's own functions are needed, each
+    because a probe composes something the econ functions alone do not cover:
+
+    - the laws of motion and the regime transition, which the constancy probe
+      differentiates directly;
+    - the reachable target regimes' functions, which those laws are composed
+      against — a continuation reads the child regime's own DAG, so a schedule
+      or flag only the child declares still reaches this regime's probe.
+
+    A regime the transition cannot reach contributes nothing: its declarations
+    never appear in this continuation, and folding them in would let an unrelated
+    name collide with one that does. Entries are keyed so that no source
+    displaces another.
+    """
+    sources: dict[str, Callable[..., object]] = dict(functions)
+    for target, target_laws in transitions.items():
+        for law_name, candidate in target_laws.items():
+            func = getattr(candidate, "func", candidate)
+            if callable(func):
+                sources[f"{target}__{law_name}"] = func
+        target_functions = getattr(user_regimes.get(target), "functions", {})
+        for func_name, func in target_functions.items():
+            if callable(func) and func_name not in sources:
+                sources[func_name] = func
+    if compute_regime_transition_probs is not None:
+        sources["compute_regime_transition_probs"] = compute_regime_transition_probs
+    return MappingProxyType(sources)
 
 
 def _array_float_arg_names(
@@ -2317,13 +2682,14 @@ def _array_float_arg_names(
     """
     scalar_args: set[str] = set()
     array_args: set[str] = set()
-    for func in functions.values():
+    for func_name, func in functions.items():
         for arg_name, param in inspect.signature(func).parameters.items():
-            resolved = getattr(param.annotation, "__value__", param.annotation)
+            resolved = _resolved_annotation(param.annotation)
             dim_str = getattr(resolved, "dim_str", None)
             if dim_str is None:
                 continue
-            (scalar_args if dim_str.strip() == "" else array_args).add(arg_name)
+            spellings = _probe_arg_spellings(func_name=func_name, arg_name=arg_name)
+            (scalar_args if dim_str.strip() == "" else array_args).update(spellings)
     return frozenset(array_args - scalar_args)
 
 
@@ -2336,25 +2702,75 @@ def _annotated_int_arg_names(
     Backing a `DiscreteGrid` is one way for an argument to be integer-coded, not
     the only one: a DAG intermediate can compute an integer code, and a flat
     parameter can be an integer threshold such as an age. Neither has a grid, so
-    both are classified from the jaxtyping dtype their consumers annotate — the
-    same declaration the runtime type check enforces.
-
-    A name every annotation calls integer is filled as an integer; a name whose
-    annotations disagree keeps the float default, since an integer fill would
-    violate the float consumer and the disagreement is the model author's to
-    resolve rather than the probe's to guess.
+    both are classified from the jaxtyping dtype their consumers annotate.
     """
-    int_args: set[str] = set()
+    return _annotated_dtype_arg_names(functions=functions, dtype_prefix="int")
+
+
+def _annotated_bool_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> frozenset[str]:
+    """Leaf parameter names that must be filled as booleans, from annotations.
+
+    A predicate computed inside the DAG — whether a threshold is crossed, whether
+    a means test binds — reaches the probe as an ordinary leaf. JAX would accept a
+    numeric fill for it, but the declared annotation does not, so the flag is
+    classified and filled as a boolean.
+    """
+    return _annotated_dtype_arg_names(functions=functions, dtype_prefix="bool")
+
+
+def _annotated_mapping_leaf_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> frozenset[str]:
+    """Leaf parameter names declared as grouped param mappings, from annotations.
+
+    A schedule the model author groups under one name — a tax table's brackets,
+    rates, and intercepts — reaches the DAG as a single `MappingLeaf` argument
+    rather than as separate arrays, so no array fill satisfies it.
+    """
+    leaf_args: set[str] = set()
     other_args: set[str] = set()
-    for func in functions.values():
+    for func_name, func in functions.items():
         for arg_name, param in inspect.signature(func).parameters.items():
-            resolved = getattr(param.annotation, "__value__", param.annotation)
+            resolved = _resolved_annotation(param.annotation)
+            if resolved is None:
+                continue
+            declares = isinstance(resolved, type) and issubclass(
+                resolved, UserMappingLeaf
+            )
+            spellings = _probe_arg_spellings(func_name=func_name, arg_name=arg_name)
+            (leaf_args if declares else other_args).update(spellings)
+    return frozenset(leaf_args - other_args)
+
+
+def _annotated_dtype_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+    dtype_prefix: str,
+) -> frozenset[str]:
+    """Leaf parameter names every consumer annotates with the given dtype family.
+
+    The jaxtyping alias on each consumer's parameter is the same declaration the
+    runtime type check enforces, so it is what the fill has to satisfy. A name
+    whose annotations disagree is excluded and keeps the float default: any fill
+    would violate one of its consumers, and the disagreement is the model
+    author's to resolve rather than the probe's to guess.
+    """
+    matching: set[str] = set()
+    other: set[str] = set()
+    for func_name, func in functions.items():
+        for arg_name, param in inspect.signature(func).parameters.items():
+            resolved = _resolved_annotation(param.annotation)
             dtypes = getattr(resolved, "dtypes", None)
             if dtypes is None:
                 continue
-            is_int = all(dtype.startswith("int") for dtype in dtypes)
-            (int_args if is_int else other_args).add(arg_name)
-    return frozenset(int_args - other_args)
+            declares = all(dtype.startswith(dtype_prefix) for dtype in dtypes)
+            spellings = _probe_arg_spellings(func_name=func_name, arg_name=arg_name)
+            (matching if declares else other).update(spellings)
+    return frozenset(matching - other)
 
 
 def _int_code_sweeps(
@@ -2400,7 +2816,10 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
     annotated_int_arg_names: frozenset[str] = frozenset(),
+    annotated_bool_arg_names: frozenset[str] = frozenset(),
+    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -2436,7 +2855,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
         ramp_down = tuple(reversed(ramp_up))
         return (constant_1, constant_3, ramp_up, ramp_down)
 
-    def _max_abs_first_derivative(  # noqa: C901
+    def _max_abs_first_derivative(
         func: Callable[..., object],
     ) -> float | None:
         # The composed law returns the child's whole carried-state vector, so probe
@@ -2446,10 +2865,14 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             return None
         liquid_pos = arg_names.index(liquid_name)
 
-        def _positional(*args: ScalarFloat | ScalarInt | Float1D) -> object:
+        # Annotated `object` deliberately: these are the probe's own fills, and
+        # whether each satisfies its contract is what the model's functions are
+        # being called to decide. Naming a narrower union here only manufactures
+        # a violation for every fill kind the union has not caught up with.
+        def _positional(*args: object) -> object:
             return func(**dict(zip(arg_names, args, strict=True)))
 
-        def _worst(*, array_floats: bool) -> float:
+        def _worst(*, array_floats: bool, array_rank: int, leaf_rank: int) -> float:
             worst = 0.0
             for fills in _fill_assignments(len(arg_names)):
                 for overrides in _int_code_sweeps(
@@ -2462,7 +2885,14 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
                                 fill,
                                 int_arg_names,
                                 array_float_arg_names,
+                                array_arg_ranks,
+                                bool_arg_names=annotated_bool_arg_names,
+                                mapping_leaf_arg_names=(
+                                    annotated_mapping_leaf_arg_names
+                                ),
                                 array_floats=array_floats,
+                                array_rank=array_rank,
+                                leaf_rank=leaf_rank,
                             )
                             if name not in overrides
                             else jnp.asarray(overrides[name], dtype=jnp.int32)
@@ -2480,10 +2910,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             return worst
 
         try:
-            try:
-                worst = _worst(array_floats=False)
-            except Exception:  # noqa: BLE001
-                worst = _worst(array_floats=True)
+            worst = _evaluate_on_first_workable_fill(_worst)
         except Exception as probe_error:
             msg = (
                 f"NBEGM could not verify that a liquid-reading law in regime "
@@ -2702,8 +3129,21 @@ def _collect_nbegm_schedule_spec(
         ),
         regime_name=context.regime_name,
         int_arg_values=_int_probe_arg_values(context.grids),
-        annotated_int_arg_names=_annotated_int_arg_names(functions=context.functions),
-        array_float_arg_names=_array_float_arg_names(functions=context.functions),
+        annotated_int_arg_names=_annotated_int_arg_names(
+            functions=_probe_annotation_sources(context=context)
+        ),
+        array_float_arg_names=_array_float_arg_names(
+            functions=_probe_annotation_sources(context=context)
+        ),
+        array_arg_ranks=_indexed_arg_ranks(
+            functions=_probe_annotation_sources(context=context)
+        ),
+        annotated_bool_arg_names=_annotated_bool_arg_names(
+            functions=_probe_annotation_sources(context=context)
+        ),
+        annotated_mapping_leaf_arg_names=_annotated_mapping_leaf_arg_names(
+            functions=_probe_annotation_sources(context=context)
+        ),
         probe_failure=probe_failure,
     )
     return _NBEGMScheduleSpec(
