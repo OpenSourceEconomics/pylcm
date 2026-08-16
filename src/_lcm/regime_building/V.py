@@ -1,4 +1,6 @@
 import dataclasses
+import functools
+import operator
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -15,7 +17,7 @@ from _lcm.typing import StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
 from lcm.regime import Regime as UserRegime
-from lcm.typing import FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -118,13 +120,12 @@ def get_V_interpolator(
             leading axes of `V_arr`; only fixed (never-transitioning) states qualify.
         interpolate_process_axes: When `True`, build a PROCESS-AWARE interpolator
             (`_get_V_interpolator_process_aware`) instead of the ordinary
-            integer-lookup / trailing-continuous-axes interpolator. Every state
-            axis (including a non-folded process axis, which is otherwise
-            classified `discrete_states` for the ordinary Markov-chain solve
-            path) is read through a single `map_coordinates` call, in native
-            `state_names` order, so it sidesteps
-            `_fail_if_interpolation_axes_are_not_last`. Use this only for a
-            reader that may receive an off-grid VALUE for a process axis (a
+            integer-lookup / trailing-continuous-axes interpolator. A non-folded
+            process axis (otherwise classified `discrete_states` for the ordinary
+            Markov-chain solve path) is then interpolated rather than indexed,
+            and the axes are handled in native `state_names` order, so it
+            sidesteps `_fail_if_interpolation_axes_are_not_last`. Use this only
+            for a reader that may receive an off-grid VALUE for a process axis (a
             `SamePeriodRef` projection / gated-edge fallback); the ordinary
             continuation-value path always feeds a process axis its exact
             on-grid Markov-chain index and must keep using the fast integer
@@ -229,22 +230,20 @@ def _get_V_interpolator_process_aware(
     V_arr_name: str,
     co_map_state_names: tuple[StateName, ...],
 ) -> Callable[..., FloatND]:
-    """Interpolate every axis of `V_arr` through one `map_coordinates` call.
+    """Read `V_arr` through one `map_coordinates` call, pinning categorical axes.
 
     Companion to `get_V_interpolator` (`interpolate_process_axes=True`).
     Unlike the ordinary path — integer fancy-indexing for `discrete_states`,
     then `map_coordinates` over the trailing `continuous_states` — this
     builds ONE coordinate per axis, in `v_interpolation_info.state_names`
-    (i.e. `V_arr`'s actual axis) order, and interpolates the whole array at
-    once:
+    (i.e. `V_arr`'s actual axis) order, and reads the whole array at once:
 
     - A genuine `DiscreteGrid` axis (in `discrete_states`, not a process):
-      the incoming value IS the integer node index already; passed through
-      unchanged as an (integer-valued) coordinate. `map_coordinates` resolves
-      an integer-valued coordinate to weight 1.0 on that node (an exact
-      lookup, just routed through interpolation machinery), so this is
-      numerically identical to the fancy-indexing lookup for any caller that
-      always feeds on-grid indices here.
+      the incoming value IS the integer node index already, so it is passed
+      through unchanged and its axis is PINNED — read at that one node
+      instead of between two. The dropped corner carries weight zero, so the
+      answer is the one an unpinned read gives; what changes is that the
+      interpolation box no longer doubles per categorical axis.
     - A non-folded process axis (`discrete_states`, `_ContinuousStochasticProcess`):
       the incoming value is treated as a genuine VALUE in the process's own
       units (not a node index) and mapped to a fractional coordinate via
@@ -275,6 +274,8 @@ def _get_V_interpolator_process_aware(
     """
     funcs: dict[str, Callable[..., FloatND]] = {}
     axis_coord_names: list[str] = []
+    categorical_axes: list[_CategoricalAxis] = []
+
     for var in v_interpolation_info.state_names:
         if var in co_map_state_names:
             continue
@@ -293,18 +294,128 @@ def _get_V_interpolator_process_aware(
                 )
             else:
                 funcs[coord_name] = _get_identity_coordinate(in_name=state_prefix + var)
+                categorical_axes.append(
+                    _CategoricalAxis(
+                        coord_name=coord_name,
+                        value_name=state_prefix + var,
+                        n_categories=len(grid_or_process.codes),
+                    )
+                )
         axis_coord_names.append(coord_name)
 
-    funcs["__fval__"] = _get_interpolator(
+    read_name = "__read__" if categorical_axes else "__fval__"
+    funcs[read_name] = _get_interpolator(
         name_of_values_on_grid=V_arr_name,
         axis_names=axis_coord_names,
+        pinned_axis_names=frozenset(axis.coord_name for axis in categorical_axes),
     )
+    if categorical_axes:
+        funcs["__fval__"] = _get_named_category_guard(
+            read_name=read_name,
+            categorical_axes=tuple(categorical_axes),
+        )
 
     return concatenate_functions(
         functions=funcs,
         targets="__fval__",
         set_annotations=True,
     )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CategoricalAxis:
+    """One genuine `DiscreteGrid` axis of a process-aware V read."""
+
+    coord_name: str
+    """Name of the DAG node holding the axis value once checked for integrality."""
+
+    value_name: str
+    """Name of the argument through which the axis value arrives."""
+
+    n_categories: int
+    """Number of categories of the grid, i.e. the length of the axis."""
+
+
+def _get_named_category_guard(
+    *,
+    read_name: str,
+    categorical_axes: tuple[_CategoricalAxis, ...],
+) -> Callable[..., FloatND]:
+    """Create a function that discards a read whose axes named no category.
+
+    A category code lies in `[0, n_categories - 1]`, and a value outside that
+    range names no more of a state than one strictly between two codes does.
+    Neither can be read, so both are refused the same way:
+
+    - Evaluated on a concrete value (outside a JAX trace), it raises and names
+      the axis.
+    - Under a trace the value is not available to a Python conditional, so the
+      read is replaced by NaN, leaving it reportable as NaN rather than
+      readable as the nearest category's value.
+
+    Args:
+        read_name: Name of the DAG node holding the value read off `V_arr`.
+        categorical_axes: Tuple of the genuine `DiscreteGrid` axes the read
+            selected.
+
+    Returns:
+        A callable with keyword-only arguments `[read_name, *coord names]`
+        returning the read, or NaN where an axis named no category.
+
+    """
+    arg_names = [read_name, *(axis.coord_name for axis in categorical_axes)]
+
+    @with_signature(
+        args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
+    )
+    def guard_named_categories(*args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
+        on_axes = []
+        for axis in categorical_axes:
+            coordinate = kwargs[axis.coord_name]
+            on_axis = (coordinate >= 0) & (coordinate <= axis.n_categories - 1)
+            _fail_if_code_is_off_the_axis(
+                axis=axis, coordinate=coordinate, on_axis=on_axis
+            )
+            on_axes.append(on_axis)
+        # The caller builds this guard only for a read with at least one
+        # categorical axis, so there is always a mask to reduce.
+        names_a_category = functools.reduce(operator.and_, on_axes)
+        return jnp.where(names_a_category, kwargs[read_name], jnp.nan)
+
+    return guard_named_categories
+
+
+def _fail_if_code_is_off_the_axis(
+    *,
+    axis: _CategoricalAxis,
+    coordinate: FloatND,
+    on_axis: BoolND,
+) -> None:
+    """Fail if a concrete categorical value lies outside its grid's codes.
+
+    Args:
+        axis: The categorical axis the value was read on.
+        coordinate: The value read on that axis.
+        on_axis: Whether the value is one of the axis's codes.
+
+    Raises:
+        ValueError: If the value is known to lie outside the axis. Under a JAX
+            trace it is not, and the caller poisons the read instead.
+
+    """
+    try:
+        every_code_on_axis = bool(jnp.all(on_axis))
+    except jax.errors.ConcretizationTypeError:
+        return
+    if not every_code_on_axis:
+        msg = (
+            f"Categorical state '{axis.value_name}' was read at a code outside "
+            f"its `DiscreteGrid`, which names no category: {coordinate}. A "
+            f"categorical value must be one of the {axis.n_categories} integer "
+            "codes of its grid."
+        )
+        raise ValueError(msg)
 
 
 def _get_process_coordinate_finder(
@@ -354,12 +465,12 @@ def _get_identity_coordinate(*, in_name: str) -> Callable[..., FloatND]:
 
     Used by `_get_V_interpolator_process_aware` for a genuine (non-process)
     `discrete_states` axis: the incoming value is the exact integer node
-    index, so it is the `map_coordinates` coordinate directly — no
-    translation needed.
+    index, so it is the coordinate on that axis directly — no translation
+    needed.
 
     Each node of such an axis is a category, and nothing lies between two of
     them, so a coordinate strictly between two nodes names no state at all.
-    `map_coordinates` would happily return the weighted blend of the two
+    A linear interpolation would happily return the weighted blend of the two
     categories' values, which is why a non-integral coordinate is refused
     here rather than interpolated:
 
@@ -559,6 +670,7 @@ def _get_interpolator(
     *,
     name_of_values_on_grid: str,
     axis_names: list[str],
+    pinned_axis_names: frozenset[str] = frozenset(),
 ) -> Callable[..., FloatND]:
     """Create a function interpolator via named axes.
 
@@ -567,12 +679,18 @@ def _get_interpolator(
             values, that have been evaluated on a grid, will be passed into the
             resulting function.
         axis_names: Names of the axes in the data array.
+        pinned_axis_names: Names among `axis_names` whose coordinate names a
+            node exactly, so the axis is read at that one node rather than
+            between two.
 
     Returns:
         A callable that interpolates a function via named axes.
 
     """
     arg_names = [name_of_values_on_grid, *axis_names]
+    pinned_axes = tuple(
+        axis for axis, var in enumerate(axis_names) if var in pinned_axis_names
+    )
 
     @with_signature(
         args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
@@ -583,6 +701,7 @@ def _get_interpolator(
         return map_coordinates(
             input=kwargs[name_of_values_on_grid],
             coordinates=coordinates,
+            pinned_axes=pinned_axes,
         )
 
     return interpolate
