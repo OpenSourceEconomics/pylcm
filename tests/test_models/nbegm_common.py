@@ -133,6 +133,7 @@ def make_alive_dead_model(
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
     liquid_grid: Grid | None = None,
+    fixed_params: Mapping[str, Any] | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -160,6 +161,8 @@ def make_alive_dead_model(
         model_states: States broadcast at model level.
         liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
             `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
+        fixed_params: Parameters fixed at model construction rather than supplied
+            to `solve`.
 
     Returns:
         The assembled `Model`.
@@ -214,4 +217,5 @@ def make_alive_dead_model(
         ages=ages,
         regime_id_class=RegimeId,
         states=dict(model_states) if model_states else {},
+        fixed_params=dict(fixed_params) if fixed_params else {},
     )
