@@ -90,6 +90,7 @@ from _lcm.regime_building.gated_edges import (
     build_fallback_state_projector,
     get_edge_fold,
     get_edge_simulate_gate_evaluator,
+    source_reads_folded_wbar,
 )
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
@@ -1231,23 +1232,24 @@ def _fail_if_gated_edge_references_inactive(
     period whose ``Wbar`` is consumed, its V does not exist and silently rolling
     the previous ``Wbar`` would feed the source a STALE later-period value.
 
-    The consumed periods are exactly ``{t : t in active(target) and
-    (t-1) in active(source)}`` — NOT every period the target is active. A period
-    ``t`` where the target is active but the source is not active at ``t-1``
-    (e.g. a self-loop edge at the target's earliest active period) produces a
-    ``Wbar`` no source ever reads, so a reference may legitimately be inactive
-    there; requiring co-activity across ALL target-active periods would wrongly
-    reject such a model (see
-    ``test_repeating_self_loop_gated_edge_simulates_past_activity_boundary``).
-    Require every referenced regime to be active on every consumed period so the
-    roll is well defined wherever its result is used.
+    Which target-active periods are consumed is `source_reads_folded_wbar`'s
+    question, and this validator asks it rather than restating it — a period
+    whose ``Wbar`` no source reads may legitimately reference an unsolved
+    regime, and rejecting those would rule out an ordinary self-loop edge at the
+    target's earliest active period. Require every referenced regime to be
+    active on every consumed period, so the roll is well defined wherever its
+    result is used.
     """
     reference_regime_names = {leg.fallback.regime for leg in edge.legs.values()} | {
         ref.regime for ref in edge.gate_refs.values()
     }
-    source_periods = set(regimes_to_active_periods[source_name])
+    source_active_periods = set(regimes_to_active_periods[source_name])
     consumed_periods = {
-        t for t in regimes_to_active_periods[target_name] if (t - 1) in source_periods
+        period
+        for period in regimes_to_active_periods[target_name]
+        if source_reads_folded_wbar(
+            source_active_periods=source_active_periods, fold_period=period
+        )
     }
     for ref_regime_name in sorted(reference_regime_names):
         missing_periods = sorted(
