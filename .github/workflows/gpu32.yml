@@ -61,6 +61,15 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
           frozen: false
+      - name: Build the exact-affine kernel
+        # The kernel is a gitignored build artifact living in the source tree,
+        # so a checkout never brings it and an environment cache cannot carry
+        # it. `pixi install` builds it only when it decides the editable
+        # package needs reinstalling, which makes its presence a function of
+        # whether the project cache hit. Tests that ask for an exact verdict
+        # without a kernel are reported as skipped, so a cache hit would turn
+        # the certified suite green by removing it. Build it explicitly.
+        run: pixi run -e tests-cuda12 build-exact-affine
       - name: Restore JAX compilation cache
         # `cpu.yml` caches this and deferred doing so here, on the reasoning that a
         # GPU runner's home directory might already persist between runs. The runner
