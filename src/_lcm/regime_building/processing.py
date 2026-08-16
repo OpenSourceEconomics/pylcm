@@ -696,16 +696,15 @@ def _attach_gated_edge_folds(
     `GatedEdge` to its engine form and build the ``(Wbar, gate)`` producer on the
     target regime's grid (reading the target's processed functions), plus one
     per-leg FALLBACK state projector and a gate interpolator for simulate
-    routing (see `build_fallback_state_projector`). The resolved edges,
-    folds, and projectors are stored back on the source's canonical regime.
+    routing (see `build_fallback_state_projector`). Each compiled callable is
+    stored on the edge (or, for a projector, on the leg) it belongs to, so the
+    source's canonical regime carries one mapping of gated edges rather than
+    several that a consumer would have to re-pair.
     """
     for source_name, user_regime in user_regimes.items():
         if not user_regime.gated_edges:
             continue
         resolved: dict[RegimeName, ResolvedGatedEdge] = {}
-        folds: dict[RegimeName, Callable] = {}
-        leg_projectors: dict[RegimeName, tuple[Callable, ...]] = {}
-        simulate_gate_evaluators: dict[RegimeName, Callable] = {}
         for target_name, edge in user_regime.gated_edges.items():
             resolved_edge = _resolve_gated_edge(
                 source_name=source_name,
@@ -713,7 +712,6 @@ def _attach_gated_edge_folds(
                 edge=edge,
                 user_regimes=user_regimes,
             )
-            resolved[target_name] = resolved_edge
             target_solution = canonical_regimes[target_name].solution
             target_deterministic_transitions = _merge_deterministic_transitions(
                 transitions=target_solution.transitions,
@@ -727,7 +725,7 @@ def _attach_gated_edge_folds(
                 reference_v_info=regime_to_v_interpolation_info,
                 target_stakeholders=user_regimes[target_name].stakeholders,
             )
-            folds[target_name] = jax.jit(fold) if enable_jit else fold
+            compiled_fold = jax.jit(fold) if enable_jit else fold
             # The simulate-side
             # router needs its own gate re-evaluated at a REALIZED (candidate
             # target-state) point, rather than by interpolating the fold's
@@ -754,7 +752,7 @@ def _attach_gated_edge_folds(
             # interpolator (a plain `get_V_interpolator` product, likewise
             # unjitted), consumed only inside `route_gated_edges`'s own
             # `jax.vmap` over subjects.
-            simulate_gate_evaluators[target_name] = get_edge_simulate_gate_evaluator(
+            simulate_gate_evaluator = get_edge_simulate_gate_evaluator(
                 edge=resolved_edge,
                 target_v_info=regime_to_v_interpolation_info[target_name],
                 target_functions=target_solution.functions,
@@ -763,27 +761,35 @@ def _attach_gated_edge_folds(
                 target_stakeholders=user_regimes[target_name].stakeholders,
                 target_has_process_axis=target_has_process_axis,
             )
-            leg_projectors[target_name] = tuple(
-                build_fallback_state_projector(
-                    ref=leg.fallback,
-                    fallback_v_info=regime_to_v_interpolation_info[leg.fallback.regime],
-                    target_regime_name=target_name,
-                    target_state_names=regime_to_v_interpolation_info[
-                        target_name
-                    ].state_names,
-                    target_functions=target_solution.functions,
-                    target_deterministic_transitions=target_deterministic_transitions,
+            legs_with_projectors = tuple(
+                dataclass_replace(
+                    leg,
+                    fallback_state_projector=build_fallback_state_projector(
+                        ref=leg.fallback,
+                        fallback_v_info=regime_to_v_interpolation_info[
+                            leg.fallback.regime
+                        ],
+                        target_regime_name=target_name,
+                        target_state_names=regime_to_v_interpolation_info[
+                            target_name
+                        ].state_names,
+                        target_functions=target_solution.functions,
+                        target_deterministic_transitions=(
+                            target_deterministic_transitions
+                        ),
+                    ),
                 )
                 for leg in resolved_edge.legs
+            )
+            resolved[target_name] = dataclass_replace(
+                resolved_edge,
+                legs=legs_with_projectors,
+                fold=compiled_fold,
+                simulate_gate_evaluator=simulate_gate_evaluator,
             )
         canonical_regimes[source_name] = dataclass_replace(
             canonical_regimes[source_name],
             gated_edges=MappingProxyType(resolved),
-            gated_edge_folds=MappingProxyType(folds),
-            gated_edge_leg_projectors=MappingProxyType(leg_projectors),
-            gated_edge_simulate_gate_evaluators=MappingProxyType(
-                simulate_gate_evaluators
-            ),
         )
     return canonical_regimes
 

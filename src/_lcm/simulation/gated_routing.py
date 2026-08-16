@@ -41,7 +41,7 @@ independently tracked rows that unlink — is NOT implemented here; it is a
 follow-up engine feature (row-split PLAN, "linked mode"). What IS
 implemented, faithfully and tested (row-split PLAN, "synthetic mode"): the
 router recomputes the gate at the realized state, computes EVERY leg's own
-fallback state coordinates via `Regime.gated_edge_leg_projectors` and writes
+fallback state coordinates via each leg's `fallback_state_projector` and writes
 each into its OWN fallback regime's per-subject state slot (so a dissolutiond
 household's row-level record of "what regime and state would each partner
 have started at" is complete and correct for every stakeholder), and then
@@ -216,7 +216,7 @@ def substitute_gated_edge_continuations(
             period_dissolution_flags=next_period_D,
         )
         wbar = _evaluate_edge_fold(
-            fold=regime.gated_edge_folds[target_name],
+            fold=edge.fold,
             target_states=cast(
                 "Mapping[str, ContinuousState | DiscreteState]",
                 _states_for_period(
@@ -422,7 +422,7 @@ def route_gated_edges(
     candidate target states `calculate_next_states` already computed for the
     target (the regime's ordinary `transition` declaration always
     structurally reaches a gated edge's target — see module docstring) via
-    `regime.gated_edge_simulate_gate_evaluators[target_name]` — which
+    the edge's own `simulate_gate_evaluator` — which
     interpolates the gate predicate's VALUE operands (the target's own value
     components, every declared `gate_refs` entry) at that realized point from
     `same_period_mappings[target_name]` (the target V / `D` / reference-V
@@ -514,9 +514,7 @@ def route_gated_edges(
         # namespace's params under distinct, qualified leaves, and the reference
         # regimes' own grid params never reach this signature at all — they ride
         # in `SAME_PERIOD_PARAMS_ARG`.
-        simulate_gate_evaluator = regime.gated_edge_simulate_gate_evaluators[
-            target_name
-        ]
+        simulate_gate_evaluator = edge.simulate_gate_evaluator
         gate_bool = jnp.asarray(
             _call_vmapped_with_accepted_kwargs(
                 simulate_gate_evaluator,
@@ -568,8 +566,8 @@ def route_gated_edges(
         # overwrite that never reaches the state slots.
         dissolving_mask = edge_mask & jnp.logical_not(gate_bool)
 
-        projectors = regime.gated_edge_leg_projectors[target_name]
-        for leg, projector in zip(legs, projectors, strict=True):
+        for leg in legs:
+            projector = leg.fallback_state_projector
             # The projector's free parameters are bound from the regime
             # that owns them — the SOURCE for a source-declared projection, as
             # recorded in `arg_provenance` — never from the target by merging

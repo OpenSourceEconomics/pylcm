@@ -1,55 +1,23 @@
-"""Regression: the gated-edge GATE reader with a NON-FOLDED process-state TARGET.
+"""Gated-edge routing reads a NON-FOLDED process-state axis by value.
 
-Companion to `test_same_period_ref_process_state_interpolation.py`. That fix
-(`_lcm.regime_building.V.get_V_interpolator`'s `interpolate_process_axes` mode,
-auto-selected by `_build_same_period_ref_reader` in `Q_and_F.py`) covers every
-reader built off `_build_same_period_ref_reader`: the solve-time fold's own
-identity-projection reads of the target's `V_target_<s>` / `D_target` and the
-gate's `gate_refs`, and the simulate-side FALLBACK-leg projector.
+A gated edge's simulate-side gate is recomputed at the realized candidate
+target state from interpolated VALUE operands — the target's own value
+components and every `gate_refs` entry — by the edge's
+`simulate_gate_evaluator` (`get_edge_simulate_gate_evaluator`). When the
+target carries a non-folded `_ContinuousStochasticProcess` axis, that
+candidate is a genuine float on the process axis rather than an integer node
+index, so each of those interpolators must read the axis by value
+(`get_V_interpolator`'s `interpolate_process_axes` mode, auto-selected from
+the target's own `VInterpolationInfo.discrete_states`). An axis read by index
+instead raises `ValueError: Indexer must have integer or boolean type` at the
+first routed period.
 
-One reader was NOT covered: the gated-edge's own GATE array reader —
-`gate_interpolators[target_name]` built in
-`_lcm.regime_building.processing._attach_gated_edge_folds` (around line 451,
-stored as `gated_edge_gate_interpolators` on the canonical regime) via a plain
-`get_V_interpolator(..., V_arr_name=GATE_ARR_NAME)` call, unconditionally
-`interpolate_process_axes=False`. `_lcm.simulation.gated_routing.route_gated_edges`
-calls this interpolator at the REALIZED candidate target-state draw
-(`calculate_next_states`' output for the target regime) to decide ACTUAL
-routing. When the target regime carries a non-folded process axis (e.g. EKL's
-wife's transitory wage shock persisting into `married`), that candidate draw
-is a genuine VALUE for the process axis (one of its own discretized nodes, but
-a raw float, never an integer node INDEX) — hitting the same
-`ValueError: Indexer must have integer or boolean type` `V.py` raises for any
-axis fed a value instead of an index, this time from `processing.py`'s
-GATE_ARR_NAME reader rather than `Q_and_F.py`'s same-period-ref reader.
-
-Fix: `_attach_gated_edge_folds` now auto-selects `interpolate_process_axes=True`
-for the gate interpolator whenever the TARGET regime's own
-`VInterpolationInfo.discrete_states` carries a `_ContinuousStochasticProcess`
-axis — the identical auto-select `_build_same_period_ref_reader` already uses,
-applied to this second, previously-missed reader.
-
-UPDATE. `route_gated_edges` no longer interpolates a baked
-boolean `gate` array at all — `gated_edge_gate_interpolators` /
-`GATE_ARR_NAME` are gone; `route_gated_edges` now RECOMPUTES the gate from
-interpolated VALUE operands via `get_edge_simulate_gate_evaluator`
-(`_lcm.regime_building.gated_edges`), stored as
-`gated_edge_simulate_gate_evaluators`. The `interpolate_process_axes`
-auto-select this test exercises now lives on the TARGET-V-component and `D`
-interpolators inside that evaluator instead (same auto-select condition,
-same target-grid process axis). This test's own assertions are UNCHANGED by
-that fix and continue to pass: `_consent_gate`'s two operands are engineered
-to be LINEAR in `shock` on both sides of the comparison (`_u_married_f`/`_m`
-and the terminal single references), so linearly interpolating the VALUES
-and applying the strict inequality is, for this specific fixture, exactly
-equivalent to linearly interpolating the boolean predicate's own {0,1} grid
-and thresholding at 0.5 (`_hand_computed_gate`'s derivation below still
-holds — see the recomputed derivation in the module docstring's tail, kept
-for the record). This is a special-case coincidence of a fixture engineered
-to isolate the process-axis interpolation machinery in isolation, not a
-general property — see `test_gated_edge_simulate_operand_recompute.py` for a
-fixture where interpolate-then-threshold and recompute-then-predicate
-genuinely DISAGREE.
+The fixture's gate is engineered to be LINEAR in `shock` on both sides of its
+comparison, so for this model alone recomputing the predicate from
+interpolated values and interpolating the predicate's own {0,1} grid agree.
+That is a property of the fixture, chosen to isolate the process-axis
+machinery — see `test_gated_edge_simulate_operand_recompute.py` for a fixture
+where the two genuinely disagree.
 
 This test builds a singleton source (`single_f`) with a mutual-consent gated
 edge into a collective target (`married_terminal`, stakeholders `f`/`m`) that

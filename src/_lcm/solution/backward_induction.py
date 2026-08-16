@@ -633,7 +633,7 @@ def _roll_gated_edges(
                 ),
             ):
                 continue
-            fold = source.gated_edge_folds[target_name]
+            fold = edge.fold
             same_period_mapping = build_same_period_mapping_for_fold(
                 edge=edge,
                 period_solution=period_solution,
@@ -697,9 +697,8 @@ def _reject_edge_fold_state_param_collisions(
         if not source.gated_edges:
             continue
         source_param_names = set(flat_params[source_name])
-        for target_name in source.gated_edges:
-            fold = source.gated_edge_folds[target_name]
-            sig_params = set(inspect.signature(fold).parameters)
+        for target_name, edge in source.gated_edges.items():
+            sig_params = set(inspect.signature(edge.fold).parameters)
             target_state_names = set(base_state_action_spaces[target_name].states)
             collisions = sorted(sig_params & target_state_names & source_param_names)
             if collisions:

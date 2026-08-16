@@ -747,7 +747,7 @@ def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
     edge = married.gated_edges["married_ir"]
     leg_names = [leg.source_stakeholder for leg in edge.legs]
     assert leg_names == ["f", "m"]
-    m_projector = married.gated_edge_leg_projectors["married_ir"][1]
+    m_projector = married.gated_edges["married_ir"].legs[1].fallback_state_projector
     projected = m_projector(wage=jnp.array([1.0, 2.0, 3.0]))
     np.testing.assert_array_equal(np.asarray(projected["wage"]), [1.0, 2.0, 3.0])
 

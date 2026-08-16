@@ -459,7 +459,7 @@ def _measure_gate_value_read(*, x: float) -> float:
         period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
-    evaluator = src.gated_edge_simulate_gate_evaluators["target"]
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator
 
     # The gate's own param is SOURCE-owned, and the evaluator exposes it under a
     # namespace-qualified leaf — ask the published provenance for the name

@@ -818,52 +818,11 @@ class Regime:
     `gated_edges`: each entry folds a gated continuation object ``Wbar`` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
-    """
 
-    gated_edge_folds: MappingProxyType[RegimeName, Callable] = MappingProxyType({})
-    """Compiled ``Wbar`` producers per gated-edge target regime, or empty.
-
-    Built once at model processing (a second pass, once every regime's grid and
-    functions are known); the backward-induction loop evaluates each at the end
-    of the period the target was solved in, storing ``Wbar`` in the rolled edge
-    continuation mapping this regime's kernel reads. Forward simulation
-    evaluates the same fold once per period from the solved solution and
-    substitutes ``Wbar`` into the source's own continuation. Simulated regime
-    ROUTING reads nothing off this fold — see
-    `gated_edge_simulate_gate_evaluators` instead.
-    """
-
-    gated_edge_leg_projectors: MappingProxyType[RegimeName, tuple[Callable, ...]] = (
-        MappingProxyType({})
-    )
-    """Per-leg FALLBACK state projectors per gated-edge target regime.
-
-    One callable per `ResolvedGatedEdge.legs` entry (same order), mapping a
-    target-grid-coordinate point to the leg's fallback regime's own state
-    coordinates (`build_fallback_state_projector`). Used only by forward
-    simulation's value router to compute the states a routed-away stakeholder
-    carries into its fallback regime; the solve-side fold never needs the
-    fallback's raw coordinates, only its (interpolated) value.
-    """
-
-    gated_edge_simulate_gate_evaluators: MappingProxyType[RegimeName, Callable] = (
-        MappingProxyType({})
-    )
-    """Per gated-edge target regime, the SIMULATE-side gate evaluator.
-
-    Built by `get_edge_simulate_gate_evaluator`
-    (`_lcm.regime_building.gated_edges`): recomputes the gate PREDICATE at a
-    realized (off-grid or on-grid) candidate target-state point by
-    interpolating its VALUE operands (the target's own value components,
-    every declared `gate_refs` entry) and re-applying the SAME predicate the
-    solve-side fold uses — rather than interpolating the fold's baked
-    boolean `gate` array and thresholding the result, which does not
-    commute with a nonlinear predicate and can flip routing decisions near a
-    grid-cell boundary the fold never evaluated. Forward simulation
-    (`_lcm.simulation.gated_routing.route_gated_edges`) calls this directly
-    to decide routing; a `D_target`-reading gate still linearly interpolates
-    the dissolution flag and thresholds it (a documented residual — see
-    `get_edge_simulate_gate_evaluator`'s docstring).
+    Each entry carries its own compiled callables — the ``Wbar`` fold, the
+    simulate-side gate evaluator, and one fallback state projector per leg —
+    so a consumer reads them off the edge it is already holding rather than
+    re-pairing parallel mappings by target name or by leg position.
     """
 
 

@@ -32,7 +32,7 @@ product-mapped over the target regime's state grid.
 from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast
+from typing import NoReturn, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions, rename_arguments, with_signature
@@ -310,6 +310,24 @@ class _ProvenanceBuilder:
         )
 
 
+def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
+    """Stand in for a gated-edge callable model processing has not built yet.
+
+    A gated edge is resolved in two stages: the resolution the build-time
+    fences read is available before any regime's grid is known, and the fold,
+    the simulate gate evaluator, and each leg's fallback projector can only be
+    compiled once they are. Only an edge reached through `Regime.gated_edges`
+    carries the compiled callables, so calling one on any other edge is a
+    staging mistake rather than a bad model, and says so.
+    """
+    msg = (
+        "This gated-edge callable was never compiled. Only edges reached "
+        "through `Regime.gated_edges` carry their fold, their simulate gate "
+        "evaluator, and their legs' fallback state projectors."
+    )
+    raise RuntimeError(msg)
+
+
 @dataclass(frozen=True, kw_only=True)
 class ResolvedEdgeLeg:
     """Engine-side form of one source-stakeholder leg of a gated edge."""
@@ -323,6 +341,20 @@ class ResolvedEdgeLeg:
 
     fallback: ResolvedSamePeriodRef
     """The CLOSED-branch reference value (regime, projection, stakeholder index)."""
+
+    fallback_state_projector: Callable = _uncompiled_edge_callable
+    """This leg's FALLBACK state projector.
+
+    Maps a target-grid-coordinate point to the fallback regime's own state
+    coordinates (`build_fallback_state_projector`). Compiled at model
+    processing and read only by forward simulation's value router, which needs
+    the states a routed-away stakeholder carries into its fallback regime; the
+    solve-side fold needs the fallback's value, never its raw coordinates.
+
+    Carried per leg rather than alongside the edge because the router consumes
+    it once per leg: a separate per-edge sequence would have to be re-paired
+    with `ResolvedGatedEdge.legs` positionally at every call.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -346,6 +378,35 @@ class ResolvedGatedEdge:
     reference_regimes: tuple[RegimeName, ...]
     """Deduplicated real regimes whose same-period V the fold reads (fallbacks +
     gate refs), excluding the target itself."""
+
+    fold: Callable = _uncompiled_edge_callable
+    """Compiled ``(Wbar, gate)`` producer.
+
+    Built once at model processing, in a second pass over the regimes once
+    every regime's grid and functions are known. Backward induction evaluates
+    it at the end of the period the target was solved in, storing ``Wbar`` in
+    the rolled edge-continuation mapping the source's kernel reads; forward
+    simulation evaluates the same fold once per period from the solved solution
+    and substitutes ``Wbar`` into the source's own continuation. Simulated
+    regime ROUTING reads nothing off this fold — that is
+    `simulate_gate_evaluator`'s job.
+    """
+
+    simulate_gate_evaluator: Callable = _uncompiled_edge_callable
+    """SIMULATE-side gate evaluator.
+
+    Built by `get_edge_simulate_gate_evaluator`: recomputes the gate PREDICATE
+    at a realized (off-grid or on-grid) candidate target-state point by
+    interpolating its VALUE operands — the target's own value components and
+    every declared `gate_refs` entry — and re-applying the SAME predicate the
+    fold uses. Interpolating the fold's baked boolean `gate` array and
+    thresholding the result does not commute with a nonlinear predicate and can
+    flip routing decisions near a grid-cell boundary the fold never evaluated.
+    `_lcm.simulation.gated_routing.route_gated_edges` calls this directly to
+    decide routing; a `D_target`-reading gate still linearly interpolates the
+    dissolution flag and thresholds it (a documented residual — see
+    `get_edge_simulate_gate_evaluator`'s docstring).
+    """
 
 
 def _pad_reader_to_state_names(

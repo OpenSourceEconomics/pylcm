@@ -284,7 +284,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         _make_shift_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edge_simulate_gate_evaluators["target"]
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     # The provenance attributes `shift` to the SOURCE, and to nothing else.
@@ -371,7 +371,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         _make_shift_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edge_simulate_gate_evaluators["target"]
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     assert _SHIFT_QNAME not in flat_params["target"]
@@ -558,7 +558,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     """
     flat_params = _projector_flat_params()
     regimes, _ids, solution = _solve_fixture(_make_projector_regimes(), flat_params)
-    projector = regimes["src"].gated_edge_leg_projectors["target"][0]
+    projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
     assert float(flat_params["src"][_PROJ_SHIFT_QNAME]) != float(
@@ -713,7 +713,7 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     assert "x__points" in flat_params["refregime"]
 
     # And the production reader no longer exposes the unsatisfiable name.
-    fold = regimes["src"].gated_edge_folds["target"]
+    fold = regimes["src"].gated_edges["target"].fold
     assert prefixed not in get_union_of_args([fold])
     assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold])
 
@@ -816,7 +816,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
         _make_ref_grid_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edge_simulate_gate_evaluators["target"]
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     # The two namespaces genuinely disagree about `x__points`.
@@ -957,7 +957,7 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
     regimes, _ids, solution = _solve_fixture(_make_fallback_grid_regimes(), flat_params)
 
     prefixed = f"{_REF_STATE_PREFIX}z__points"
-    fold = regimes["src"].gated_edge_folds["target"]
+    fold = regimes["src"].gated_edges["target"].fold
     assert prefixed not in get_union_of_args([fold])
 
     wbar = np.asarray(_same_period_wbar(regimes, flat_params, solution))
