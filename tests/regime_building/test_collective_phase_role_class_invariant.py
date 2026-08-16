@@ -209,7 +209,7 @@ def assert_the_collective_builders_route_each_role(
     # utility and the shared feasibility must be built from `functions` -- the pool
     # of the phase being built -- never from the perceived continuation pool.
     u_calls = call_named(collective, "_get_U_and_F")
-    assert len(u_calls) == 1  # one comprehension call, executed once per stakeholder
+    assert len(u_calls) == 1  # one call, building every stakeholder's felicity at once
     u_kw = keyword_map(u_calls[0])
     assert_name(u_kw["functions"], "functions")
     assert_name(u_kw["constraints"], "constraints")

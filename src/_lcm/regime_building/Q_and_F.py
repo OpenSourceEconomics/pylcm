@@ -16,7 +16,6 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
-    scaled_down_by_power_of_two,
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
@@ -28,10 +27,10 @@ from _lcm.regime_building.w_dag import _get_build_W_kwargs
 
 # `zero_safe_average` only, and only because it is the reduction that takes an
 # `axis`: a collective regime's node reduction has to leave the trailing
-# stakeholder axis standing, which `_expectation_over_stochastic_nodes` reduces
-# away. Every weighted TERM in this file comes from `_lcm.zero_safe` below --
-# including the one inside `zero_safe_average` itself -- so one implementation
-# carries the scale and subnormal rules for the whole engine.
+# stakeholder axis standing, so it cannot reduce the whole array at once. Every
+# weighted TERM in this file comes from `_lcm.zero_safe` below -- including the
+# one inside `zero_safe_average` itself -- so one implementation carries the
+# scale and subnormal rules for the whole engine.
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.transition_laws import (
     TransitionLaws,
@@ -545,12 +544,11 @@ def get_Q_and_F_terminal_collective(
     with the simulate / compute-intermediates machinery) carries none of the
     stakeholder handling; this builder is used only at the collective solve site.
 
-    Builds one `U^s`-and-`F` closure per stakeholder from its own `utility_<s>`
-    DAG target. Feasibility is regime-level: `_get_U_and_F` builds `feasibility`
-    from the regime's constraints and function pool alone and `utility_<s>` only
-    selects a second target, so every closure carries the identical node and
-    returns the identical mask — the first stakeholder's is returned and the
-    others are discarded. The returned `Q_and_F` stacks the
+    Builds ONE closure over every stakeholder's `utility_<s>` target plus the
+    single `feasibility` target. Feasibility is regime-level: `_get_feasibility`
+    takes no stakeholder input, so a household has one action set however many
+    felicities it carries, and the mask is a DAG target the felicities share
+    rather than one evaluated per stakeholder. The returned `Q_and_F` stacks the
     per-stakeholder utilities on a trailing stakeholder axis: for a scalar
     (state, action) cell it returns `U` of shape `(n_stakeholders,)` and a scalar
     `F`. After the action product-map in `get_max_Q_over_a`, `U` has shape
@@ -569,17 +567,14 @@ def get_Q_and_F_terminal_collective(
         shared feasibility mask (F) for a terminal collective period.
 
     """
-    U_and_F_by_stakeholder = {
-        stakeholder: _get_U_and_F(
-            functions=functions,
-            constraints=constraints,
-            utility_name=f"utility_{stakeholder}",
-        )
-        for stakeholder in stakeholders
-    }
+    utilities_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        utility_names=tuple(f"utility_{stakeholder}" for stakeholder in stakeholders),
+    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        deps=list(U_and_F_by_stakeholder.values()),
+        deps=[utilities_and_F],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
         exclude=frozenset(),
     )
@@ -604,14 +599,11 @@ def get_Q_and_F_terminal_collective(
             stakeholder axis) and the shared feasibility mask.
 
         """
-        stakeholder_flows = [
-            u_and_f(**states_actions_params)
-            for u_and_f in U_and_F_by_stakeholder.values()
-        ]
-        U_stack = jnp.stack([jnp.asarray(U_s) for U_s, _ in stakeholder_flows], axis=-1)
-        # The stakeholders share one `feasibility` node and evaluate it on the
-        # same arguments, so every entry is the same mask; the first is returned.
-        return U_stack, jnp.asarray(stakeholder_flows[0][1])
+        *stakeholder_utilities, F_arr = utilities_and_F(**states_actions_params)
+        U_stack = jnp.stack(
+            [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
+        )
+        return U_stack, jnp.asarray(F_arr)
 
     return Q_and_F
 
@@ -1001,14 +993,16 @@ def get_Q_and_F_collective(
     continuation_pool = (
         functions if continuation_functions is None else continuation_functions
     )
-    U_and_F_by_stakeholder = {
-        stakeholder: _get_U_and_F(
-            functions=functions,
-            constraints=constraints,
-            utility_name=f"utility_{stakeholder}",
-        )
-        for stakeholder in stakeholders
-    }
+    # One DAG for every stakeholder's felicity and the single feasibility mask.
+    # The mask takes no stakeholder input — `_get_feasibility` is handed the
+    # regime's constraints and function pool alone — so a household has one
+    # action set however many felicities it carries, and the felicities' shared
+    # nodes are computed once rather than once per stakeholder.
+    utilities_and_F = _get_U_and_F(
+        functions=functions,
+        constraints=constraints,
+        utility_names=tuple(f"utility_{stakeholder}" for stakeholder in stakeholders),
+    )
     n_stakeholders = len(stakeholders)
 
     # The engine's one continuation-aggregation site, told that every target's V
@@ -1050,7 +1044,7 @@ def get_Q_and_F_collective(
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[
-            *list(U_and_F_by_stakeholder.values()),
+            utilities_and_F,
             *continuation_deps,
             *list(value_constraint_machinery.evaluators.values()),
             *list(value_constraint_machinery.reference_readers.values()),
@@ -1083,14 +1077,11 @@ def get_Q_and_F_collective(
             (trailing stakeholder axis) and the shared feasibility mask.
 
         """
-        stakeholder_flows = [
-            u_and_f(**states_actions_params)
-            for u_and_f in U_and_F_by_stakeholder.values()
-        ]
-        U_stack = jnp.stack([jnp.asarray(U_s) for U_s, _ in stakeholder_flows], axis=-1)
-        # The stakeholders share one `feasibility` node and evaluate it on the
-        # same arguments, so every entry is the same mask; the first is kept.
-        F_arr: BoolND = jnp.asarray(stakeholder_flows[0][1])
+        *stakeholder_utilities, feasibility = utilities_and_F(**states_actions_params)
+        U_stack = jnp.stack(
+            [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
+        )
+        F_arr: BoolND = jnp.asarray(feasibility)
 
         # The mass is stakeholder-independent — the regime transition is — so the
         # accumulator zero carries the cell shape, and the aggregator puts the
@@ -1569,8 +1560,8 @@ def _get_compute_CE(
             # support, and so a NaN out of the interpolator -- is not part of the
             # model. Both aggregation routes drop such a node rather than
             # multiplying it by its zero weight, since `0 * nan` is `nan`: the
-            # per-target route in `_expectation_over_stochastic_nodes`, the
-            # lottery route in the certainty equivalent's own `aggregate`.
+            # per-target route in `zero_safe_average`, the lottery route in the
+            # certainty equivalent's own `aggregate`.
             # The mass sum reads the weight as the arithmetic sees it: a
             # probability too small for the dtype to hold contributes nothing
             # to a total of order one, which is the right answer. Its sign is a
@@ -2257,73 +2248,6 @@ def _expected_continuation_over_nodes(
     return jnp.average(values)
 
 
-def _expectation_over_stochastic_nodes(
-    *, values: FloatND, weights: FloatND, shifts: IntND
-) -> FloatND:
-    """Return the weighted mean of one target's continuation over its nodes.
-
-    Normalized explicitly rather than with `jnp.average`, for the reason
-    `_as_lottery` states: a target whose joint weights carry no mass
-    contributes no branch, and must not contribute NaN either — every target
-    enters the same continuation, so a NaN here would destroy the
-    well-specified targets beside it.
-
-    The same holds one level down, at a single node of a target that does carry
-    mass: a node of probability zero contributes nothing whatever value stands
-    there, so it is dropped rather than multiplied by its zero weight.
-
-    Two details of how that node is dropped:
-
-    - the mask sits on the **value**, so the multiplication stays a bare
-      operation feeding the sum and can be contracted into a fused
-      multiply-add. Selecting on the product instead forces it to round before
-      the sum rounds again, which every well-specified node pays for;
-    - the test is for a represented zero, not for positivity. A negative weight
-      is a malformed specification and a `NaN` weight is not a probability at
-      all; `> 0` is false for both and would launder either into a zero
-      contribution, turning a broken transition into a plausible number.
-
-    Each node arrives with a scale of its own. The denominator names the
-    weights on the largest scale all nodes reach. The numerator first forms
-    `w · v` and then applies that node's relative scale. This order is exact for
-    the scaled joint-probability coefficients supplied here: every live
-    coefficient is normal and no larger than one, so multiplying it by a
-    finite continuation cannot overflow, while applying the scale to the
-    weight first can flush a decision-relevant contribution before the value
-    supplies its binades.
-
-    Args:
-        values: Next period's value at this target's stochastic nodes.
-        weights: The nodes' scaled joint weights.
-        shifts: Each node's own base-two scale.
-
-    Returns:
-        The weighted mean over the nodes.
-
-    """
-    shifts_arr = jnp.asarray(shifts)
-    common_shift = jnp.min(shifts_arr)
-    relative_scale = (common_shift - shifts_arr).astype(jnp.int32)
-
-    # The mass only needs the weights on one scale. A live node too far below
-    # that scale to register contributes no share to a total of order one.
-    lowered_weights = scaled_down_by_power_of_two(weights, relative_scale)
-    weight_sum = jnp.sum(lowered_weights)
-    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
-
-    # The numerator is different: a tiny probability can meet a large value and
-    # make an ordinary contribution. Form the product while the coefficient is
-    # still normal, then scale the product down. Only a represented-zero
-    # coefficient is a null event; a live NaN or infinity must remain visible.
-    safe_values = jnp.where(
-        is_represented_zero(weights) & ~jnp.isfinite(values),
-        jnp.zeros((), dtype=values.dtype),
-        values,
-    )
-    terms = scaled_down_by_power_of_two(weights * safe_values, relative_scale)
-    return jnp.sum(terms) / safe_weight_sum
-
-
 def _as_lottery(
     *,
     values: FloatND,
@@ -2437,25 +2361,34 @@ def _get_U_and_F(
     *,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
-    utility_name: str = "utility",
-) -> Callable[..., tuple[FloatND, BoolND]]:
-    """Get the instantaneous utility and feasibility function.
+    utility_names: tuple[str, ...] = ("utility",),
+) -> Callable[..., tuple[Any, ...]]:
+    """Get the instantaneous utilities and the one feasibility function.
 
     Note:
     -----
     U may depend on all kinds of other functions (taxes, transfers, ...), which will be
     executed if they matter for the value of U.
 
+    Feasibility carries no stakeholder input of its own: `_get_feasibility` builds
+    the mask from the regime's constraints and the shared function pool, so a
+    household has ONE action set however many felicities it carries. A constraint
+    may still name a stakeholder-indexed node (`utility_f`) — that names the same
+    node for every stakeholder, which is why the mask is a single DAG target here
+    rather than one per felicity.
+
     Args:
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        utility_name: DAG target name of the felicity function. `"utility"` (the
-            default) is the singleton case; a collective regime passes a
-            per-stakeholder `"utility_<s>"` so this builder returns that
-            stakeholder's own `U^s` alongside the shared feasibility.
+        utility_names: DAG target names of the felicity functions, in the order
+            their values are returned. `("utility",)` (the default) is the
+            singleton case; a collective regime passes every stakeholder's
+            `"utility_<s>"`, so all felicities and the shared feasibility come out
+            of one DAG evaluation with every node they have in common computed once.
 
     Returns:
-        The instantaneous utility and feasibility function.
+        A function returning one value per entry of `utility_names`, in that
+        order, followed by the feasibility mask.
 
     """
     return concatenate_functions(
@@ -2465,9 +2398,7 @@ def _get_U_and_F(
             ),
             **dict(functions),
         },
-        # `utility_name`, not the literal: a collective regime builds one `U^s`
-        # per stakeholder off the same shared feasibility.
-        targets=[utility_name, "feasibility"],
+        targets=[*utility_names, "feasibility"],
         enforce_signature=False,
         set_annotations=True,
     )
