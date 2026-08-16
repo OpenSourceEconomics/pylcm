@@ -599,3 +599,59 @@ def test_annotation_source_functions_keeps_every_econ_function() -> None:
         ),
     )
     assert "schedule" in _array_float_arg_names(functions=sources)
+
+
+def test_probe_fill_returns_the_models_own_value_for_a_declared_parameter() -> None:
+    """A parameter the model declares answers with its value, not a synthetic fill."""
+    value = _probe_fill(
+        "utility__crra",
+        1.0,
+        frozenset(),
+        param_values=MappingProxyType({"utility__crra": jnp.asarray(2.5)}),
+    )
+
+    assert float(cast("FloatND", value)) == 2.5
+
+
+def test_probe_fill_prefers_a_real_parameter_over_its_annotated_shape() -> None:
+    """A real value wins over the shape the argument's annotation would synthesize."""
+    table = jnp.asarray([[0.1, 0.2], [0.3, 0.4]])
+
+    value = _probe_fill(
+        "taxes__marginal_rates",
+        1.0,
+        frozenset(),
+        frozenset({"taxes__marginal_rates"}),
+        param_values=MappingProxyType({"taxes__marginal_rates": table}),
+    )
+
+    assert jnp.shape(cast("FloatND", value)) == (2, 2)
+
+
+def test_probe_fill_hands_back_a_grouped_parameter_unchanged() -> None:
+    """A declared tax schedule reaches the probe as the model's own schedule."""
+    schedule = MappingLeaf(
+        {"brackets_upper": jnp.asarray([10.0, 20.0]), "rates": jnp.asarray([0.1, 0.3])}
+    )
+
+    value = _probe_fill(
+        "taxes__income_tax_schedule",
+        1.0,
+        frozenset(),
+        mapping_leaf_arg_names=frozenset({"taxes__income_tax_schedule"}),
+        param_values=MappingProxyType({"taxes__income_tax_schedule": schedule}),
+    )
+
+    assert value is schedule
+
+
+def test_probe_fill_synthesizes_an_argument_that_is_not_a_parameter() -> None:
+    """A state, action, or unbound DAG intermediate still gets a synthetic fill."""
+    value = _probe_fill(
+        "liquid",
+        3.0,
+        frozenset(),
+        param_values=MappingProxyType({"utility__crra": jnp.asarray(2.5)}),
+    )
+
+    assert float(cast("FloatND", value)) == 3.0

@@ -316,6 +316,12 @@ class NNBEGM(Solver):
         return SolutionKernels(
             period_kernels=period_kernels,
             continuation_template=template,
+            # Both inner margins are solved by the inner solver, so both sets of
+            # parameter-dependent preconditions still apply to this regime.
+            param_checks=(
+                *adjuster_kernels.param_checks,
+                *keeper_kernels.param_checks,
+            ),
         )
 
 

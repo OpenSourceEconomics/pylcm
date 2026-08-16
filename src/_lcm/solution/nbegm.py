@@ -56,6 +56,7 @@ from _lcm.solution.continuation_target import (
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
+    ParamCheck,
     PeriodKernel,
     SolutionKernels,
     Solver,
@@ -87,9 +88,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     IntND,
-    ScalarBool,
     ScalarFloat,
-    ScalarInt,
     StateName,
     StateOrActionName,
 )
@@ -245,16 +244,16 @@ class NBEGM(Solver):
     Either way the branch body compiles once — the axis is never Python-unrolled.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
-    """What to do when a build-time derivative probe cannot evaluate the model.
+    """What to do when a derivative probe cannot evaluate the model.
 
     The affine-budget and interval-constancy probes differentiate the model's DAG
-    functions on synthetic scalar inputs. A DAG that cannot be evaluated that way
-    (e.g. array-valued schedule parameters the probe cannot synthesize) leaves the
-    precondition unverified:
+    functions on the first solve, reading the declared parameters' own values and
+    synthesizing the states and actions they sweep. A DAG that cannot be
+    differentiated that way leaves the precondition unverified:
 
-    - `"reject"` — refuse to build; the per-interval EGM preconditions must be
+    - `"reject"` — refuse to solve; the per-interval EGM preconditions must be
       machine-verified.
-    - `"assume_declared"` — warn and build; the model author asserts the budget's
+    - `"assume_declared"` — warn and solve; the model author asserts the budget's
       within-interval affinity and every liquid-reading law's interval-constancy,
       to be validated empirically (e.g. full-model brute-agreement gates).
     """
@@ -535,6 +534,9 @@ class NBEGM(Solver):
             continuation_template=_build_one_asset_carry_template(
                 liquid_grid=liquid_grid
             ),
+            param_checks=(
+                schedule_spec.param_checks if schedule_spec is not None else ()
+            ),
         )
 
     def _fail_if_unsupported_ride_discrete(
@@ -673,29 +675,20 @@ class NBEGM(Solver):
             int(context.grids[name].to_jax().shape[0])
             for name in schedule_spec.ride_along_state_names
         )
-        annotation_sources = _probe_annotation_sources(context=context)
+        probe_arguments = _probe_arguments(context=context)
+        param_checks: list[ParamCheck] = list(schedule_spec.param_checks)
         if _aggregates_nonlinearly(context.certainty_equivalent):
-            _fail_if_flow_not_single_power(
-                utility_dag=schedule_spec.utility_dag,
-                consumption_action_name=next(
-                    iter(context.state_action_space.continuous_actions)
-                ),
-                regime_name=context.regime_name,
-                int_arg_values=_int_probe_arg_values(context.grids),
-                annotated_int_arg_names=_annotated_int_arg_names(
-                    functions=annotation_sources
-                ),
-                array_float_arg_names=_array_float_arg_names(
-                    functions=annotation_sources
-                ),
-                array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
-                annotated_bool_arg_names=_annotated_bool_arg_names(
-                    functions=annotation_sources
-                ),
-                annotated_mapping_leaf_arg_names=_annotated_mapping_leaf_arg_names(
-                    functions=annotation_sources
-                ),
-                probe_failure=self.probe_failure,
+            param_checks.append(
+                _deferred_probe(
+                    _fail_if_flow_not_single_power,
+                    regime_name=context.regime_name,
+                    probe_arguments=probe_arguments,
+                    utility_dag=schedule_spec.utility_dag,
+                    consumption_action_name=next(
+                        iter(context.state_action_space.continuous_actions)
+                    ),
+                    probe_failure=self.probe_failure,
+                )
             )
         transition_target_names = tuple(context.transitions)
 
@@ -734,25 +727,15 @@ class NBEGM(Solver):
                 ),
             )
             if key not in continuation_cores:
-                _fail_if_liquid_reading_next_state_varies_within_interval(
-                    continuation_plan=plan,
-                    liquid_name=schedule_spec.liquid_state_name,
-                    regime_name=context.regime_name,
-                    int_arg_values=_int_probe_arg_values(context.grids),
-                    annotated_int_arg_names=_annotated_int_arg_names(
-                        functions=annotation_sources
-                    ),
-                    array_float_arg_names=_array_float_arg_names(
-                        functions=annotation_sources
-                    ),
-                    array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
-                    annotated_bool_arg_names=_annotated_bool_arg_names(
-                        functions=annotation_sources
-                    ),
-                    annotated_mapping_leaf_arg_names=(
-                        _annotated_mapping_leaf_arg_names(functions=annotation_sources)
-                    ),
-                    probe_failure=self.probe_failure,
+                param_checks.append(
+                    _deferred_probe(
+                        _fail_if_liquid_reading_next_state_varies_within_interval,
+                        regime_name=context.regime_name,
+                        probe_arguments=probe_arguments,
+                        continuation_plan=plan,
+                        liquid_name=schedule_spec.liquid_state_name,
+                        probe_failure=self.probe_failure,
+                    )
                 )
                 statics = _nbegm_ride_along_statics(
                     savings_grid=savings_grid,
@@ -859,6 +842,7 @@ class NBEGM(Solver):
                 grids=context.grids,
                 ride_along_state_names=schedule_spec.ride_along_state_names,
             ),
+            param_checks=tuple(param_checks),
         )
 
 
@@ -1777,6 +1761,10 @@ class _NBEGMScheduleSpec:
     """Each discrete action the budget shifts, paired with its grid codes, empty
     when the regime carries no discrete action. Excluded from `coh_param_names` —
     the envelope core binds them per branch."""
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Preconditions on the composed budget, run on the first solve. Collected
+    here because the budget is composed while the spec is, and checking its
+    affinity in the liquid state needs the schedules' parameter values."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -1994,12 +1982,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: str,
-    int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
-    array_float_arg_names: frozenset[str] = frozenset(),
-    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
-    annotated_int_arg_names: frozenset[str] = frozenset(),
-    annotated_bool_arg_names: frozenset[str] = frozenset(),
-    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
+    probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -2017,21 +2000,22 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     additionally have unit slope in the liquid state: a non-unit affine slope
     declared as jump-only would be solved as if `coh = liquid + intercept`.
 
-    The probe evaluates the composed budget's first and second liquid-derivatives at
-    a few interior points, with the other arguments filled by two constant sets so a
+    The probe evaluates the composed budget's first and second liquid-derivatives
+    at a few interior points, with every declared parameter set to its own value —
+    the real tax schedules and tables, so the real bracket structure is what gets
+    differentiated — and every remaining argument filled by two constant sets so a
     parameter-dependent slope is caught; each integer-coded argument is additionally
     swept over its grid's actual codes one at a time. The probe is a finite
     diagnostic, not a certificate — a nonlinearity whose curvature vanishes at every
-    probed point passes undetected. A budget the probe cannot evaluate or
-    differentiate on plain scalars is refused: the per-interval inversion's
-    affinity precondition would otherwise go unverified.
+    probed point passes undetected. A budget the probe cannot differentiate is
+    refused: the per-interval inversion's affinity precondition would otherwise go
+    unverified.
     """
     import inspect  # noqa: PLC0415
 
     arg_names = tuple(inspect.signature(coh_dag).parameters)
     if liquid_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _budget_of_liquid(
         liquid_value: FloatND,
@@ -2048,14 +2032,9 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 if name == liquid_name
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
-                else _probe_fill(
+                else probe_arguments.fill(
                     name,
                     fill,
-                    int_arg_names,
-                    array_float_arg_names,
-                    array_arg_ranks,
-                    bool_arg_names=annotated_bool_arg_names,
-                    mapping_leaf_arg_names=annotated_mapping_leaf_arg_names,
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
@@ -2070,14 +2049,14 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     def _fail_unprobeable(probe_error: Exception) -> None:
         msg = (
             f"NBEGM could not verify that regime {regime_name!r}'s budget is affine "
-            f"in the liquid state {liquid_name!r}: the build-time probe failed to "
+            f"in the liquid state {liquid_name!r}: the probe failed to "
             "differentiate the budget on scalar inputs "
             f"({type(probe_error).__name__}: {probe_error}). The per-interval EGM "
             "inversion is exact only for an affine within-interval budget."
         )
         if probe_failure == "assume_declared":
             warnings.warn(
-                msg + " Building anyway (`probe_failure='assume_declared'`): the "
+                msg + " Solving anyway (`probe_failure='assume_declared'`): the "
                 "model author asserts within-interval affinity; validate the solve "
                 "against an independent reference.",
                 stacklevel=2,
@@ -2113,7 +2092,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 )
                 for fill in (1.0, 3.0)
                 for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=int_arg_values
+                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
                 )
                 for sample in (0.37, 1.63, 2.71)
             ]
@@ -2144,7 +2123,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 )
                 for fill, x in ((1.0, 1.0), (3.0, 2.0))
                 for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=int_arg_values
+                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
                 )
             )
 
@@ -2199,12 +2178,7 @@ def _fail_if_flow_not_single_power(
     utility_dag: Callable[..., object],
     consumption_action_name: str,
     regime_name: RegimeName,
-    int_arg_values: Mapping[str, tuple[int, ...]],
-    array_float_arg_names: frozenset[str] = frozenset(),
-    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
-    annotated_int_arg_names: frozenset[str] = frozenset(),
-    annotated_bool_arg_names: frozenset[str] = frozenset(),
-    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
+    probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
     """Probe the flow's consumption elasticity for the single-power contract.
@@ -2215,9 +2189,9 @@ def _fail_if_flow_not_single_power(
     it cannot certify the global structure (for `q = e^c` the locally fitted
     power solves a different first-order condition). The probe evaluates the
     flow, its marginal, and the elasticity `c q'(c)/q(c)` at several
-    consumption values, with every other argument filled by a scalar probe and
-    each integer-coded argument swept over its actual grid codes. Rejected at
-    model build:
+    consumption values, with every declared parameter set to its own value and
+    each integer-coded argument swept over its actual grid codes. Rejected on the
+    first solve:
 
     - a nonpositive flow or nonpositive marginal at any probed point (the
       recursion takes fractional powers of the flow; `q = -c` carries a
@@ -2230,7 +2204,6 @@ def _fail_if_flow_not_single_power(
     arg_names = tuple(inspect.signature(utility_dag).parameters)
     if consumption_action_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
     probe_consumptions = (0.5, 1.0, 2.0, 5.0)
     fill = 1.7
 
@@ -2248,14 +2221,9 @@ def _fail_if_flow_not_single_power(
                 if name == consumption_action_name
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
-                else _probe_fill(
+                else probe_arguments.fill(
                     name,
                     fill,
-                    int_arg_names,
-                    array_float_arg_names,
-                    array_arg_ranks,
-                    bool_arg_names=annotated_bool_arg_names,
-                    mapping_leaf_arg_names=annotated_mapping_leaf_arg_names,
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
@@ -2265,7 +2233,9 @@ def _fail_if_flow_not_single_power(
         }
         return jnp.asarray(utility_dag(**kwargs)).reshape(())
 
-    sweep_names = tuple(name for name in arg_names if name in int_arg_names)
+    sweep_names = tuple(
+        name for name in arg_names if name in probe_arguments.int_arg_names
+    )
 
     def _readings(
         *, array_floats: bool, array_rank: int, leaf_rank: int
@@ -2274,7 +2244,7 @@ def _fail_if_flow_not_single_power(
         marginals: list[float] = []
         elasticities: list[float] = []
         for overrides in _int_code_sweeps(
-            arg_names=sweep_names, int_arg_values=int_arg_values
+            arg_names=sweep_names, int_arg_values=probe_arguments.int_arg_values
         ):
             for probe_c in probe_consumptions:
                 args = (jnp.asarray(probe_c), overrides)
@@ -2302,13 +2272,13 @@ def _fail_if_flow_not_single_power(
     except Exception as probe_error:
         msg = (
             f"NBEGM could not verify that regime {regime_name!r}'s period flow "
-            f"is a single power of {consumption_action_name!r}: the build-time "
+            f"is a single power of {consumption_action_name!r}: the "
             "elasticity probe failed to evaluate the flow on scalar inputs "
             f"({type(probe_error).__name__}: {probe_error})."
         )
         if probe_failure == "assume_declared":
             warnings.warn(
-                msg + " Building anyway (`probe_failure='assume_declared'`): "
+                msg + " Solving anyway (`probe_failure='assume_declared'`): "
                 "the model author asserts the single-power flow; validate the "
                 "solve against an independent reference.",
                 stacklevel=2,
@@ -2432,6 +2402,121 @@ _PROBE_ANNOTATION_VOCABULARY: MappingProxyType[str, object] = MappingProxyType(
 _PROBE_FILL_HIGH = 2.0
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ProbeArguments:
+    """How the probes build every argument of the DAG they differentiate.
+
+    Assembled at model build from the regime's grids and its functions'
+    annotations, then completed with `with_params` on the first solve. Splitting
+    it that way is what lets the probes read the model's real schedules and
+    tables: the classification is a property of the source, the values are not
+    known until the user supplies params.
+    """
+
+    int_arg_values: MappingProxyType[str, tuple[int, ...]] = MappingProxyType({})
+    """Grid codes per integer-coded argument, swept one code at a time."""
+    array_float_arg_names: frozenset[str] = frozenset()
+    """Arguments whose consumers annotate them as float arrays."""
+    array_arg_ranks: MappingProxyType[str, int] = MappingProxyType({})
+    """Axis count per array argument, read off how its consumers subscript it."""
+    annotated_int_arg_names: frozenset[str] = frozenset()
+    """Arguments whose consumers annotate them with an integer dtype."""
+    bool_arg_names: frozenset[str] = frozenset()
+    """Arguments whose consumers annotate them with a boolean dtype."""
+    mapping_leaf_arg_names: frozenset[str] = frozenset()
+    """Arguments whose consumers annotate them as grouped params."""
+    param_values: MappingProxyType[str, object] = MappingProxyType({})
+    """The model's own parameter values, empty until `with_params` runs."""
+
+    @property
+    def int_arg_names(self) -> frozenset[str]:
+        """Every argument that must receive an integer fill."""
+        return frozenset(self.int_arg_values) | self.annotated_int_arg_names
+
+    def with_params(
+        self, *, flat_params: FlatParams, regime_name: RegimeName
+    ) -> _ProbeArguments:
+        """Return a copy answering every declared parameter with its own value.
+
+        The regime's own flat params take precedence; the other regimes' fill in
+        underneath, because a probe may differentiate a law that carries into a
+        target regime and reads that target's params.
+        """
+        merged: dict[str, object] = {}
+        for name, regime_params in flat_params.items():
+            if name != regime_name:
+                merged.update(regime_params)
+        merged.update(flat_params.get(regime_name, MappingProxyType({})))
+        return replace(self, param_values=MappingProxyType(merged))
+
+    def fill(
+        self,
+        name: str,
+        fill: float,
+        *,
+        array_floats: bool = False,
+        array_rank: int = 1,
+        leaf_rank: int = 1,
+    ) -> object:
+        """Build one argument at the given fill level and rung."""
+        return _probe_fill(
+            name,
+            fill,
+            self.int_arg_names,
+            self.array_float_arg_names,
+            self.array_arg_ranks,
+            bool_arg_names=self.bool_arg_names,
+            mapping_leaf_arg_names=self.mapping_leaf_arg_names,
+            param_values=self.param_values,
+            array_floats=array_floats,
+            array_rank=array_rank,
+            leaf_rank=leaf_rank,
+        )
+
+
+def _deferred_probe(
+    probe: Callable[..., None],
+    *,
+    regime_name: RegimeName,
+    probe_arguments: _ProbeArguments,
+    **bound: object,
+) -> ParamCheck:
+    """Configure a probe at model build and run it on the first solve.
+
+    The probe's target — the composed budget, the utility DAG, the continuation
+    plan — is fixed by the model's structure and bound here. Its arguments are
+    not: a budget reading tax schedules cannot be differentiated until those
+    schedules have values, so the fills are completed from the params the engine
+    supplies at solve.
+    """
+
+    def _check(*, flat_params: FlatParams) -> None:
+        probe(
+            regime_name=regime_name,
+            probe_arguments=probe_arguments.with_params(
+                flat_params=flat_params, regime_name=regime_name
+            ),
+            **bound,
+        )
+
+    return _check
+
+
+def _probe_arguments(*, context: SolverBuildContext) -> _ProbeArguments:
+    """Classify a regime's probe arguments from its grids and annotations."""
+    annotation_sources = _probe_annotation_sources(context=context)
+    return _ProbeArguments(
+        int_arg_values=_int_probe_arg_values(context.grids),
+        array_float_arg_names=_array_float_arg_names(functions=annotation_sources),
+        array_arg_ranks=_indexed_arg_ranks(functions=annotation_sources),
+        annotated_int_arg_names=_annotated_int_arg_names(functions=annotation_sources),
+        bool_arg_names=_annotated_bool_arg_names(functions=annotation_sources),
+        mapping_leaf_arg_names=_annotated_mapping_leaf_arg_names(
+            functions=annotation_sources
+        ),
+    )
+
+
 def _probe_fill(
     name: str,
     fill: float,
@@ -2441,11 +2526,22 @@ def _probe_fill(
     *,
     bool_arg_names: frozenset[str] = frozenset(),
     mapping_leaf_arg_names: frozenset[str] = frozenset(),
+    param_values: Mapping[str, object] = MappingProxyType({}),
     array_floats: bool = False,
     array_rank: int = 1,
     leaf_rank: int = 1,
-) -> ScalarFloat | ScalarInt | ScalarBool | FloatND | MappingLeaf:
-    """Build a probe fill matching the argument's dtype contract.
+) -> object:
+    """Build a probe argument, preferring the model's own parameter value.
+
+    A parameter the model declares answers with its own value: the probes run on
+    the first solve, so the tax schedules, interpolation tables, and coefficients
+    the budget reads are in hand. That is both simpler and stricter than any
+    synthetic stand-in — the probe differentiates the real bracket structure
+    rather than a fabricated one-bracket schedule.
+
+    Everything else is synthesized from what its consumers declare. The
+    remaining arguments are the states and actions the probe is sweeping, plus
+    any DAG intermediate the pruned budget leaves unbound.
 
     Integer-coded arguments — discrete states/actions (their grids are
     `DiscreteGrid`s), the period index, and anything its consumers annotate with
@@ -2477,6 +2573,8 @@ def _probe_fill(
     whole-DAG fallback kept for a DAG whose per-argument annotations do not
     resolve, at the cost of violating any genuinely 0-d parameter.
     """
+    if name in param_values:
+        return param_values[name]
     if name in mapping_leaf_arg_names:
         return _ProbeMappingLeaf(jnp.full((1,) * leaf_rank, fill))
     axes = (1,) * max(array_rank, array_arg_ranks.get(name, 1))
@@ -2814,12 +2912,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     liquid_name: str,
     regime_name: str,
-    int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
-    array_float_arg_names: frozenset[str] = frozenset(),
-    array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
-    annotated_int_arg_names: frozenset[str] = frozenset(),
-    annotated_bool_arg_names: frozenset[str] = frozenset(),
-    annotated_mapping_leaf_arg_names: frozenset[str] = frozenset(),
+    probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -2830,23 +2923,22 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     dependence is piecewise-constant (a level switched at a declared cliff, so its
     derivative in the liquid state is zero between breakpoints). A smooth (affine or
     curved) dependence makes the midpoint-bound row wrong for the interval's other
-    liquid points, so it is rejected at build.
+    liquid points, so it is rejected on the first solve.
 
     The probe evaluates each liquid-reading law's first liquid-derivative at a few
-    interior points, with the other arguments filled by several constant and ramped
-    assignments (the ramps activate monotone binary gates like an age cutoff that a
-    symmetric fill would leave on its zero branch); each integer-coded argument is
-    additionally swept over its grid's actual codes one at a time, so a dependence
-    gated on a specific discrete cell is still sampled. The probe is a finite
-    diagnostic, not a certificate — a smooth dependence vanishing at every probed
-    point passes undetected. A law the probe cannot evaluate or differentiate on
-    plain scalars is refused: the interval path's constancy precondition would
-    otherwise go unverified.
+    interior points, with every declared parameter set to its own value and the
+    remaining arguments filled by several constant and ramped assignments (the ramps
+    activate monotone binary gates like an age cutoff that a symmetric fill would
+    leave on its zero branch); each integer-coded argument is additionally swept over
+    its grid's actual codes one at a time, so a dependence gated on a specific
+    discrete cell is still sampled. The probe is a finite diagnostic, not a
+    certificate — a smooth dependence vanishing at every probed point passes
+    undetected. A law the probe cannot differentiate is refused: the interval path's
+    constancy precondition would otherwise go unverified.
     """
     import inspect  # noqa: PLC0415
 
     tol = 1e-6
-    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
         constant_1 = tuple(1.0 for _ in range(n_args))
@@ -2876,20 +2968,13 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             worst = 0.0
             for fills in _fill_assignments(len(arg_names)):
                 for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=int_arg_values
+                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
                 ):
                     for sample in (0.37, 1.63, 2.71):
                         args = [
-                            _probe_fill(
+                            probe_arguments.fill(
                                 name,
                                 fill,
-                                int_arg_names,
-                                array_float_arg_names,
-                                array_arg_ranks,
-                                bool_arg_names=annotated_bool_arg_names,
-                                mapping_leaf_arg_names=(
-                                    annotated_mapping_leaf_arg_names
-                                ),
                                 array_floats=array_floats,
                                 array_rank=array_rank,
                                 leaf_rank=leaf_rank,
@@ -2915,7 +3000,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             msg = (
                 f"NBEGM could not verify that a liquid-reading law in regime "
                 f"{regime_name!r} is piecewise-constant in the liquid state "
-                f"{liquid_name!r}: the build-time constancy probe failed to "
+                f"{liquid_name!r}: the constancy probe failed to "
                 "differentiate it on scalar inputs "
                 f"({type(probe_error).__name__}: {probe_error}). The interval "
                 "path binds one continuation row per interval, which is exact "
@@ -2923,7 +3008,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
             )
             if probe_failure == "assume_declared":
                 warnings.warn(
-                    msg + " Building anyway (`probe_failure='assume_declared'`): "
+                    msg + " Solving anyway (`probe_failure='assume_declared'`): "
                     "the model author asserts interval-constancy; validate the "
                     "solve against an independent reference.",
                     stacklevel=2,
@@ -3116,7 +3201,10 @@ def _collect_nbegm_schedule_spec(
     )
     breakpoint_kinds = tuple(bp.kind for bp in first_breakpoints)
     all_kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
-    _fail_if_budget_nonaffine_in_liquid(
+    affinity_check = _deferred_probe(
+        _fail_if_budget_nonaffine_in_liquid,
+        regime_name=context.regime_name,
+        probe_arguments=_probe_arguments(context=context),
         coh_dag=coh_dag,
         liquid_name=liquid_state_name,
         # The pure-jump step (liquid-direct, non-ride, all-jump) reads only
@@ -3127,26 +3215,10 @@ def _collect_nbegm_schedule_spec(
             and bool(all_kinds)
             and all(kind == "jump" for kind in all_kinds)
         ),
-        regime_name=context.regime_name,
-        int_arg_values=_int_probe_arg_values(context.grids),
-        annotated_int_arg_names=_annotated_int_arg_names(
-            functions=_probe_annotation_sources(context=context)
-        ),
-        array_float_arg_names=_array_float_arg_names(
-            functions=_probe_annotation_sources(context=context)
-        ),
-        array_arg_ranks=_indexed_arg_ranks(
-            functions=_probe_annotation_sources(context=context)
-        ),
-        annotated_bool_arg_names=_annotated_bool_arg_names(
-            functions=_probe_annotation_sources(context=context)
-        ),
-        annotated_mapping_leaf_arg_names=_annotated_mapping_leaf_arg_names(
-            functions=_probe_annotation_sources(context=context)
-        ),
         probe_failure=probe_failure,
     )
     return _NBEGMScheduleSpec(
+        param_checks=(affinity_check,),
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         utility_dag=utility_dag,
