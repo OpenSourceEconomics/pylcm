@@ -19,15 +19,15 @@ modes follow:
     clobbered by edge A's (declaration-order-dependent) unconditional write,
     and vice versa.
 
-This is invisible to every existing collective-regimes test because EKL's own
-topology declares the gated edge's target via an ordinary `MarkovTransition`
-at PROBABILITY 1 (see module docstrings in `test_collective_regime_simulate.py`
+No other collective-regimes test can see this, because EKL's own topology
+declares the gated edge's target via an ordinary `MarkovTransition` at
+PROBABILITY 1 (see module docstrings in `test_collective_regime_simulate.py`
 / `test_row_split_synthetic.py`: "offer arrives with certainty; only consent
 is modeled") -- so `ordinary_draw == target_id` holds for every row the gate
-could possibly touch, and the missing condition is always vacuously true.
+could possibly touch, and the condition is vacuously true there.
 
-The fix threads an IMMUTABLE snapshot of the ordinary draw
-(`ordinary_draw_ids`, captured before the edge loop) through each edge's
+`route_gated_edges` therefore threads an IMMUTABLE snapshot of the ordinary
+draw (`ordinary_draw_ids`, captured before the edge loop) through each edge's
 routing mask AND its fallback-state-write mask:
 `subjects_in_regime & (ordinary_draw_ids == target_id)`. Only a row whose
 ordinary draw actually selected THIS edge's target is routed -- and has its
@@ -102,13 +102,6 @@ def _same_period_mappings_for(
     return same_period_mappings
 
 
-# ------------------------------------------------------------------------------
-# Test 1 + control: an UNRELATED ordinary draw must survive an open gate;
-# an ordinary draw that IS the target must route exactly as before (open ->
-# target, closed -> own fallback) -- the EKL-shaped (prob-1 offer) case.
-# ------------------------------------------------------------------------------
-
-
 def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     """A row whose ordinary draw picked an edge-unrelated regime stays there.
 
@@ -179,7 +172,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
 
     Control case with a probability-1 offer: open gate -> target, closed gate ->
     own fallback. This is the shape every other collective-simulate test
-    exercises, and must stay byte-identical.
+    exercises.
     """
     _ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_consent()

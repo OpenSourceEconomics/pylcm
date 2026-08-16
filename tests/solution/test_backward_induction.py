@@ -73,21 +73,15 @@ class MockRegime(Regime):
 
 
 def test_backward_induction():
-    """Test solve brute with hand written inputs.
+    """`solve` runs backward induction over hand-written engine inputs.
 
-    Normally, these inputs would be created from a model specification. For now this can
-    be seen as reference of what the functions that process a model specification need
-    to produce.
-
+    The inputs a model specification would normally produce -- flat params, a
+    state-action space, and a per-period `Q_and_F` -- are written out literally
+    here, so this doubles as a reference for what the regime-building pipeline
+    has to hand `solve`.
     """
-    # ==================================================================================
-    # create the params
-    # ==================================================================================
     flat_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
-    # ==================================================================================
-    # create the list of state_action_spaces
-    # ==================================================================================
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType(
             {
@@ -110,9 +104,6 @@ def test_backward_induction():
         ),
         state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
-    # ==================================================================================
-    # create the Q_and_F functions
-    # ==================================================================================
 
     def _Q_and_F(
         consumption,
@@ -146,10 +137,6 @@ def test_backward_induction():
         state_names=("lazy", "wealth"),
         batch_sizes={"lazy": 0, "wealth": 0},
     )
-
-    # ==================================================================================
-    # call solve function
-    # ==================================================================================
 
     regime = MockRegime(
         solution=MockSolutionPhase(
@@ -199,7 +186,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     def _Q_and_F(a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
-        # next_regime_to_V_arr is now a dict but not used in this test
+        # `next_regime_to_V_arr` is part of the kernel signature; this Q ignores it.
         util = d
         feasib = d <= a + b + c
         return util, feasib
@@ -237,5 +224,5 @@ def test_backward_induction_single_period_Qc_arr():
         enable_jit=False,
     )
 
-    # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
+    # `value_functions` is keyed by period, then by regime name.
     aaae(got.value_functions[0]["default"], expected)

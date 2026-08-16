@@ -99,10 +99,6 @@ def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
     }
 
 
-# --------------------------------------------------------------------------------------
-# Case 1: the folding regime is the TARGET of another regime's gated_edges.
-# --------------------------------------------------------------------------------------
-
 _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 
 
@@ -150,11 +146,6 @@ def test_unfolded_collective_gated_edge_target_still_constructs():
     process_regimes(
         **_solve_kwargs(_make_gated_target_regimes(fold=False), ages=_AGES_2P)
     )
-
-
-# --------------------------------------------------------------------------------------
-# Case 2a: the folding regime is a `same_period_refs` REFERENCE.
-# --------------------------------------------------------------------------------------
 
 
 def _dummy_constraint(Q_f: FloatND, V_ref: FloatND) -> BoolND:
@@ -209,11 +200,6 @@ def test_unfolded_collective_same_period_reference_still_constructs():
     process_regimes(
         **_solve_kwargs(_make_same_period_ref_regimes(fold=False), ages=_AGES_2P)
     )
-
-
-# --------------------------------------------------------------------------------------
-# Case 2b: the folding regime is referenced via a gate's `gate_refs`.
-# --------------------------------------------------------------------------------------
 
 
 def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:

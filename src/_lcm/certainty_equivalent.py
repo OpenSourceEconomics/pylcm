@@ -614,12 +614,13 @@ def _args_for(
 def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> bool:
     """Whether this certainty equivalent is anything other than the linear one.
 
-    Every non-terminal regime now carries a certainty equivalent, so PRESENCE
-    no longer distinguishes a nonlinear aggregation from the expected-utility
-    default: `LinearExpectation` is a real class with a real `aggregate`, and it
-    is what a regime that declared nothing receives. A guard that means "this
-    path does not implement a nonlinear CE" must therefore ask for the property,
-    not for presence.
+    The cut is the type, not whether a value is attached. `LinearExpectation`
+    is a real class with a real `aggregate` and is what a regime that declared
+    nothing receives, so every non-terminal regime carries a certainty
+    equivalent and presence separates nothing. A guard that means "this path
+    does not implement a nonlinear CE" therefore asks whether the certainty
+    equivalent is `LinearExpectation`; an unattached slot carries no nonlinear
+    aggregation of its own and answers False as well.
     """
     return certainty_equivalent is not None and not isinstance(
         certainty_equivalent, LinearExpectation

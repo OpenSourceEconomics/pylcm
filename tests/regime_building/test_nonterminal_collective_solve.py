@@ -1,15 +1,16 @@
-"""Integration tests for the NON-terminal collective-regime solve (slice 2).
+"""Integration tests for the NON-terminal collective-regime solve.
 
-Extends the slice-1b terminal machinery with per-stakeholder continuation
-values: a non-terminal `Regime(stakeholders=("f", "m"))` computes
+Extends the terminal machinery with per-stakeholder continuation values: a
+non-terminal `Regime(stakeholders=("f", "m"))` computes
 `Q^s = u^s + beta * E[V'^s]` per stakeholder, argmaxes the household
 scalarization `O = sum_s lambda_s Q^s` over the feasible actions, and reads off
-each stakeholder's OWN `Q^s` at that shared argmax (design doc
-`pylcm-extension-collective-regimes.md` §2, E1 — no gates, which are slice 4).
+each stakeholder's OWN `Q^s` at that shared argmax. No gated edges here; those
+are covered by `test_gated_edges_collective_solve.py`.
 
-The economics mirror the 1b work/leisure setup (same utility functions) so the
-hand computations carry over; only the wage grid's low point moves from 10 to 8
-so every argmax is strict (at wage 10 the myopic household objective ties).
+The economics mirror the work/leisure setup of
+`test_terminal_collective_solve.py` (same utility functions) so the hand
+computations carry over; only the wage grid's low point moves from 10 to 8 so
+every argmax is strict (at wage 10 the myopic household objective ties).
 
 Hand computation, wage grid {8, 40}, beta = 0.95, next_wage = 40*work +
 8*(1-work) (working today yields the high wage tomorrow):
@@ -356,7 +357,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
 
 
 def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
-    """Routing a collective regime toward a singleton target is slice 4."""
+    """Routing a collective regime toward a singleton target needs a gated edge."""
 
     def _utility_single(wage: ContinuousState) -> FloatND:
         return wage
@@ -404,7 +405,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
 
 
 def test_collective_regime_with_taste_shocks_is_rejected():
-    """EV1 taste shocks on a collective regime are out of scope for E1."""
+    """EV1 taste shocks on a collective regime are out of scope."""
     with pytest.raises(NotImplementedError, match="taste shocks"):
         Regime(
             transition=_next_regime,

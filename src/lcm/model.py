@@ -780,10 +780,11 @@ class Model:
                 stakeholder, and each leg sends the row into *that*
                 stakeholder's own continuing regime under *that* stakeholder's
                 own state projection — so the role decides which leg governs
-                every row (ROW-SPLIT "synthetic mode": `"f"` for an all-women
-                cohort tracking synthetic husbands, `"m"` for an all-men one;
-                EKL Appendix F's two independent single-gender cohorts). On a
-                collective source, both `None` and a value naming no declared
+                every row. A dissolution does not split a row into two
+                independently tracked households: each cohort is single-gender
+                and carries synthetic partners, so `"f"` simulates women and
+                `"m"` men, and a two-sided population is two separate calls. On
+                a collective source, both `None` and a value naming no declared
                 leg raise `ValueError`; a singleton source ignores the
                 argument entirely, so `None` (the default) is right there.
 
@@ -840,14 +841,15 @@ class Model:
             multiple=alignment,
         )
         flat_params = self._process_params(params)
-        # simulate-round8 F1 (re-review): the edge-fold state/source-param collision
-        # guard also runs on the SIMULATE entry, not only in `solve()`. The public
-        # simulate API accepts a precomputed / cached `period_to_regime_to_V_arr`
-        # and skips `solve()` entirely (see below), so a guard installed only in
-        # `solve()` would leave the simulate gate and fallback-state projector to
-        # read a colliding leaf (a name that is both a target state and a
-        # `flat_params[source]` key) unchecked. Run it here before any simulation
-        # compilation or routing, regardless of how the value arrays are obtained.
+        # The edge-fold state/source-param collision guard runs on the simulate
+        # entry as well as inside `solve()`. Simulation accepts a precomputed or
+        # cached `period_to_regime_to_V_arr` and then skips `solve()` entirely
+        # (the `period_to_regime_to_V_arr is None` branch below), so a guard
+        # sitting only in `solve()` would let the simulate gate and the
+        # fallback-state projector read a colliding leaf unchecked — a name that
+        # is both a target state of the target regime and a key of
+        # `flat_params[source]`. Running it here, before any simulation
+        # compilation or routing, covers every route to the value arrays.
         # A cheap no-op when no regime declares gated edges.
         if any(regime.gated_edges for regime in self._regimes.values()):
             _reject_edge_fold_state_param_collisions(

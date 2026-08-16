@@ -253,7 +253,7 @@ def zero_safe_weighted_term(
 
 
 def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
-    """Sum ``values`` after canonicalising the floating-point reduction order.
+    """Sum `values` after canonicalising the floating-point reduction order.
 
     Floating-point addition is not associative.  When the entries are keyed by
     economically inert identifiers (regime labels, stakeholder names), reducing in
@@ -269,7 +269,7 @@ def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
         axis: Axis containing the permutable contributions.
 
     Returns:
-        The value-ordered sum over ``axis``.
+        The value-ordered sum over `axis`.
     """
     arr = jnp.asarray(values)
     return jnp.sum(jnp.sort(arr, axis=axis), axis=axis)

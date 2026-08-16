@@ -56,9 +56,10 @@ class SamePeriodRef:
     orders each period's active regimes topologically by these declarations),
     and its value function is linearly interpolated at the projected
     coordinates with the same machinery the continuation uses — but with the
-    CURRENT period's arrays (design doc `pylcm-extension-collective-regimes.md`
-    §2 E2; EKL 2019 eq. 11 reads the singles' period-t values from inside the
-    married period-t problem).
+    CURRENT period's arrays. Reading the current period rather than the
+    continuation is what a within-period participation constraint needs: a
+    couple's period-$t$ decision is checked against the values its members
+    would have as singles in that same period $t$.
     """
 
     regime: RegimeName
@@ -67,7 +68,8 @@ class SamePeriodRef:
     Must be another regime of the model, active in every period the declaring
     regime is active. No transition edge between the two regimes is required —
     same-period reference reads work across otherwise unconnected regime
-    "islands" (that is the point of E2).
+    "islands", which is what lets a value constraint compare this regime's
+    value against a regime it never transitions into.
     """
 
     projection: Mapping[StateName, UserFunction]
@@ -104,19 +106,19 @@ class EdgeLeg:
 
     A gated edge carries one leg per SOURCE stakeholder (a singleton source
     declares exactly one leg; a collective source one per stakeholder). Each leg
-    says, for that source stakeholder's continuation object ``Wbar^s`` on the
+    says, for that source stakeholder's continuation object `Wbar^s` on the
     target regime's grid:
 
-    - ``target_stakeholder`` — which component of the target regime's value the
+    - `target_stakeholder` — which component of the target regime's value the
       OPEN (gate-True) branch takes. For a collective target it names one of the
-      target's stakeholders; for a singleton target it is ``None``.
-    - ``fallback`` — a `SamePeriodRef` giving the value the CLOSED (gate-False)
+      target's stakeholders; for a singleton target it is `None`.
+    - `fallback` — a `SamePeriodRef` giving the value the CLOSED (gate-False)
       branch takes: a same-period reference regime's V at a projection from the
       TARGET regime's grid coordinates — typically the source stakeholder's own
       single regime, at the projection back to its single state. The mixture is the
-      strict ``jnp.where(gate, V_target, V_fallback)`` — NEVER a linear
-      ``gate*V_target + (1-gate)*V_fallback`` (the target value is ``-inf`` in a
-      dissolution cell, and ``0 * -inf = NaN``).
+      strict `jnp.where(gate, V_target, V_fallback)` — NEVER a linear
+      `gate*V_target + (1-gate)*V_fallback` (the target value is `-inf` in a
+      dissolution cell, and `0 * -inf = NaN`).
     """
 
     fallback: SamePeriodRef
@@ -138,30 +140,31 @@ class GatedEdge:
     singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
     raw transitions between different-stakeholder regimes stay rejected.
 
-    A source regime declares ``gated_edges`` as a mapping of TARGET regime name
+    A source regime declares `gated_edges` as a mapping of TARGET regime name
     to `GatedEdge`. At the end of each period's solve, the engine folds, for
-    each declared edge and each source stakeholder ``s``, a gated continuation
-    object on the target regime's grid::
+    each declared edge and each source stakeholder `s`, a gated continuation
+    object on the target regime's grid:
 
         Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
 
-    The source's continuation then reads ``Wbar`` in place of the raw target V,
+    The source's continuation then reads `Wbar` in place of the raw target V,
     threaded through the ordinary transition machinery.
 
-    - ``gate`` — a BOOLEAN user function evaluated pointwise on the target
+    - `gate` — a BOOLEAN user function evaluated pointwise on the target
       regime's grid. It may read the target regime's per-stakeholder value
-      components under the names ``V_target_<s>`` (one per target stakeholder),
-      the target's dissolution flag ``D_target`` (a collective target only), each
-      key of ``gate_refs`` (a same-period reference value at its projection), and
-      ordinary target states / params. EKL consent (eq. 27):
-      ``gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)``
-      — strict, unanimous. EKL no-dissolution (eqs. 9/12): ``gate = ~D_target``.
-      Stochastic (``kappa`` in ``(0, 1)``) gates are out of scope for this
-      slice.
-    - ``legs`` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
+      components under the names `V_target_<s>` (one per target stakeholder),
+      the target's dissolution flag `D_target` (a collective target only), each
+      key of `gate_refs` (a same-period reference value at its projection), and
+      ordinary target states / params. Mutual consent to marriage is the strict,
+      unanimous gate
+      `gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)`;
+      "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
+      a gate returning a probability in `(0, 1)` rather than a boolean — are
+      not supported.
+    - `legs` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
       stakeholder name; a singleton source declares exactly one leg under any
       key).
-    - ``gate_refs`` — extra same-period reference values the ``gate`` reads,
+    - `gate_refs` — extra same-period reference values the `gate` reads,
       exactly like a regime's `same_period_refs` but projected from the TARGET
       regime's grid.
     """
@@ -175,7 +178,7 @@ class GatedEdge:
     gate_refs: Mapping[str, SamePeriodRef] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Same-period reference values the ``gate`` reads (projected from the target
+    """Same-period reference values the `gate` reads (projected from the target
     grid)."""
 
     def __post_init__(self) -> None:
@@ -355,31 +358,34 @@ class Regime:
     """Names of the stakeholders whose individual values this regime carries.
 
     `None` (the default) is the singleton case: the regime has one implicit
-    stakeholder, one value function, and follows today's exact code path — no
-    behavior change. A non-`None` tuple declares a *collective regime*: a couple
-    (or other multi-party household) that solves one household argmax but reads
-    off a per-stakeholder value at that common argmax, with value-aware
-    feasibility and value-gated regime routing (consent / dissolution).
+    stakeholder and one value function. A non-`None` tuple declares a
+    *collective regime*: a couple (or other multi-party household) that solves
+    one household argmax but reads off a per-stakeholder value at that common
+    argmax, with value-aware feasibility and value-gated regime routing
+    (consent / dissolution).
 
-    The **solve** is implemented for terminal and
-    non-terminal regimes: a collective regime carries a per-stakeholder utility
+    A collective regime carries a per-stakeholder utility
     `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
-    `weights`; its solve reads off each stakeholder's own value at the shared
-    household argmax, and a non-terminal collective regime aggregates the
-    per-stakeholder continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal
-    collective regime's transition targets must all be collective regimes with
-    the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes goes through `gated_edges`. EV1 taste shocks, nonlinear
-    certainty equivalents, and non-GridSearch solvers on a collective regime
-    raise `NotImplementedError`. Collective-regime **simulation** is
-    implemented for the reduced synthetic-cohort envelope: one fixed-size
-    population, an APPROXIMATE off-grid value-gate router (the simulate gate
-    interpolates already-maximized target V rather than recomputing the
-    household maximum off-grid; see `get_edge_simulate_gate_evaluator`), and a
-    per-call `own_stakeholder` (or first-declared-leg) row role. Deliberately
-    deferred: an exact off-grid max-recompute, linked two-row dissolution
-    reallocation, between-period child-age (carried-state) reassignment, and
-    transient-node shock folding.
+    `weights`. Its solve reads off each stakeholder's own value at the shared
+    household argmax, and a non-terminal one aggregates the per-stakeholder
+    continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal collective regime's
+    transition targets must all be collective regimes with the identical
+    `stakeholders` tuple — per-stakeholder routing to different regimes goes
+    through `gated_edges`. EV1 taste shocks, nonlinear certainty equivalents,
+    and non-GridSearch solvers on a collective regime raise
+    `NotImplementedError`.
+
+    Three things to know before simulating one:
+
+    - The population is one fixed-size cohort of independent rows. A
+      dissolution does not split a row into two independently tracked
+      households; each row records where every stakeholder would land and then
+      continues as one of them.
+    - `simulate` requires `own_stakeholder` for a collective source, and it
+      names the role every row in that call carries.
+    - The off-grid value gate is approximate: it interpolates the target's
+      already-maximized value rather than recomputing the household maximum at
+      the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
     """
 
     weights: Mapping[str, float] | None = None
@@ -387,9 +393,10 @@ class Regime:
 
     Used only when `stakeholders is not None`: the collective solve maximizes the
     household scalarization `O = Σ_s λ_s Q^s` over the feasible action set. When
-    omitted (the default), equal weights `1/len(stakeholders)` are used; supply
-    an explicit mapping to express unequal Pareto weights (e.g. EKL's λ=0.5 on
-    each partner). Ignored — and must be `None` — for a singleton regime.
+    omitted (the default), equal weights `1/len(stakeholders)` are used — the
+    symmetric-couple case, `λ = 0.5` on each partner. Supply an explicit mapping
+    to give one stakeholder more weight in the household decision. Ignored —
+    and must be `None` — for a singleton regime.
     """
 
     value_constraints: Mapping[FunctionName, UserFunction] = field(
@@ -431,8 +438,8 @@ class Regime:
     collective one for mutual-consent marriage, or a collective regime into
     singleton regimes for dissolution) — the only way to cross the mixed-topology
     fence. When declared, the engine folds a gated continuation object
-    ``Wbar^s = jnp.where(gate, V_target, V_fallback)`` on the target regime's
-    grid at each period's end, and this regime's continuation reads ``Wbar`` in
+    `Wbar^s = jnp.where(gate, V_target, V_fallback)` on the target regime's
+    grid at each period's end, and this regime's continuation reads `Wbar` in
     place of the raw target V. See `GatedEdge`. Only meaningful together
     with the corresponding `transition` / `state_transitions` into the target's
     state space; a target reached by a gated edge is exempt from the mixed-

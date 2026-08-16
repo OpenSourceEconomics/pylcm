@@ -72,52 +72,50 @@ from lcm.typing import (
 def _sum_regime_mixture(
     mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], *, like: FloatND
 ) -> FloatND:
-    """Reduce the regime mixture ``E[V']=Σ p_r·V_r`` as ONE zero-safe contraction.
+    """Reduce the regime mixture `E[V']=Σ p_r·V_r` as ONE zero-safe contraction.
 
-    ``mixture_terms`` is a list of ``(target_name, prob_r, expected_V_r)`` — the
+    `mixture_terms` is a list of `(target_name, prob_r, expected_V_r)` — the
     UNMULTIPLIED per-target probability and expected continuation. The per-target
     probabilities and continuations are stacked along a new leading (target) axis and
-    multiplied ONCE inside a single ``zero_safe_weighted_term``; the resulting
-    per-target contributions ``p_r·V_r`` are then reduced by a VALUE-ORDERED
-    ``jnp.sum`` — the contributions are ``jnp.sort``-ed along the target axis
-    before the sum. Two
+    multiplied ONCE inside a single `zero_safe_weighted_term`; the resulting
+    per-target contributions `p_r·V_r` are then reduced by a VALUE-ORDERED `jnp.sum`
+    — the contributions are `jnp.sort`-ed along the target axis before the sum. Two
     properties this buys over a sequential left-fold
-    ``E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)``, both MEASURED:
+    `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`, both MEASURED:
 
     - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
       NOT stacking the already-formed products — lands on the exact-policy side of a
-      pinned 5-target fixture (``> alternative`` bits ...843) where the
-      left-fold and ``jnp.sum(jnp.stack(products))`` both land on the wrong side
-      (bits ...842). It
-      is still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
+      pinned 5-target fixture (`> alternative` bits ...843) where the left-fold and
+      `jnp.sum(jnp.stack(products))` both land on the wrong side (bits ...842). It is
+      still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
       error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
       argmax can still resolve either way. Deterministic resolution AT a genuine
-      knife-edge would need compensated/exact summation, which is not implemented: a
-      value-sorted Neumaier compensated sum WAS measured and, on a counterexample,
-      landed on the WRONG side of the competing action while the plain
-      value-sorted reduction landed exact-side, so it was NOT adopted.
+      knife-edge would need compensated/exact summation, which is not implemented — and
+      a value-sorted Neumaier compensated sum does not supply it: MEASURED, on a
+      counterexample it lands on the WRONG side of the competing action where the plain
+      value-sorted reduction lands exact-side.
     - **Reproducibility (label-independence).** The reduction ORDER is a deterministic
       function of the contribution VALUES — economically meaningful — and NEVER of the
-      arbitrary regime NAMES. Sorting by name (``sorted(mixture_terms, key=name)``)
+      arbitrary regime NAMES. Sorting by name (`sorted(mixture_terms, key=name)`)
       would remove the transition-mapping ITERATION-ORDER dependence but make the
       float64 summation order a function of the user's regime LABELS: a pure
       ALPHA-RENAMING of the regimes (same probabilities, same continuations, only the
       dict keys change) reorders the non-associative float64 sum and, MEASURED, moves
       the result across 37 distinct outputs over the 120 name bijections of a valid
       5-target float64 mixture — reversing a non-tied household argmax.
-      Sorting the CONTRIBUTION MULTISET (``jnp.sort`` along the target axis) makes the
-      sum provably invariant to alpha-renaming: the multiset ``{p_r·V_r}`` is unchanged
+      Sorting the CONTRIBUTION MULTISET (`jnp.sort` along the target axis) makes the
+      sum provably invariant to alpha-renaming: the multiset `{p_r·V_r}` is unchanged
       by relabeling, and the sorted order (hence the summation order and its bits) is a
-      function of that multiset alone. The stacking order of ``mixture_terms`` is
+      function of that multiset alone. The stacking order of `mixture_terms` is
       therefore irrelevant (the sort canonicalises it), so no name-sort is needed.
 
-    Zero-mass safety is preserved (a zero ``p_r`` beside an admissible ``±inf`` V_r is
-    masked to exactly 0 by ``zero_safe_weighted_term`` BEFORE the sort, so a zero-mass
-    ``-inf`` contributes 0 and never survives the sort as ``-inf``). Cost: the K
+    Zero-mass safety holds throughout (a zero `p_r` beside an admissible `±inf` V_r is
+    masked to exactly 0 by `zero_safe_weighted_term` BEFORE the sort, so a zero-mass
+    `-inf` contributes 0 and never survives the sort as `-inf`). Cost: the K
     per-target contributions are materialised together and sorted along the (small)
     target axis, an O(K log K) sort on a tiny axis, rather than folded one at a time — K
-    is the number of active next-period targets. ``mixture_terms`` is empty in a
-    terminal period with no active target; the mixture is then exactly ``zeros_like``.
+    is the number of active next-period targets. `mixture_terms` is empty in a
+    terminal period with no active target; the mixture is then exactly `zeros_like`.
     """
     if not mixture_terms:
         return jnp.zeros_like(like)
@@ -161,8 +159,8 @@ def _sum_regime_mixture(
     # to 0); sorting them along the target axis (axis 0) before `jnp.sum` makes the
     # non-associative float64 reduction order a deterministic function of the
     # contribution multiset -- provably invariant to an economically-inert
-    # alpha-renaming of the regimes -- where the previous name-sort made the bits
-    # (and a non-tied argmax) depend on the arbitrary regime labels. See the docstring.
+    # alpha-renaming of the regimes. Sorting by regime label instead would make the
+    # bits (and a non-tied argmax) depend on the arbitrary names. See the docstring.
     # `subnormal_is_accounted_for=False`: these weights are regime transition
     # probabilities straight from the model, and nothing has put them on a common
     # scale, so the term has to move the exponent itself.
@@ -341,13 +339,11 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        # F_arr is built here, before and independently
-        # of Q (it never reads E_next_V). A value-aware mask cannot stay here:
-        # it needs per-stakeholder Q^s, so E2 splits this into (i) build the
-        # state-independent F here, (ii) compute Q^s, (iii) `mask = F ∧ g(...)`
-        # applied in max_Q_over_a. This site also returns the explicit dissolution
-        # flag D = 1[mask empty], distinct from a numeric -inf. See design doc
-        # §2 / §3.
+        # F_arr is built here, before and independently of Q (it never reads
+        # E_next_V). A value-aware mask cannot be built at this point: it needs
+        # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
+        # the state-independent F here and ANDs its value constraints in only
+        # after computing Q^s.
         U_arr, F_arr = U_and_F(**states_actions_params)
         CE, _ = compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -545,9 +541,9 @@ def get_Q_and_F_terminal_collective(
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
 
-    Separate from `get_Q_and_F_terminal` so the singleton
-    terminal path (shared with the simulate / compute-intermediates machinery) is
-    byte-identical; this builder is used only at the collective solve site.
+    Separate from `get_Q_and_F_terminal` so the singleton terminal path (shared
+    with the simulate / compute-intermediates machinery) carries none of the
+    stakeholder handling; this builder is used only at the collective solve site.
 
     Builds one `U^s`-and-`F` closure per stakeholder from its own `utility_<s>`
     DAG target. Feasibility is regime-level: `_get_U_and_F` builds `feasibility`
@@ -636,18 +632,13 @@ SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
 # `IrregSpacedGrid(pass_points_at_runtime=True)` reference state's `points`, via
 # `V._get_coordinate_finder`) are parameters of the REFERENCE regime: they live
 # in `flat_params[ref.regime]`, never in the READING regime's own namespace.
-# Before this argument existed the reader exposed those helpers as extra outer
-# arguments named after the PREFIXED coordinate variable
-# (`__same_period_ref__x__points`), which no caller supplies and no params
-# template ever emits (`_lcm.params.regime_template._add_runtime_grid_params`
-# emits `x__points`, in the reference regime's own template): all four consumers
-# of `_build_same_period_ref_reader` — ordinary E2 same-period refs, solve-side
-# gate refs, solve-side leg-fallback value readers, and simulate-side gate refs
-# — raised a missing-argument error the moment a reference regime declared a
-# runtime irregular grid. Coordinate VARIABLES stay prefixed (internal wiring
-# that must not collide with the reading regime's own state names); PARAMETER
-# qnames are separated from them and resolved against the reference regime's
-# explicit namespace through this mapping instead.
+# Coordinate VARIABLES stay prefixed (internal wiring that must not collide with
+# the reading regime's own state names), but that prefixed spelling
+# (`__same_period_ref__x__points`) is a name no caller supplies and no params
+# template emits — `_lcm.params.regime_template._add_runtime_grid_params` emits
+# `x__points`, in the reference regime's own template. PARAMETER qnames are
+# therefore separated from the coordinate variables and resolved against the
+# reference regime's explicit namespace through this mapping.
 SAME_PERIOD_PARAMS_ARG = "same_period_regime_to_params"
 
 # Internal argument names of the same-period reference interpolation; never
@@ -718,8 +709,7 @@ def _build_same_period_ref_reader(
     genuine value), `get_V_interpolator`'s process-aware mode
     (`interpolate_process_axes=True`) is used so that axis is linearly
     interpolated instead of integer-looked-up; a reference regime without a
-    process state is unaffected (`interpolate_process_axes=False`, the
-    ordinary path, byte-identical).
+    process state takes the ordinary path (`interpolate_process_axes=False`).
 
     Args:
         ref: Resolved same-period reference declaration.
@@ -737,7 +727,7 @@ def _build_same_period_ref_reader(
         V_arr_name=_REF_V_ARR_NAME,
         interpolate_process_axes=_reference_has_process_axis,
     )
-    # Empty for an E2 value constraint: that projection is evaluated at THIS
+    # Empty for a value constraint: that projection is evaluated at THIS
     # period's states, where a `next_<state>` has no value and is rejected.
     # A gated-edge fold passes the target's laws, because it projects INTO the
     # target's state space -- a transition role, where those values exist.
@@ -764,10 +754,10 @@ def _build_same_period_ref_reader(
     # Extra interpolator inputs beyond the coordinates and the V array (e.g.
     # runtime-supplied irregular-grid points). These are the REFERENCE
     # regime's own parameters, so they are NOT exposed as outer arguments of
-    # this reader (the reading regime's caller has no such param, and the
-    # prefixed name they carried was unsatisfiable by anyone) — they are looked
-    # up per call in `SAME_PERIOD_PARAMS_ARG[ref.regime]` under their qname in
-    # the reference regime's OWN namespace.
+    # this reader (the reading regime's caller has no such param, and nothing
+    # emits the prefixed spelling they arrive under) — they are looked up per
+    # call in `SAME_PERIOD_PARAMS_ARG[ref.regime]` under their qname in the
+    # reference regime's OWN namespace.
     interpolator_extra_qnames = _reference_interpolator_param_qnames(
         extra_args=get_union_of_args([interpolator])
         - coordinate_names
@@ -823,8 +813,8 @@ def _reference_interpolator_param_qnames(
     `get_V_interpolator` applied, and recovers the reference regime's own qname.
 
     Any extra input that does NOT carry the prefix cannot be attributed to a
-    reference state this way; rather than bind it from an arbitrary namespace
-    (the defect class this whole mechanism exists to end), fail loudly at build
+    reference state this way; rather than bind it from a guessed namespace,
+    which would silently read another regime's parameter, fail loudly at build
     time.
 
     Raises:
@@ -954,7 +944,8 @@ def get_Q_and_F_collective(
         transition_laws: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability function
-            for solve (stakeholder-independent — per-stakeholder gates are E3').
+            for solve (stakeholder-independent — per-stakeholder gating is
+            carried by the gated edges, not by these probabilities).
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info of the CONTINUATION, i.e. of next period's
             value arrays (state axes only; the stakeholder axis is not an
@@ -1005,7 +996,7 @@ def get_Q_and_F_collective(
     # other pool is neither phase and can reverse the household argmax.
     #
     # The flow needs no pool of its own: `next_<state>` is reserved for a
-    # transition's output, so no per-stakeholder utility, feasibility or E2 value
+    # transition's output, so no per-stakeholder utility, feasibility or value
     # constraint reads one and the flow holds no transition node to resolve.
     continuation_pool = (
         functions if continuation_functions is None else continuation_functions
@@ -1121,10 +1112,9 @@ def get_Q_and_F_collective(
             **_build_W_kwargs(states_actions_params),
         )
 
-        # Value-aware feasibility. Evaluated AFTER
-        # Q^s — this is the reorder the singleton path never needs (there,
-        # F is built before and independently of Q). Interpolate each declared
-        # same-period reference value at the projected coordinates, then AND
+        # Value-aware feasibility. Evaluated AFTER Q^s, unlike the singleton
+        # path, where F is built before and independently of Q. Interpolate each
+        # declared same-period reference value at the projected coordinates, then AND
         # every predicate — reading its own `Q_<s>` gathers, the reference
         # values, and ordinary cell kwargs — into the mask. The household
         # argmax downstream runs over the masked set; an all-infeasible cell
@@ -1145,7 +1135,7 @@ def get_Q_and_F_collective(
 
 @dataclass(frozen=True, kw_only=True)
 class _ValueConstraintMachinery:
-    """Prebuilt E2 evaluation machinery closed over by a collective `Q_and_F`."""
+    """Prebuilt value-constraint machinery closed over by a collective `Q_and_F`."""
 
     reference_readers: Mapping[str, Callable[..., FloatND]]
     """Per reference-value name, the same-period reference reader."""
@@ -1174,7 +1164,7 @@ def _build_value_constraint_machinery(
     same_period_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     functions: EconFunctionsMapping,
 ) -> _ValueConstraintMachinery:
-    """Build the E2 reference readers and value-constraint evaluators once.
+    """Build the same-period reference readers and value-constraint evaluators once.
 
     Each evaluator is the predicate concatenated with
     the regime's function DAG (so it may read helper functions, exactly like
@@ -1461,7 +1451,7 @@ def _get_compute_CE(
 
     # Co-mapped states are sliced off each `next_V_arr` leaf by the backward-
     # induction co-map, so their `next_`-prefixed coordinates are not passed to
-    # the interpolator (which no longer indexes those axes).
+    # the interpolator, which does not index those axes.
     co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
     def compute_CE(
@@ -1609,12 +1599,11 @@ def _get_compute_CE(
                 # this beats a sequential left-fold on accuracy and why the
                 # order must not depend on regime LABELS.
                 #
-                # Multiplying here, as the upstream accumulator does, would put this
-                # term outside that single value-ordered reduction -- which is the
-                # point of the unmultiplied form. The `0 * -inf` hazard it would
-                # otherwise raise (a zero-probability target carrying an admissible
-                # `-inf`) is handled one level in, by `zero_safe_weighted_term` inside
-                # `_sum_regime_mixture`.
+                # Multiplying here would put this term outside that single
+                # value-ordered reduction -- which is the point of the unmultiplied
+                # form. The `0 * -inf` hazard multiplying would raise (a
+                # zero-probability target carrying an admissible `-inf`) is handled one
+                # level in, by `zero_safe_weighted_term` inside `_sum_regime_mixture`.
                 mixture_terms.append(
                     (
                         target_regime_name,
@@ -1652,9 +1641,9 @@ def _get_compute_CE(
         # ONE reduction for the whole regime mixture: stack the operands and
         # contract once, value-ordered, rather than folding `CE = CE + p*V` per
         # target. Accuracy and a sum order that must not depend on
-        # regime LABELS. Empty on the lottery route, where
-        # `_sum_regime_mixture` returns `zeros_like(like)` -- the same zero the
-        # upstream accumulator started from, so the branches below compose.
+        # regime LABELS. `mixture_terms` is empty on the lottery route, where
+        # `_sum_regime_mixture` returns `zeros_like(like)` -- the additive
+        # identity the branches below then compose with.
         # `like` is the shape of a VALUE, so collectively it carries the trailing
         # stakeholder axis the mass-shaped `zero` does not.
         CE = _sum_regime_mixture(
@@ -1909,8 +1898,8 @@ def _get_interpolator_resolving_draws(
             by the value its next-state function yields.
 
     Returns:
-        A callable with the interpolator's signature, minus the laws it now
-        resolves itself, plus whatever resolving them reads.
+        A callable with the interpolator's signature, minus the laws it resolves
+        itself, plus whatever resolving them reads.
 
     """
     resolve = concatenate_functions(
@@ -2031,7 +2020,7 @@ def _build_target_continuation(
     dependencies_by_law = _draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_variables
     )
-    # A declared entry is a coordinate like any other now, so a law reading a
+    # A declared entry is a coordinate like any other, so a law reading a
     # sibling draw is resolved inside that draw's axes whether it feeds a
     # coordinate or an entry.
     dependent_coordinate_names = tuple(dependencies_by_law)
@@ -2178,11 +2167,10 @@ def _scalar_target_contribution(
         else:
             # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
             # `p_r * V_r` once inside a single zero-safe contraction, masking the
-            # VALUE before the multiply. That is the same neutralization upstream's
-            # `_neutralize_where_unreachable` performs, on the same `prob == 0`
-            # predicate, so applying it here as well would be redundant -- and
-            # multiplying here would reintroduce `0 * -inf = nan` for a zero-mass
-            # stateless target and put this term outside the value-ordered reduction.
+            # VALUE on the `prob == 0` predicate before the multiply. So no
+            # neutralization is owed here -- while multiplying here would raise
+            # `0 * -inf = nan` for a zero-mass stateless target and put this term
+            # outside the value-ordered reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
     return (
         mixture_terms,

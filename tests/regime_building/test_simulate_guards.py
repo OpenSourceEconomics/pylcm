@@ -1,32 +1,32 @@
-"""Regression tests for the SIMULATE-subsystem boundary guards (F3-F7).
+"""Regression tests for the SIMULATE-subsystem boundary guards.
 
-Five findings from an audit of the collective-regimes forward-simulation
-path (`_lcm.simulation.gated_routing`, `_lcm.simulation.result_dataframe`,
+Five boundary conditions on the collective-regimes forward-simulation path
+(`_lcm.simulation.gated_routing`, `_lcm.simulation.result_dataframe`,
 `_lcm.simulation.simulate`):
 
-- F3: a gated edge's target is solved at `period + 1` but a declared
-  reference regime (fallback / gate ref) is not -- a malformed ACTIVE edge
-  that `substitute_gated_edge_continuations` silently no-opped instead of
-  raising.
-- F4: two legs of one gated edge sharing the same fallback regime -- the
-  later leg's projected state silently overwrites the earlier leg's in
-  `route_gated_edges`. Rejected at model construction instead.
-- F5: `_select_own_leg` returning `legs[0]` for an `own_stakeholder` a
-  genuinely multi-leg (collective) source does not declare, or for none at
-  all.
-- F6: `to_dataframe()` on a result where every populated regime is
-  collective (no scalar `value` column anywhere) raising `KeyError`.
-- F7: a STATELESS collective regime's simulated `V_arr` / argmax index
-  missing the subject axis a stateful collective or a stateless singleton
+- A gated edge whose target is solved at `period + 1` while a declared
+  reference regime (fallback / gate ref) is not: a malformed ACTIVE edge, so
+  `substitute_gated_edge_continuations` raises rather than no-opping, which
+  would leave the edge silently ungated.
+- Two legs of one gated edge sharing the same fallback regime: rejected at
+  model construction, because in `route_gated_edges` the later leg's
+  projected state would overwrite the earlier leg's.
+- `_select_own_leg` on a genuinely multi-leg (collective) source: an
+  `own_stakeholder` the source does not declare, or none at all, raises
+  rather than resolving to `legs[0]`.
+- `to_dataframe()` on a result where every populated regime is collective
+  (no scalar `value` column anywhere): builds the frame from the
+  per-stakeholder value columns.
+- A STATELESS collective regime's simulated `V_arr` / argmax index: carries
+  the subject axis that a stateful collective or a stateless singleton
   regime always carries.
 
 Each test pins the required behaviour and fails loudly on the defect it
-guards. Byte-identical regression coverage for the untouched paths (stateful
-collective, stateless singleton, mixed-topology dataframe, distinct-
-fallback dissolution, matching-leg routing) is
-already carried by `test_collective_regime_simulate.py` and
-`test_row_split_synthetic.py`; this file focuses on the five guards
-themselves plus their required negative controls.
+guards. Coverage of the paths these guards leave alone (stateful collective,
+stateless singleton, mixed-topology dataframe, distinct-fallback dissolution,
+matching-leg routing) is already carried by
+`test_collective_regime_simulate.py` and `test_row_split_synthetic.py`; this
+file focuses on the five guards themselves plus their negative controls.
 """
 
 from types import MappingProxyType
@@ -73,12 +73,6 @@ class Work:
     work: ScalarInt  # code 1
 
 
-# ------------------------------------------------------------------------------
-# F3: a gated edge's target is solved at period+1 but a declared reference
-# regime is not -- must raise, not silently no-op.
-# ------------------------------------------------------------------------------
-
-
 def test_missing_reference_regime_at_target_period_raises():
     """A missing reference regime at the target's period raises, never ungates.
 
@@ -120,8 +114,8 @@ def test_missing_reference_regime_at_target_period_raises():
 
 def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     """Negative control: the TARGET (not a reference) missing at period+1 stays
-    a silent no-op -- the legitimate repeating/one-shot boundary case (F3's
-    `continue` this finding must NOT touch). Mirrors
+    a silent no-op -- the legitimate repeating/one-shot boundary case, which
+    the missing-reference guard must leave alone. Mirrors
     `test_repeating_self_loop_gated_edge_simulates_past_activity_boundary`'s
     scenario at the kernel level: an empty `period_to_regime_to_V_arr` for
     period+1 (no target, hence no references either) must not raise.
@@ -180,10 +174,8 @@ def test_dissolution_fixture_with_all_references_present_is_unaffected():
     assert "married_ir" in gate_arrays
 
 
-# ------------------------------------------------------------------------------
-# F4: two legs of one gated edge sharing a fallback regime must be rejected
-# at model construction.
-# ------------------------------------------------------------------------------
+# Two legs of one gated edge sharing a fallback regime must be rejected at
+# model construction.
 
 _WAGE_3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
@@ -215,7 +207,7 @@ def _u_shared(wage: ContinuousState) -> FloatND:
 def _make_shared_fallback_regimes() -> dict[str, Regime]:
     """Same dissolution topology as `_make_dissolution_regimes`, but BOTH legs
     of `married`'s edge fall back to the SAME regime (`single_shared`) under
-    different projections -- the F4 counterexample.
+    different projections -- the topology model construction must reject.
     """
     married = Regime(
         transition={"married_ir": MarkovTransition(_prob_one)},
@@ -299,10 +291,8 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     )
 
 
-# ------------------------------------------------------------------------------
-# F5: an own_stakeholder that a multi-leg source does not declare — a typo, or
+# An own_stakeholder that a multi-leg source does not declare — a typo, or
 # none at all — must raise, not silently fall back to legs[0].
-# ------------------------------------------------------------------------------
 
 
 def _leg(source_stakeholder: str | None) -> ResolvedEdgeLeg:
@@ -378,10 +368,8 @@ def test_select_own_leg_singleton_source_without_a_role_returns_sole_leg():
     )
 
 
-# ------------------------------------------------------------------------------
-# F6: to_dataframe() on an all-collective result must not require a scalar
+# to_dataframe() on an all-collective result must not require a scalar
 # `value` column.
-# ------------------------------------------------------------------------------
 
 
 def _u_couple_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -486,10 +474,8 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
     assert df["value_m"].notna().all()
 
 
-# ------------------------------------------------------------------------------
-# F7: a stateless collective regime's V_arr / argmax index must carry the
+# A stateless collective regime's V_arr / argmax index must carry the
 # subject axis.
-# ------------------------------------------------------------------------------
 
 
 def _u_stateless_f(work: DiscreteAction) -> FloatND:
@@ -593,8 +579,8 @@ def test_stateless_collective_without_any_action_is_rejected_when_regimes_finali
 def test_stateful_collective_regime_simulate_shape_is_byte_identical():
     """Regression pin: a STATEFUL collective regime (has its own state axis,
     e.g. `_make_couple_regimes`'s `wage`) already carries the subject axis
-    from its per-subject state arrays and must be untouched by the F7
-    branch. Reuses `_make_all_collective_regimes` (has a `wage` state).
+    from its per-subject state arrays, and the stateless-collective branch
+    leaves it alone. Reuses `_make_all_collective_regimes` (has a `wage` state).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_all_collective()

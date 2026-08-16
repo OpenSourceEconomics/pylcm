@@ -451,11 +451,11 @@ def process_regimes(
         regimes_to_active_periods=regimes_to_active_periods,
     )
 
-    # COLLECTIVE-REGIMES (fold / E2 / E3' interaction, completed guard):
     # `fold=True` on a regime that another regime's gate reads nodewise (as a
     # gated-edge target, a leg fallback, or a same-period reference) is
-    # rejected here, regardless of stakeholder cardinality — see the function
-    # docstring.
+    # rejected here, regardless of stakeholder cardinality: folding averages
+    # the node axis away before value constraints or gated edges can route or
+    # read per node — see the function docstring.
     _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
 
     # The regimes an endogenous-grid regime can transition into. Only these owe
@@ -540,8 +540,8 @@ def process_regimes(
 
         # Resolve the household Pareto weights once (equal
         # weights when unspecified) and thread the stakeholder names / weights into
-        # both phase builds. `None` for the singleton default, so the existing path
-        # is byte-identical.
+        # both phase builds. Both are `None` for a singleton (non-collective)
+        # regime, which is what the downstream builds branch on.
         stakeholders = user_regime.stakeholders
         weights = _resolve_stakeholder_weights(user_regime)
         # The (deduplicated, order-preserving) regimes
@@ -693,7 +693,7 @@ def _attach_gated_edge_folds(
     """Resolve and compile each source regime's gated-edge folds.
 
     For every source regime declaring `gated_edges`, resolve each user
-    `GatedEdge` to its engine form and build the ``(Wbar, gate)`` producer on the
+    `GatedEdge` to its engine form and build the `(Wbar, gate)` producer on the
     target regime's grid (reading the target's processed functions), plus one
     per-leg FALLBACK state projector and a gate interpolator for simulate
     routing (see `build_fallback_state_projector`). Each compiled callable is
@@ -741,17 +741,16 @@ def _attach_gated_edge_folds(
             # (`Q_and_F.py`) auto-select of `get_V_interpolator`'s
             # process-aware mode so that axis is linearly interpolated
             # instead of integer-looked-up; a target without a process state
-            # is unaffected (byte-identical ordinary path).
+            # takes the ordinary integer-lookup path.
             target_has_process_axis = any(
                 isinstance(grid, _ContinuousStochasticProcess)
                 for grid in regime_to_v_interpolation_info[
                     target_name
                 ].discrete_states.values()
             )
-            # Never wrapped in `jax.jit` here — mirrors the previous gate
-            # interpolator (a plain `get_V_interpolator` product, likewise
-            # unjitted), consumed only inside `route_gated_edges`'s own
-            # `jax.vmap` over subjects.
+            # Never wrapped in `jax.jit` here: it is consumed only inside
+            # `route_gated_edges`'s own `jax.vmap` over subjects, which stages
+            # it out anyway.
             simulate_gate_evaluator = get_edge_simulate_gate_evaluator(
                 edge=resolved_edge,
                 target_v_info=regime_to_v_interpolation_info[target_name],
@@ -810,11 +809,11 @@ def _merge_deterministic_transitions(
     wins. Stochastic transitions are excluded: an unrealised draw has no value to
     project.
 
-    This is the surviving half of the old decision-DAG merge. The other half
-    detected laws that differ across target bundles, and existed only because the
-    merged law was bound into the WITHIN-PERIOD decision, where disagreeing with
-    the per-target simulate update was silent and wrong. Nothing binds it there
-    now, so there is no conflict left to report.
+    The merge needs no cross-target conflict check. The merged law is bound
+    only into transition-role reads, never into the WITHIN-PERIOD decision, so
+    a name whose law differs across target bundles cannot silently disagree
+    with the per-target simulate update — that update reads its own target's
+    bundle.
     """
     merged: dict[TransitionFunctionName, TransitionFunction] = {}
     for target_regime_name, bundle in transitions.items():
@@ -859,7 +858,7 @@ def _resolve_gated_edge(
         )
 
     # A collective source's legs are iterated in its stakeholder order so
-    # ``Wbar``'s trailing axis matches the source's stakeholder axis; a singleton
+    # `Wbar`'s trailing axis matches the source's stakeholder axis; a singleton
     # source has exactly one leg (keyed arbitrarily), stored with source
     # stakeholder `None`.
     if source_stakeholders is None:
@@ -911,8 +910,8 @@ def _resolve_stakeholder_weights(
 ) -> MappingProxyType[str, float] | None:
     """Resolve a collective regime's household Pareto weights.
 
-    Returns `None` for a singleton regime (the default,
-    keeping the existing path untouched). For a collective regime, uses the
+    Returns `None` for a singleton regime (the default, and the marker the
+    downstream builds read as non-collective). For a collective regime, uses the
     user's explicit `weights` when given, else equal weights `1/len(stakeholders)`
     (validated to match the stakeholder names at regime construction).
     """
@@ -1229,18 +1228,18 @@ def _fail_if_gated_edge_references_inactive(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
     """Reject a gated edge whose fallback / gate reference is not co-active with
-    its target on every period whose ``Wbar`` is actually consumed.
+    its target on every period whose `Wbar` is actually consumed.
 
-    `_roll_gated_edges` folds the edge's ``Wbar``
-    in each period ``t`` the TARGET regime is solved, reading each fallback's and
-    gate reference's SAME-PERIOD V, and that ``Wbar`` is consumed by the SOURCE
-    one period earlier (at ``t-1``). If a referenced regime is inactive in a
-    period whose ``Wbar`` is consumed, its V does not exist and silently rolling
-    the previous ``Wbar`` would feed the source a STALE later-period value.
+    `_roll_gated_edges` folds the edge's `Wbar`
+    in each period $t$ the TARGET regime is solved, reading each fallback's and
+    gate reference's SAME-PERIOD V, and that `Wbar` is consumed by the SOURCE
+    one period earlier (at $t-1$). If a referenced regime is inactive in a
+    period whose `Wbar` is consumed, its V does not exist and silently rolling
+    the previous period's `Wbar` would feed the source a STALE later-period value.
 
     Which target-active periods are consumed is `source_reads_folded_wbar`'s
     question, and this validator asks it rather than restating it — a period
-    whose ``Wbar`` no source reads may legitimately reference an unsolved
+    whose `Wbar` no source reads may legitimately reference an unsolved
     regime, and rejecting those would rule out an ordinary self-loop edge at the
     target's earliest active period. Require every referenced regime to be
     active on every consumed period, so the roll is well defined wherever its
@@ -1439,8 +1438,8 @@ def _fail_if_folded_regime_is_same_period_endpoint(
     stored V — and, for a COLLECTIVE regime, additionally collapses its
     dissolution flag `D` by `jnp.any` — immediately after that regime's OWN
     period solve (`_wrap_with_fold_reduction` in
-    `regime_building/max_Q_over_a.py`). E3' gated-edge routing and E2
-    same-period reads both require gate-THEN-integrate: each realized shock
+    `regime_building/max_Q_over_a.py`). Gated-edge routing and same-period
+    value reads both require gate-THEN-integrate: each realized shock
     node must be routed through its own gate / consent decision before any
     node is averaged away (`jnp.where(gate, V_target, V_fallback)` per node,
     then integrate — never integrate first and gate the average). If the
@@ -1448,10 +1447,10 @@ def _fail_if_folded_regime_is_same_period_endpoint(
     same-period reference, the two orderings conflict: the reader only ever
     sees the already-averaged V (and, if collective, the already-`jnp.any`-
     reduced D), not the per-node values gate-then-integrate needs.
-    Counterexample: target node values ``[-inf, 1]``, nodewise dissolution
-    ``[True, False]``, fallback ``0``, equal weights — the correct
-    route-then-average is ``0.5``, but fold-first (`D_any=True`) routes the
-    whole cell to the fallback, ``0.0``.
+    Counterexample: target node values `[-inf, 1]`, nodewise dissolution
+    `[True, False]`, fallback `0`, equal weights — the correct
+    route-then-average is `0.5`, but fold-first (`D_any=True`) routes the
+    whole cell to the fallback, `0.0`.
 
     A regime is unsafe to fold when it is any of:
 
@@ -1472,16 +1471,16 @@ def _fail_if_folded_regime_is_same_period_endpoint(
     singleton has a node-valued V (just no D) that a gate/reference reads
     exactly the same way.
 
-    This is the bounded INTERIM fix for the finding: reject the unsafe
-    combination at construction rather than implement the full transient
-    V_node/D_node split that would let a gate read the pre-fold, per-node
-    values (a separate, larger slice). A folded regime that is none of the
-    above — neither a gated-edge target, a leg fallback, nor a same-period
-    reference — is unaffected and stays allowed — mirroring the cross-regime
-    graph walks in `_fail_if_same_period_refs_invalid` /
-    `_fail_if_gated_edges_invalid` above and `_fail_if_folded_state_persists`
-    below, this runs once every regime's declarations are known, not in the
-    regime-local `_validate_fold_declarations`.
+    The combination is rejected at construction rather than executed: no
+    transient per-node `V_node` / `D_node` survives the fold reduction, so a
+    gate reading such a regime has nothing to route on and there is no correct
+    ordering left to pick. A folded regime that is none of the above — neither
+    a gated-edge target, a leg fallback, nor a same-period reference — stays
+    allowed. Like the cross-regime graph walks in
+    `_fail_if_same_period_refs_invalid` / `_fail_if_gated_edges_invalid` above
+    and `_fail_if_folded_state_persists` below, this runs once every regime's
+    declarations are known, not in the regime-local
+    `_validate_fold_declarations`.
 
     Raises:
         ModelInitializationError: Naming every offending regime, its folded
@@ -1552,8 +1551,9 @@ def _fail_if_folded_regime_is_same_period_endpoint(
             f"{fold_names} while being {cardinality} that is "
             f"{' and '.join(roles)}. Folding integrates the shock's node "
             f"axis out of this regime's stored V{d_clause} before that gate "
-            "/ reference can route or read per node: E2/E3' require "
-            "gate-then-integrate, not integrate-then-gate. Drop "
+            "/ reference can route or read per node: value constraints and "
+            "gated edges require gate-then-integrate, not "
+            "integrate-then-gate. Drop "
             "`fold=True` on this regime, or stop targeting / referencing it "
             "from a gated edge or same-period reference."
         )
@@ -2279,7 +2279,7 @@ class _TerminalCarryPeriodKernel:
 
         The wrapped regime keeps whatever the base kernel is: a gated-edge
         source stays one when a carry producer is composed around it, so its
-        ``Wbar`` templates pass straight through.
+        `Wbar` templates pass straight through.
         """
         return self.base.build_lower_args(
             core_key=core_key,
@@ -2668,8 +2668,8 @@ def _build_simulation_phase(
     )
 
     # Forward simulation of a collective regime
-    # reuses the SAME Q_and_F builders the solve phase uses (E1/E2's
-    # `get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
+    # reuses the SAME Q_and_F builders the solve phase uses
+    # (`get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
     # value-masked exactly like solve), so the simulated argmax never picks
     # an action the solved value function excluded. Only the ARGMAX step
     # differs from the singleton path — `get_argmax_and_max_Q_over_a`'s
@@ -3325,10 +3325,10 @@ def _process_regime_core(
         # not carry it, or on a coarse candidate. Its stored V has no such axis,
         # and building the edge trips `_fail_if_folded_state_persists`, which is
         # STRUCTURAL -- it inspects built `next_<process>` edges, not transition
-        # probability. This has to be decided here, not only at entry: now that
-        # the process names come off the TARGET's own grids, a folded
-        # target-only process is visible to synthesis for the first time, and
-        # the source's variables used to hide it.
+        # probability. This has to be decided here, not only at entry: the
+        # process names come off the TARGET's own grids, so a folded process the
+        # source does not carry reaches synthesis at this point and no earlier
+        # stage can filter it out.
         #
         # The `process not in process_names` half is what keeps the guard armed.
         # A folded process the source DOES carry can genuinely persist, and the
@@ -4353,7 +4353,7 @@ def _get_weights_func_for_process(
     For processes whose params are supplied at runtime, the grid points and
     transition probabilities are computed inside JIT from those runtime params. For a
     state-conditioned process the row is instead computed directly at the from-value
-    (``_get_conditioned_weights_func``), and `grids` is that regime's grid mapping, from
+    (`_get_conditioned_weights_func`), and `grids` is that regime's grid mapping, from
     which the conditioning state is resolved.
 
     """
@@ -5291,9 +5291,9 @@ def _fail_if_folded_state_persists(
     declared in exactly the one regime that folds them, and not redeclared
     (directly or via a self-transition) in any regime any transition reaches.
     A genuinely persistent IID shock (redrawn every period a regime is
-    active) needs the fold to also be recognized by the *continuation* side
-    (`regime_to_v_interpolation_info` / `stochastic_transition_names`) of
-    every regime that reads into it — out of scope for this slice.
+    active) would need the fold to also be recognized by the *continuation*
+    side (`regime_to_v_interpolation_info` / `stochastic_transition_names`) of
+    every regime that reads into it, which is not implemented.
     """
     error_messages: list[str] = []
     for regime_name, regime in canonical_regimes.items():
@@ -5472,9 +5472,11 @@ def _build_Q_and_F_per_period(
     for key, periods in configs.items():
         targets = key[0]
         representative_period = periods[0]
-        # Upstream added this check; it is a general invariant about the group's
-        # continuation grids, so it belongs BEFORE the collective/singleton split
-        # rather than only on the singleton twin.
+        # Every period in a group shares one compiled Q_and_F, so the group's
+        # continuation grids must agree across its periods — a property of the
+        # group alone, independent of stakeholder cardinality. Hence the split
+        # and the assertion run BEFORE the collective/singleton branch, so both
+        # branches are built against the same checked target partition.
         stateful_targets, scalar_targets = partition_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_info(representative_period),
@@ -5485,12 +5487,14 @@ def _build_Q_and_F_per_period(
             periods=tuple(periods),
         )
         if stakeholders is not None:
-            # Separate builder so the singleton path
-            # is byte-identical. No certainty equivalent — rejected at regime
-            # construction for collective regimes. Functions/constraints are
-            # resolved at the group's age exactly as the singleton branch — a
-            # passthrough for a collective regime with no age-specialized nodes
-            # (EKL), so the tested collective behaviour is unchanged.
+            # A collective regime gets its own builder: the household objective
+            # and the per-stakeholder value readout differ from the singleton
+            # kernel. It takes no certainty equivalent — a nonlinear one is
+            # rejected at regime construction, and the per-stakeholder
+            # continuation is the linear expectation. Functions and constraints
+            # are resolved at the group's representative age exactly as in the
+            # singleton branch; with no age-specialized node the resolution is a
+            # passthrough.
             built[key] = get_Q_and_F_collective(
                 flat_param_names=flat_param_names,
                 koopmans_aggregator=koopmans_aggregator,
@@ -5502,9 +5506,8 @@ def _build_Q_and_F_per_period(
                     "ConstraintFunctionsMapping",
                     resolve_periodized_nodes(constraints, representative_period),
                 ),
-                # The stateful targets: the ones whose continuation is actually
-                # interpolated this period, which is what this branch's
-                # `period_targets` has always meant.
+                # `period_targets` means the stateful targets: the ones whose
+                # continuation is actually interpolated this period.
                 # `partition_continuation_targets` splits the graph targets into
                 # exactly that set and the stateless one, whose rank-zero value
                 # enters `E[V^s]` weighted by the regime transition alone.
@@ -5525,12 +5528,12 @@ def _build_Q_and_F_per_period(
                 value_constraints=value_constraints,
                 same_period_refs=same_period_refs,
                 # Thread the flow/continuation phase split, exactly as the singleton
-                # branch below: dropping these made the collective simulator build
-                # current flow from the SOLVE transitions and the continuation from
-                # the SIMULATE/decision pool — a hybrid sub-DAG that can reverse the
-                # household argmax. `None` /
-                # solve-phase values are a passthrough, so the solve build is
-                # unchanged.
+                # branch below, so the collective simulator builds current flow and
+                # continuation from the SAME pool. Mixing them — current flow from
+                # the SOLVE transitions, continuation from the SIMULATE/decision
+                # pool — is a hybrid sub-DAG that can reverse the household argmax.
+                # A solve build passes `None` here, where the continuation pool
+                # coincides with `functions`.
                 continuation_functions=(
                     cast(
                         "EconFunctionsMapping",

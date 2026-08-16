@@ -11,9 +11,9 @@ every grid node by construction, but can disagree at any off-grid point
 whenever the value operands' difference does not cross zero at the same
 point the boolean ramp crosses 0.5.
 
-Mirrors the reviewer's counterexample: a target with a 2-point grid
+The counterexample: a target with a 2-point grid
 `x in {0.0, 1.0}`, a consent-style gate `V_target(x) > V_ref(x)` whose
-boolean value at the two nodes is `[False, True]` (so the OLD boolean-grid
+boolean value at the two nodes is `[False, True]` (so boolean-grid
 interpolation is, independent of the actual values, a linear ramp from 0 to
 1 across `[0, 1]`, thresholding to "open iff `x > 0.5`" for ANY such
 fixture) -- but whose VALUE operands are engineered so the true zero-crossing
@@ -27,20 +27,20 @@ of `V_target(x) - V_ref(x)` sits at `x = 2/3`, not `x = 0.5`:
 At the realized (off-grid) candidate state `x = 0.6` (strictly between 0.5
 and 2/3):
 
-    - OLD (interpolate boolean, threshold 0.5): 0.6 > 0.5  -> gate OPEN
+    - Interpolate the boolean, threshold at 0.5: 0.6 > 0.5  -> gate OPEN
       (route to the target) -- WRONG, this fixture's own boolean grid never
       says so at a genuine value comparison.
-    - NEW (interpolate operands, apply predicate): d(0.6) = -0.1 < 0
+    - Interpolate the operands, apply the predicate: d(0.6) = -0.1 < 0
       -> gate CLOSED (route to the fallback) -- the faithful answer.
 
 `test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boolean`
-proves the CURRENT code produces the faithful (CLOSED) answer, and
-cross-checks -- using the SAME production interpolation kernel
+proves the code produces the faithful (CLOSED) answer, and cross-checks --
+using the SAME production interpolation kernel
 (`_lcm.regime_building.ndimage.map_coordinates` + the grid's own
-`get_coordinate`) rather than a hand-derived number -- that the OLD
-boolean-interpolate-then-threshold recipe would have produced the OPPOSITE
-(OPEN) answer for this exact fixture, so the two recipes are shown to
-genuinely disagree here (not merely asserted to).
+`get_coordinate`) rather than a hand-derived number -- that the
+boolean-interpolate-then-threshold recipe yields the OPPOSITE (OPEN) answer
+for this exact fixture, so the two recipes are shown to genuinely disagree
+here (not merely asserted to).
 
 CHARACTERIZATION (a residual, deliberately NOT fixed)
 
@@ -232,12 +232,12 @@ def _solve_fixture():
 
 
 def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boolean():
-    """Fail-pre/pass-post repro (simulate F1).
+    """Routing follows the value-operand recompute, not the interpolated boolean.
 
     Confirms (a) the two recipes GENUINELY disagree for this fixture at
     `x = 0.6` (via the production interpolation kernel, not a hand-derived
-    number), and (b) the CURRENT `route_gated_edges` matches the faithful
-    (value-operand recompute) answer, not the old boolean-interpolation one.
+    number), and (b) that `route_gated_edges` matches the faithful
+    (value-operand recompute) answer, not the boolean-interpolation one.
     """
     regimes, regime_names_to_ids, flat_params, solution, _dissolution_flags = (
         _solve_fixture()
@@ -246,10 +246,9 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     target_id = regime_names_to_ids["target"]
     fallback_id = regime_names_to_ids["fallback"]
 
-    # (a) Cross-check with the SAME production interpolation kernel that the
-    # OLD (removed) `GATE_ARR_NAME` mechanism used: interpolate the grid-level
-    # BOOLEAN gate (evaluated exactly at the two nodes, cast to float) at the
-    # realized x = 0.6, and threshold at 0.5.
+    # (a) Cross-check with the production interpolation kernel: interpolate the
+    # grid-level BOOLEAN gate (evaluated exactly at the two nodes, cast to
+    # float) at the realized x = 0.6, and threshold at 0.5.
     gate_at_nodes = np.array(
         [
             _u_target(jnp.asarray(0.0)) > _u_ref(jnp.asarray(0.0)),
@@ -257,22 +256,22 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
         ]
     )
     np.testing.assert_array_equal(gate_at_nodes, [False, True])
-    old_style_interp = map_coordinates(
+    thresholded_interp = map_coordinates(
         input=jnp.asarray(gate_at_nodes, dtype=float),
         coordinates=jnp.asarray([_X2.get_coordinate(jnp.asarray(0.6))]),
     )
-    old_style_gate_open = bool(np.asarray(old_style_interp) > 0.5)
-    assert old_style_gate_open, (
-        "Sanity check on the repro fixture itself: the OLD boolean-"
-        "interpolate-then-threshold recipe must say OPEN at x=0.6 for this "
-        "test to be a genuine counterexample."
+    thresholded_gate_open = bool(np.asarray(thresholded_interp) > 0.5)
+    assert thresholded_gate_open, (
+        "Check on the fixture itself: interpolating the boolean gate array "
+        "and thresholding it must say OPEN at x=0.6, or this test is not a "
+        "counterexample to that recipe."
     )
 
     # The faithful (value-operand) answer at the SAME realized point: exact,
     # since V_target/V_ref are each linear on this 2-point grid.
     faithful_gate_open = bool(_u_target(jnp.asarray(0.6)) > _u_ref(jnp.asarray(0.6)))
     assert faithful_gate_open is False
-    assert faithful_gate_open != old_style_gate_open, (
+    assert faithful_gate_open != thresholded_gate_open, (
         "The two recipes must genuinely disagree at x=0.6 for this to be a "
         "repro, not merely a regression pin."
     )
@@ -324,9 +323,7 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     np.testing.assert_array_equal(np.asarray(routed_ids), [fallback_id])
 
 
-# ==================================================================================
-# CHARACTERIZATION: the F1 residual (interp(V) != max_a Q), deliberately NOT fixed.
-# ==================================================================================
+# CHARACTERIZATION: the residual (interp(V) != max_a Q), deliberately NOT fixed.
 
 # Two AFFINE actions whose upper envelope is CURVED (kinked) -- the minimal
 # fixture in which "interpolate the stored V" and "recompute max_a Q" differ.
@@ -549,9 +546,10 @@ def test_gate_value_read_off_grid_is_interp_of_V_not_true_max_a_Q():
     np.testing.assert_allclose(measured, interp_value, atol=1e-5)
     # What a faithful gate WOULD do -- and demonstrably does not.
     assert abs(measured - true_value) > 0.25, (
-        "The F1 residual is documented as live: if the gate now recomputes "
-        "max_a Q, delete this characterization test together with the "
-        "residual (see this module's docstring)."
+        "The simulate gate interpolates the stored maximized value rather "
+        "than recomputing max_a Q off-grid, and this test characterizes that "
+        "gap. Delete it together with the gap if the gate ever recomputes "
+        "the maximum."
     )
 
 

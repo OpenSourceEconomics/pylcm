@@ -155,9 +155,9 @@ class _GridSearchPeriodKernel:
 
     When non-empty, `build_lower_args` and `__call__`
     replace each such target's entry in `next_regime_to_V_arr` with the gated
-    continuation object ``Wbar`` supplied under `edge_regime_to_V_arr` (a
+    continuation object `Wbar` supplied under `edge_regime_to_V_arr` (a
     per-source template at lowering, the freshly folded array at run time), so
-    the source's continuation reads ``Wbar`` in place of the raw target V with
+    the source's continuation reads `Wbar` in place of the raw target V with
     no change to the compiled core. Empty keeps every other kernel
     byte-identical.
     """
@@ -168,7 +168,7 @@ class _GridSearchPeriodKernel:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     ) -> Mapping[RegimeName, FloatND]:
-        """Replace edge targets' raw V with their gated ``Wbar``."""
+        """Replace edge targets' raw V with their gated `Wbar`."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
         if edge_regime_to_V_arr is None:
@@ -223,17 +223,17 @@ class _GridSearchPeriodKernel:
     ) -> Mapping[str, object]:
         """Build the core's lowering arguments: the full state-action product.
 
-        For an E2 regime (`same_period_ref_regimes` non-empty) the same-period
-        reference V arrays are lowered with the zero templates already built for
-        `next_regime_to_V_arr` — the same-period array of a reference regime has
-        exactly its (period-invariant) V shape and sharding. For an E3' source
-        (`edge_target_regimes` non-empty) each edge target's continuation is
-        lowered with its ``Wbar`` template (target grid + source stakeholder
-        axis), substituted for the raw target V.
+        A regime that declares same-period references (`same_period_ref_regimes`
+        non-empty) has those reference V arrays lowered with the zero templates
+        already built for `next_regime_to_V_arr` — a reference regime's
+        same-period array carries exactly its own (period-invariant) V shape and
+        sharding. A gated-edge source (`edge_target_regimes` non-empty) has each
+        edge target's continuation lowered with its `Wbar` template instead of
+        the raw target V: the target's grid plus the source's stakeholder axis.
 
         The two slots stay independent when a regime both references and gates
         into the SAME regime: the solve loop passes that regime's own V under
-        the same-period slot and its ``Wbar`` under the continuation slot, and
+        the same-period slot and its `Wbar` under the continuation slot, and
         for a collective source the two differ in rank. So the same-period
         templates read the raw mapping, never the edge-substituted one.
         """

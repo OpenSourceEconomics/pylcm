@@ -18,25 +18,26 @@ The three provenances an edge-side callable mixes, all in one signature:
 
 Covered here:
 
-- **F2 (completeness).** `gated_edges.py`'s previous revision assigned every
-  gate-ref reader argument WHOLESALE to the target namespace, though a reader's
-  signature mixes all three of the above. A SOURCE-declared projection param was
-  therefore read out of the TARGET's params — silently, when the target happened
-  to declare the same qname, and as a crash when it did not.
-  (F2's disjointness half — two regimes' identically named `x__points` — is
-  pinned in `test_simulate_gate_param_and_leg_selection.py`.)
-- **F3.** `route_gated_edges` called every fallback projector with
-  `{**candidate_target_states, **flat_params[target]}` while the fold projected
-  the very same coordinate with `flat_params[source]`. The row entered the right
-  fallback REGIME at a STATE the solved policy never priced, and carried it into
-  the next period.
-- **F4.** `_build_same_period_ref_reader` exposed the reference regime's
-  interpolation helpers under the PREFIXED coordinate name
-  (`__same_period_ref__x__points`), which no params template emits and no caller
-  supplies, so any reference to a runtime irregular grid raised a
-  missing-argument error — on all four consumers of that reader. Coordinate
-  variables stay prefixed; the PARAMS are now resolved against the reference
-  regime's own namespace (`SAME_PERIOD_PARAMS_ARG`).
+- **Completeness of the gate-ref reader's provenance.** A reader's signature
+  mixes all three of the above, so assigning its arguments WHOLESALE to the
+  target namespace would read a SOURCE-declared projection param out of the
+  TARGET's params — silently, when the target happens to declare the same
+  qname, and as a crash when it does not. (The disjointness half — two regimes'
+  identically named `x__points` — is pinned in
+  `test_simulate_gate_param_and_leg_selection.py`.)
+- **The fallback projector's params.** `route_gated_edges` must project a
+  coordinate with the same `flat_params[source]` the fold projected it with.
+  Calling the projector with `{**candidate_target_states, **flat_params[target]}`
+  instead puts the row in the right fallback REGIME at a STATE the solved policy
+  never priced, and carries it into the next period.
+- **The reference regime's interpolation params.** A gate ref's or leg
+  fallback's read of another regime's V needs that regime's own grid helpers.
+  Exposing them under the PREFIXED coordinate name
+  (`__same_period_ref__x__points`) — which no params template emits and no
+  caller supplies — makes every reference to a runtime irregular grid raise a
+  missing-argument error, on all four consumers of that reader. Coordinate
+  variables stay prefixed; the PARAMS resolve against the reference regime's own
+  namespace (`SAME_PERIOD_PARAMS_ARG`).
 
 Fixture discipline: every one of these is only a repro if the two candidate
 bindings genuinely disagree, so each fixture gives the two regimes DIFFERENT
@@ -157,9 +158,7 @@ def _same_period_mappings(regimes, flat_params, solution):
     return mappings
 
 
-# ----------------------------------------------------------------------------------
-# F2 (completeness): a SOURCE-declared gate-ref projection's free param.
-# ----------------------------------------------------------------------------------
+# Completeness: a SOURCE-declared gate-ref projection's free param.
 
 # The contested qname. The SOURCE declares the projection, so `shift` is the
 # source's parameter; the target's identically named one exists only to make the
@@ -324,7 +323,8 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         )
 
     # V_target(0.6) = 0.6: open against the source's 0.1, closed against the
-    # target's 0.9. Fail-pre / pass-post, on the same evaluator.
+    # target's 0.9 — the two bindings decide the gate opposite ways, on the same
+    # evaluator.
     assert _gate(_SRC_SHIFT)
     assert not _gate(_TARGET_SHIFT)
 
@@ -443,9 +443,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
     )
 
 
-# ----------------------------------------------------------------------------------
-# F3: the fallback projector must project the coordinate the FOLD projected.
-# ----------------------------------------------------------------------------------
+# The fallback projector must project the coordinate the FOLD projected.
 
 # The leg fallback's projection parameter, qualified by the edge's target regime
 # and by the leg — which the params template and both sides of the solve/simulate
@@ -546,15 +544,14 @@ def _projector_flat_params():
 
 
 def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
-    """Fail-pre/pass-post repro — the actual contract.
+    """The simulate projector lands on the coordinate the solve fold projected.
 
     The fold's `Wbar` (gate closed everywhere, `V_fallback(z) = z`) IS the
-    coordinate the SOLVE side projected, cell by cell. The simulate-side
-    projector must produce the same number at the same target state; it did not,
-    because binding `shift` from the target while the fold binds it from the
-    source pulls them apart. That call is run below — `{**states,
-    **flat_params[target]}`, filtered to the projector's signature — and
-    disagrees.
+    coordinate the SOLVE side projected, cell by cell, and the simulate-side
+    projector must produce the same number at the same target state. Binding
+    `shift` from the target while the fold binds it from the source pulls the
+    two apart: that call is run below — `{**states, **flat_params[target]}`,
+    filtered to the projector's signature — and disagrees.
     """
     flat_params = _projector_flat_params()
     regimes, _ids, solution = _solve_fixture(_make_projector_regimes(), flat_params)
@@ -670,9 +667,7 @@ def test_router_writes_the_fold_consistent_fallback_state():
     )
 
 
-# ----------------------------------------------------------------------------------
-# F4: a REFERENCE regime's runtime irregular grid.
-# ----------------------------------------------------------------------------------
+# A REFERENCE regime's runtime irregular grid.
 
 # The reference regime's own points, and the SOURCE's identically named ones.
 # Both regimes declare a runtime-points `IrregSpacedGrid`, so both flat-param
@@ -682,16 +677,16 @@ _SRC_POINTS = (0.0, 10.0)
 
 
 def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
-    """Why F4 CRASHED, from production code alone (the fail-pre proof).
+    """The PREFIXED reference-grid param name is unsatisfiable by every regime.
 
     `get_V_interpolator(state_prefix=_REF_STATE_PREFIX)` derives a runtime
     irregular grid's helper name from the COORDINATE variable it was handed, so
-    it asks for `__same_period_ref__x__points`. The reader used to expose that
-    name verbatim as an outer argument — and no params template anywhere emits
-    it: `_add_runtime_grid_params` names the very same quantity `x__points`, in
-    the reference regime's own template. The argument was unsatisfiable by every
-    regime in the model, which is exactly the missing-argument error all four
-    consumers of the reader raised.
+    it asks for `__same_period_ref__x__points`. Exposing that name verbatim as
+    an outer argument of the reader cannot work — no params template anywhere
+    emits it: `_add_runtime_grid_params` names the very same quantity
+    `x__points`, in the reference regime's own template. Read from production
+    code alone, this is the missing-argument error such an argument raises on
+    all four consumers of the reader.
     """
     regimes_dict = _make_ref_grid_regimes()
     flat_params = _ref_grid_flat_params()
@@ -708,11 +703,12 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     # No regime's params carry it — not the reference's, not the reader's own.
     for regime_name, params in flat_params.items():
         assert prefixed not in params, regime_name
-    # The reference regime DOES carry the unprefixed qname; separating the
-    # coordinate variable from the parameter qname is the whole fix.
+    # The reference regime DOES carry the unprefixed qname; keeping the
+    # coordinate variable separate from the parameter qname is what makes the
+    # read satisfiable.
     assert "x__points" in flat_params["refregime"]
 
-    # And the production reader no longer exposes the unsatisfiable name.
+    # And the production reader does not expose the unsatisfiable name.
     fold = regimes["src"].gated_edges["target"].fold
     assert prefixed not in get_union_of_args([fold])
     assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold])
@@ -966,10 +962,8 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
     np.testing.assert_allclose(wbar, [0.0, 1.0], atol=1e-6)
 
 
-# ----------------------------------------------------------------------------------
-# F4: the ORDINARY E2 same-period ref (the reader's fourth consumer, and the
-# only one that runs inside a regime's own compiled kernel).
-# ----------------------------------------------------------------------------------
+# The ORDINARY same-period ref (the reader's fourth consumer, and the only one
+# that runs inside a regime's own compiled kernel).
 
 # The reference regime `single_f`'s own points, and the READING regime's
 # identically named ones. Both declare a state `wage` on a runtime irregular
@@ -1342,7 +1336,7 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
         _solve_fixture(_make_gate_ref_target_helper_regimes(), flat_params)
 
 
-# F2: the fence must be ancestry-aware — it must not reject a valid direct source
+# The fence must be ancestry-aware — it must not reject a valid direct source
 # param merely because an UNRELATED target helper reuses the name. This is a
 # property of the leaf-set computation itself, so it is pinned as a unit test on
 # `_reached_target_param_leaves` (a full-solve fixture would instead exercise
@@ -1387,8 +1381,8 @@ def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
         == frozenset()
     )
 
-    # Fail-pre proof: the removed global-union fence WOULD have flagged `shift`,
-    # because `unrelated_helper` contributes it to the whole-pool leaf set.
+    # For contrast: a global-union fence WOULD flag `shift`, because
+    # `unrelated_helper` contributes it to the whole-pool leaf set.
     global_leaves: set[str] = set()
     for fn in dag_pool.values():
         global_leaves |= set(get_union_of_args([fn]))
@@ -1396,7 +1390,7 @@ def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
     assert "shift" in global_leaves
 
 
-# F3: an injected gate-ref key that collides with a target function name must be
+# An injected gate-ref key that collides with a target function name must be
 # rejected, not silently shadowed by the target node in the concatenated DAG.
 def _target_outside(x: ContinuousState) -> FloatND:
     return jnp.full_like(jnp.asarray(x, dtype=float), 0.9)
@@ -1492,7 +1486,6 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
 #        wins, silently discarding the computed reference value.
 # The fixtures give the two candidate bindings different meanings so each is a
 # genuine repro, and each fence rejects the topology at construction.
-# ----------------------------------------------------------------------------------
 
 
 def _target_threshold(x: ContinuousState) -> FloatND:
@@ -1654,7 +1647,6 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
 # gate-ref key equal to a target state name) is silently preempted -- the gate reads
 # the injected value / reference instead of the realized state, reversing routing
 # with no error. `_reject_gate_operand_state_name_collision` closes both.
-# ----------------------------------------------------------------------------------
 
 
 def test_reject_gate_operand_state_name_collision_flags_a_value_operand_alias():
@@ -1781,8 +1773,7 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         _solve_fixture(_make_gate_ref_key_aliases_target_state_regimes(), flat_params)
 
 
-# ----------------------------------------------------------------------------------
-# simulate-round8 F1: a gate/projection arg that is BOTH a TARGET STATE and a
+# A gate/projection arg that is BOTH a TARGET STATE and a
 # SOURCE PARAM binds one fold leaf two ways -- solve reads the param
 # (`_evaluate_edge_fold` overwrites the state grid), simulate reads the state
 # (`_expose` classifies it as a state before recording a source param). The two
@@ -1790,7 +1781,6 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
 # catch it at construction: a gate/projection param is bound from a BARE key the
 # user adds to `flat_params[source]`, never from the (function-qualified) template.
 # The fence therefore runs at solve, where `flat_params` is in hand.
-# ----------------------------------------------------------------------------------
 
 
 def _next_y_identity(y: ContinuousState) -> ContinuousState:
@@ -1801,8 +1791,8 @@ def _entry_x() -> FloatND:
     """Target-specific ENTRY law for `x`, which `src` does not carry.
 
     A retained edge must give every target state a next-period value; `x` lives
-    only on the target, so `src` supplies it explicitly rather than relying on an
-    implicit initialization that no longer exists.
+    only on the target, so `src` supplies it explicitly — there is no implicit
+    initialization to fall back on.
 
     Returns a jax array, not a Python float: the value is fed to
     `LinSpacedGrid.get_coordinate`, whose `FloatND` hint beartype enforces as an
@@ -1929,8 +1919,7 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
     )
 
 
-# ----------------------------------------------------------------------------------
-# simulate-round9 F1: the ENGINE argument namespace must be reserved too.
+# The ENGINE argument namespace must be reserved too.
 #
 # `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
 # (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) into the fold
@@ -2092,8 +2081,8 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
 
 
 def test_source_param_aliasing_the_engine_params_arg_is_rejected():
-    """simulate-round9 F1: a source param named `SAME_PERIOD_PARAMS_ARG` opens the
-    gate in solve (source scalar) but closes it in simulate (engine mapping)."""
+    """A source param named `SAME_PERIOD_PARAMS_ARG` is rejected: it would open
+    the gate in solve (source scalar) and close it in simulate (engine mapping)."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -2114,8 +2103,8 @@ def test_source_param_aliasing_the_engine_params_arg_is_rejected():
 
 
 def test_source_param_aliasing_the_engine_v_arg_is_rejected():
-    """simulate-round9 F1: a source param named `SAME_PERIOD_V_ARG` overwrites the
-    solve-side value mapping."""
+    """A source param named `SAME_PERIOD_V_ARG` is rejected: it would overwrite
+    the solve-side value mapping."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -2136,8 +2125,8 @@ def test_source_param_aliasing_the_engine_v_arg_is_rejected():
 
 
 def test_target_state_aliasing_the_engine_v_arg_is_rejected():
-    """simulate-round9 F1: a target STATE named `SAME_PERIOD_V_ARG` shares one fold
-    leaf with the engine value mapping."""
+    """A target STATE named `SAME_PERIOD_V_ARG` is rejected: it would share one
+    fold leaf with the engine value mapping."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(

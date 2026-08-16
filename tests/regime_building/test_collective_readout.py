@@ -4,7 +4,7 @@ The readout is the mathematical heart of the "collective regimes" extension: giv
 per-stakeholder action-value arrays and a feasibility mask, choose the action that
 maximizes the household scalarization Σ_s λ_s Q^s over the feasible set, then read
 off each stakeholder's OWN Q at that common argmax (eqs. 10-12 of Eckstein-Keane-
-Lifshitz 2019). See `pylcm-extension-collective-regimes.md` §2.
+Lifshitz 2019).
 """
 
 import itertools
@@ -130,13 +130,14 @@ def test_two_action_axes_are_flattened_consistently():
 
 
 def test_terminal_e1_end_to_end_with_real_utilities():
-    """Terminal E1 milestone: real per-stakeholder utilities -> correct V^s.
+    """Real per-stakeholder utilities read out to the correct per-stakeholder V^s.
 
-    Mirrors exactly what the terminal collective kernel will do (slice 1b): build one
-    Q^s per stakeholder by evaluating its utility over the action product for each
-    state, then hand the stacked Q^s to `collective_readout`. Here the "action" is a
-    binary work choice and the "state" is a wage; the wife weights leisure, the
-    husband weights household consumption. No engine mutation — proves the numerics.
+    Mirrors what the terminal collective kernel does: build one Q^s per stakeholder
+    by evaluating its utility over the action product for each state, then hand the
+    stacked Q^s to `collective_readout`. Here the "action" is a binary work choice
+    and the "state" is a wage; the wife weights leisure, the husband weights
+    household consumption. Exercises the readout core directly, so it pins the
+    numerics rather than the engine wiring.
     """
     # Two states (wages), one binary action a in {0=leisure, 1=work}.
     wage = jnp.array([10.0, 40.0])  # state grid

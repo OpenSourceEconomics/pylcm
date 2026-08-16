@@ -1,17 +1,17 @@
 """Collective-regime readout: the stakeholder value gather at the household argmax.
 
-A collective regime carries one per-stakeholder action-value array ``Q^s`` each,
+A collective regime carries one per-stakeholder action-value array `Q^s` each,
 chooses the action that maximizes a household *scalarization*
-``O = Σ_s λ_s Q^s`` over the feasible set, and then reads off *each stakeholder's
-own* ``Q^s`` at that common argmax — NOT the scalarized value ``O``. The household
+`O = Σ_s λ_s Q^s` over the feasible set, and then reads off *each stakeholder's
+own* `Q^s` at that common argmax — NOT the scalarized value `O`. The household
 maximizes the weighted objective, but the individual values are each stakeholder's
 own utility stream under that joint choice.
 
 This module is a pure, engine-topology-free building block: it takes already-computed
-per-stakeholder ``Q`` arrays and the feasibility mask and returns the per-stakeholder
-``V`` plus the all-infeasible flag ``D`` (the dissolution / empty-feasible-set marker,
-kept distinct from a numeric ``-inf`` that can arise on-path). The terminal and
-non-terminal solve kernels call it after building their ``Q^s``.
+per-stakeholder `Q` arrays and the feasibility mask and returns the per-stakeholder
+`V` plus the all-infeasible flag `D` (the dissolution / empty-feasible-set marker,
+kept distinct from a numeric `-inf` that can arise on-path). The terminal and
+non-terminal solve kernels call it after building their `Q^s`.
 """
 
 from collections.abc import Mapping
@@ -50,7 +50,7 @@ def collective_argmax_and_readout(
     `_lookup_values_from_indices`).
 
     Returns:
-        Tuple ``(argmax_flat, V, D)`` — the flat argmax index (in the same
+        Tuple `(argmax_flat, V, D)` — the flat argmax index (in the same
         flattened-action layout `argmax_and_max` produces, directly
         compatible with the singleton simulate lookup), the per-stakeholder
         value mapping, and the dissolution flag.
@@ -96,37 +96,40 @@ def collective_readout(
 ) -> tuple[dict[str, FloatND], BoolND]:
     r"""Household argmax of the scalarization, then per-stakeholder value readout.
 
-    Implements the E1 readout (eqs. 10-12):
+    One household maximizes the Pareto-weighted sum of its stakeholders' action
+    values over the feasible actions, and each stakeholder's value is its own
+    action value read at that single choice:
 
-    .. math::
+    ```{math}
         a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s\, Q^s(x, a),
         \qquad V^s(x) = Q^s(x, a^*(x)).
+    ```
 
-    All stakeholders share the same argmax ``a*`` (the joint household choice), so
-    ties are broken identically for every stakeholder — ``argmax_and_max`` selects
+    All stakeholders share the same argmax `a*` (the joint household choice), so
+    ties are broken identically for every stakeholder — `argmax_and_max` selects
     the first maximizer, and the gather uses that same flattened index for each
-    ``Q^s``. A cell with no feasible action yields ``D = True`` (the dissolution /
-    empty-``F`` marker); the returned ``V^s`` in such a cell is overwritten with the
-    ``-inf`` sentinel — the masked argmax is arbitrary there, so the gathered
-    ``Q^s`` would otherwise be an infeasible action's value — and must be routed
+    `Q^s`. A cell with no feasible action yields `D = True` (the dissolution /
+    empty-`F` marker); the returned `V^s` in such a cell is overwritten with the
+    `-inf` sentinel — the masked argmax is arbitrary there, so the gathered
+    `Q^s` would otherwise be an infeasible action's value — and must be routed
     by the caller through the dissolution fallback, never read as a value.
 
     Args:
         stakeholder_Q: Mapping stakeholder name -> its action-value array, each of
-            shape ``(*state_axes, *action_axes)`` (identical shape across stakeholders).
-        feasibility: Boolean mask of the same shape as each ``Q^s``; ``True`` where
+            shape `(*state_axes, *action_axes)` (identical shape across stakeholders).
+        feasibility: Boolean mask of the same shape as each `Q^s`; `True` where
             the (state, action) is feasible.
-        weights: Mapping stakeholder name -> Pareto weight ``λ_s`` (scalar or an array
+        weights: Mapping stakeholder name -> Pareto weight `λ_s` (scalar or an array
             broadcastable to the state axes). Should sum to 1 across stakeholders,
             though this is not enforced (a caller may pass unnormalized weights).
-        action_axes: The axes of ``Q^s`` / ``feasibility`` to maximize over (the
+        action_axes: The axes of `Q^s` / `feasibility` to maximize over (the
             action dimensions). The remaining axes are the state axes retained in the
             output.
 
     Returns:
-        Tuple ``(V, D)`` where ``V`` maps each stakeholder name to its value array of
-        shape ``(*state_axes,)`` (the action axes reduced away), and ``D`` is the
-        boolean all-infeasible flag of shape ``(*state_axes,)``.
+        Tuple `(V, D)` where `V` maps each stakeholder name to its value array of
+        shape `(*state_axes,)` (the action axes reduced away), and `D` is the
+        boolean all-infeasible flag of shape `(*state_axes,)`.
     """
     _argmax_flat, values, dissolution = collective_argmax_and_readout(
         stakeholder_Q=stakeholder_Q,
@@ -179,7 +182,7 @@ def _weighted_sum(
             objective = objective + term
         return objective
 
-    # ``stakeholders`` is an ordered representation of identities, not an economic
+    # `stakeholders` is an ordered representation of identities, not an economic
     # ordering of summands.  For three or more terms a declaration-order left fold
     # can cross a strict action boundary under cancellation.  Canonicalise by the
     # contribution VALUES, the same invariant used for the regime mixture.
@@ -189,13 +192,13 @@ def _weighted_sum(
 def _gather_along_actions(
     *, q: FloatND, argmax_flat: IntND, action_axes: tuple[int, ...]
 ) -> FloatND:
-    """Gather ``q`` at the flattened action argmax, mirroring ``argmax_and_max``.
+    """Gather `q` at the flattened action argmax, mirroring `argmax_and_max`.
 
-    ``argmax_and_max`` moves ``action_axes`` to the back, flattens them, and argmaxes
-    the last axis, so ``argmax_flat`` indexes into that flattened action space with
-    the state axes as its shape. Reproduce the same layout on ``q`` and take along it.
+    `argmax_and_max` moves `action_axes` to the back, flattens them, and argmaxes
+    the last axis, so `argmax_flat` indexes into that flattened action space with
+    the state axes as its shape. Reproduce the same layout on `q` and take along it.
 
-    With no action axis to reduce, ``argmax_and_max`` returns ``q``'s own maximum —
+    With no action axis to reduce, `argmax_and_max` returns `q`'s own maximum —
     the array itself — so the gather is the identity here too.
     """
     if not action_axes:

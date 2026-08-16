@@ -223,11 +223,12 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
 def test_fold_default_path_is_byte_identical():
     """Omitting `fold` entirely is bit-identical to passing `fold=False`.
 
-    Pins that `fold`'s DEFAULT really is the pre-fold path. The two branches
+    Pins that `fold`'s DEFAULT really is the unfolded path. The two branches
     must construct genuinely DIFFERENT declarations — an omitted `fold` vs an
     explicit `fold=False` — or this compares a spec with itself and pins
-    nothing but determinism (fold-review J3: it previously did exactly that,
-    since both branches went through `_shock`, which always passes `fold=`).
+    nothing but determinism. Routing both branches through `_shock`, which
+    always passes `fold=`, would do exactly that; hence the separate
+    `_make_regimes_fold_omitted` fixture.
     """
     omitted = _make_regimes_fold_omitted()["period0"].states["wage_shock"]
     explicit = _make_regimes(fold=False)["period0"].states["wage_shock"]
@@ -339,8 +340,8 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     this (source) regime's — so `gate=lambda wage_shock: ...` here reads
     `some_target`'s `wage_shock` (if it declares one), not this regime's.
     Treating the SOURCE-local `_validate_fold_declarations` walk as if the
-    gate were source-local (the old behavior this test used to pin) produced
-    a false positive purely from name collision. The genuine cross-regime
+    gate were source-local would produce a false positive purely from a name
+    collision. The genuine cross-regime
     hazard — THIS regime being read nodewise as a gated-edge target, leg
     fallback, or same-period reference — is covered by the model-processing
     guard `_fail_if_folded_regime_is_same_period_endpoint`
@@ -505,7 +506,7 @@ def _bits(x: FloatND) -> int:
     """The exact bit pattern of a float scalar, as an int.
 
     `assert_allclose` cannot see a 1-ULP defect; a feature whose contract is
-    EXACT equality has to be pinned on the bits themselves (fold-review J4).
+    EXACT equality has to be pinned on the bits themselves.
 
     Reads the array's OWN dtype — the suite runs float64 by default and
     float32 under `--precision=32`. Casting to a fixed width here would
@@ -561,7 +562,7 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     oracle = jnp.average(unfolded_V, weights=weights)
 
     # Guard the guard #1: strictly positive weights, so this exercises the
-    # all-positive path the fix is about — not the zero-weight one.
+    # all-positive path — not the zero-weight one.
     assert bool(jnp.all(weights > 0))
     # Guard the guard #2: this configuration really does separate the two
     # kernels, so the assertion below has something to catch. The module
@@ -613,7 +614,7 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     oracle = jnp.average(unfolded_V, weights=weights)
 
     # atol + C * n * eps(dtype) * Σ|w_k V_k| — summand-scale, node-count- and
-    # dtype-aware, stable under cancellation (fold-round5 T2). This is a
+    # dtype-aware, stable under cancellation. This is a
     # TOOLCHAIN-CHARACTERIZED contract, not a proved universal XLA bound: the
     # classical weighted-reduction forward error is ~gamma_n * Σ|w_k V_k| (with
     # gamma_n = n*u/(1-n*u)); `C = 16` is a conservative empirical factor that
@@ -635,7 +636,7 @@ def test_select_fold_reducer_takes_the_guard_only_when_a_weight_is_zero():
     """The zero-safe guard is bound per axis, at build time, from that axis's
     own weights.
 
-    `zero_safe_average` costs an extra rounding (hence F1's 1-ULP drift) and
+    `zero_safe_average` costs an extra rounding (hence a 1-ULP drift) and
     ~3x the runtime; it protects only against `0 * ±inf = nan`, which cannot
     arise on an axis whose weights are all strictly positive. The weights are
     concrete at kernel-build time (`_validate_fold_declarations` rejects a
@@ -754,7 +755,7 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
     A coarse `transition=func` emits a `next_regime` cell for EVERY regime —
     routing is decided at runtime from the returned id — so its cell keys are
     the CANDIDATE universe. Those candidates ARE admitted to `reachable_targets`
-    (fold-round3 F1: omitting a genuinely-routed candidate silently drops its
+    (omitting a genuinely-routed candidate would silently drop its
     continuation), but two things keep that from fabricating a spurious
     continuation here: (1) the SOURCE regime is excluded, so no false
     `period0 -> period0` self-transition wires `period0`'s own folded
@@ -764,10 +765,10 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
     primary supported fold topology (shock declared and folded only in
     `period0`); it must still solve cleanly to `E[10 + shock] = 10`.
 
-    MEASURED: the reviewer's original `reachable_targets |=
-    set(next_regime_cells_by_target)` (candidates INCLUDING self) fabricates the
-    self-transition and fails this model with a bogus persistence error; the
-    minus-self admission does not.
+    MEASURED: admitting the candidates INCLUDING self (`reachable_targets |=
+    set(next_regime_cells_by_target)`) fabricates the self-transition and fails
+    this model with a bogus persistence error; the minus-self admission does
+    not.
     """
     solution = _solve(_make_regimes(fold=True))
     assert solution[0]["period0"].shape == ()
@@ -777,18 +778,16 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
 def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
     """A COARSE `transition=func` that can route to a folded target whose shock
     persists from the source is rejected at build time, requiring per-target
-    cells (fold-round3 F1 / fold-round4 F1+F2).
+    cells.
 
-    Before the coarse-candidate reachability fix, this target — reached only via
-    coarse routing, folding a `wage_shock` that also lives in the source — was
-    silently dropped from E[V], while the byte-identical PER-TARGET model raised
-    "structurally persists". A coarse transition's actual support is unknown at
-    build time, so rather than build a `next_wage_shock` edge whose persistence
-    the structural guard would then judge on an UNKNOWN-support candidate (which
-    would wrongly accept a real self-fold or wrongly reject a never-returned one),
-    the ambiguous folded-coarse topology is rejected here with a clear
-    "use per-target transitions" scope error. Declaring the per-target form then
-    routes it into the exact persistence guard
+    The target here is reached only via coarse routing and folds a `wage_shock`
+    that also lives in the source. A coarse transition's actual support is
+    unknown at build time, so rather than build a `next_wage_shock` edge whose
+    persistence the structural guard would then judge on an UNKNOWN-support
+    candidate (which would wrongly accept a real self-fold or wrongly reject a
+    never-returned one), the ambiguous folded-coarse topology is rejected here
+    with a clear "use per-target transitions" scope error. Declaring the
+    per-target form then routes it into the exact persistence guard
     (`test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected`).
     """
     period0 = Regime(
@@ -864,8 +863,8 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
 
 
 def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
-    """fold-round5 F1: the active-period scope fence must key on the SOURCE's own
-    process names, not every folded process in the candidate target.
+    """The active-period scope fence keys on the SOURCE's own process names, not
+    on every folded process in the candidate target.
 
     `terminal` folds a target-local `target_shock` the source never carries, so no
     `next_target_shock` continuation can persist across the coarse edge -- there is
@@ -958,11 +957,10 @@ def test_coarse_self_transition_retains_the_self_continuation():
     def _next_self(age: int) -> ScalarInt:
         # "stay" while `stay` is still active next period; "done" at its LAST
         # active age. Returning "stay" there would send the whole mass to a
-        # target that is inactive in the next period -- a specification error
-        # that used to be silently dropped and the survivors renormalized, so
-        # the solve returned an all-NaN value function with nothing saying why.
-        # Period 0 -> 1 still exercises what this test is about: the coarse law
-        # returns the SOURCE regime and its self-continuation must survive.
+        # target that is inactive in the next period -- a specification error,
+        # and not what this test is about. Period 0 -> 1 still exercises what
+        # it is: the coarse law returns the SOURCE regime and its
+        # self-continuation must survive.
         return jnp.where(age < 1, jnp.int32(0), jnp.int32(1))
 
     stay = Regime(
@@ -1017,8 +1015,8 @@ def test_coarse_self_transition_retains_the_self_continuation():
 
 def test_coarse_self_fold_is_rejected():
     """A coarse transition that can return its own regime while that regime FOLDS
-    a shock is rejected (fold-round4 F1: it must not silently bypass the
-    persistence guard).
+    a shock is rejected, so that it cannot silently bypass the persistence
+    guard.
 
     `stay` is active two periods, folds `wage_shock`, and coarse-routes to itself,
     so the folded shock could persist across the self-edge. Support is unknown at
@@ -1067,8 +1065,7 @@ def test_coarse_self_fold_is_rejected():
 
 def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
     """A coarse function that never returns a folded candidate is still rejected
-    with the per-target scope error, NOT a misleading 'structurally persists'
-    (fold-round4 F2).
+    with the per-target scope error, NOT a misleading 'structurally persists'.
 
     The persistence guard is structural and cannot see that the coarse function
     always returns `stay` (so folded candidate `alt` has probability zero). Rather
@@ -1170,7 +1167,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
     # Guard the guard: the per-target continuation is genuinely present (the
     # discounted terminal value lifts period0 above its own shock-only ~10).
     assert float(jnp.mean(per_target[0]["period0"])) > 11.0
-    # The coarse form no longer drops it: value-for-value equal to per-target.
+    # The coarse form does not drop it: value-for-value equal to per-target.
     np.testing.assert_allclose(
         np.asarray(coarse[0]["period0"]), np.asarray(per_target[0]["period0"])
     )
@@ -1181,7 +1178,6 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
 # SCALAR (the folded axis is integrated out), so it needs an empty transition
 # bundle that keeps it enumerable by `get_period_targets`, and its continuation
 # must be read as that scalar (no interpolation coordinate).
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=False)
@@ -1358,13 +1354,11 @@ def test_folded_only_per_target_target_is_enumerable_in_transitions():
     assert "dead_C" not in transitions
 
 
-# --------------------------------------------------------------------------------------
-# simulate-side parity for fold-round6/round7: pylcm's simulate RE-OPTIMIZES Q over
+# simulate-side parity: pylcm's simulate RE-OPTIMIZES Q over
 # the grid (it does not interpolate the stored policy), so it reads the continuation
 # exactly as solve does. The folded-only per-target continuation must therefore enter
 # the SIMULATED argmax the same way it enters the solved E[V] — the folded target must
 # stay enumerable AND be read as its scalar V (no phantom `next_<shock>` coordinate).
-# --------------------------------------------------------------------------------------
 
 
 def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
@@ -1495,7 +1489,7 @@ def _simulate_route(
 
 
 def test_folded_only_per_target_continuation_enters_simulated_value():
-    """The folded-only continuation enters the SIMULATED argmax (round6/7 parity).
+    """The folded-only continuation enters the SIMULATED argmax.
 
     Simulate re-optimizes Q over the grid, so `src`'s simulated period-0 decision
     must value the folded-only target `folded_B` (scalar V = 1.0) exactly as solve

@@ -1,9 +1,8 @@
-"""Integration tests for E2: value-aware feasibility + same-period refs + D (slice 3).
+"""Integration tests for value-aware feasibility, same-period refs, and D.
 
 A collective regime may declare `value_constraints` — predicates masking actions
 on the per-stakeholder action values `Q^s` and on *same-period* reference values
-of OTHER regimes at projected states (design doc
-`pylcm-extension-collective-regimes.md` §2 E2; EKL 2019 eq. 11):
+of OTHER regimes at projected states (EKL 2019 eq. 11):
 
     F(x) = { a : Q^j(x, a) >= V^j_single(pi_j(x)) - Delta_j  for j = f, m }.
 
@@ -89,9 +88,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-# --------------------------------------------------------------------------------------
 # Married (collective) regime
-# --------------------------------------------------------------------------------------
 
 
 def _utility_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -114,9 +111,7 @@ def _project_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-# --------------------------------------------------------------------------------------
 # Singleton (single) regimes
-# --------------------------------------------------------------------------------------
 
 
 def _utility_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -381,9 +376,7 @@ def test_ir_model_via_public_model_api():
     )
 
 
-# --------------------------------------------------------------------------------------
 # Genuine projection + interpolation at off-grid projected coordinates
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=False)
@@ -539,9 +532,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     )
 
 
-# --------------------------------------------------------------------------------------
 # On-path -inf vs the dissolution flag (no value constraints involved)
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=False)
@@ -557,8 +548,8 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     `wage < 2.5` (masks every action at w=3) and felicities of -inf for
     w > 1.5; the terminal couple is finite and unconstrained (a -inf terminal
     V would leak NaN through the linear continuation interpolation of the
-    NEIGHBOURING cell — 0 * inf — which is the raw-V read the E3' gated edges
-    replace in slice 4):
+    NEIGHBOURING cell — 0 * inf — which is the raw-V read a gated edge
+    replaces with its fold):
 
     w=1: both actions feasible, finite -> V=(2, 1) (work wins), D=False.
     w=2: both actions feasible but u = -inf -> V=(-inf, -inf), D=False.
@@ -647,9 +638,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     np.testing.assert_array_equal(D_terminal, np.array([False, False, False]))
 
 
-# --------------------------------------------------------------------------------------
 # Scope fences and build-time validation
-# --------------------------------------------------------------------------------------
 
 
 def _minimal_collective_kwargs() -> dict:

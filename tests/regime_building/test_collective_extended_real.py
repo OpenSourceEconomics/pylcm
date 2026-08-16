@@ -48,11 +48,10 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 
-# ----------------------------------------------------------------------------------
 # Helpers for the FMA / bit-exactness regression tests.
 #
-# The fix under test masks the VALUE before the weight-multiply
-# (`w * where(w==0, 0, v)`) instead of masking the PRODUCT after it
+# The production arithmetic masks the VALUE before the weight-multiply
+# (`w * where(w==0, 0, v)`) rather than the PRODUCT after it
 # (`where(w==0, 0, w*v)`). Both neutralize a zero-weight `+-inf`, but only the
 # value-masking form leaves the multiply FMA-contractible into the downstream
 # reduction, so the all-positive-weight path is BIT-IDENTICAL to the naive
@@ -118,9 +117,7 @@ def _raw_corner_sum_interpolator(
     return interpolate
 
 
-# ----------------------------------------------------------------------------------
 # `zero_safe_weighted_term` / `zero_safe_average` — the centralized primitives
-# ----------------------------------------------------------------------------------
 
 
 def test_zero_safe_weighted_term_annihilates_minus_inf_at_zero_weight():
@@ -188,15 +185,13 @@ def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient():
 
 
 def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
-    # No zero weight, no +-inf value -> BYTE-IDENTICAL to jnp.average now.
+    # No zero weight, no +-inf value -> BYTE-IDENTICAL to jnp.average.
     #
-    # After the value-masking fix the multiply stays FMA-contractible into the
-    # reduction, so the all-positive path matches jnp.average bit-for-bit -- not
-    # merely within a ULP. (The earlier retracted claim was the reverse: that the
-    # product-masking guard blocked FMA and drifted ~1 ULP. That was the BUG.)
-    # This particular fixture rounds identically under both the old and new forms,
-    # so it is a plain regression pin; the fail-pre/pass-post proof that the OLD
-    # recipe drifts lives in the counterexample tests below.
+    # Value masking leaves the multiply FMA-contractible into the reduction, so
+    # the all-positive path matches jnp.average bit-for-bit -- not merely within
+    # a ULP. This particular fixture rounds identically under value masking and
+    # product masking alike, so it is a plain regression pin; the counterexample
+    # tests below carry the proof that the product-masking recipe drifts.
     values = jnp.array([1.0, 3.0, 5.0])
     weights = jnp.array([0.2, 0.3, 0.5])
     result = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
@@ -210,7 +205,7 @@ def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
 def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
     use_x64,
 ):
-    """The all-positive path is now BIT-IDENTICAL to `jnp.average`, not within a ULP.
+    """The all-positive path is BIT-IDENTICAL to `jnp.average`, not within a ULP.
 
     On this counterexample both weights are strictly positive, so the zero guard
     never fires. Product masking would round twice and drift from `jnp.average`;
@@ -227,7 +222,7 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
         values = jnp.array([-0.3096868097782135, 0.3673213720321655], dtype=dtype)
         weights = jnp.array([0.5910956263542175, 0.40890437364578247], dtype=dtype)
         # Guard the guard: an all-positive fixture is the whole point; a zero
-        # weight would make the old and new forms agree and prove nothing.
+        # weight would make the two forms agree and prove nothing.
         assert bool(jnp.all(weights > 0))
 
         naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
@@ -315,9 +310,9 @@ def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
 
 
 def test_zero_safe_average_does_not_reverse_a_nontied_action():
-    """F1: the ULP drift must not flip a NON-TIED discrete-action choice.
+    """The ULP drift must not flip a NON-TIED discrete-action choice.
 
-    The concrete reversal the fix prevents. With nodes `[-3.9480734, 2.623802]`
+    The concrete reversal at stake. With nodes `[-3.9480734, 2.623802]`
     and probabilities `[0.38403073, 0.61596930]` (both strictly positive, sum
     exactly 1 in float32), the exact stochastic value is ~0.0999998 -- just BELOW
     a deterministic alternative of 0.1, so the household picks the alternative.
@@ -331,7 +326,7 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     alternative = np.float32(0.1)
 
     # Guard the guard: all-positive probabilities summing to exactly 1.0 in
-    # float32. A zero weight would make old and new forms agree and defang F1.
+    # float32. A zero weight would make the two forms agree and defang the test.
     assert bool(jnp.all(probabilities > 0))
     assert float(jnp.sum(probabilities)) == 1.0
 
@@ -653,12 +648,12 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
             old_bits.add(_bits(old_val))
             old_policy.add(bool(float(old_val) > _ALPHA_RENAME_COMPETING))
 
-    # pass-post: bit-identical across ALL 120 relabelings -> ONE label-independent
-    # policy, and it is the exact-arithmetic decision.
+    # The alpha-renaming reducer: bit-identical across ALL 120 relabelings -> ONE
+    # label-independent policy, and it is the exact-arithmetic decision.
     assert len(new_bits) == 1
     assert new_policy == {exact_side}
-    # fail-pre proof: the name-sort's float64 bits AND its non-tied argmax both
-    # depend on the arbitrary regime labels.
+    # The name-sort reducer, for contrast: its float64 bits AND its non-tied
+    # argmax both depend on the arbitrary regime labels.
     assert len(old_bits) > 1
     assert old_policy == {True, False}
 
@@ -710,9 +705,7 @@ def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
     )
 
 
-# ----------------------------------------------------------------------------------
-# F4: `_weighted_sum` — the household Pareto scalarization
-# ----------------------------------------------------------------------------------
+# `_weighted_sum` — the household Pareto scalarization
 
 
 def test_weighted_sum_zero_weight_minus_inf_stakeholder_stays_finite():
@@ -781,10 +774,8 @@ def test_zero_pareto_weight_minus_inf_batched_over_states():
     np.testing.assert_allclose(np.asarray(values["m"]), [5.0, 7.0])
 
 
-# ----------------------------------------------------------------------------------
 # Dissolution flag D: an on-path -inf must not be confused with the
 # all-infeasible (empty-mask) marker.
-# ----------------------------------------------------------------------------------
 
 
 def test_onpath_minus_inf_with_a_feasible_action_leaves_dissolution_false():
@@ -818,9 +809,7 @@ def test_empty_feasible_mask_sets_dissolution_true():
     assert bool(dissolution) is True
 
 
-# ----------------------------------------------------------------------------------
-# J1 (minor): collective weight / stakeholder validation at `Regime` construction.
-# ----------------------------------------------------------------------------------
+# Collective weight / stakeholder validation at `Regime` construction.
 
 _WEALTH = LinSpacedGrid(start=1, stop=10, n_points=5)
 

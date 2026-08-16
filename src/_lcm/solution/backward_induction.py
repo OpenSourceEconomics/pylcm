@@ -299,9 +299,9 @@ def solve(  # noqa: C901, PLR0915
         solution[period] = MappingProxyType(period_solution)
         # Publish each collective regime's dissolution
         # flag D alongside V. Kept as a plain per-period mapping (not rolled
-        # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D — the
-        # E3' gates read the still-live per-period flags at each period's end,
-        # before the roll (above).
+        # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D — a
+        # gated edge's gate reads the still-live per-period flags at each
+        # period's end, before the roll (above).
         dissolution_flags[period] = MappingProxyType(period_dissolution_flags)
         simulation_policies[period] = MappingProxyType(
             {
@@ -598,21 +598,21 @@ def _roll_gated_edges(
 
     For each declared edge whose target regime (and
     every reference regime it reads) was solved in the period just completed,
-    evaluate its ``Wbar`` producer on the still-live period-``t`` arrays and
+    evaluate its `Wbar` producer on the still-live period-`t` arrays and
     store it; edges whose target is inactive this period keep their previous
-    ``Wbar`` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
+    `Wbar` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
     set so the pytree structure stays JIT-stable.
 
     Which of the two an edge gets is `edge_may_fold_at_period`'s answer, the
-    same one forward simulation consults. The fold at period ``t`` is read by
-    the source at ``t - 1``, so whether a source exists there decides what an
+    same one forward simulation consults. The fold at period `t` is read by
+    the source at `t - 1`, so whether a source exists there decides what an
     unsolved reference regime means: at an unread period it is the legitimate
     boundary no-op of a self-loop edge at its target's earliest active period,
-    and the previous ``Wbar`` stands; at a read period it is a misconfigured
+    and the previous `Wbar` stands; at a read period it is a misconfigured
     edge, and the fold refuses rather than feed the source a stale value.
 
     The gate and the projections are evaluated on the target's grid nodes at
-    ``period`` — the same nodes the target's value function being folded was
+    `period` — the same nodes the target's value function being folded was
     tabulated on. An `AgeSpecializedGrid` keeps `n_points` fixed while its
     bounds move with age, so reading the representative axis instead passes
     every shape check and folds the value at the wrong coordinates.
@@ -676,12 +676,12 @@ def _reject_edge_fold_state_param_collisions(
     gate/projection params in ONE flat signature, so a name that is simultaneously
     a TARGET STATE of the target regime and a key of `flat_params[source]` occupies
     a single leaf that two binders both claim: `_evaluate_edge_fold` (below)
-    overwrites the state grid with the source param, so the SOLVE-side ``Wbar``
-    reads the param, while the simulate evaluator's ``_expose``
+    overwrites the state grid with the source param, so the SOLVE-side `Wbar`
+    reads the param, while the simulate evaluator's `_expose`
     (`get_edge_simulate_gate_evaluator`) classifies the same name as a state
     BEFORE it would record a source param, so the SIMULATE-side gate reads the
     realized target state. Solve and simulate then evaluate DIFFERENT predicates
-    for the same edge -- the gate flips, ``Wbar`` changes, or a fallback
+    for the same edge -- the gate flips, `Wbar` changes, or a fallback
     coordinate is written from the wrong value, all silently.
 
     Why this is a solve-time (not construction-time) fence: a gate/projection
@@ -875,7 +875,7 @@ def _build_continuation_templates(
       the regime's V array;
     - the continuation template holds entries only for continuation-publishing
       regimes, in the key order reused every period;
-    - the gated-edge template holds a zero ``Wbar`` per declared edge,
+    - the gated-edge template holds a zero `Wbar` per declared edge,
       shaped like the target regime's V state grid plus the source regime's
       stakeholder axis (a singleton source: the target grid alone). Empty for
       models without gated edges, so the default path only gains an empty third
@@ -915,7 +915,7 @@ def _edge_kwargs(
     regime_name: RegimeName,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> dict[str, object]:
-    """Build a source kernel's gated-edge ``Wbar`` argument, keyed by target.
+    """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
 
     The kernel substitutes each entry for the raw target V in
     `next_regime_to_V_arr`. Lowering and execution both go through this one
@@ -939,9 +939,9 @@ def _iter_edge_topologies(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
-    """Yield ``(source, target, Wbar topology)`` for every declared gated edge.
+    """Yield `(source, target, Wbar topology)` for every declared gated edge.
 
-    ``Wbar`` lands on the target regime's state grid, so its axes — and the
+    `Wbar` lands on the target regime's state grid, so its axes — and the
     device sharding a `distributed=True` target state asks for — are the
     target's, built by the same sharding plan the target's own V template goes
     through. A collective source folds one leg per stakeholder onto a trailing
@@ -1051,7 +1051,7 @@ def _compile_all_functions(
             for constructing lowering arguments.
         next_regime_to_continuation: Template with consistent keys and carry
             shapes for constructing lowering arguments.
-        next_edge_to_V_arr: Template with consistent keys and ``Wbar`` shapes
+        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.

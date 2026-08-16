@@ -1,29 +1,29 @@
 """Zero-weight-safe arithmetic on the extended reals for the collective solve core.
 
-On-path ``-inf`` is admissible throughout the collective-regimes extension (a
+On-path `-inf` is admissible throughout the collective-regimes extension (a
 feasible zero-consumption state, an all-infeasible dissolution cell whose
-value is masked to ``-inf`` before being folded/averaged away, ...), and an
+value is masked to `-inf` before being folded/averaged away, ...), and an
 exact-zero weight is equally admissible (an inactive regime-transition target,
 a zero-probability `MarkovTransition` node, a zero-weight quadrature node, an
 on-grid interpolation corner, a zero Pareto weight). Whenever such a weight
 multiplies such a value, naive floating-point arithmetic computes
-``0.0 * -inf = nan`` (or ``+inf``), which then poisons whatever sum it feeds —
+`0.0 * -inf = nan` (or `+inf`), which then poisons whatever sum it feeds —
 a continuation expectation, a fold reduction, an interpolated reference value,
 or a household scalarization — even though the zero-weight term should
 contribute exactly nothing.
 
-This module holds ``zero_safe_average``, and performs no multiply of its own:
+This module holds `zero_safe_average`, and performs no multiply of its own:
 the weighted TERM lives in `_lcm.zero_safe` and serves the whole engine, where
 what it does is documented.
 
 The fix pattern that term applies: replace the VALUE with an
 explicit `0.0` wherever the weight is exactly zero AND the value is NON-FINITE,
-via ``jnp.where``, BEFORE multiplying. `weight * where(mask, 0, value)`
-annihilates a zero-weight ``+-inf`` (the multiply sees ``w * 0 = 0``, never
-``0 * -inf``) AND leaves the
+via `jnp.where`, BEFORE multiplying. `weight * where(mask, 0, value)`
+annihilates a zero-weight `+-inf` (the multiply sees `w * 0 = 0`, never
+`0 * -inf`) AND leaves the
 multiply as a bare operation feeding the downstream reduction, which XLA CAN fuse
 into an FMA — so the all-positive-weight path is bit-identical to the naive
-``jnp.average`` / raw corner sum **on the currently pinned jaxlib**. That identity
+`jnp.average` / raw corner sum **on the currently pinned jaxlib**. That identity
 is NOT guaranteed: it rests on XLA choosing to contract the multiply into the
 reduction's FMA identically for both expressions, which JAX's compatibility
 policy explicitly does not promise across releases, backends, or jit contexts
@@ -31,57 +31,57 @@ policy explicitly does not promise across releases, backends, or jit contexts
 runtime call sites), that is a safety requirement, not a bit-exactness one; the
 bit-exactness is a convenient property of the current toolchain, not a contract.
 
-WHY THE MASK IS RESTRICTED TO NON-FINITE VALUES. ``jnp.where`` is a hard select,
-so a mask that fires on EVERY zero-weight node also kills ``d/dw`` there: the
-branch taken is a constant, whose derivative w.r.t. the weight is ``0`` rather
-than ``value``. That is invisible while the weight is a CONSTANT of the
+WHY THE MASK IS RESTRICTED TO NON-FINITE VALUES. `jnp.where` is a hard select,
+so a mask that fires on EVERY zero-weight node also kills `d/dw` there: the
+branch taken is a constant, whose derivative w.r.t. the weight is `0` rather
+than `value`. That is invisible while the weight is a CONSTANT of the
 differentiation — a Pareto weight, a transition probability, a quadrature
 weight, i.e. every call site this module was written for — and WRONG the moment
 the weight is itself a function of the argument being differentiated. An
 interpolation corner weight is exactly that: applying the unrestricted mask
-inside `map_coordinates` made ``jax.grad`` return ``-grid[c]`` instead of the
+inside `map_coordinates` made `jax.grad` return `-grid[c]` instead of the
 segment slope at every on-node coordinate, with the VALUES still correct and so
 nothing but a gradient test able to see it. Restricting the mask costs nothing:
-for finite ``v``, ``0 * v == 0`` either way, so values are NUMERICALLY EQUAL to
-the unrestricted form, and only the genuine ``0 * +-inf`` case still selects,
+for finite `v`, `0 * v == 0` either way, so values are NUMERICALLY EQUAL to
+the unrestricted form, and only the genuine `0 * +-inf` case still selects,
 which has no finite derivative to preserve. See
 `tests/regime_building/test_zero_safe_gradients.py`.
 
-SIGNED ZERO. At ``w = +0`` with a NEGATIVE finite ``v``, the restricted form
-returns ``-0.0`` where an unrestricted mask returns ``+0.0``: the mask does not
-fire, so the sign of the product is the sign of ``v``. The two compare equal,
+SIGNED ZERO. At `w = +0` with a NEGATIVE finite `v`, the restricted form
+returns `-0.0` where an unrestricted mask returns `+0.0`: the mask does not
+fire, so the sign of the product is the sign of `v`. The two compare equal,
 have the same derivative, and any reduction consuming them is byte-for-byte
-unchanged (``sum([-0.0, 3.0])`` and ``sum([+0.0, 3.0])`` agree exactly), so no
+unchanged (`sum([-0.0, 3.0])` and `sum([+0.0, 3.0])` agree exactly), so no
 decision moves. This is an exception to bit-identity, not to numerical
 equality — and only a check that looks at BITS (`np.signbit`, `.tobytes()`) can
-see it at all. `jnp.array_equal` cannot, because ``+0.0 == -0.0`` is True.
+see it at all. `jnp.array_equal` cannot, because `+0.0 == -0.0` is True.
 
 WHY THE MASK GOES ON THE VALUE, NOT THE PRODUCT. Masking the product
-(``where(weight == 0, 0, weight * value)``) puts the `select` AFTER the
+(`where(weight == 0, 0, weight * value)`) puts the `select` AFTER the
 multiply, which blocks FMA contraction, so the all-positive path rounds twice
 where the naive path rounds once. That is decision-relevant, MEASURED (jax
 0.9.x/0.10.x, CPU, float32):
 
 - The drift reaches **6 ULP** on a valid all-positive probability vector under
-  cancellation: with nodes ``[-3.9480734, 2.6238020]`` and probabilities
-  ``[0.38403073, 0.61596930]`` (sum exactly 1), the masked-PRODUCT average
-  returns bits ``1036831952`` where ``jnp.average`` returns ``1036831946`` —
+  cancellation: with nodes `[-3.9480734, 2.6238020]` and probabilities
+  `[0.38403073, 0.61596930]` (sum exactly 1), the masked-PRODUCT average
+  returns bits `1036831952` where `jnp.average` returns `1036831946` —
   six apart, and on the WRONG side of the exact real mean.
 - That reverses a **non-tied** discrete action: against a deterministic
-  alternative ``0.1``, the exact/naive value is below ``0.1`` (choose the
+  alternative `0.1`, the exact/naive value is below `0.1` (choose the
   alternative) while the masked-product value is above it (choose the
   stochastic action). The same 1-ULP+ drift on the interpolation path reverses
-  an individual-rationality comparison and hence the dissolution flag ``D``
-  (``~any(final_mask)`` — any finite IR flip flips it). No exact tie is
+  an individual-rationality comparison and hence the dissolution flag `D`
+  (`~any(final_mask)` — any finite IR flip flips it). No exact tie is
   required: if the IR margin has positive density near 0, any nonzero
   perturbation flips a positive-probability band.
 - Masking the VALUE (this form) restores the naive bits on the all-positive
-  path with NO global predicate and NO ``lax.cond`` — MEASURED 0 drift vs
-  ``jnp.average`` across K in {2,3,4,7,8,16} x {float32,float64}, and 0 drift
+  path with NO global predicate and NO `lax.cond` — MEASURED 0 drift vs
+  `jnp.average` across K in {2,3,4,7,8,16} x {float32,float64}, and 0 drift
   vs the raw corner sum across 5000 off-grid interpolation coordinates (where
   the masked-product form drifted on 802/5000). Cost is ~6% over
-  ``jnp.average`` under plain ``vmap``, against ~4.5x for a ``lax.map``-batched
-  scalar ``lax.cond``, which also works but is far heavier on a solve-core hot
+  `jnp.average` under plain `vmap`, against ~4.5x for a `lax.map`-batched
+  scalar `lax.cond`, which also works but is far heavier on a solve-core hot
   path.
 
 PORTABILITY. That 0-drift sweep is not a guarantee, and K=5 is where the
@@ -90,7 +90,7 @@ identity fails: a K=5 float32 all-positive vector drifts SEVEN ULP between
 reversing a constructed non-tied argmax, and on gb10 (aarch64, jax 0.11.0, GPU)
 raw `jnp.average` returns bits 1035386569 against the masked 1035386568 on a
 32x32x8-carried K=5 vector. The same vector on hmg-office CPU jax 0.10.1 gives
-0 drift across raw, the explicit ``sum(w*v)/sum(w)`` and `zero_safe_average`
+0 drift across raw, the explicit `sum(w*v)/sum(w)` and `zero_safe_average`
 alike (all bits 1035386575). So the divergence is CPU-microarchitecture and
 XLA-lowering dependent, not merely a function of jaxlib version or weight
 shape, and `raw jnp.average` is ITSELF not bit-portable across CPUs — "match
@@ -137,7 +137,7 @@ all-positive 5-target float64 mixture:
 - It lands on the exact-policy side of a pinned knife-edge fixture (bits ...858
   against an alternative at ...843, exact at ...851) where accumulating
   ALREADY-MULTIPLIED terms does not — a sequential left-fold
-  ``E += zero_safe_weighted_term(p_r, V_r)`` and ``jnp.sum(jnp.stack(products))``
+  `E += zero_safe_weighted_term(p_r, V_r)` and `jnp.sum(jnp.stack(products))`
   both return the identical wrong-side bits ...842. Stacking OPERANDS rather
   than PRODUCTS is the whole distinction. Beware the trap: an eager (non-jit)
   run of the same fixture returns bits ...848 for every form and hides the
@@ -177,7 +177,7 @@ def zero_safe_average(
     shifts: IntND | None,
     axis: int | None = None,
 ) -> FloatND:
-    """Zero-weight-safe replacement for ``jnp.average(a, weights=weights, axis=axis)``.
+    """Zero-weight-safe replacement for `jnp.average(a, weights=weights, axis=axis)`.
 
     Mirrors `jnp.average`'s own weight-broadcasting contract (`weights` must
     either match `a`'s full shape, when `axis` is `None`, or `a.shape[axis]`,
@@ -188,7 +188,7 @@ def zero_safe_average(
     core (`Q_and_F.py`, `max_Q_over_a.py`).
 
     `shifts` carries the base-two scale each weight is held at — a node's
-    probability is ``weights * 2**-shift`` — as `scaled_joint_weight` now
+    probability is `weights * 2**-shift` — as `scaled_joint_weight` now
     returns one scale per node rather than one for the whole lottery. Weights
     from different nodes are therefore not comparable as plain floats, and a
     reduction that ignored the scales would weight the nodes by their

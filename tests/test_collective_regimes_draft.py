@@ -1,26 +1,22 @@
 """Executable spec for the collective-regimes extension (DRAFT / WIP).
 
-This file is the *executable specification* of the "collective regimes"
-extension proposed in the design doc `pylcm-extension-collective-regimes.md`
-(v2.1) and the tracking issue `pylcm-issue-collective-regimes.md`. It is NOT a
-working feature: the numerics (E1-E4) are not implemented. The tests split into
-two groups:
+A collective regime declares a tuple of `stakeholders` and carries one
+`utility_<s>` per stakeholder, so a single household decision is scored by
+several value functions at once. The extension is only partly built, and this
+file is where the line between what a collective regime already does and what it
+must eventually do is written down. The tests split into two groups:
 
-* Pinning tests (PASS today) — they nail down the current honest state: the
-  `Regime.stakeholders` API surface exists, the E1 solve (terminal + non-terminal
-  continuation) is implemented, everything beyond it (gates, routing, simulation)
-  is honestly rejected, and the default singleton (`stakeholders=None`) path is
-  untouched.
+* Pinning tests (pass today) — the construction-time contract: the
+  `Regime.stakeholders` API surface exists, a regime that declares stakeholders
+  is validated against its per-stakeholder utilities, and the singleton default
+  (`stakeholders=None`) is untouched by any of it.
 
-* Target-behavior tests (`xfail`, `strict=False`) — they encode what a
-  collective regime must do once E1-E4 land. Written against the real
-  construction API, they fail today (the sketched result APIs — per-stakeholder
-  result objects, consent gates, the value router — do not exist yet) and will
-  start passing, one by one, as the follow-up PRs implement the numerics.
-  `strict=False` so an implemented-but-not-yet-un-xfailed test does not turn
-  the suite red.
-
-Design-doc section references are on each target-behavior test.
+* Target-behavior tests (`xfail`, `strict=False`) — what a collective regime
+  must do once the numerics land. They are written against the real construction
+  API and fail today because the result APIs they read — per-stakeholder value
+  arrays, the consent gate, the simulation value router — do not exist yet.
+  `strict=False` so a test that starts passing before it is un-xfailed does not
+  turn the suite red.
 """
 
 import jax.numpy as jnp
@@ -44,9 +40,8 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# ----------------------------------------------------------------------------------
-# Shared building blocks (a stripped-down couples problem)
-# ----------------------------------------------------------------------------------
+# Shared building blocks: a stripped-down couples problem, in which the two
+# stakeholders differ only in their disutility of work.
 
 
 @categorical(ordered=True)
@@ -101,12 +96,11 @@ def _next_regime_widowed(age: FloatND) -> IntND:
 def _build_married_regime() -> Regime:
     """Construct a two-stakeholder `married` regime via the real API surface.
 
-    The concrete declaration of the household scalarization `O({Q^s})` and the
-    value-aware mask is still an open design question (design doc §7, issue
-    open-questions 2-3); here the two per-stakeholder utilities are supplied as
-    named functions and `stakeholders` names the value axis. Today this raises
-    `NotImplementedError` at construction — which is exactly why the tests that
-    call it are marked `xfail`.
+    How the household scalarization `O({Q^s})` and the value-aware mask are
+    declared is still an open question, so the two per-stakeholder utilities are
+    supplied as named functions and `stakeholders` names the value axis. Every
+    test that builds this regime is `xfail`: each reads a result API the
+    extension does not expose yet.
     """
     return Regime(
         transition=None,  # terminal, keeps the spec minimal
@@ -126,20 +120,16 @@ def _build_married_regime() -> Regime:
     )
 
 
-# ----------------------------------------------------------------------------------
-# Pinning tests — PASS today (current honest state)
-# ----------------------------------------------------------------------------------
+# Pinning tests: the collective-regime contract that holds today.
 
 
 def test_declaring_non_terminal_stakeholders_constructs():
-    """A NON-terminal collective regime now constructs (slice 2, E1).
+    """A non-terminal collective regime constructs.
 
-    The continuation (non-terminal) collective regime is implemented: the
-    per-stakeholder contract is validated at construction instead of raising
-    `NotImplementedError`. The remaining honest boundaries are elsewhere:
-    routing to targets with a different `stakeholders` tuple is rejected at
-    model processing (slice 4, E3'), and collective-regime simulation still
-    raises (slice 6, E4) — see
+    Declaring `stakeholders` alongside a regime transition is accepted: the
+    per-stakeholder contract is checked at construction, and the constructed
+    regime keeps both its stakeholder tuple and its non-terminal status. What a
+    collective regime is allowed to route to, and how it solves, is pinned in
     `tests/regime_building/test_nonterminal_collective_solve.py`.
     """
 
@@ -200,11 +190,11 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
 
 
 def test_singleton_default_is_untouched():
-    """The default `stakeholders=None` path constructs exactly as before.
+    """A regime that declares no stakeholders is a plain singleton regime.
 
-    A regime that does not declare stakeholders must be byte-for-byte the
-    current behavior: `stakeholders is None`, and construction succeeds without
-    entering the not-yet-implemented branch.
+    Omitting `stakeholders` leaves the field `None` and construction takes the
+    ordinary single-value path — the collective branch is reached only by an
+    explicit declaration, never by default.
     """
 
     def utility(consumption: ContinuousAction) -> FloatND:
@@ -225,9 +215,7 @@ def test_stakeholders_field_default_is_none():
     assert field.default is None
 
 
-# ----------------------------------------------------------------------------------
-# Target-behavior tests — xfail until E1-E4 land
-# ----------------------------------------------------------------------------------
+# Target-behavior tests: what a collective regime must do once the numerics land.
 
 
 @pytest.mark.xfail(
@@ -235,12 +223,12 @@ def test_stakeholders_field_default_is_none():
     strict=False,
 )
 def test_two_stakeholder_values_differ():
-    """E1: a two-stakeholder regime yields two distinct value arrays.
+    """A two-stakeholder regime yields two distinct value arrays.
 
     At the common household argmax, the wife's and husband's per-stakeholder
     values are read off separately (`V^s = Q^s(x, a*)`). Because their felicities
     differ (different disutility of work), the two value arrays must not be
-    identical. See design doc §2.
+    identical.
     """
     regime = _build_married_regime()
     # Target API: the solved regime exposes one value array per stakeholder.
@@ -253,13 +241,13 @@ def test_two_stakeholder_values_differ():
     strict=False,
 )
 def test_value_aware_feasibility_reads_reference_value():
-    """E2: the action mask compares Q^s against a same-period reference value.
+    """The action mask compares Q^s against a same-period reference value.
 
     The married participation set is `Q^j(x, a) >= V^j(outside_j) - Delta_j`, so
-    the mask must read a *same-period* single-regime reference value at the
-    matched shock realization — it can no longer be computed before Q. The solve
-    must also expose an explicit dissolution flag `D = 1[mask empty]`, distinct from
-    a numeric -inf value. See design doc §2.
+    the mask reads a *same-period* single-regime reference value at the matched
+    shock realization — a quantity that only exists once Q has been formed, and
+    so cannot be computed ahead of it. The solve must also expose an explicit
+    dissolution flag `D = 1[mask empty]`, distinct from a numeric -inf value.
     """
     regime = _build_married_regime()
     result = regime.solve_period_values()  # ty: ignore[unresolved-attribute]
@@ -273,12 +261,12 @@ def test_value_aware_feasibility_reads_reference_value():
     strict=False,
 )
 def test_mutual_consent_gate():
-    """E3': the singles->married edge forms a marriage only by mutual consent.
+    """The singles->married edge forms a marriage only by mutual consent.
 
     The gated edge object folds `E_eps[ kappa*V_married + (1-kappa)*V_single ]`
     where the consent gate `kappa` is `1` iff `V^{jM}_{t+1} > V^j_{t+1}` for BOTH
     stakeholders (strict, no slack). A candidate marriage that clears only one
-    partner's outside option must NOT form. See design doc §2.
+    partner's outside option must NOT form.
     """
     regime = _build_married_regime()
     # Target API: the edge gate is a callable reading both stakeholders' values
@@ -297,12 +285,12 @@ def test_mutual_consent_gate():
     strict=False,
 )
 def test_simulate_value_router_routes_on_realized_values():
-    """E4: the simulator routes regimes by recomputed values, not by Phi(x,a).
+    """The simulator routes regimes by recomputed values, not by Phi(x,a).
 
     At simulation, the router draws candidate realizations, recomputes the
     candidate regimes' per-stakeholder values at the realized point, evaluates
-    the same gates as E3', then routes and discards the losing candidate. See
-    design doc §2.
+    the same mutual-consent gates the solve applies, then routes and discards
+    the losing candidate.
     """
     regime = _build_married_regime()
     router = regime.simulate_value_router  # ty: ignore[unresolved-attribute]

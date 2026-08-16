@@ -1,9 +1,8 @@
-"""Integration tests for E3': gated edge objects (slice 4).
+"""Integration tests for gated edge objects.
 
 A source regime declares `gated_edges` keyed by TARGET regime name. At the end of
 each period the engine folds, per declared edge and source stakeholder ``s``, a
-gated continuation object on the target regime's grid (design doc
-`pylcm-extension-collective-regimes.md` §2 E3'; EKL 2019 eqs. 9/12/27)::
+gated continuation object on the target regime's grid (EKL 2019 eqs. 9/12/27)::
 
     Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
 
@@ -63,9 +62,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-# --------------------------------------------------------------------------------------
 # Consent edge: single_f (singleton) -> married_terminal (collective)
-# --------------------------------------------------------------------------------------
 
 
 def _u_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -236,10 +233,9 @@ def test_consent_gate_matches_under_jit():
     )
 
 
-# --------------------------------------------------------------------------------------
-# Dissolution edge: married (collective) -> married_ir (collective), ~D gate, per-
-# stakeholder fallback to single_f / single_m (reusing the slice-3 IR miniature)
-# --------------------------------------------------------------------------------------
+# Dissolution edge: married (collective) -> married_ir (collective), ~D gate,
+# per-stakeholder fallback to single_f / single_m (reusing the value-constraint
+# IR miniature)
 
 _WAGE3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
@@ -431,7 +427,7 @@ def _solve_dissolution(*, enable_jit: bool = False):
     )
 
 
-# married_ir period-1 solution (slice-3 IR miniature): D at wage=2, -inf there.
+# married_ir period-1 solution (value-constraint IR miniature): D at wage=2, -inf there.
 # Wbar = where(~D, V_married_ir, own single fallback):
 #   wage=1 (D=F): (2, 1);  wage=2 (D=T): (V_single_f=5.5, V_single_m=1.0);
 #   wage=3 (D=F): (6, 3).
@@ -466,9 +462,7 @@ def test_dissolution_edge_matches_under_jit():
     )
 
 
-# --------------------------------------------------------------------------------------
 # Scope fences and build-time validation (pins)
-# --------------------------------------------------------------------------------------
 
 
 def test_raw_ungated_mixed_transition_still_rejected():
@@ -631,9 +625,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
         )
 
 
-# --------------------------------------------------------------------------------------
 # Full mini-EKL topology in ONE model via the public API
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=False)
@@ -772,9 +764,10 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
 def test_full_ekl_topology_via_public_model_api():
     """single_f/single_m + married with consent edge + dissolution edge + IR, one model.
 
-    married (period 1) is the slice-3 IR miniature (dissolution cell at wage=2). Its
-    dissolution edge routes into the (zero-valued) terminal couple — gate ~D is open
-    there, so its continuation is zero and its V equals the felicity readout.
+    married (period 1) is the value-constraint IR miniature (dissolution cell at
+    wage=2). Its dissolution edge routes into the (zero-valued) terminal couple —
+    gate ~D is open there, so its continuation is zero and its V equals the
+    felicity readout.
     single_f (period 0) reaches married through the CONSENT edge:
 
     gate(wage) = (V_married_f > V_single_f) & (V_married_m > V_single_m):
@@ -793,7 +786,8 @@ def test_full_ekl_topology_via_public_model_api():
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
         log_level="off",
     )
-    # married period-1: slice-3 IR miniature (continuation zero via dissolution edge).
+    # married period-1: value-constraint IR miniature (continuation zero via the
+    # dissolution edge).
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
         np.array([[2.0, 1.0], [-np.inf, -np.inf], [6.0, 3.0]]),
@@ -873,7 +867,7 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
 
 
 def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
-    """F4: a gate reference (or fallback) inactive in a period whose ``Wbar`` is
+    """A gate reference (or fallback) inactive in a period whose ``Wbar`` is
     actually CONSUMED (target active at t, source active at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
     a stale later-period ``Wbar``.
@@ -903,7 +897,7 @@ def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
 
 
 def test_gated_edge_coactive_references_pass():
-    """F4: references active in every consumed period pass the guard."""
+    """References active in every consumed period pass the guard."""
     edge = _edge_with_refs(
         fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
     )
@@ -926,7 +920,7 @@ def test_gated_edge_coactive_references_pass():
 
 
 def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
-    """F4 (over-reach guard): a self-loop edge's reference may be inactive in a
+    """Over-reach guard: a self-loop edge's reference may be inactive in a
     target-active period whose ``Wbar`` is NEVER consumed — the target's earliest
     active period, where no source exists one period earlier. Requiring
     co-activity across ALL target-active periods would wrongly reject the

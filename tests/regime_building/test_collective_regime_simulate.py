@@ -1,8 +1,8 @@
-"""Integration tests for E4: forward simulation of collective regimes (slice 6).
+"""Integration tests for forward simulation of collective regimes.
 
 pylcm simulate recomputes the argmax per period against the STORED next-period
-V rather than storing policies (design doc `pylcm-extension-collective-regimes.md`
-§2 E4). For a collective regime this means, per simulated household:
+V rather than storing policies. For a collective regime this means, per
+simulated household:
 
 1. **Household argmax at the realized state** — the joint action `a*` both
    stakeholders follow, recomputed the same way `get_max_Q_over_a`'s collective
@@ -18,18 +18,17 @@ V rather than storing policies (design doc `pylcm-extension-collective-regimes.m
    target-state draw to decide ACTUAL regime routing: the target when open, a
    leg's fallback regime (with its own projected states) when closed.
 3. **The stochastic offer draw** — a target-only `MarkovTransition` state
-   (e.g. a drawn spouse type) is realized by the ordinary (pre-existing,
-   collective-agnostic) `calculate_next_states` machinery; nothing
+   (e.g. a drawn spouse type) is realized by the ordinary,
+   collective-agnostic `calculate_next_states` machinery; nothing
    gated-edge-specific is needed for the draw itself.
 
 Dissolution (a COLLECTIVE source's multi-leg gated edge) is a documented SCOPE
 FENCE: forward simulation is a fixed-size population pass, so one row cannot
-literally become two independently-tracked future rows. What this slice
-delivers — and what is tested here — is that EVERY leg's own fallback
-(regime, state) is computed correctly and written into that fallback
-regime's per-subject state slot, and that the row's own continuing
-membership follows the FIRST declared leg (deterministic, documented
-convention); see `_lcm.simulation.gated_routing`'s module docstring.
+literally become two independently-tracked future rows. What is tested here is
+that EVERY leg's own fallback (regime, state) is computed correctly and
+written into that fallback regime's per-subject state slot, and that the row's
+own continuing membership follows the leg matching this `simulate()` call's
+`own_stakeholder`; see `_lcm.simulation.gated_routing`'s module docstring.
 """
 
 from types import MappingProxyType
@@ -82,7 +81,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 def _solve_and_process(
     *, regimes_dict: dict[str, Regime], ages: AgeGrid, regime_names: list[str]
 ):
-    """Shared build+solve harness (kernel-level, mirrors the slice-4/5 tests)."""
+    """Shared build+solve harness (kernel-level, mirrors the solve-side tests)."""
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
@@ -109,11 +108,9 @@ def _solve_and_process(
     return regimes, regime_names_to_ids
 
 
-# ----------------------------------------------------------------------------------
 # Test 1: a solved (non-gated) collective regime simulates the recomputed joint
 # argmax over two periods, both stakeholders tracked (reuses the
 # test_nonterminal_collective_solve.py couple model).
-# ----------------------------------------------------------------------------------
 
 
 @categorical(ordered=False)
@@ -291,11 +288,9 @@ def test_couple_simulate_with_runtime_validation_enabled():
     )
 
 
-# ----------------------------------------------------------------------------------
 # Test 2: consent routing — a singleton source (single_f) with a gated marriage
 # edge; households whose realized wage clears mutual consent marry, others stay
 # single. Exact per-seed routing (deterministic wage draws, no stochastic offer).
-# ----------------------------------------------------------------------------------
 
 _WAGE_2 = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
 
@@ -502,11 +497,9 @@ def test_consent_routing_never_populates_the_non_routed_target():
     np.testing.assert_array_equal(np.asarray(single_m_term.in_regime), [False, False])
 
 
-# ----------------------------------------------------------------------------------
-# Test 3: dissolution routing — a married cohort where slice-3 IR empties the mask
+# Test 3: dissolution routing — a married cohort where the IR mask empties
 # at wage=2; reuses the dissolution-edge miniature from
 # test_gated_edges_collective_solve.py::_make_dissolution_regimes.
-# ----------------------------------------------------------------------------------
 
 _WAGE_3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
@@ -676,7 +669,7 @@ def _solve_dissolution():
 
 
 def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
-    """D=True at wage=2 (slice-3 IR empties the mask there, see solve test).
+    """D=True at wage=2 (the IR mask empties there, see solve test).
 
     The cohort declares itself the wives, so the dissolving household's row is
     routed to that role's leg ("f" -> `single_f`) instead of `married_ir` — a
@@ -723,7 +716,7 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     # docstring's scope fence.
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
-    # The dissolutiond household's (wage=2) value under its routed regime matches
+    # The dissolved household's (wage=2) value under its routed regime matches
     # the IR miniature's single fallback exactly (hand-computed in
     # test_gated_edges_collective_solve.py): V_single_f(wage=2) = 5.5.
     np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.5, rtol=1e-6)
@@ -752,11 +745,9 @@ def test_dissolution_edge_leg_projector_computes_the_non_primary_states_too():
     np.testing.assert_array_equal(np.asarray(projected["wage"]), [1.0, 2.0, 3.0])
 
 
-# ----------------------------------------------------------------------------------
 # Test 4: value-masked simulate — the simulated argmax never selects an action
-# excluded by a slice-3 value constraint (reuses the dissolution miniature's IR
+# excluded by a value constraint (reuses the dissolution miniature's IR
 # mask: married_ir's mask is empty at wage=2).
-# ----------------------------------------------------------------------------------
 
 
 def test_value_masked_simulate_reports_the_solved_masked_value():
@@ -767,8 +758,8 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
        simulate-side Q_and_F applies the IDENTICAL value-aware feasibility mask
     the solve phase used: the argmax's `V_arr` reports the same `-inf`
        sentinel `solution[1]["married_ir"]` carries at wage=2 (the empty mask;
-       the household's real-world routing away from this cell is E3'/E4's
-       separate concern, covered by the dissolution test above).
+       the household's real-world routing away from this cell is the gated
+       edge's separate concern, covered by the dissolution test above).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
@@ -808,14 +799,9 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
     )
 
 
-# ----------------------------------------------------------------------------------
-# Test 5: pin — a still-unsupported simulate construct raises clearly rather
-# than crashing obscurely. `Model.simulate()` does not yet surface
-# `period_to_regime_to_dissolution_flags` through its public API (documented gap,
-# see `simulate()`'s own docstring); calling the internal `simulate()` the
-# same way (omitting it) for a dissolution-gated model must fail with a clear
+# Test 5: pin — calling the internal `simulate()` for a dissolution-gated model
+# while omitting `period_to_regime_to_dissolution_flags` fails with a clear
 # message, not a bare `None > 0.5` TypeError.
-# ----------------------------------------------------------------------------------
 
 
 def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
@@ -844,24 +830,23 @@ def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
         )
 
 
-# ----------------------------------------------------------------------------------
 # Test 6: regression — a gated edge's TARGET has a discrete state axis (in
 # addition to a continuous one). `route_gated_edges` interpolates the fold's
 # `gate` array at each subject's candidate target-state draw
-# (`_lcm.simulation.gated_routing._call_vmapped_with_accepted_kwargs`); before
-# that call was `vmap`-ped over subjects, a discrete target axis broke
-# `jax.scipy.ndimage.map_coordinates`'s `len(coordinates) == input.ndim`
-# invariant (advanced indexing on whole-population `(n_subjects,)` discrete
-# indices collapses the discrete axes into a leading batch dimension while
-# leaving the continuous axis trailing) — every OTHER gated-edge simulate test
-# above uses a continuous-only target, where a `(n_subjects,)` coordinate
-# array happens to broadcast correctly through `map_coordinates` by
-# coincidence, so this gap went untested. Adapted from
+# (`_lcm.simulation.gated_routing._call_vmapped_with_accepted_kwargs`), one
+# subject at a time under `vmap`. Interpolating for the whole population at once
+# instead would break `jax.scipy.ndimage.map_coordinates`'s
+# `len(coordinates) == input.ndim` invariant on a discrete target axis (advanced
+# indexing on whole-population `(n_subjects,)` discrete indices collapses the
+# discrete axes into a leading batch dimension while leaving the continuous axis
+# trailing) — every OTHER gated-edge simulate test above uses a continuous-only
+# target, where a `(n_subjects,)` coordinate array happens to broadcast correctly
+# through `map_coordinates` by coincidence, so this is the fixture that covers
+# the discrete case. Adapted from
 # `_make_consent_regimes` (Test 2 above) by adding a discrete `educ` state,
 # carried as-is (`fixed_transition`) and contributing 0 to every utility, so
 # the gate arithmetic and expected routing/values are IDENTICAL to
 # `test_consent_routing_simulate_matches_gate_exactly`.
-# ----------------------------------------------------------------------------------
 
 
 @categorical(ordered=True)
@@ -1064,15 +1049,14 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
     )
 
 
-# ----------------------------------------------------------------------------------
-# Test 7: public `Model.solve`/`Model.simulate` API — closes the gap Test 5 pins
-# at the INTERNAL `simulate()` level. `Model.solve(return_dissolution_flags=True)`
-# must surface the dissolution-flag mapping `backward_induction.solve` already
-# computes (previously discarded), and `Model.simulate(...)` must accept it via
-# `period_to_regime_to_dissolution_flags` and thread it down to the same dissolution
-# routing exercised by Test 3 (`_make_dissolution_regimes`), reusing that fixture
-# through the public API instead of the internal `process_regimes` harness.
-# ----------------------------------------------------------------------------------
+# Test 7: public `Model.solve`/`Model.simulate` API — the flags Test 5 pins at
+# the INTERNAL `simulate()` level travel through the public one too.
+# `Model.solve(return_dissolution_flags=True)` must surface the dissolution-flag
+# mapping `backward_induction.solve` computes, and `Model.simulate(...)` must
+# accept it via `period_to_regime_to_dissolution_flags` and thread it down to the
+# same dissolution routing exercised by Test 3 (`_make_dissolution_regimes`),
+# reusing that fixture through the public API instead of the internal
+# `process_regimes` harness.
 
 
 @categorical(ordered=False)
@@ -1193,8 +1177,8 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
 def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_values(
     monkeypatch,
 ):
-    """simulate-round8 F1 (re-review): the edge-fold state/source-param collision
-    guard must run on the SIMULATE entry, not only in `solve()`.
+    """The edge-fold state/source-param collision guard runs on the SIMULATE
+    entry, not only in `solve()`.
 
     The public `Model.simulate` accepts a precomputed / cached
     `period_to_regime_to_V_arr` and skips `solve()` entirely, so a guard installed
@@ -1275,12 +1259,10 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
         )
 
 
-# ----------------------------------------------------------------------------------
 # Test 7: `to_dataframe()` flattens a collective regime's 2D per-stakeholder value
 # into per-stakeholder columns, and leaves a singleton regime's 1D `value` column
-# untouched — regression pin for the `pd.DataFrame` "must be 1-dimensional" crash
-# fixed in `_lcm.simulation.result_dataframe._process_regime`.
-# ----------------------------------------------------------------------------------
+# as it is — regression pin against the `pd.DataFrame` "must be 1-dimensional"
+# crash in `_lcm.simulation.result_dataframe._process_regime`.
 
 
 def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
@@ -1445,7 +1427,6 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     assert pd.api.types.is_float_dtype(df["value"])
 
 
-# ----------------------------------------------------------------------------------
 # Test 8: regression — a REPEATING, self-looping, value-gated edge past the
 # source's own activity boundary. Every OTHER gated-edge test above has a
 # source active for exactly ONE period (a "one-shot" edge): the target is

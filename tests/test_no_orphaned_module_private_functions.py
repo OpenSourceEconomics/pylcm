@@ -1,22 +1,19 @@
-"""Guard against a merge dropping a consumer but leaving its definition behind.
+"""No module-private function outlives the call site it was written for.
 
-Cascade merge 80f5e79 dropped the solve hot loop's call to `_states_for_period`
-while keeping a second copy of the function in `diagnostics.py`. The result was a
-`backward_induction.py` that still *defined* `_states_for_period` and never called
-it -- so the age-specialized per-period grids were built, stored, and silently
-ignored, and every period solved on the base axis.
+When a module keeps a private function that nothing in that module calls, while a
+function of the same name lives in another module, one of two copies has lost its
+consumer: the work that copy performs has silently dropped out of the program. The
+surviving definition keeps imports, type checking, and every behavioural test green,
+so no other check in the suite can see it -- a behavioural guard only fires for
+models that exercise the specific computation that went missing, and the point of
+this module is to catch the *shape* of the mistake instead, wherever it happens and
+whatever the function is called.
 
-Nothing caught it. The behavioural guard for that specific defect lives in
-`tests/solution/test_age_specialized_grid_solve.py`, but it can only fire for models
-that use an `AgeSpecializedGrid`. This test catches the *shape* of the mistake
-instead, so the next dropped consumer is caught wherever it happens and whatever it
-is called -- in particular during a cascade merge, which is when it happened.
-
-The signature is deliberately narrow, because "module-private function with no
-in-module use" alone is noisy (~50 hits: most are imported by sibling modules). The
-precise tell is a module-private function that is dead *within its own module* while
-a same-named function exists in another module -- i.e. one of two copies stopped
-being used. That is 3 benign hits repo-wide, all allowlisted below.
+The signature is deliberately narrow. "Module-private function with no in-module
+use" on its own is noisy, because most such functions are imported by sibling
+modules and are perfectly alive. Requiring a same-named twin in another module is
+what turns the observation into evidence, and it leaves few enough legitimate cases
+repo-wide that each one can be named in `ALLOWED` below.
 """
 
 import ast
@@ -59,8 +56,8 @@ def _module_private_defs_and_names(
 def test_no_module_private_function_is_dead_beside_a_twin():
     """No module-private function is dead in its own module while duplicated elsewhere.
 
-    That combination means one of two copies lost its consumer -- the exact footprint
-    of the `_states_for_period` drop in cascade 80f5e79.
+    That combination means one of two copies lost its consumer, so whatever that
+    copy computed is not computed anywhere.
     """
     defining_modules: dict[str, list[str]] = collections.defaultdict(list)
     dead: list[tuple[str, str]] = []

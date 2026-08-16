@@ -98,10 +98,10 @@ def _callable_mapping_errors(
 
 
 def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
-    """Validate a collective (stakeholder-valued) regime — E1.
+    """Validate a collective (stakeholder-valued) regime.
 
-    Both the terminal (slice 1b) and non-terminal continuation (slice 2) cases
-    are implemented. Checked here are the properties a bare `Regime` already
+    Both the terminal and the non-terminal continuation cases are implemented.
+    Checked here are the properties a bare `Regime` already
     determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
     the regime-local `value_constraints` / `same_period_refs` grammar, and — if
     `weights` is given — weight keys matching the stakeholder names, with every
@@ -116,7 +116,8 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     is completeness, so `_validate_completeness` checks it once the regimes are
     finalized at model build.
 
-    Features outside the E1 scope raise `NotImplementedError`: EV1 taste shocks
+    Features the collective solve does not implement raise `NotImplementedError`:
+    EV1 taste shocks
     (the collective argmax is the hard household maximum), a nonlinear
     certainty equivalent (the per-stakeholder continuation is the linear
     expectation), and any solver other than `GridSearch`.
@@ -131,19 +132,19 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "EV1 taste shocks on a collective (stakeholder-valued) regime are "
             "not yet implemented: the collective solve takes the hard household "
             "argmax of the Pareto-weighted objective, not a smoothed maximum. "
-            "See the design doc `pylcm-extension-collective-regimes.md` (v2.1)."
+            "Drop `taste_shocks` on this regime, or model the choice as a "
+            "singleton regime."
         )
-    # Presence alone no longer distinguishes a nonlinear certainty equivalent:
-    # every non-terminal regime now carries one, and `LinearExpectation` IS the
-    # expected-utility default -- which is exactly what the collective path
-    # implements. Only a genuinely nonlinear CE is unimplemented here.
+    # Every non-terminal regime carries a certainty equivalent, and
+    # `LinearExpectation` is the expected-utility default the collective path
+    # implements -- so the test is the CE's type, not whether one is attached.
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
             "A nonlinear certainty equivalent on a collective "
             "(stakeholder-valued) regime is not yet implemented: the "
             "per-stakeholder continuation is the linear expectation "
-            "E[V'^s]. See the design doc "
-            "`pylcm-extension-collective-regimes.md` (v2.1)."
+            "E[V'^s]. Use `certainty_equivalent=LinearExpectation()` on this "
+            "regime."
         )
     if not isinstance(regime.solver, GridSearch):
         raise NotImplementedError(
@@ -158,8 +159,7 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "regime are not implemented: value-aware feasibility masks a "
             "within-period household decision; the terminal kernel carries no "
             "such mask. Declare them on the non-terminal regime whose decision "
-            "they constrain. See the design doc "
-            "`pylcm-extension-collective-regimes.md` (v2.1), §2 E2."
+            "they constrain."
         )
 
     error_messages: list[str] = []
@@ -292,11 +292,11 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
 
 
 def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
-    """Validate a regime's `gated_edges` declarations — E3' (regime-local part).
+    """Validate a regime's `gated_edges` declarations (regime-local part).
 
     Checks the properties knowable without the other
-    regimes: the gate is a plain boolean callable (a stochastic `kappa` gate —
-    a `MarkovTransition` — is out of scope for this slice); every declared edge
+    regimes: the gate is a plain boolean callable (a stochastic, probabilistic
+    gate — a `MarkovTransition` — is not implemented); every declared edge
     targets one of the regime's reachable transition targets; the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
     per stakeholder for a collective source). Cross-regime properties — the
@@ -304,9 +304,9 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     projections cover the reference states — are validated at model processing.
 
     A gated-edge SOURCE is restricted to the `GridSearch` solver with no taste
-    shocks or certainty equivalent: the source reads the folded ``Wbar`` through
-    the grid-search continuation machinery, and edges touching DC-EGM /
-    taste-shock / certainty-equivalent regimes are out of scope for this slice.
+    shocks or certainty equivalent: the source reads the folded `Wbar` through
+    the grid-search continuation machinery, which no DC-EGM, taste-shock, or
+    certainty-equivalent source has.
 
     Called from `Regime.__post_init__` only when `gated_edges` is non-empty, so
     the default path never reaches it.
@@ -322,8 +322,8 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
         if isinstance(edge.gate, MarkovTransition):
             error_messages.append(
                 f"{prefix}the gate must be a plain boolean function. A "
-                "`MarkovTransition` (stochastic / probabilistic gate) is out of "
-                "scope for this slice — E3' gates are boolean."
+                "`MarkovTransition` (stochastic / probabilistic gate) is not "
+                "implemented — a gated edge routes on a boolean gate."
             )
         elif not callable(edge.gate):
             error_messages.append(f"{prefix}the gate must be a callable.")
@@ -358,18 +358,16 @@ def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
         raise NotImplementedError(
             "Gated edges are only implemented for GridSearch source "
             "regimes: the source reads the folded continuation through the "
-            "grid-search machinery. Edges touching DC-EGM regimes are out of "
-            "scope for this slice. Use `solver=GridSearch()`."
+            "grid-search machinery, which a DC-EGM regime does not have. Use "
+            "`solver=GridSearch()`."
         )
     if regime.taste_shocks is not None:
         raise NotImplementedError(
-            "Gated edges on a taste-shock source regime are out of scope "
-            "for this slice."
+            "Gated edges on a taste-shock source regime are not implemented."
         )
     if aggregates_nonlinearly(regime.certainty_equivalent):
         raise NotImplementedError(
-            "Gated edges on a certainty-equivalent source regime are out "
-            "of scope for this slice."
+            "Gated edges on a certainty-equivalent source regime are not implemented."
         )
 
 

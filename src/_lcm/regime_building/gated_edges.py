@@ -1,28 +1,29 @@
 """Gated edge objects: mutual-consent marriage / dissolution routing.
 
-The design-doc §2 E3' construct that unlocks MIXED singleton/collective regime
-topologies. A source regime declares, per target regime, a `GatedEdge`. At the
-END of each period ``t``'s solve — after every period-``t`` regime is solved, so
-their value arrays and dissolution flags are still live — the engine folds, for each
-declared edge and each source stakeholder ``s``, a gated continuation object on
-the TARGET regime's period-``t`` grid::
+Gated edges unlock MIXED singleton/collective regime topologies. A source
+regime declares, per target regime, a `GatedEdge`. At the END of each
+period `t`'s solve — after every period-`t` regime is solved, so their value
+arrays and dissolution flags are still live — the engine folds, for each
+declared edge and each source stakeholder `s`, a gated continuation object on
+the TARGET regime's period-`t` grid:
 
     Wbar^s(x) = jnp.where( gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)) )
 
-with ``gate`` a boolean user function on the target grid (EKL consent eq. 27 /
-no-dissolution eqs. 9/12) and ``V_fallback^s`` a same-period reference regime's value
-at a projection (EKL: the source stakeholder's own single regime). The source's
-period ``t-1`` continuation then reads ``Wbar`` in place of the raw target V,
-threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
+with `gate` a boolean user function on the target grid — a mutual-consent
+predicate, or a no-dissolution one — and `V_fallback^s` a same-period reference
+regime's value at a projection, typically the source stakeholder's own singleton
+regime. The source's period `t-1` continuation then reads `Wbar` in place of the
+raw target V, threaded through the ordinary transition machinery
+(`next_regime_to_V_arr`).
 
 **Numerics (non-negotiable).** The mixture is the strict
-``jnp.where(gate, V_target, V_fallback)``, never a linear
-``gate*V_target + (1-gate)*V_fallback``: the target value carries the slice-3
-``-inf`` sentinel in dissolution cells, and ``0 * -inf = NaN``. Every read that
-lands the target value — including the gate's own ``V_target_<s>`` reads — is an
+`jnp.where(gate, V_target, V_fallback)`, never a linear
+`gate*V_target + (1-gate)*V_fallback`: the target value carries the `-inf`
+sentinel in dissolution cells, and `0 * -inf = NaN`. Every read that
+lands the target value — including the gate's own `V_target_<s>` reads — is an
 on-grid identity-projection interpolation, so it is exact.
 
-The whole fold reuses the slice-3 same-period reference-reader machinery
+The whole fold reuses the same-period reference-reader machinery
 (`_build_same_period_ref_reader`): the target's own value components and dissolution
 flag are read as identity-projection references of the target regime, and the
 gate refs / leg fallbacks as ordinary projected references. The per-cell fold is
@@ -224,7 +225,7 @@ class EdgeArgProvenance:
     `SAME_PERIOD_PARAMS_ARG`. This class covers exactly what remains.
     """
 
-    states: frozenset[str]
+    states: frozenset[StateName]
     """Exposed args bound from the realized candidate target states."""
 
     params: MappingProxyType[str, tuple[str, str]]
@@ -241,7 +242,7 @@ class _ProvenanceBuilder:
     genuinely carry the same value.
     """
 
-    def __init__(self, *, states: frozenset[str]) -> None:
+    def __init__(self, *, states: frozenset[StateName]) -> None:
         self._states = states
         self._params: dict[str, tuple[str, str]] = {}
 
@@ -261,9 +262,9 @@ class _ProvenanceBuilder:
         if recorded is not None and recorded != (namespace, qname):
             # The construction-time guard the qualified scheme is designed to
             # make unreachable, asserted rather than assumed: collapsing two
-            # provenances onto one keyword is exactly the defect this mechanism
-            # replaced, and neither an unqualified exposure nor a future change
-            # to the naming scheme may reintroduce it silently.
+            # provenances onto one keyword binds an argument from the wrong
+            # regime, and neither an unqualified exposure nor a future change
+            # to the naming scheme may reintroduce that silently.
             msg = (
                 f"Argument '{exposed}' would carry two different values: "
                 f"{recorded} and {(namespace, qname)}. One keyword argument "
@@ -281,9 +282,8 @@ class _ProvenanceBuilder:
 
         Every outer argument must be classified exactly once: an engine-supplied
         one, a candidate target state, or a parameter of a named namespace. A
-        missing classification is the F2 completeness defect (an argument the
-        router would have to guess a namespace for); an overlap is the F2
-        disjointness defect (a name two provenances both claim).
+        missing classification leaves an argument the router would have to guess
+        a namespace for; an overlap leaves a name two provenances both claim.
 
         Raises:
             ValueError: The provenance does not partition `outer_arg_names`.
@@ -380,14 +380,14 @@ class ResolvedGatedEdge:
     gate refs), excluding the target itself."""
 
     fold: Callable = _uncompiled_edge_callable
-    """Compiled ``(Wbar, gate)`` producer.
+    """Compiled `(Wbar, gate)` producer.
 
     Built once at model processing, in a second pass over the regimes once
     every regime's grid and functions are known. Backward induction evaluates
-    it at the end of the period the target was solved in, storing ``Wbar`` in
+    it at the end of the period the target was solved in, storing `Wbar` in
     the rolled edge-continuation mapping the source's kernel reads; forward
     simulation evaluates the same fold once per period from the solved solution
-    and substitutes ``Wbar`` into the source's own continuation. Simulated
+    and substitutes `Wbar` into the source's own continuation. Simulated
     regime ROUTING reads nothing off this fold — that is
     `simulate_gate_evaluator`'s job.
     """
@@ -412,13 +412,13 @@ class ResolvedGatedEdge:
 def _pad_reader_to_state_names(
     reader: Callable[..., FloatND],
     *,
-    state_names: tuple[str, ...],
+    state_names: tuple[StateName, ...],
 ) -> Callable[..., FloatND]:
-    """Widen a reader's exposed signature to every one of ``state_names``.
+    """Widen a reader's exposed signature to every one of `state_names`.
 
-    ``reader``'s own args are kept (states it genuinely reads, plus any extra
+    `reader`'s own args are kept (states it genuinely reads, plus any extra
     runtime params, e.g. grid points for an irregular-grid projection); any
-    ``state_names`` entry missing from that set is added as an ignored
+    `state_names` entry missing from that set is added as an ignored
     keyword-only argument, so `_grid_reader`'s downstream `productmap` (which
     always maps over the FULL `state_names`) sees every axis in the wrapped
     function's own signature and does not drop it.
@@ -434,22 +434,22 @@ def _pad_reader_to_state_names(
 
 
 def _reached_target_param_leaves(
-    dag_pool: Mapping[str, Callable[..., FloatND]],
+    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
-    state_names: frozenset[str],
+    state_names: frozenset[StateName],
 ) -> frozenset[str]:
     """Dynamic target-DAG parameter leaves REACHED by one specific edge consumer.
 
-    ``seed_args`` are a single consumer's OWN declared arguments BEFORE the
+    `seed_args` are a single consumer's OWN declared arguments BEFORE the
     concatenation with the target DAG -- the gate predicate's parameters, or one
-    projection's parameters. A seed that names a ``dag_pool`` node (a target
+    projection's parameters. A seed that names a `dag_pool` node (a target
     regime function or deterministic transition) enters the target's own function
     graph; walking that graph to its leaves and dropping the produced-node names
     and the state coordinates leaves exactly the dynamic parameters the TARGET
-    regime binds from ``flat_params[target]`` and that THIS consumer reaches.
+    regime binds from `flat_params[target]` and that THIS consumer reaches.
 
     Restricting to the consumer's actual ancestor closure -- rather than unioning
-    the free args of every function in ``dag_pool`` -- is load-bearing. A
+    the free args of every function in `dag_pool` -- is load-bearing. A
     parameter a source edge declares directly, or an unrelated target
     helper the consumer never calls, is not a leaf reached HERE and must not trip
     the fence; unioning the whole pool would reject those valid topologies purely
@@ -533,7 +533,7 @@ def _gate_ref_with_qualified_params(
     ref: ResolvedSamePeriodRef,
     ref_name: str,
     target: RegimeName,
-    state_names: Container[str],
+    state_names: Container[StateName],
 ) -> ResolvedSamePeriodRef:
     """Return a gate reference whose projections declare their flat param names."""
     return _ref_with_qualified_params(
@@ -551,7 +551,7 @@ def _leg_fallback_with_qualified_params(
     *,
     ref: ResolvedSamePeriodRef,
     target: RegimeName,
-    state_names: Container[str],
+    state_names: Container[StateName],
 ) -> ResolvedSamePeriodRef:
     """Return a leg fallback whose projections declare their flat param names."""
     return _ref_with_qualified_params(
@@ -572,7 +572,7 @@ def _ref_with_qualified_params(
     ref: ResolvedSamePeriodRef,
     target: RegimeName,
     entry_by_state: Mapping[StateName, FunctionName],
-    state_names: Container[str],
+    state_names: Container[StateName],
 ) -> ResolvedSamePeriodRef:
     """Return `ref` with each projection's parameters renamed to their flat names.
 
@@ -609,24 +609,24 @@ def _ref_with_qualified_params(
 
 def _reject_target_function_params(
     *,
-    dag_pool: Mapping[str, Callable[..., FloatND]],
+    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
-    state_names: frozenset[str],
-    edge_target: str,
+    state_names: frozenset[StateName],
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a target helper param mis-owned as source.
 
     Collective-edge provenance binds every non-injected gate/projection argument
-    from ``flat_params[source]`` -- the solve-side fold does the same, so solve
+    from `flat_params[source]` -- the solve-side fold does the same, so solve
     and simulate stay mutually consistent. But that is NOT consistent with the
     *target* regime's own kernel, which binds a target function's parameter from
-    ``flat_params[target]``: a consumer that reaches a target-regime function with
+    `flat_params[target]`: a consumer that reaches a target-regime function with
     a free dynamic parameter would therefore evaluate that parameter from the
     wrong namespace, and would COLLAPSE with a same-named source parameter,
     reversing the gate.
 
-    ``seed_args`` are the consumer's OWN declared arguments; the fence walks the
+    `seed_args` are the consumer's OWN declared arguments; the fence walks the
     target DAG's ancestor closure from them (`_reached_target_param_leaves`) so it
     fires exactly when THIS consumer genuinely reaches a target-owned parameter.
     It must be called on EVERY target-DAG-concatenating consumer of an edge -- the
@@ -661,18 +661,18 @@ def _reject_target_function_params(
 def _reject_injected_name_collision(
     *,
     injected_names: frozenset[str],
-    dag_pool: Mapping[str, Callable[..., FloatND]],
-    edge_target: str,
+    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a gate operand name that collides with a target-DAG node.
 
     The gate predicate is compiled as
-    ``concatenate_functions({**dag_pool, "__gate__": gate})``. Its injected value
-    operands -- ``V_target`` / ``V_target_<s>``, ``D_target``, and the gate-ref
+    `concatenate_functions({**dag_pool, "__gate__": gate})`. Its injected value
+    operands -- `V_target` / `V_target_<s>`, `D_target`, and the gate-ref
     keys -- are meant to be free leaves the fold/evaluator fills with the realized
     arrays. If one of those names also names a target function or deterministic
-    transition in ``dag_pool``, the DAG compiler resolves the gate's argument to
+    transition in `dag_pool`, the DAG compiler resolves the gate's argument to
     that TARGET NODE instead, silently substituting an unrelated target value for
     the intended operand (a gate reversal). Reject the collision at construction.
     """
@@ -692,21 +692,21 @@ def _reject_injected_name_collision(
 
 def _reject_gate_projection_target_node_read(
     *,
-    dag_pool: Mapping[str, Callable[..., FloatND]],
+    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
-    edge_target: str,
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a gate/projection arg that DIRECTLY names a target DAG node.
 
-    ``_reject_target_function_params`` fences a consumer that REACHES a target-owned
+    `_reject_target_function_params` fences a consumer that REACHES a target-owned
     *dynamic parameter*. But a target function / deterministic-transition node that
     depends only on target STATES contributes no dynamic leaf, so that fence stays
-    silent -- while ``concatenate_functions({**dag_pool, "__consumer__": ...})`` still
+    silent -- while `concatenate_functions({**dag_pool, "__consumer__": ...})` still
     resolves a same-named consumer argument to the target NODE. If that name was meant
-    as a source parameter (bound from ``flat_params[source]``), the source value is
+    as a source parameter (bound from `flat_params[source]`), the source value is
     silently dropped from the compiled signature and replaced by the node's output: a
-    gate reversal, a changed solve-side ``Wbar``, or a wrong projected fallback
+    gate reversal, a changed solve-side `Wbar`, or a wrong projected fallback
     state.
 
     Whether the author meant the source value or the target node is NOT decidable at
@@ -714,12 +714,12 @@ def _reject_gate_projection_target_node_read(
     so this fence enforces the only build-time-checkable contract: a gate/projection
     argument must not name a target function / deterministic-transition node at all.
     Compute a target-derived quantity as a source-declared gate-ref PROJECTION (read
-    through ``_build_same_period_ref_reader``, whose params ARE bound from the source)
+    through `_build_same_period_ref_reader`, whose params ARE bound from the source)
     instead of naming the target node directly. This is STRICTER than only rejecting a
     proven source/target collision -- the structural repair, namespace-qualified
     source/target leaves before concatenation, is deferred. Injected operands are
-    excluded upstream: ``_reject_injected_name_collision`` runs first and guarantees no
-    injected name is in ``dag_pool``, so those never trip this fence.
+    excluded upstream: `_reject_injected_name_collision` runs first and guarantees no
+    injected name is in `dag_pool`, so those never trip this fence.
     """
     entered = sorted(set(seed_args) & set(dag_pool))
     if entered:
@@ -751,7 +751,7 @@ def _reject_d_target_read_on_singleton_target(
     *,
     gate_arg_names: Iterable[str],
     target_stakeholders: tuple[str, ...] | None,
-    edge_target: str,
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a gate reading `D_target` on a target that publishes no flag.
@@ -780,20 +780,20 @@ def _reject_gate_ref_operand_alias(
     *,
     gate_ref_names: Iterable[str],
     reserved_operand_names: frozenset[str],
-    edge_target: str,
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a gate-ref key that aliases a built-in injected operand.
 
     The injected gate operands are assembled into ONE kwargs namespace
-    (`_assemble_gate_kwargs`): the target value component(s) ``V_target`` /
-    ``V_target_<s>``, the regime-level ``D_target``, and every gate-ref value. That
-    assembly resolves a name to the target component / ``D_target`` BEFORE the gate
-    refs, and the ``injected_names`` SET silently collapses a duplicate -- so a public
-    ``gate_refs`` key spelled ``V_target`` (or ``D_target``, or a collective
-    ``V_target_<s>``) is computed but then discarded, and the built-in operand wins (a
-    silent gate reversal). ``_reject_injected_name_collision`` only checks the injected
-    names against ``dag_pool``, never the injected categories against EACH OTHER, so it
+    (`_assemble_gate_kwargs`): the target value component(s) `V_target` /
+    `V_target_<s>`, the regime-level `D_target`, and every gate-ref value. That
+    assembly resolves a name to the target component / `D_target` BEFORE the gate
+    refs, and the `injected_names` SET silently collapses a duplicate -- so a public
+    `gate_refs` key spelled `V_target` (or `D_target`, or a collective
+    `V_target_<s>`) is computed but then discarded, and the built-in operand wins (a
+    silent gate reversal). `_reject_injected_name_collision` only checks the injected
+    names against `dag_pool`, never the injected categories against EACH OTHER, so it
     misses this. The categories must be disjoint; reject the alias.
     """
     collisions = sorted(set(gate_ref_names) & reserved_operand_names)
@@ -810,23 +810,23 @@ def _reject_gate_ref_operand_alias(
 
 def _reject_gate_operand_state_name_collision(
     *,
-    state_names: Iterable[str],
+    state_names: Iterable[StateName],
     reserved_operand_names: frozenset[str],
     gate_ref_names: Iterable[str],
-    edge_target: str,
+    edge_target: RegimeName,
     context: str,
 ) -> None:
     """Fence a target STATE name that aliases a built-in operand / gate-ref.
 
-    ``_assemble_gate_kwargs`` resolves each gate argument in a fixed PRECEDENCE order:
-    target value component(s) ``V_target`` / ``V_target_<s>`` first, then ``D_target``,
-    then the gate-ref values, and only THEN the target ``state_mesh``. So a target
-    regime whose own STATE is named ``V_target`` / ``D_target`` / ``V_target_<s>`` has
-    that state silently preempted by the injected VALUE operand -- ``gate(V_target)``
+    `_assemble_gate_kwargs` resolves each gate argument in a fixed PRECEDENCE order:
+    target value component(s) `V_target` / `V_target_<s>` first, then `D_target`,
+    then the gate-ref values, and only THEN the target `state_mesh`. So a target
+    regime whose own STATE is named `V_target` / `D_target` / `V_target_<s>` has
+    that state silently preempted by the injected VALUE operand -- `gate(V_target)`
     reads the target's continuation VALUE, not its realized STATE -- and a gate-ref key
     equal to a target state name silently preempts the state with the projected
     reference value. Either reverses target-vs-fallback routing with no error.
-    ``_reject_gate_ref_operand_alias`` makes the built-ins and gate-ref keys disjoint
+    `_reject_gate_ref_operand_alias` makes the built-ins and gate-ref keys disjoint
     but never checks EITHER category against the target state names, which enter the
     same namespace. Close the gap: the value/D operands, the gate-ref keys, and the
     target state names must be pairwise disjoint.
@@ -860,15 +860,15 @@ def _build_target_dag_pool(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-) -> dict[str, Callable[..., FloatND]]:
+) -> dict[FunctionName | TransitionFunctionName, Callable[..., FloatND]]:
     """Return the target-regime nodes a gate or projection resolves against.
 
     A gated-edge callable is written in the target regime's vocabulary and is
     compiled by concatenating it with these nodes, so the pool fixes which names
-    the DAG can bind for it: the target's merged deterministic ``next_<state>``
+    the DAG can bind for it: the target's merged deterministic `next_<state>`
     laws (an edge projects INTO the target's state space, a transition role) and
     the target's own processed functions. The collective Koopmans aggregator
-    ``H`` is left out: it consumes engine-injected continuation values
+    `H` is left out: it consumes engine-injected continuation values
     (`Q^s = H(u^s, E[V'^s])`), not target-grid quantities, so it is not a node an
     edge callable may read.
 
@@ -879,7 +879,8 @@ def _build_target_dag_pool(
 
     Returns:
         Dict of node name to callable, the DAG pool every edge-side consumer of
-        this target is concatenated with.
+        this target is concatenated with. Keys are the target's function names
+        and its deterministic `next_<state>` transition names.
 
     """
     return {
@@ -890,9 +891,9 @@ def _build_target_dag_pool(
 
 def _fence_edge_consumer(
     *,
-    dag_pool: Mapping[str, Callable[..., FloatND]],
+    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
-    state_names: frozenset[str],
+    state_names: frozenset[StateName],
     edge_target: RegimeName,
     context: str,
 ) -> None:
@@ -1142,7 +1143,7 @@ def get_edge_fold(
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
     target_stakeholders: tuple[str, ...] | None,
 ) -> Callable[..., FloatND]:
-    """Build one edge's fold: a jittable ``Wbar`` producer on the target grid.
+    """Build one edge's fold: a jittable `Wbar` producer on the target grid.
 
     Returns a callable whose keyword arguments are the target regime's state
     grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
@@ -1151,13 +1152,13 @@ def get_edge_fold(
     `<target>__<entry>__<param>` (`edge_param_qname`), which is the name the
     source regime's params template gives them, so
     `backward_induction._evaluate_edge_fold` binds them by a plain name match
-    against `flat_params[source]`. It returns ``Wbar`` of shape
-    ``(*target_state_axes, n_source_components)`` for a collective source, or
-    ``(*target_state_axes,)`` for a singleton source (a single leg with no
+    against `flat_params[source]`. It returns `Wbar` of shape
+    `(*target_state_axes, n_source_components)` for a collective source, or
+    `(*target_state_axes,)` for a singleton source (a single leg with no
     trailing axis).
 
-    The fold does NOT return its raw grid-level boolean ``gate`` array; it is
-    computed INTERNALLY below, for ``Wbar``'s own ``jnp.where``, and stays
+    The fold does NOT return its raw grid-level boolean `gate` array; it is
+    computed INTERNALLY below, for `Wbar`'s own `jnp.where`, and stays
     there. Handing it to the simulate-side value router
     (`_lcm/simulation/gated_routing.py`) would invite deciding a realized
     subject's REGIME ROUTING by INTERPOLATING that baked boolean array and
@@ -1171,10 +1172,10 @@ def get_edge_fold(
 
     **Numerics.** The target regime's OWN value components and dissolution flag are
     read by DIRECT array indexing off the same-period mapping — never by
-    interpolation. Linear interpolation of the target's ``-inf``-bearing V would
-    compute ``0 * -inf = NaN`` at the grid points ADJACENT to a dissolution cell
+    interpolation. Linear interpolation of the target's `-inf`-bearing V would
+    compute `0 * -inf = NaN` at the grid points ADJACENT to a dissolution cell
     (the zero-weight neighbour), poisoning the OPEN branch before the
-    ``jnp.where`` could guard it. Only the gate references and leg fallbacks —
+    `jnp.where` could guard it. Only the gate references and leg fallbacks —
     which read OTHER (finite) regimes at projected coordinates — are
     interpolated, product-mapped over the target grid.
 
@@ -1185,17 +1186,17 @@ def get_edge_fold(
             the target DAG the gate/projections resolve against. Gates and
             projections read target STATES directly; a target helper or
             deterministic-transition NODE may NOT be named directly as a gate/
-            projection argument (``_reject_gate_projection_target_node_read`` --
+            projection argument (`_reject_gate_projection_target_node_read` --
             build-time undecidable source/target name collision), so inline its
             formula over the target states or read a VALUE via a gate-ref projection.
         target_deterministic_transitions: The target regime's merged
-            deterministic ``next_<state>`` laws (used to build the target DAG; not
-            directly nameable as a projection argument -- see ``target_functions``).
+            deterministic `next_<state>` laws (used to build the target DAG; not
+            directly nameable as a projection argument -- see `target_functions`).
         reference_v_info: V-interpolation info per reference regime.
         target_stakeholders: The target regime's stakeholders, or `None`.
 
     Returns:
-        The fold callable producing ``Wbar`` on the target grid.
+        The fold callable producing `Wbar` on the target grid.
     """
     state_names = target_v_info.state_names
 
@@ -1319,7 +1320,8 @@ def get_edge_fold(
             for name, reader in gate_ref_readers.items()
         }
         # Broadcast the target state grids to the full grid for any gate that
-        # reads a state directly (EKL's do not; supported for generality).
+        # reads a state directly (supported for generality; the usual gate
+        # reads only value operands).
         state_mesh = dict(
             zip(
                 state_names,
@@ -1400,34 +1402,29 @@ def get_edge_simulate_gate_evaluator(
       `get_edge_fold` uses, just called directly at one point instead of
       product-mapped over the whole target grid.
 
-      This is a KNOWN, NON-CONVERGENT residual: the gate is an
-      APPROXIMATE router, not the exact E4 recomputation the extension spec
-      states. Two earlier versions of this docstring were WRONG about it and
-      both errors are recorded here, because each was a confident claim that
-      no test could contradict:
+      This is a KNOWN, NON-CONVERGENT residual: the gate is an APPROXIMATE
+      router, not an exact recomputation of the target's realized optimum.
+      Two things are wrong with the interpolated read, and neither is a rate
+      that refinement cures:
 
-      1. It first called these "faithful recomputes". They are not.
-         `V_target` is an ALREADY-MAXIMIZED object and interpolation does not
-         commute with a `max`: with target actions `u=x` and `u=1-x` on the
-         grid `{0,1}`, both nodes give `V=1`, so the interpolant reads 1
-         everywhere while the true `max_a Q` at `x=0.5` is 0.5.
-      2. It then called the residual "SECOND-ORDER", citing an O(h^2)
-         crossing-location rate. That rate was measured against a SMOOTH
-         target (`u=sqrt(x)`) — and smoothness is exactly what fails here.
-         **At an action-envelope kink the error is O(h), not O(h^2).**
-
-      Worse, and the reason this is not merely a rate question: **value
-      convergence does not imply ROUTING convergence.** The consent
-      predicate is discontinuous, so refinement does not cure it when the
-      candidate distribution has an atom on the equality surface. Take
-      `V(x) = max(x, 1-x)`, a deterministic candidate atom at `x=0.5`, and
-      the strict gate `V(x) > 0.5`. On every EVEN-cardinality uniform grid
-      the two nodes flanking 0.5 both carry `V = 0.5 + h/2`, so
-      `interp(V)(0.5) = 0.5 + h/2 > 0.5` and the gate OPENS, while the
-      faithful gate is CLOSED. The value error `h/2` vanishes; the routing
-      error stays at probability ONE for every such grid. One ordinary
-      envelope kink plus a deterministic draw is enough — no pathological
-      density is needed.
+      1. Interpolating `V_target` is not a faithful recompute. `V_target` is
+         an ALREADY-MAXIMIZED object and interpolation does not commute with
+         a `max`: with target actions `u=x` and `u=1-x` on the grid `{0,1}`,
+         both nodes give `V=1`, so the interpolant reads 1 everywhere while
+         the true `max_a Q` at `x=0.5` is 0.5. **At an action-envelope kink
+         the value error is $O(h)$**; the $O(h^2)$ rate holds only against a
+         SMOOTH target, and smoothness is exactly what fails here.
+      2. **Value convergence does not imply ROUTING convergence.** The
+         consent predicate is discontinuous, so refinement does not cure it
+         when the candidate distribution has an atom on the equality surface.
+         Take `V(x) = max(x, 1-x)`, a deterministic candidate atom at
+         `x=0.5`, and the strict gate `V(x) > 0.5`. On every
+         EVEN-cardinality uniform grid the two nodes flanking 0.5 both carry
+         `V = 0.5 + h/2`, so `interp(V)(0.5) = 0.5 + h/2 > 0.5` and the gate
+         OPENS, while the faithful gate is CLOSED. The value error `h/2`
+         vanishes; the routing error stays at probability ONE for every such
+         grid. One ordinary envelope kink plus a deterministic draw is
+         enough — no pathological density is needed.
 
       Turning value convergence into routing convergence would need a MARGIN
       condition that is neither stated nor checked here, e.g.
@@ -1443,18 +1440,17 @@ def get_edge_simulate_gate_evaluator(
       and `collective_argmax_and_readout` through `route_gated_edges`,
       `Regime`'s compiled artifacts, and the solve/simulate plumbing — and it
       would still leave the LAST interpolation level in place (a non-terminal
-      target's recomputed `max_a Q` reads `interp(V_{t+2})`). Not taken here;
-      tracked as the known gap between this router and the E4 spec.
-    - The BOOLEAN `D_target` operand (a no-dissolution gate, e.g. EKL eqs.
-      9/12) is a DOCUMENTED RESIDUAL: linearly interpolating the float-cast
-      flag and thresholding at 0.5 (`_assemble_gate_kwargs`'s existing
-      `D_target` branch, reused unchanged) is kept, rather than recomputed
-      from `D`'s own underlying per-action value comparison at the realized
-      point. That would mean re-deriving `D` from IR internals the fold
-      itself never exposes here — a deeper, separate slice; a gate reading
-      ONLY `D_target` (a pure divorce/no-dissolution gate) is therefore
-      NOT yet fully faithful off-grid, only nearest-node-equivalent via
-      linear interpolation + threshold, same as before this fix.
+      target's recomputed `max_a Q` reads `interp(V_{t+2})`). That is not what
+      this evaluator does: the value gate is approximate by construction, and
+      the two failure modes above are what a caller has to plan around.
+    - The BOOLEAN `D_target` operand (a no-dissolution gate) is a DOCUMENTED
+      RESIDUAL: the float-cast flag is linearly interpolated and thresholded
+      at 0.5 (`_assemble_gate_kwargs`'s `D_target` branch), rather than
+      recomputed from `D`'s own underlying per-action value comparison at the
+      realized point. Recomputing it would mean re-deriving `D` from
+      internals the fold never exposes here, so a gate reading ONLY
+      `D_target` (a pure dissolution gate) is only nearest-node-equivalent
+      off-grid — linear interpolation plus a threshold — not exact.
 
     **Numerics.** Unlike `get_edge_fold`'s target-V read (exact grid-point
     indexing, to dodge `0 * -inf = nan` poisoning a dissolution cell's
@@ -1475,7 +1471,7 @@ def get_edge_simulate_gate_evaluator(
         target_functions: The target regime's processed functions, so the
             gate resolves target states / helper functions.
         target_deterministic_transitions: The target regime's merged
-            deterministic ``next_<state>`` laws.
+            deterministic `next_<state>` laws.
         reference_v_info: V-interpolation info per reference regime.
         target_stakeholders: The target regime's stakeholders, or `None`.
         target_has_process_axis: Whether the target carries a non-folded
@@ -1670,9 +1666,9 @@ def get_edge_simulate_gate_evaluator(
 
         # VALUE-operand read: interpolate the target's own (per-component)
         # value array at the realized point, instead of reading the
-        # solve-side fold's baked boolean gate off-grid. Exact on nodes,
-        # O(h^2) between them -- NOT a recompute of `max_a Q`; see this
-        # function's docstring for the measured residual.
+        # solve-side fold's baked boolean gate off-grid. Exact on nodes and
+        # interpolated between them -- NOT a recompute of `max_a Q`; see this
+        # function's docstring for the residual that leaves.
         target_components: dict[str, FloatND] = {}
         for index, name in enumerate(target_component_names):
             component_arr = (
@@ -1725,7 +1721,7 @@ def get_edge_simulate_gate_evaluator(
             state_mesh={name: jnp.asarray(kwargs[name]) for name in state_names},
             # The predicate declares its params under their OWN qnames; map the
             # qualified leaves back before handing them over, so `edge.gate` and
-            # `_assemble_gate_kwargs` are byte-identical to the solve side.
+            # `_assemble_gate_kwargs` see the names the solve side passes them.
             cell_kwargs={
                 arg: kwargs[exposed] for arg, exposed in gate_extra_exposed.items()
             },
@@ -1747,19 +1743,19 @@ def build_fallback_state_projector(
     ref: ResolvedSamePeriodRef,
     fallback_v_info: VInterpolationInfo,
     target_regime_name: RegimeName,
-    target_state_names: tuple[str, ...],
+    target_state_names: tuple[StateName, ...],
     target_functions: EconFunctionsMapping,
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-) -> Callable[..., Mapping[str, FloatND]]:
+) -> Callable[..., Mapping[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
     Companion to `_build_same_period_ref_reader`
     (which reads the fallback regime's V at these same projected
     coordinates, for the solve-side fold): the simulate-side value router
     does not need the fallback's VALUE (Wbar already folds that in) but does
-    need the fallback's own STATE coordinates, to write the dissolutiond/rejected
+    need the fallback's own STATE coordinates, to write the dissolved/rejected
     stakeholder's next-period row into `states[fallback.regime]`. Reuses the
     identical projection-function construction (same `dag_pool`, same
     `concatenate_functions` targets) so the coordinates are guaranteed
@@ -1845,8 +1841,8 @@ def build_fallback_state_projector(
     qualified_ref = _leg_fallback_with_qualified_params(
         ref=ref, target=target_regime_name, state_names=target_state_names
     )
-    projection_funcs: dict[str, Callable[..., FloatND]] = {}
-    projection_args: dict[str, tuple[str, ...]] = {}
+    projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
+    projection_args: dict[StateName, tuple[str, ...]] = {}
     for state_name in fallback_v_info.state_names:
         target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
         projection_funcs[state_name] = concatenate_functions(
@@ -1872,8 +1868,10 @@ def build_fallback_state_projector(
         outer_arg_names=arg_names, engine_args=set()
     )
 
-    @with_signature(args=list(arg_names), return_annotation="Mapping[str, FloatND]")
-    def project(**kwargs: _ParamsLeaf) -> Mapping[str, FloatND]:
+    @with_signature(
+        args=list(arg_names), return_annotation="Mapping[StateName, FloatND]"
+    )
+    def project(**kwargs: _ParamsLeaf) -> Mapping[StateName, FloatND]:
         return {
             state_name: projection_funcs[state_name](
                 **{arg: kwargs[arg] for arg in projection_args[state_name]}
@@ -1895,20 +1893,20 @@ def _assemble_gate_kwargs(
     target_components: Mapping[str, FloatND],
     d_value: FloatND | None,
     gate_ref_values: Mapping[str, FloatND],
-    state_mesh: Mapping[str, ContinuousState | DiscreteState],
+    state_mesh: Mapping[StateName, ContinuousState | DiscreteState],
     cell_kwargs: Mapping[str, object],
 ) -> dict[str, object]:
     """Bind each gate argument to its grid array.
 
     Resolves the gate's declared arguments against the target's own value
-    components (``V_target_<s>``), its boolean dissolution flag (``D_target``), the
+    components (`V_target_<s>`), its boolean dissolution flag (`D_target`), the
     gate references, the broadcast target-state grids, and remaining cell kwargs.
 
-    ``state_mesh`` carries the target regime's own state grids broadcast to the
+    `state_mesh` carries the target regime's own state grids broadcast to the
     full mesh (`jnp.meshgrid`), which may include DISCRETE (int-typed) axes —
     an encoded categorical, say — not just continuous ones, so it must not be
     narrowed to `FloatND` (the same holds for `_evaluate_edge_fold`'s
-    ``target_states`` in `backward_induction.py`).
+    `target_states` in `backward_induction.py`).
     """
     gate_kwargs: dict[str, object] = {}
     for arg in gate_arg_names:
@@ -1943,14 +1941,14 @@ def source_reads_folded_wbar(
     source_active_periods: Container[int],
     fold_period: int,
 ) -> bool:
-    """Say whether the ``Wbar`` folded at ``fold_period`` is read by anyone.
+    """Say whether the `Wbar` folded at `fold_period` is read by anyone.
 
-    A gated edge's ``Wbar`` lands on the TARGET regime's grid at the period the
+    A gated edge's `Wbar` lands on the TARGET regime's grid at the period the
     target's value function was tabulated on, and the SOURCE consumes it one
     period earlier, as the continuation of its own decision. So the fold at
-    period ``t`` is read exactly when the source is active at ``t - 1``. A
+    period `t` is read exactly when the source is active at `t - 1`. A
     target-active period with no source one period earlier — a self-loop edge
-    at the target's earliest active period, say — produces a ``Wbar`` no
+    at the target's earliest active period, say — produces a `Wbar` no
     decision ever reads.
 
     That distinction is what separates a boundary no-op from a misconfigured
@@ -1968,12 +1966,12 @@ def edge_may_fold_at_period(
     solved_regimes: Container[RegimeName],
     source_reads_wbar: bool,
 ) -> bool:
-    """Answer whether one gated edge's ``Wbar`` may be folded on this period.
+    """Answer whether one gated edge's `Wbar` may be folded on this period.
 
     The single answer both phases consult — backward induction rolling an
     edge forward through the periods, and forward simulation substituting
-    ``Wbar`` for the raw target V. A fold needs every array it reads to be
-    solved at ``fold_period``: the target's own V, and each reference regime's
+    `Wbar` for the raw target V. A fold needs every array it reads to be
+    solved at `fold_period`: the target's own V, and each reference regime's
     (`ResolvedGatedEdge.reference_regimes` — leg fallbacks and gate refs).
     Three outcomes:
 
@@ -1982,27 +1980,27 @@ def edge_may_fold_at_period(
       caller keeps whatever value it already holds.
     - the target and every reference are solved ⇒ `True`.
     - the target is solved and a reference is not ⇒ `False` when no source
-      reads this period's ``Wbar``, and a rejection when one does. An
-      unread ``Wbar`` may be left at its previous value; a read one cannot,
+      reads this period's `Wbar`, and a rejection when one does. An
+      unread `Wbar` may be left at its previous value; a read one cannot,
       because the source would silently consume a stale later-period value
       instead of the reference the edge declares.
 
-    ``source_reads_wbar`` is the caller's answer to `source_reads_folded_wbar`
+    `source_reads_wbar` is the caller's answer to `source_reads_folded_wbar`
     — the one fact the two phases do not share. Backward induction folds
-    period ``t`` for a consumer at ``t - 1`` that may not exist and has to
-    ask; forward simulation folds ``period + 1`` on behalf of the very source
-    it is simulating at ``period``, so it is the consumer and passes `True`.
+    period `t` for a consumer at `t - 1` that may not exist and has to
+    ask; forward simulation folds `period + 1` on behalf of the very source
+    it is simulating at `period`, so it is the consumer and passes `True`.
 
     Args:
-        edge: The resolved edge whose ``Wbar`` would be folded.
+        edge: The resolved edge whose `Wbar` would be folded.
         source_name: Name of the regime declaring the edge, for the message.
         fold_period: The period whose value arrays the fold reads.
-        solved_regimes: Names of the regimes solved at ``fold_period``.
-        source_reads_wbar: Whether the source consumes this period's ``Wbar``.
+        solved_regimes: Names of the regimes solved at `fold_period`.
+        source_reads_wbar: Whether the source consumes this period's `Wbar`.
 
     Raises:
         ModelInitializationError: A reference regime is unsolved at a period
-            whose ``Wbar`` the source reads.
+            whose `Wbar` the source reads.
     """
     if edge.target not in solved_regimes:
         return False
@@ -2061,7 +2059,7 @@ def build_same_period_mapping_for_fold(
 
     Carries the target regime's V, its dissolution flag cast to float (under the
     reserved `D_KEY_SUFFIX` key), and every reference regime's V — all
-    period-``t`` arrays, still live at the fold site.
+    period-`t` arrays, still live at the fold site.
 
     The key set does not depend on whether a flag was supplied: the mapping is
     an argument of one jitted fold that both backward induction and forward

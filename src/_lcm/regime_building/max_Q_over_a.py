@@ -100,7 +100,7 @@ def get_max_Q_over_a(
             (`collective_readout`) instead of the plain masked max; the returned
             function then yields the pair `(V, D)` — the stakeholder-axis value
             array plus the boolean dissolution flag `D = 1[mask empty]` on the state
-            axes (E2; distinct from a numeric `-inf`, which occurs on-path).
+            axes — distinct from a numeric `-inf`, which occurs on-path.
         weights: Household Pareto weights per stakeholder; required (and only used)
             when `stakeholders` is set.
         fold_state_names: IID-process states declared `fold=True`, or empty (the

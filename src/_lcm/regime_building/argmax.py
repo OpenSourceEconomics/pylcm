@@ -29,37 +29,27 @@ def argmax_and_max(
         - The corresponding maximum values.
 
     """
-    # Preparation
-    # ==================================================================================
     if axis is None:
         axis = tuple(range(a.ndim))
     elif isinstance(axis, int):
         axis = (axis,)
 
     # Handle scalar or empty axis case (no actions to maximize over)
-    # ==================================================================================
     if a.ndim == 0 or len(axis) == 0:
         # When there are no dimensions to reduce over, return:
         # - index 0 (trivial argmax since there's only one element)
         # - the array itself (already the maximum)
         return jnp.array(0, dtype=jnp.int32), a
 
-    # Move axis over which to compute the argmax to the back and flatten last dims
-    # ==================================================================================
     if a.ndim != 0:
         a = _move_axes_to_back(a, axes=axis)
         a = _flatten_last_n_axes(a, n=len(axis))
 
-    # Do same transformation for where
-    # ==================================================================================
     if where is not None and where.ndim != 0:
         where = _move_axes_to_back(where, axes=axis)
         where = _flatten_last_n_axes(where, n=len(axis))
 
-    # Compute argmax over last dimension
-    # ----------------------------------------------------------------------------------
     # Note: If multiple maxima exist, this approach will select the first index.
-    # ==================================================================================
     _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)
     max_value_mask = a == _max
     if where is not None:

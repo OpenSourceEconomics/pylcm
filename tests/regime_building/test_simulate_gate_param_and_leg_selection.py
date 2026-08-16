@@ -1,4 +1,4 @@
-"""Repros/regressions for three simulate-side gated-edge routing defects.
+"""Regressions for three simulate-side gated-edge routing invariants.
 
 All three live on the path `_lcm.simulation.gated_routing.route_gated_edges`
 walks once per declared gated edge; each is exercised here at the kernel
@@ -7,8 +7,8 @@ level (the `test_route_conditions_on_ordinary_draw.py` /
 miniature, then call `substitute_gated_edge_continuations` and
 `route_gated_edges` directly on hand-crafted realized states).
 
-**F2 — each of the gate evaluator's args must be resolved against the ONE
-namespace that owns it.** The evaluator
+**Each of the gate evaluator's args is resolved against the ONE namespace
+that owns it.** The evaluator
 (`_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`)
 publishes an `arg_provenance` precisely because its extra args are NOT
 distinguishable by name: `get_V_interpolator`'s runtime grid helpers are named
@@ -18,35 +18,33 @@ after the STATE with no regime qualification
 regime that happens to declare a state named `x` therefore contributes an
 identically named param, and a single merged dict
 (`{**flat_params[target_name], **flat_params[regime.name]}`, source last =
-source wins) silently hands the TARGET's interpolator the SOURCE's grid
+source wins) would silently hand the TARGET's interpolator the SOURCE's grid
 points. `test_gate_reads_target_grid_points_not_the_source_s_same_named_ones`
-proves the current code reads the target's grid and — by calling
-`_call_vmapped_with_accepted_kwargs` with exactly the old merged dict, in
-this same process — that the old recipe returns the OPPOSITE gate.
+proves the code reads the target's grid and — by calling
+`_call_vmapped_with_accepted_kwargs` with exactly that merged dict, in this
+same process — that the merged-dict recipe returns the OPPOSITE gate.
 
-An intermediate revision published two frozensets of UNQUALIFIED names
-(`args_from_target_params` / `args_from_source_params`) and had the router
-build two filtered dicts, merged source-last. That did not fix it, on two
-counts, and both are pinned here:
+Two properties of the published provenance carry that guarantee, and both are
+pinned here:
 
-- The sets are not DISJOINT — the target's `x__points` and a source param of
-  the same qname both land in them — so the merge still let the source win the
-  collision exactly as before. No merge ORDER can be right: one keyword
-  argument cannot carry two regimes' arrays. Exposed param leaves are now
-  namespace-QUALIFIED, which is what makes the two distinct
+- The per-namespace arg sets are DISJOINT. Unqualified names would not be:
+  the target's `x__points` and a source param of the same qname would land in
+  both, and no merge ORDER can settle that — one keyword argument cannot
+  carry two regimes' arrays. Exposed param leaves are namespace-QUALIFIED,
+  which is what keeps the two apart
   (`test_gate_evaluator_provenance_partitions_its_signature`).
-- Nor were they COMPLETE. A gate-ref reader's args were assigned WHOLESALE to
-  the target, though they mix target candidate states, SOURCE-declared
-  projection params, and the reference regime's own interpolation helpers —
-  three provenances, not two
+- The sets are COMPLETE. A gate-ref reader's args mix target candidate
+  states, SOURCE-declared projection params, and the reference regime's own
+  interpolation helpers — three provenances, not two, so assigning them
+  wholesale to the target would bind the wrong regime's params
   (`test_gate_ref_projection_param_is_bound_from_the_source_not_the_target`).
 
-**F3 — a STATELESS gated target must not crash `vmap`.** With no states of
-its own (a terminal scrap-value regime), the evaluator's batched kwargs are
-empty after filtering, and `jax.vmap` cannot infer a batch size from zero
-batched arguments ("vmap wrapped function must be passed at least one
-argument containing an array or axis_size must be specified"). `axis_size`
-is now threaded explicitly from the population size.
+**A STATELESS gated target does not crash `vmap`.** With no states of its own
+(a terminal scrap-value regime), the evaluator's batched kwargs are empty
+after filtering, and `jax.vmap` cannot infer a batch size from zero batched
+arguments ("vmap wrapped function must be passed at least one argument
+containing an array or axis_size must be specified"), so `axis_size` is
+threaded explicitly from the population size.
 
 **`_select_own_leg`'s sole-leg exemption keys on the leg's ROLE, not on
 arity.** The validator accepts a ONE-element `stakeholders` tuple, and
@@ -91,7 +89,8 @@ from tests.regime_building.test_collective_regime_simulate import _solve_and_pro
 _BETA = 0.95
 _AGES = AgeGrid(start=0, stop=2, step="Y")
 
-# The realized, OFF-GRID candidate `x` every subject lands on in the F2 repro.
+# The realized, OFF-GRID candidate `x` every subject lands on in the grid-points
+# repro.
 _REALIZED_X = 0.6
 
 # The target's own grid points (supplied at runtime, hence the collision-prone
@@ -455,9 +454,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     assert int(np.asarray(routed_ids)[0]) != int(fallback_id)
 
 
-# ----------------------------------------------------------------------------------
-# F3: a STATELESS gated target leaves `vmap` with zero batched args.
-# ----------------------------------------------------------------------------------
+# A STATELESS gated target leaves `vmap` with zero batched args.
 
 
 def _u_stateless_target() -> FloatND:
@@ -634,9 +631,7 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
     assert np.asarray(result).shape == (4,)
 
 
-# ----------------------------------------------------------------------------------
-# F4: `_select_own_leg`'s sole-leg exemption keys on the ROLE, not on arity.
-# ----------------------------------------------------------------------------------
+# `_select_own_leg`'s sole-leg exemption keys on the ROLE, not on arity.
 
 
 def _leg(source_stakeholder: str | None, fallback_regime: str) -> ResolvedEdgeLeg:
@@ -664,7 +659,7 @@ def _arity_only_select_own_leg(legs, own_stakeholder):
 
 
 def test_one_leg_collective_source_raises_on_unknown_own_stakeholder():
-    """Fail-pre/pass-post repro (F4a).
+    """A one-leg COLLECTIVE source rejects an `own_stakeholder` it cannot match.
 
     A ONE-element `stakeholders=("f",)` source is legal, and
     `processing.py`'s `leg_order = [(s, s) for s in source_stakeholders]`

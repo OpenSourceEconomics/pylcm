@@ -168,7 +168,7 @@ def assert_canonical_for_inference(
     """Refuse canonical-looking outputs from a non-canonical configuration.
 
     A non-canonical run is allowed only when its output label explicitly
-    declares it (contains ``"historical"``); everything else raises. This is
+    declares it (contains `"historical"`); everything else raises. This is
     the plan's rule that canonical estimation and standard errors may never
     run with legacy switches enabled.
     """

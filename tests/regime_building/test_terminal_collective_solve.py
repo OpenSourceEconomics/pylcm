@@ -1,11 +1,9 @@
-"""Integration test for the terminal collective-regime solve (slice 1b).
+"""Integration test for the terminal collective-regime solve.
 
-Wires the already-committed `collective_readout` core into the GridSearch
-terminal kernel: a terminal `Regime(stakeholders=("f", "m"))` solved end-to-end
-through the real processing + backward-induction path must produce a
-value-function array carrying a trailing stakeholder axis, with each
-stakeholder's value read off its OWN utility at the shared household argmax
-(design doc `pylcm-extension-collective-regimes.md` §2, E1).
+A terminal `Regime(stakeholders=("f", "m"))` solved end-to-end through the real
+processing + backward-induction path produces a value-function array carrying a
+trailing stakeholder axis, with each stakeholder's value read off its OWN
+utility at the shared household argmax.
 
 The economics mirror `test_collective_readout.test_terminal_e1_end_to_end_with_
 real_utilities`: a binary work choice and a two-point wage state where the

@@ -1,4 +1,4 @@
-"""F2: an exact finite node next to an on-path `-inf` must interpolate finitely.
+"""An exact finite node next to an on-path `-inf` must interpolate finitely.
 
 The linear-interpolation kernel shared by every same-period-reference / gate /
 fallback V reader (`_lcm.regime_building.V.get_V_interpolator`, both the
@@ -10,11 +10,11 @@ including a corner whose weight is exactly `0.0` — which happens not only at
 an out-of-range extrapolation but at the ordinary case of querying EXACTLY AT
 a grid node (one corner gets weight `1.0`, its neighbor `0.0`). If that
 zero-weight neighbor holds an admissible on-path `-inf` (e.g. an infeasible
-or zero-consumption reference cell), `0.0 * -inf = nan` used to leak into the
-sum and turn an exact, finite, on-grid lookup into `nan`.
+or zero-consumption reference cell), a naive `0.0 * -inf = nan` would leak into
+the sum and turn an exact, finite, on-grid lookup into `nan`.
 
 Both `get_V_interpolator` modes share the identical `map_coordinates` kernel,
-so fixing it once covers every reader built on top of it — the same-period
+so the zero-safe term there covers every reader built on top of it — the same-period
 reference reader (`Q_and_F.py:_build_same_period_ref_reader`), the gated-edge
 gate reader, and the gated-edge fallback reader
 (`processing.py:_attach_gated_edge_folds`) alike; this test exercises the

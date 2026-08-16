@@ -564,9 +564,8 @@ def _simulate_regime_in_period(
         base_state_action_space: The regime's params-completed state-action
             space, built once per simulate call.
         base_state_action_spaces: Every regime's params-completed state-action
-            space (COLLECTIVE-REGIMES E4: a gated edge's value/gate fold
-            needs its TARGET regime's own state grids, not just this
-            regime's).
+            space — a gated edge's value-and-gate fold needs its TARGET
+            regime's own state grids, not just this regime's.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
@@ -638,7 +637,7 @@ def _simulate_regime_in_period(
     # next-states are known — `route_gated_edges` RECOMPUTES the gate from
     # these rather than interpolating a baked boolean.
     # No-op (returns the inputs unchanged) for a regime without
-    # `gated_edges`. See design doc §2 / §3.
+    # `gated_edges`.
     next_regime_to_V_arr, same_period_mappings = substitute_gated_edge_continuations(
         regime=regime,
         regime_name=regime_name,
@@ -777,7 +776,7 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 
-    # F4: `None` from the reader means no nested continuous-outer read ran for
+    # `None` from the reader means no nested continuous-outer read ran for
     # this regime-period (no payload, the flat single-EGM path, passive rows,
     # the discrete-branch redecide), so no subject fell back on that path.
     nested_policy_fallback = (
@@ -1221,7 +1220,8 @@ def _read_nested_policy(
     Returns the recovered actions and a per-subject Boolean `fallback` flag
     (True where the off-grid read was refused and the grid-argmax pair kept):
     all-True on the whole-regime fallbacks above, `~accepted` on the normal
-    path. Inference must refuse whenever any entry is True (see F4).
+    path. Inference must refuse whenever any entry is True; the flag reaches
+    the user as the `nested_policy_fallback` column.
     """
     keeper_pol = payload.keeper
     bank = payload.adjuster
@@ -1365,7 +1365,7 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
-    # F3: certify the affine inversion per subject AT the recovered action, not
+    # Certify the affine inversion per subject AT the recovered action, not
     # only through the 0/1 slope probe. `outer_action = s' - offset`, so an
     # affine-unit transition reproduces `T(states, outer_action) == s'` exactly;
     # a non-affine transition that happened to pass the two-point slope test

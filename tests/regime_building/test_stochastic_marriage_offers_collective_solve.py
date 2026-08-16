@@ -1,10 +1,10 @@
-"""Integration tests for slice 5: the stochastic marriage/job-offer machinery.
+"""Integration tests for the stochastic marriage/job-offer machinery.
 
 EKL 2019's marriage market (eqs. 24-26): a single may receive a marriage OFFER
 — a stochastic draw of a potential spouse's attributes, with an offer
-distribution conditioned on the single's own education. Consent (eq. 27,
-slice 4's `GatedEdge`) then compares the household's married value (given the
-DRAWN spouse) against each partner's own outside option.
+distribution conditioned on the single's own education. Consent (eq. 27, a
+`GatedEdge`) then compares the household's married value (given the DRAWN
+spouse) against each partner's own outside option.
 
 **What this adds on top of the surrounding machinery.** The gated-edge fold
 `Wbar = jnp.where(gate, V_target, V_fallback)` is built on the TARGET
@@ -33,14 +33,14 @@ distribution reading the household's OWN solved values (an equilibrium-
 flavored, self-referential offer) is not representable through this
 primitive.
 
-Memory note (deferred to slice 5b): the spouse-type draw here is an ordinary
-GRID AXIS of the stored `married_terminal` V array (`(*states, n_stakeholders)`
-with a `spouse_type` state axis), exactly like every other stochastic state in
-this engine. The design doc's "transient categorical shocks that fold before
-storage" (§2, Stage-B F2) is an explicit MEMORY optimization for full-scale
-EKL (avoiding the node blow-up across married's ~58M-cell grid) and is OUT OF
-SCOPE here: this slice is about correctness/expressibility on small grids, not
-performance at EKL's actual scale.
+Memory note: the spouse-type draw here is an ordinary GRID AXIS of the stored
+`married_terminal` V array (`(*states, n_stakeholders)` with a `spouse_type`
+state axis), exactly like every other stochastic state in this engine. Folding
+a transient categorical shock before storage instead is a MEMORY optimization
+for full-scale EKL (it avoids a node blow-up across married's much larger
+grid) and is OUT OF SCOPE here: these tests are about
+correctness/expressibility on small grids, not performance at EKL's actual
+scale.
 """
 
 from types import MappingProxyType
@@ -68,10 +68,8 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure
 
-# --------------------------------------------------------------------------------------
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
 # with a spouse-type draw feeding the mutual-consent gated edge.
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=True)
@@ -350,14 +348,12 @@ def test_stochastic_marriage_offer_matches_under_jit():
     )
 
 
-# --------------------------------------------------------------------------------------
 # Job-offer stochastic state: feasibility (not just felicity) conditions on a
 # MarkovTransition-drawn discrete state (EKL eq. 24). The collective +
 # MarkovTransition-into-utility case is already covered end-to-end by
 # `test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder`
 # in `test_nonterminal_collective_solve.py` (nothing collective-specific about
 # it); this test pins the FEASIBILITY-gating half.
-# --------------------------------------------------------------------------------------
 
 
 @categorical(ordered=True)
@@ -430,17 +426,18 @@ def test_job_offer_gates_feasible_actions_and_solves():
     )
 
 
-# --------------------------------------------------------------------------------------
 # Scope fence: an endogenous / self-referential offer distribution (reading the
 # household's OWN solved value) is not representable through `MarkovTransition`
 # — it can only read states/actions/params through the ordinary DAG, never a
-# `Q_<s>` action value (that access is `value_constraints`-only, E2). This pins
+# `Q_<s>` action value (that access is `value_constraints`-only). This pins
 # the natural failure mode rather than a bespoke check.
-# --------------------------------------------------------------------------------------
 
 
 def _self_referential_offer_probs(Q_f: FloatND) -> FloatND:  # noqa: ARG001
-    """Ill-formed: an offer distribution reading the household's own Q (E2-only)."""
+    """Ill-formed: an offer distribution reading the household's own Q.
+
+    Reading `Q_<s>` is a `value_constraints`-only access.
+    """
     return jnp.array([0.5, 0.5])
 
 

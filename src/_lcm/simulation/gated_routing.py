@@ -1,6 +1,6 @@
 """Forward-simulation value router for gated edges.
 
-The design-doc §2 E4 counterpart to the solve-side E3' fold
+The forward-simulation counterpart to the solve-side gated-edge fold
 (`_lcm.regime_building.gated_edges`). pylcm's forward simulation recomputes
 argmaxes against the stored solution rather than storing policies; a source
 regime declaring `gated_edges` needs two things this module provides, both
@@ -26,52 +26,51 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    commute with a nonlinear predicate (see `_lcm.regime_building.gated_edges
    .get_edge_simulate_gate_evaluator`'s docstring for the full rationale).
    The household is routed to the target when the recomputed gate is open,
-   or to a leg's FALLBACK regime when closed, discarding the other branch's
-   coordinates — precisely the source of the wording in the design doc and
-   the implementation plan ("discard the non-taken branch's coordinates").
+   or to a leg's FALLBACK regime when closed; the non-taken branch's
+   coordinates are discarded.
 
-**Scope fence (documented, not silently dropped).** A COLLECTIVE source's
-gated edge (e.g. a married couple's dissolution edge) declares one leg per
-stakeholder, each with its OWN fallback regime (wife -> her own single
-regime, husband -> his). pylcm's forward simulation is a single fixed-size
-population pass: one subject ROW cannot occupy two regimes at once, so a
-genuine second forward-simulated row per additional stakeholder — LINKED
-subject population reallocation on dissolution, where both partners are
-independently tracked rows that unlink — is NOT implemented here; it is a
-follow-up engine feature (row-split PLAN, "linked mode"). What IS
-implemented, faithfully and tested (row-split PLAN, "synthetic mode"): the
-router recomputes the gate at the realized state, computes EVERY leg's own
-fallback state coordinates via each leg's `fallback_state_projector` and writes
-each into its OWN fallback regime's per-subject state slot (so a dissolutiond
-household's row-level record of "what regime and state would each partner
-have started at" is complete and correct for every stakeholder), and then
-picks ONE of them as the row's OWN continuing regime membership: the leg
-whose `source_stakeholder` matches `own_stakeholder` — the row's own,
-call-level-fixed role (e.g. "f" for an all-women simulate() population
+**Scope fence: one subject row stays one subject row.** A COLLECTIVE
+source's gated edge (e.g. a married couple's dissolution edge) declares one
+leg per stakeholder, each with its OWN fallback regime (wife -> her own
+single regime, husband -> his). pylcm's forward simulation is a single
+fixed-size population pass: one subject ROW cannot occupy two regimes at
+once, so a dissolution does NOT split a row into two independently tracked
+households. That splitting behaviour — LINKED mode, in which both partners
+are separately tracked rows that unlink from each other on dissolution — is
+not available; it would be a future engine feature.
+
+What this router does implement, faithfully and tested, is SYNTHETIC mode:
+it recomputes the gate at the realized state, computes EVERY leg's own
+fallback state coordinates via each leg's `fallback_state_projector` and
+writes each into its OWN fallback regime's per-subject state slot (so a
+dissolved household's row-level record of "what regime and state would each
+partner have started at" is complete and correct for every stakeholder),
+and then picks ONE of them as the row's OWN continuing regime membership:
+the leg whose `source_stakeholder` matches `own_stakeholder` — the row's
+own, call-level-fixed role (e.g. "f" for an all-women simulate() population
 tracking synthetic male partners, "m" for an all-men population). A
 collective source must be given that role; a singleton source's sole leg
 carries none and needs none. `own_stakeholder` is a single value for the
-whole `simulate()` call, not a per-subject array: this is the "synthetic
-partner" mode (EKL Appendix F's two independent, single-gender cohorts),
-which needs no cross-row linkage. A genuinely mixed population where individual rows
-have DIFFERING own-roles, or two TRACKED (linked) rows that must unlink into
-each other's rows on dissolution, remains the deferred "linked mode".
+whole `simulate()` call, not a per-subject array, and that is what makes
+the mode synthetic: the population is one single-gender cohort whose
+partners are imputed rather than simulated, so no cross-row linkage is
+needed. A genuinely mixed population whose individual rows have DIFFERING
+own-roles, and two separately tracked rows that must unlink into each
+other's rows on dissolution, are what LINKED mode would add.
 
-**Deferred: the generic between-period state-reassignment hook.** The
-design doc (§2 E4) and EKL's App. E.2 additionally motivate a callback that
-rewrites designated state components between simulated periods from
-externally tracked auxiliaries (e.g. EKL's child-age bookkeeping: children
-exit the household at 19, tracked only in simulation). This is NOT
-implemented in this slice: the row-splitting scope fence above is the piece
-that actually blocks a faithful EKL-scale collective simulate, and a
-GENERIC reassignment-hook API designed in isolation — without a second,
-independent consumer to validate its shape against — risks guessing wrong
-about what such a hook needs (e.g. whether the externally tracked auxiliary
-is itself subject to the same row-per-couple vs. row-per-stakeholder
-question the scope fence above raises). Left for a follow-up slice once the
-row-reallocation question is settled; EKL's specific child-age logic
-belongs in an EKL replication module either way, not in this generic engine
-layer.
+**Absent: a generic between-period state-reassignment hook.** A collective
+lifecycle model may want to rewrite designated state components between
+simulated periods from auxiliaries that only simulation tracks — children
+ageing out of the household, say. This router offers no such callback. The
+row-splitting fence above is the piece that actually blocks a faithful
+full-scale collective simulate, and a GENERIC reassignment-hook API
+designed in isolation — without a second, independent consumer to validate
+its shape against — risks guessing wrong about what such a hook needs (e.g.
+whether the externally tracked auxiliary is itself subject to the same
+row-per-couple vs. row-per-stakeholder question the fence above raises).
+Adding one waits on the row-reallocation question being settled; a
+particular study's child-age bookkeeping belongs in that study's
+replication code either way, not in this generic engine layer.
 """
 
 from collections.abc import Callable, Mapping
@@ -121,13 +120,13 @@ def substitute_gated_edge_continuations(
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
 ]:
-    """Substitute each declared edge's ``Wbar`` for the raw target V.
+    """Substitute each declared edge's `Wbar` for the raw target V.
 
     A no-op (returns `next_regime_to_V_arr` unchanged and no same-period
     mappings) when `regime` declares no `gated_edges` — the default
     simulate path is untouched.
 
-    ``period_to_regime_to_V_arr`` is the
+    `period_to_regime_to_V_arr` is the
     SPARSE per-period solution `backward_induction.solve` returns (only the
     regimes actually active — i.e. solved — in that period; see
     `solution[period] = MappingProxyType(period_solution)` there). A
@@ -145,7 +144,7 @@ def substitute_gated_edge_continuations(
     while the target is present is rejected rather than silently falling back
     to the raw (ungated) target V, which would leave the edge's routing
     undetectably disabled. Backward induction tolerates that same absence at
-    a period whose ``Wbar`` no source reads; this call site never can, because
+    a period whose `Wbar` no source reads; this call site never can, because
     the source reading it is the very regime being simulated at `period`.
 
     The fold lands on the target regime's grid at the period whose value it
@@ -237,169 +236,6 @@ def substitute_gated_edge_continuations(
         # same-period mapping, at the realized candidate state.
         same_period_mappings[target_name] = same_period_mapping
     return MappingProxyType(substituted), MappingProxyType(same_period_mappings)
-
-
-def _bind_provenance_params(
-    provenance: EdgeArgProvenance,
-    *,
-    flat_params: FlatParams,
-    source_name: RegimeName,
-    target_name: RegimeName,
-) -> dict[str, object]:
-    """Bind an edge callable's params, each from the regime that OWNS it.
-
-    The router holds every regime's flat params and the realized candidate
-    target states; `provenance` (published by the callable's builder in
-    `_lcm.regime_building.gated_edges`) is what says which of them resolves a
-    given argument. Both merge orders of two name-filtered dicts are wrong — one
-    keyword cannot carry two regimes' identically named arrays, and the target
-    and the source genuinely can contribute the same qname (`x__points` for a
-    state `x` on a runtime irregular grid, in both regimes) — so nothing is
-    merged here: each exposed leaf is looked up in exactly one namespace.
-
-    Raises:
-        KeyError: A namespace does not carry a qname the callable declares.
-    """
-    regime_of_namespace = {SOURCE_PARAMS: source_name, TARGET_PARAMS: target_name}
-    bound: dict[str, object] = {}
-    for exposed, (namespace, qname) in provenance.params.items():
-        regime_name = regime_of_namespace[namespace]
-        regime_params = flat_params[regime_name]
-        if qname not in regime_params:
-            msg = (
-                f"A gated edge into '{target_name}' needs the {namespace} "
-                f"regime '{regime_name}''s parameter '{qname}', which is not in "
-                f"flat_params['{regime_name}'] (present: "
-                f"{sorted(regime_params)})."
-            )
-            raise KeyError(msg)
-        bound[exposed] = regime_params[qname]
-    return bound
-
-
-def _call_vmapped_with_accepted_kwargs(
-    func: Callable,
-    *,
-    batched_kwargs: Mapping[str, object],
-    static_kwargs: Mapping[str, object],
-    axis_size: int,
-) -> object:
-    """Call a per-subject-scalar `func` over a whole population via `vmap`.
-
-    `func` here is always a `_lcm.regime_building.V.get_V_interpolator`
-    product (discrete-index lookup + `map_coordinates` interpolation): it is
-    written to be evaluated at a single subject's SCALAR discrete indices and
-    continuous coordinates, then `vmap`-ped or `productmap`-ped by its
-    caller — the same idiom `_lcm.simulation.transitions
-    .calculate_next_states` uses for `regime.simulation.next_state`. Calling
-    it directly on whole-population `(n_subjects,)` arrays only happens to
-    work when the target has zero discrete state axes (`map_coordinates`
-    natively batches over query points when `len(coordinates) ==
-    input.ndim`); the moment the target has >=1 discrete axis, the discrete
-    lookup's fancy indexing collapses those axes into a leading batch
-    dimension while leaving the continuous axes trailing, which breaks that
-    invariant. `vmap`-ing here makes every call genuinely scalar-per-subject
-    for both discrete and continuous axes, which is correct in both cases.
-
-    `batched_kwargs` (mapped over subject axis 0 — e.g. the candidate target
-    states) and `static_kwargs` (held fixed across subjects — e.g. regime
-    params and the raw grid-level array being read) are filtered down to the
-    names `func` accepts; on a name collision, `static_kwargs` wins, mirroring
-    the original `{**states, **params}` merge precedence. That precedence is
-    safe here: `static_kwargs` carries the provenance-bound params, whose
-    exposed names are namespace-qualified and so cannot collide with a target
-    state name.
-
-    `axis_size` is REQUIRED, not inferred. A STATELESS gated target (no
-    continuous or discrete states of its own — e.g. a terminal scrap-value
-    regime) leaves `batched` empty after filtering, and `vmap` cannot infer
-    a batch size from zero batched arguments: it raises "vmap wrapped
-    function must be passed at least one argument containing an array".
-    Passing the population size explicitly makes the stateless case a
-    legal broadcast instead of a crash.
-    """
-    accepted = set(signature(func).parameters)
-    static = {name: value for name, value in static_kwargs.items() if name in accepted}
-    batched = {
-        name: value
-        for name, value in batched_kwargs.items()
-        if name in accepted and name not in static
-    }
-
-    def _call_one_subject(one_subject_kwargs: Mapping[str, object]) -> object:
-        return func(**one_subject_kwargs, **static)
-
-    return jax.vmap(_call_one_subject, axis_size=axis_size)(batched)
-
-
-def _select_own_leg(
-    *,
-    legs: tuple[ResolvedEdgeLeg, ...],
-    own_stakeholder: str | None,
-    source_regime_name: RegimeName,
-) -> ResolvedEdgeLeg:
-    """Pick the leg whose fallback IS this row's own continuing regime.
-
-    ROW-SPLIT (synthetic mode). A collective source declares one leg per
-    stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
-    `simulate()` call's fixed own-role (e.g. "f" for an all-women
-    population), so the matching leg's fallback is the row's own single
-    regime on dissolution.
-
-    A COLLECTIVE source therefore REQUIRES a role. Each stakeholder's leg
-    carries its own fallback regime and its own state projection, so a
-    population routed without a role would follow one partner's dissolution
-    path for every row — each divorced husband simulated as his wife, in her
-    regime and at her state. That is a caller error, not a default: both a
-    missing `own_stakeholder` and one matching no declared leg raise.
-
-    A SINGLETON source's sole leg carries `source_stakeholder=None`. It
-    offers no choice between roles, so it neither needs nor accepts one and
-    is returned for any `own_stakeholder` — the common, correct case.
-
-    Collective-vs-singleton keys on `legs[0].source_stakeholder is None`, NOT
-    on `len(legs) == 1`. Arity is the wrong test: the validator accepts a
-    ONE-element `stakeholders` tuple, and `processing.py`'s
-    `leg_order = [(s, s) for s in source_stakeholders]` then gives that sole
-    leg `source_stakeholder="f"` — not `None`. Keying on arity lets a typo'd
-    or missing `own_stakeholder` fall through to that leg silently on exactly
-    the single-stakeholder collective source the raise exists to protect.
-
-    Args:
-        legs: The edge's resolved legs, in source stakeholder order.
-        own_stakeholder: This `simulate()` call's fixed own-role, or `None`.
-        source_regime_name: Regime declaring the edge, named in the error.
-
-    Returns:
-        The leg whose fallback this row's own membership follows.
-
-    Raises:
-        ValueError: The source is collective (its legs carry roles) and
-            `own_stakeholder` is either `None` or matches no leg.
-    """
-    if legs[0].source_stakeholder is None:
-        return legs[0]
-    available = tuple(leg.source_stakeholder for leg in legs)
-    for leg in legs:
-        if leg.source_stakeholder == own_stakeholder:
-            return leg
-    if own_stakeholder is None:
-        msg = (
-            f"Simulating regime '{source_regime_name}' needs an explicit "
-            f"own_stakeholder, one of {available}. It is collective and its "
-            "gated edge declares one dissolution leg per stakeholder, each "
-            "with its own fallback regime and its own state projection, so "
-            "without a role every row would follow one partner's path. Pass "
-            "`own_stakeholder=...` to `simulate()`."
-        )
-        raise ValueError(msg)
-    msg = (
-        f"own_stakeholder={own_stakeholder!r} does not match any leg's "
-        f"source_stakeholder (available: {available}) of the collective "
-        f"regime '{source_regime_name}'. A row's own-role must name one of "
-        "the declared stakeholders."
-    )
-    raise ValueError(msg)
 
 
 def route_gated_edges(
@@ -607,3 +443,165 @@ def route_gated_edges(
             )
 
     return states, routed_ids
+
+
+def _bind_provenance_params(
+    provenance: EdgeArgProvenance,
+    *,
+    flat_params: FlatParams,
+    source_name: RegimeName,
+    target_name: RegimeName,
+) -> dict[str, object]:
+    """Bind an edge callable's params, each from the regime that OWNS it.
+
+    The router holds every regime's flat params and the realized candidate
+    target states; `provenance` (published by the callable's builder in
+    `_lcm.regime_building.gated_edges`) is what says which of them resolves a
+    given argument. Both merge orders of two name-filtered dicts are wrong — one
+    keyword cannot carry two regimes' identically named arrays, and the target
+    and the source genuinely can contribute the same qname (`x__points` for a
+    state `x` on a runtime irregular grid, in both regimes) — so nothing is
+    merged here: each exposed leaf is looked up in exactly one namespace.
+
+    Raises:
+        KeyError: A namespace does not carry a qname the callable declares.
+    """
+    regime_of_namespace = {SOURCE_PARAMS: source_name, TARGET_PARAMS: target_name}
+    bound: dict[str, object] = {}
+    for exposed, (namespace, qname) in provenance.params.items():
+        regime_name = regime_of_namespace[namespace]
+        regime_params = flat_params[regime_name]
+        if qname not in regime_params:
+            msg = (
+                f"A gated edge into '{target_name}' needs the {namespace} "
+                f"regime '{regime_name}''s parameter '{qname}', which is not in "
+                f"flat_params['{regime_name}'] (present: "
+                f"{sorted(regime_params)})."
+            )
+            raise KeyError(msg)
+        bound[exposed] = regime_params[qname]
+    return bound
+
+
+def _call_vmapped_with_accepted_kwargs(
+    func: Callable,
+    *,
+    batched_kwargs: Mapping[str, object],
+    static_kwargs: Mapping[str, object],
+    axis_size: int,
+) -> object:
+    """Call a per-subject-scalar `func` over a whole population via `vmap`.
+
+    `func` here is always a `_lcm.regime_building.V.get_V_interpolator`
+    product (discrete-index lookup + `map_coordinates` interpolation): it is
+    written to be evaluated at a single subject's SCALAR discrete indices and
+    continuous coordinates, then `vmap`-ped or `productmap`-ped by its
+    caller — the same idiom `_lcm.simulation.transitions
+    .calculate_next_states` uses for `regime.simulation.next_state`. Calling
+    it directly on whole-population `(n_subjects,)` arrays only happens to
+    work when the target has zero discrete state axes (`map_coordinates`
+    natively batches over query points when `len(coordinates) ==
+    input.ndim`); the moment the target has >=1 discrete axis, the discrete
+    lookup's fancy indexing collapses those axes into a leading batch
+    dimension while leaving the continuous axes trailing, which breaks that
+    invariant. `vmap`-ing here makes every call genuinely scalar-per-subject
+    for both discrete and continuous axes, which is correct in both cases.
+
+    `batched_kwargs` (mapped over subject axis 0 — e.g. the candidate target
+    states) and `static_kwargs` (held fixed across subjects — e.g. regime
+    params and the raw grid-level array being read) are filtered down to the
+    names `func` accepts; on a name collision, `static_kwargs` wins. That
+    precedence is safe here: `static_kwargs` carries the provenance-bound
+    params, whose exposed names are namespace-qualified and so cannot collide
+    with a target state name.
+
+    `axis_size` is REQUIRED, not inferred. A STATELESS gated target (no
+    continuous or discrete states of its own — e.g. a terminal scrap-value
+    regime) leaves `batched` empty after filtering, and `vmap` cannot infer
+    a batch size from zero batched arguments: it raises "vmap wrapped
+    function must be passed at least one argument containing an array".
+    Passing the population size explicitly makes the stateless case a
+    legal broadcast instead of a crash.
+    """
+    accepted = set(signature(func).parameters)
+    static = {name: value for name, value in static_kwargs.items() if name in accepted}
+    batched = {
+        name: value
+        for name, value in batched_kwargs.items()
+        if name in accepted and name not in static
+    }
+
+    def _call_one_subject(one_subject_kwargs: Mapping[str, object]) -> object:
+        return func(**one_subject_kwargs, **static)
+
+    return jax.vmap(_call_one_subject, axis_size=axis_size)(batched)
+
+
+def _select_own_leg(
+    *,
+    legs: tuple[ResolvedEdgeLeg, ...],
+    own_stakeholder: str | None,
+    source_regime_name: RegimeName,
+) -> ResolvedEdgeLeg:
+    """Pick the leg whose fallback IS this row's own continuing regime.
+
+    ROW-SPLIT (synthetic mode). A collective source declares one leg per
+    stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
+    `simulate()` call's fixed own-role (e.g. "f" for an all-women
+    population), so the matching leg's fallback is the row's own single
+    regime on dissolution.
+
+    A COLLECTIVE source therefore REQUIRES a role. Each stakeholder's leg
+    carries its own fallback regime and its own state projection, so a
+    population routed without a role would follow one partner's dissolution
+    path for every row — each divorced husband simulated as his wife, in her
+    regime and at her state. That is a caller error, not a default: both a
+    missing `own_stakeholder` and one matching no declared leg raise.
+
+    A SINGLETON source's sole leg carries `source_stakeholder=None`. It
+    offers no choice between roles, so it neither needs nor accepts one and
+    is returned for any `own_stakeholder` — the common, correct case.
+
+    Collective-vs-singleton keys on `legs[0].source_stakeholder is None`, NOT
+    on `len(legs) == 1`. Arity is the wrong test: the validator accepts a
+    ONE-element `stakeholders` tuple, and `processing.py`'s
+    `leg_order = [(s, s) for s in source_stakeholders]` then gives that sole
+    leg `source_stakeholder="f"` — not `None`. Keying on arity lets a typo'd
+    or missing `own_stakeholder` fall through to that leg silently on exactly
+    the single-stakeholder collective source the raise exists to protect.
+
+    Args:
+        legs: The edge's resolved legs, in source stakeholder order.
+        own_stakeholder: This `simulate()` call's fixed own-role, or `None`.
+        source_regime_name: Regime declaring the edge, named in the error.
+
+    Returns:
+        The leg whose fallback this row's own membership follows.
+
+    Raises:
+        ValueError: The source is collective (its legs carry roles) and
+            `own_stakeholder` is either `None` or matches no leg.
+    """
+    if legs[0].source_stakeholder is None:
+        return legs[0]
+    available = tuple(leg.source_stakeholder for leg in legs)
+    for leg in legs:
+        if leg.source_stakeholder == own_stakeholder:
+            return leg
+    if own_stakeholder is None:
+        msg = (
+            f"Simulating regime '{source_regime_name}' needs an explicit "
+            f"own_stakeholder, one of {available}. It is collective and its "
+            "gated edge declares one dissolution leg per stakeholder, each "
+            "with its own fallback regime and its own state projection, so "
+            "without a role every row would follow one partner's path. Pass "
+            "`own_stakeholder=...` to `simulate()`."
+        )
+        raise ValueError(msg)
+    msg = (
+        f"own_stakeholder={own_stakeholder!r} does not match any leg's "
+        f"source_stakeholder (available: {available}) of the collective "
+        f"regime '{source_regime_name}'. A row's own-role must name one of "
+        "the declared stakeholders."
+    )
+    raise ValueError(msg)

@@ -502,11 +502,11 @@ def _state_conditioned_names(
 
     - **local processes** — declared in this regime. Only a *retained* process forces
       its conditioner (a process that is itself a pruned broadcast candidate reads
-      nothing), so this stays monotone in ``grown_here`` and the caller's fixed point
+      nothing), so this stays monotone in `grown_here` and the caller's fixed point
       terminates.
     - **reachable-target processes** — a conditioned process in a regime this one can
       transition into has its transition weight built into *this* regime's Q, evaluated
-      at *this* regime's ``on`` state. So the conditioner is needed in the source too,
+      at *this* regime's `on` state. So the conditioner is needed in the source too,
       not only the process's own regime.
 
     Keeping the state also keeps its law of motion, which the caller filters by the

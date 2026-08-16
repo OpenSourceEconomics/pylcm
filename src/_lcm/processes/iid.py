@@ -45,18 +45,14 @@ class _IIDProcess(_ContinuousStochasticProcess):
     `Regime.__post_init__` / model processing; see
     `_validate_fold_declarations`.
 
-    SCOPE (nonpersistent-only, no continuation support yet):
-    `_fail_if_folded_state_persists` rejects a fold whenever ANY reachable
-    regime's continuation still carries a `next_<name>` for this state — a
-    self-transition, or the same IID shock redeclared in a later period of
-    the SAME regime. This slice only reduces a shock that is used and
-    discarded within the one period that folds it; it does NOT implement
-    fold-aware continuation interpolation, so a shock that is genuinely
-    redrawn every period across many periods (the multi-period,
-    "repeated-IID" topology — e.g. a wage/match shock redrawn each age) is
-    out of scope and is rejected at construction, not silently
-    mishandled. Continuation support for a persistent fold is a deferred,
-    separate feature.
+    A fold reduces a shock that is drawn, used, and discarded inside the one
+    period that folds it. `_fail_if_folded_state_persists` rejects a fold
+    whenever ANY reachable regime's continuation still carries a
+    `next_<name>` for this state — a self-transition, or the same IID shock
+    redeclared in a later period of the SAME regime — because fold-aware
+    continuation interpolation is not implemented. So a shock genuinely
+    redrawn every period (a wage or match shock redrawn at each age) is
+    rejected at construction rather than silently mishandled.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (

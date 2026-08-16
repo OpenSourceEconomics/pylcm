@@ -1,8 +1,8 @@
-"""Tests for the dissolution row-split, synthetic mode (row-split PLAN, commit 1).
+"""Tests for the dissolution row-split, synthetic mode.
 
 pylcm's forward simulation tracks INDIVIDUALS, not households: a married
 individual's row carries its own state plus a DRAWN (synthetic) partner
-block (slice-5/6 machinery). On dissolution (`~gate`), the row must revert to
+block. On dissolution (`~gate`), the row must revert to
 `single_<own role>` with its OWN projected state — the leg whose
 `source_stakeholder` matches the row's own role. A cohort that names no role
 is refused rather than routed through some declared leg.
@@ -17,8 +17,8 @@ is a single value for the whole `simulate()` call (see
 Reuses the dissolution miniature from `test_collective_regime_simulate.py`
 (`_make_dissolution_regimes` / `_solve_dissolution`): a collective `married` regime
 with stakeholders `("f", "m")`, a dissolution edge with two legs (`"f" ->
-single_f`, `"m" -> single_m`), and a slice-3 IR mask that empties (`D=True`)
-at `wage=2` on the `WAGE_3 = {1, 2, 3}` grid.
+single_f`, `"m" -> single_m`), and a value-constraint IR mask that empties
+(`D=True`) at `wage=2` on the `WAGE_3 = {1, 2, 3}` grid.
 """
 
 from types import MappingProxyType
@@ -61,19 +61,13 @@ def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
     ), solution
 
 
-# ----------------------------------------------------------------------------------
-# Test (a): a synthetic-married individual whose slice-3 IR mask empties at t+1
-# (D=True) reverts to `single_<own role>` with its own projected state.
-# ----------------------------------------------------------------------------------
-
-
 def test_synthetic_dissolution_reverts_to_own_role_single_regime_for_m():
-    """`own_stakeholder="m"` routes the dissolutiond row to `single_m`, not `single_f`.
+    """`own_stakeholder="m"` routes the dissolved row to `single_m`, not `single_f`.
 
     D=True only at wage=2 (hand-verified in `test_gated_edges_collective_solve.py`
-    / `test_collective_regime_simulate.py`'s dissolution test). Under the PRIOR
-    "first declared leg" convention this row would incorrectly become
-    `single_f`; the row's own role here is "m".
+    / `test_collective_regime_simulate.py`'s dissolution test). The leg is picked
+    by the row's own role, "m" here -- not by declaration order, which would send
+    it to `single_f`.
     """
     result, solution = _simulate_dissolution_cohort(own_stakeholder="m")
 
@@ -112,19 +106,12 @@ def test_synthetic_dissolution_without_a_role_is_refused():
         _simulate_dissolution_cohort(own_stakeholder=None)
 
 
-# ----------------------------------------------------------------------------------
-# Test (b): two independent populations (EKL Appendix F) -- an all-women cohort
-# and an all-men cohort, each correctly reverting on dissolution, with no
-# cross-population coupling.
-# ----------------------------------------------------------------------------------
-
-
 def test_two_independent_synthetic_populations_each_revert_correctly():
     """A women-role run and a men-role run each dissolution-revert to their own single.
 
     Both runs share the identical input population (same wages, same solved
     value functions) and differ ONLY in `own_stakeholder`; their outputs
-    differ ONLY in which single regime the dissolutiond row (wage=2) lands in --
+    differ ONLY in which single regime the dissolved row (wage=2) lands in --
     everything else (the gate decision, the still-married rows' values) is
     identical, confirming the two populations are independent (no
     cross-population state leakage through shared solved arrays).
@@ -132,7 +119,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
     women_result, _ = _simulate_dissolution_cohort(own_stakeholder="f")
     men_result, _ = _simulate_dissolution_cohort(own_stakeholder="m")
 
-    # Women cohort: dissolutiond row (index 1) becomes single_f, not single_m.
+    # Women cohort: dissolved row (index 1) becomes single_f, not single_m.
     np.testing.assert_array_equal(
         np.asarray(women_result.raw_results["single_f"][1].in_regime),
         [False, True, False],
@@ -142,7 +129,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
         [False, False, False],
     )
 
-    # Men cohort: dissolutiond row becomes single_m, not single_f.
+    # Men cohort: dissolved row becomes single_m, not single_f.
     np.testing.assert_array_equal(
         np.asarray(men_result.raw_results["single_m"][1].in_regime),
         [False, True, False],
