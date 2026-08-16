@@ -11,8 +11,19 @@ declares.
 
 import jax.numpy as jnp
 
-from _lcm.solution.nbegm import _array_float_arg_names, _probe_fill
-from lcm.typing import ContinuousState, Float1D, FloatND, ScalarFloat
+from _lcm.solution.nbegm import (
+    _annotated_int_arg_names,
+    _array_float_arg_names,
+    _probe_fill,
+)
+from lcm.typing import (
+    ContinuousState,
+    Float1D,
+    FloatND,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 def _rate_term(liquid: ContinuousState, rate_of_return: ScalarFloat) -> FloatND:
@@ -29,6 +40,18 @@ def _reads_rate_as_scalar(rate_of_return: ScalarFloat) -> FloatND:
 
 def _reads_rate_as_array(rate_of_return: Float1D) -> FloatND:
     return rate_of_return
+
+
+def _reads_insurance_code(insurance_status: IntND) -> FloatND:
+    return jnp.asarray(insurance_status, dtype=jnp.float64)
+
+
+def _reads_repeal_age(repeal_age: ScalarInt) -> FloatND:
+    return jnp.asarray(repeal_age, dtype=jnp.float64)
+
+
+def _reads_repeal_age_as_float(repeal_age: ScalarFloat) -> FloatND:
+    return jnp.asarray(repeal_age)
 
 
 def test_array_float_arg_names_includes_an_array_typed_param() -> None:
@@ -68,3 +91,44 @@ def test_probe_fill_keeps_an_unclassified_float_arg_scalar() -> None:
         array_float_arg_names=frozenset({"schedule"}),
     )
     assert jnp.ndim(scalar) == 0
+
+
+def test_annotated_int_arg_names_includes_a_rank_polymorphic_int_param() -> None:
+    """A DAG intermediate annotated `IntND` is marked for an integer fill."""
+    names = _annotated_int_arg_names(functions={"reads": _reads_insurance_code})
+    assert "insurance_status" in names
+
+
+def test_annotated_int_arg_names_includes_a_scalar_int_param() -> None:
+    """A fixed parameter annotated `ScalarInt` is marked for an integer fill.
+
+    Integer-valued parameters need not back a `DiscreteGrid`; an age threshold is
+    an ordinary flat param whose only declaration of integer-ness is its
+    annotation.
+    """
+    names = _annotated_int_arg_names(functions={"reads": _reads_repeal_age})
+    assert "repeal_age" in names
+
+
+def test_annotated_int_arg_names_excludes_a_float_param() -> None:
+    """A float-annotated parameter is never marked for an integer fill."""
+    names = _annotated_int_arg_names(functions={"rate_term": _rate_term})
+    assert "rate_of_return" not in names
+
+
+def test_annotated_int_arg_names_lets_a_float_annotation_win_on_conflict() -> None:
+    """A param any consumer annotates float keeps its float fill.
+
+    An integer fill would violate that consumer, so a name whose annotations
+    disagree is left to the float default rather than guessed at.
+    """
+    names = _annotated_int_arg_names(
+        functions={"a": _reads_repeal_age, "b": _reads_repeal_age_as_float}
+    )
+    assert "repeal_age" not in names
+
+
+def test_probe_fill_gives_an_annotated_int_arg_an_integer_fill() -> None:
+    """An arg classified integer by annotation fills as int32, not float."""
+    code = _probe_fill("insurance_status", 1.0, frozenset({"insurance_status"}))
+    assert code.dtype == jnp.int32

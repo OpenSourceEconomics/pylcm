@@ -15,6 +15,7 @@ façade stays a thin re-export that pulls in no numerical engine modules.
 
 import functools
 import inspect
+import itertools
 import math
 import warnings
 from collections.abc import Callable, Hashable, Iterator, Mapping
@@ -92,6 +93,11 @@ from lcm.typing import (
 # targets either side of a `"|"` separator, followed by those targets'
 # age-specialized grid signatures at `period + 1`.
 type _RideAlongGroupKey = tuple[RegimeName | Hashable, ...]
+
+# Every discrete action the envelope branches over, paired with its grid codes.
+# The branch axis is the product of these code sets, so the pairing has to keep
+# each action's name next to its own codes.
+type DiscreteActionCodes = tuple[tuple[ActionName, tuple[int, ...]], ...]
 
 
 @beartype(conf=REGIME_CONF)
@@ -543,51 +549,47 @@ class NBEGM(Solver):
         and the breakpoint partition — and takes the upper envelope. Outside that
         contract, model build refuses:
 
-        - more than one discrete action (the envelope is over one action's grid),
         - an action entering the discount factor (evaluated per cell, not per
           branch),
         - an action entering a *jumped* schedule variable under the one-sided
           cliff read (branches would not share the published parent query grid).
 
-        A jump breakpoint is otherwise supported: each branch publishes its
-        one-sided cliff limits and the envelope takes the max over branches.
+        Several discrete actions are supported: the branch axis is the product of
+        their grids, and every branch binds a code for each. A jump breakpoint is
+        likewise supported — each branch publishes its one-sided cliff limits and
+        the envelope takes the max over branches.
         """
         import inspect  # noqa: PLC0415
 
-        actions = context.state_action_space.discrete_actions
-        if len(actions) != 1:
-            msg = (
-                "NBEGM's schedule+ride-along discrete envelope supports exactly "
-                f"one discrete action; the regime {context.regime_name!r} declares "
-                f"{tuple(actions)}."
-            )
-            raise RegimeInitializationError(msg)
-        action_name = next(iter(actions))
+        action_names = tuple(context.state_action_space.discrete_actions)
         # The discount factor is evaluated once per cell in the envelope core, not
         # once per branch, so an action-dependent discount factor would silently
         # use one branch's weight for all branches — refuse it.
         discount_factor_dag = schedule_spec.discount_factor_dag
-        if (
-            discount_factor_dag is not None
-            and action_name in inspect.signature(discount_factor_dag).parameters
-        ):
-            msg = (
-                "NBEGM's schedule+ride-along discrete envelope evaluates the "
-                "discount factor per cell, not per discrete branch, so the action "
-                f"{action_name!r} must not enter the discount factor; regime "
-                f"{context.regime_name!r} reads it there."
-            )
-            raise RegimeInitializationError(msg)
-        # The envelope binds the action into each branch's period utility, so an
-        # action the utility reads is supported (a leisure/effort-like term).
-        _fail_if_discrete_action_feeds_continuation(
-            context=context,
-            action_name=action_name,
-            liquid_state_name=schedule_spec.liquid_state_name,
-            budget_target=self.budget_target,
-            post_decision_function=self.post_decision_function,
-            allow_continuation_feed=True,
+        discount_args = (
+            frozenset(inspect.signature(discount_factor_dag).parameters)
+            if discount_factor_dag is not None
+            else frozenset()
         )
+        for action_name in action_names:
+            if action_name in discount_args:
+                msg = (
+                    "NBEGM's schedule+ride-along discrete envelope evaluates the "
+                    "discount factor per cell, not per discrete branch, so the "
+                    f"action {action_name!r} must not enter the discount factor; "
+                    f"regime {context.regime_name!r} reads it there."
+                )
+                raise RegimeInitializationError(msg)
+            # The envelope binds each action into every branch's period utility, so
+            # an action the utility reads is supported (a leisure/effort-like term).
+            _fail_if_discrete_action_feeds_continuation(
+                context=context,
+                action_name=action_name,
+                liquid_state_name=schedule_spec.liquid_state_name,
+                budget_target=self.budget_target,
+                post_decision_function=self.post_decision_function,
+                allow_continuation_feed=True,
+            )
         # An action entering a schedule variable gives each branch its own
         # breakpoint partition (its own asset preimage of every threshold), which
         # the envelope solves per branch. Publishing a jump is the exception: the
@@ -605,11 +607,15 @@ class NBEGM(Solver):
             return
         for source in schedule_spec.sources:
             dag = source.derived_of_liquid_dag
-            if dag is None or action_name not in inspect.signature(dag).parameters:
+            if dag is None:
+                continue
+            source_args = frozenset(inspect.signature(dag).parameters)
+            shifting = tuple(name for name in action_names if name in source_args)
+            if not shifting:
                 continue
             msg = (
                 "NBEGM's schedule+ride-along discrete envelope publishes the jump "
-                f"breakpoint on a shared query grid, so the action {action_name!r} "
+                f"breakpoint on a shared query grid, so the actions {shifting} "
                 f"must not enter any schedule variable — regime "
                 f"{context.regime_name!r} reads it in {source.variable!r} (a "
                 f"{source.kind} source), whose breakpoints would then sit at a "
@@ -676,6 +682,9 @@ class NBEGM(Solver):
                 ),
                 regime_name=context.regime_name,
                 int_arg_values=_int_probe_arg_values(context.grids),
+                annotated_int_arg_names=_annotated_int_arg_names(
+                    functions=context.functions
+                ),
                 array_float_arg_names=_array_float_arg_names(
                     functions=context.functions
                 ),
@@ -723,6 +732,9 @@ class NBEGM(Solver):
                     liquid_name=schedule_spec.liquid_state_name,
                     regime_name=context.regime_name,
                     int_arg_values=_int_probe_arg_values(context.grids),
+                    annotated_int_arg_names=_annotated_int_arg_names(
+                        functions=context.functions
+                    ),
                     array_float_arg_names=_array_float_arg_names(
                         functions=context.functions
                     ),
@@ -832,7 +844,7 @@ class NBEGM(Solver):
                     # Match `_assemble_ride_carry`'s carry_policy predicate:
                     # continuous-only (no ride discrete action) and jump-free.
                     carry_policy=(
-                        schedule_spec.discrete_action_name is None
+                        not schedule_spec.discrete_actions
                         and (
                             next(iter(statics_by_key.values())).n_published_jumps
                             if statics_by_key
@@ -1758,12 +1770,15 @@ class _NBEGMScheduleSpec:
     qualified params, or `None` when the regime uses pylcm's flat
     `koopmans_aggregator__discount_factor` parameter. When set, the ride-along
     core resolves the discount factor per cell."""
-    discrete_action_name: str | None = None
-    """Name of a single discrete action the budget shifts, enveloped over per ride
-    cell, or `None` when the regime carries no discrete action. Excluded from
-    `coh_param_names` — the envelope core binds it per branch."""
-    discrete_action_codes: tuple[int, ...] = ()
-    """Integer codes of the discrete action's grid values, in envelope order."""
+    discrete_actions: DiscreteActionCodes = ()
+    """Each discrete action the budget shifts, paired with its grid codes, empty
+    when the regime carries no discrete action. Excluded from `coh_param_names` —
+    the envelope core binds them per branch."""
+
+    @property
+    def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
+        """One binding of every declared discrete action, per envelope branch."""
+        return _branch_bindings(self.discrete_actions)
 
 
 def _fail_if_discrete_action_feeds_continuation(
@@ -1886,18 +1901,88 @@ def _state_laws(
                 yield state_name, func
 
 
-def _ride_discrete_action(
-    *, context: SolverBuildContext
-) -> tuple[str | None, tuple[int, ...]]:
-    """Identify a single budget-shifting discrete action and its grid codes.
+def _ride_discrete_actions(*, context: SolverBuildContext) -> DiscreteActionCodes:
+    """Collect every budget-shifting discrete action with its grid codes.
 
-    Returns `(None, ())` when the regime carries no discrete action.
+    Returns an empty tuple when the regime carries no discrete action.
     """
-    discrete_actions = context.state_action_space.discrete_actions
-    if not discrete_actions:
-        return None, ()
-    name = next(iter(discrete_actions))
-    return name, tuple(int(code) for code in discrete_actions[name])
+    return _discrete_actions_of(space=context.state_action_space)
+
+
+def _discrete_actions_of(*, space: StateActionSpace) -> DiscreteActionCodes:
+    """Pair each declared discrete action with its grid codes, in declared order."""
+    return tuple(
+        (name, tuple(int(code) for code in codes))
+        for name, codes in space.discrete_actions.items()
+    )
+
+
+def _stacked_branch_codes(
+    *,
+    branch_bindings: tuple[MappingProxyType[ActionName, int], ...],
+    action_names: tuple[ActionName, ...],
+) -> IntND:
+    """Stack the branch bindings into a `(n_branches, n_actions)` code array.
+
+    The branch axis is streamed by `lax.map`, so every branch has to present the
+    same pytree: one row of codes, ordered by `action_names`, rather than a
+    per-action entry whose presence varies.
+    """
+    return jnp.asarray(
+        [[binding[name] for name in action_names] for binding in branch_bindings],
+        dtype=jnp.int32,
+    )
+
+
+def _branch_inputs(
+    *,
+    codes: IntND,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    extra_cont_value: FloatND | None,
+    cliff_savings: FloatND | None,
+) -> dict[str, Any]:
+    """Assemble the pytree `lax.map` streams over the branch axis.
+
+    The optional continuations enter only where the regime supplies them, so a
+    regime without child cliffs or an extra continuation maps a narrower tree
+    rather than one padded with sentinels that every branch would then carry.
+    """
+    inputs: dict[str, Any] = {
+        "codes": codes,
+        "cont_value": cont_value,
+        "cont_marginal": cont_marginal,
+    }
+    if extra_cont_value is not None:
+        inputs["extra_cont_value"] = extra_cont_value
+    if cliff_savings is not None:
+        inputs["cliff_savings"] = cliff_savings
+    return inputs
+
+
+def _branch_bindings(
+    discrete_actions: DiscreteActionCodes,
+) -> tuple[MappingProxyType[ActionName, int], ...]:
+    """Bind every combination of the declared discrete actions, in envelope order.
+
+    The envelope's branch axis is the *product* of the declared grids: a regime
+    declaring a binary and a five-valued action carries ten branches, each a
+    complete assignment of a code to every action. A regime declaring none
+    carries a single empty binding, so the branch axis is never degenerate and
+    callers need no separate no-action case.
+
+    The order is the contract between the two independently-jitted cores: the
+    continuation core stacks one slice per branch and the envelope core reads
+    slice `pos` for branch `pos`. Both derive it from the same `discrete_actions`
+    tuple through this function, so position means the same thing on both sides
+    as long as neither builds the product itself.
+    """
+    names = tuple(name for name, _ in discrete_actions)
+    code_sets = tuple(codes for _, codes in discrete_actions)
+    return tuple(
+        MappingProxyType(dict(zip(names, combination, strict=True)))
+        for combination in itertools.product(*code_sets)
+    )
 
 
 def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
@@ -1908,6 +1993,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -1939,7 +2025,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     arg_names = tuple(inspect.signature(coh_dag).parameters)
     if liquid_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _budget_of_liquid(
         liquid_value: FloatND,
@@ -2082,6 +2168,7 @@ def _fail_if_flow_not_single_power(
     regime_name: RegimeName,
     int_arg_values: Mapping[str, tuple[int, ...]],
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"],
 ) -> None:
     """Probe the flow's consumption elasticity for the single-power contract.
@@ -2107,7 +2194,7 @@ def _fail_if_flow_not_single_power(
     arg_names = tuple(inspect.signature(utility_dag).parameters)
     if consumption_action_name not in arg_names:
         return
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
     probe_consumptions = (0.5, 1.0, 2.0, 5.0)
     fill = 1.7
 
@@ -2257,6 +2344,36 @@ def _array_float_arg_names(
     return frozenset(array_args - scalar_args)
 
 
+def _annotated_int_arg_names(
+    *,
+    functions: Mapping[str, Callable[..., object]],
+) -> frozenset[str]:
+    """Leaf parameter names that must be filled as integers, from annotations.
+
+    Backing a `DiscreteGrid` is one way for an argument to be integer-coded, not
+    the only one: a DAG intermediate can compute an integer code, and a flat
+    parameter can be an integer threshold such as an age. Neither has a grid, so
+    both are classified from the jaxtyping dtype their consumers annotate — the
+    same declaration the runtime type check enforces.
+
+    A name every annotation calls integer is filled as an integer; a name whose
+    annotations disagree keeps the float default, since an integer fill would
+    violate the float consumer and the disagreement is the model author's to
+    resolve rather than the probe's to guess.
+    """
+    int_args: set[str] = set()
+    other_args: set[str] = set()
+    for func in functions.values():
+        for arg_name, param in inspect.signature(func).parameters.items():
+            resolved = getattr(param.annotation, "__value__", param.annotation)
+            dtypes = getattr(resolved, "dtypes", None)
+            if dtypes is None:
+                continue
+            is_int = all(dtype.startswith("int") for dtype in dtypes)
+            (int_args if is_int else other_args).add(arg_name)
+    return frozenset(int_args - other_args)
+
+
 def _int_code_sweeps(
     *,
     arg_names: tuple[str, ...],
@@ -2300,6 +2417,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     regime_name: str,
     int_arg_values: Mapping[str, tuple[int, ...]] = MappingProxyType({}),
     array_float_arg_names: frozenset[str] = frozenset(),
+    annotated_int_arg_names: frozenset[str] = frozenset(),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
@@ -2326,7 +2444,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     import inspect  # noqa: PLC0415
 
     tol = 1e-6
-    int_arg_names = frozenset(int_arg_values)
+    int_arg_names = frozenset(int_arg_values) | annotated_int_arg_names
 
     def _fill_assignments(n_args: int) -> tuple[tuple[float, ...], ...]:
         constant_1 = tuple(1.0 for _ in range(n_args))
@@ -2559,13 +2677,14 @@ def _collect_nbegm_schedule_spec(
     # A single discrete action shifting the budget is enveloped over per ride
     # cell; it is neither a state nor a coh param, so exclude it from
     # `coh_param_names` (the envelope core binds it per branch).
-    discrete_action_name, discrete_action_codes = _ride_discrete_action(context=context)
+    discrete_actions = _ride_discrete_actions(context=context)
+    discrete_action_names = frozenset(name for name, _ in discrete_actions)
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(
         name
         for name in coh_args
-        if name not in state_names and name != discrete_action_name
+        if name not in state_names and name not in discrete_action_names
     )
     utility_dag = concatenate_functions(dict(context.functions), targets="utility")
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
@@ -2600,6 +2719,7 @@ def _collect_nbegm_schedule_spec(
         ),
         regime_name=context.regime_name,
         int_arg_values=_int_probe_arg_values(context.grids),
+        annotated_int_arg_names=_annotated_int_arg_names(functions=context.functions),
         array_float_arg_names=_array_float_arg_names(functions=context.functions),
         probe_failure=probe_failure,
     )
@@ -2615,8 +2735,7 @@ def _collect_nbegm_schedule_spec(
         breakpoint_kinds=breakpoint_kinds,
         sources=tuple(sources),
         discount_factor_dag=discount_factor_dag,
-        discrete_action_name=discrete_action_name,
-        discrete_action_codes=discrete_action_codes,
+        discrete_actions=discrete_actions,
     )
 
 
@@ -3354,7 +3473,8 @@ def _nbegm_ride_along_statics(
         name
         for name in utility_arg_names
         if name not in state_names
-        and name not in (consumption_action_name, schedule_spec.discrete_action_name)
+        and name != consumption_action_name
+        and name not in {name for name, _ in schedule_spec.discrete_actions}
     )
     utility_state_names = tuple(
         name for name in ride_names if name in utility_arg_names
@@ -3409,8 +3529,8 @@ def _nbegm_ride_along_statics(
         branch_batch_size=branch_batch_size,
         n_action_branches=(
             0
-            if schedule_spec.discrete_action_name is None
-            else len(schedule_spec.discrete_action_codes)
+            if not schedule_spec.discrete_actions
+            else len(schedule_spec.branch_bindings)
         ),
         co_map_state_names=co_map_ride_names,
     )
@@ -3654,8 +3774,8 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
     liquid_name = statics.liquid_name
     ride_names = statics.ride_names
     state_names = statics.state_names
-    action_name = schedule_spec.discrete_action_name
-    action_codes = schedule_spec.discrete_action_codes
+    action_names = tuple(name for name, _ in schedule_spec.discrete_actions)
+    branch_bindings = schedule_spec.branch_bindings
     # A distributed, never-transitioning ride state is co-mapped: its axis is the
     # leading ride axis, so the mesh over the *remaining* ride states solves inside
     # an outer `vmap` that co-slices the child carry — each device reads only its
@@ -3687,23 +3807,30 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                     return _cell_rows_for_pool(combo_pool)
 
                 base_pool = {**param_pool, **comap_bindings, **cell}
-                if action_name is None:
+                if not action_names:
                     return rows_for_pool(base_pool)
 
                 # A discrete action that feeds the continuation reads a different
                 # next-state per branch, so the continuation is evaluated per branch
-                # (the action rides into `combo_pool` → `next_state_func`). A leading
-                # branch axis is added; when the action does not feed the continuation
-                # the branch rows are identical, matching the shared-continuation case.
-                # `lax.map` compiles the branch body once and streams it in
-                # `branch_batch_size` blocks (the whole axis in one vectorized pass by
-                # default), so per-branch intermediates never all sit in flight.
-                def rows_for_code(code: IntND) -> tuple[FloatND, ...]:
-                    return rows_for_pool({**base_pool, action_name: code})
+                # (the actions ride into `combo_pool` → `next_state_func`). A leading
+                # branch axis is added over the product of the declared grids; when
+                # the actions do not feed the continuation the branch rows are
+                # identical, matching the shared-continuation case. `lax.map` compiles
+                # the branch body once and streams it in `branch_batch_size` blocks
+                # (the whole axis in one vectorized pass by default), so per-branch
+                # intermediates never all sit in flight.
+                def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
+                    binding = {
+                        name: codes_row[position]
+                        for position, name in enumerate(action_names)
+                    }
+                    return rows_for_pool({**base_pool, **binding})
 
-                codes = jnp.asarray(action_codes, dtype=jnp.int32)
+                codes = _stacked_branch_codes(
+                    branch_bindings=branch_bindings, action_names=action_names
+                )
                 return jax.lax.map(
-                    rows_for_code,
+                    rows_for_codes,
                     codes,
                     batch_size=statics.branch_batch_size or codes.shape[0],
                 )
@@ -3747,11 +3874,11 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                     # graph per interval. The interval partition follows the action when
                     # it feeds the schedule variable — the branch rides in `combo_pool`,
                     # so its per-branch breakpoints match the envelope's.
-                    cell_action_binding = (
-                        {action_name: combo_pool[action_name]}
-                        if action_name is not None and action_name in combo_pool
-                        else {}
-                    )
+                    cell_action_binding = {
+                        name: combo_pool[name]
+                        for name in action_names
+                        if name in combo_pool
+                    }
                     breakpoints, _ = _nbegm_cell_breakpoints(
                         statics=statics,
                         kwargs=kwargs,
@@ -3977,7 +4104,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         inspect.signature(schedule_spec.utility_dag).parameters
     )
 
-    def envelope_core(  # noqa: C901, PLR0915
+    def envelope_core(  # noqa: C901
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -4000,7 +4127,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             else None
         )
 
-        def solve_one_cell(  # noqa: C901
+        def solve_one_cell(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
@@ -4149,14 +4276,15 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     arithmetic=statics.envelope_arithmetic,
                 )
 
-            # A discrete action is enveloped over per cell: each branch solves the
-            # continuous subproblem with the action bound into cash-on-hand against its
-            # own continuation slice, then the discrete choice is taken by the upper
-            # envelope. When the action feeds a co-state, the continuation core adds a
-            # leading branch axis over `discrete_action_codes` (branch `pos` reads slice
-            # `pos`); when it feeds only the budget those slices are identical. Under a
-            # published jump each branch's row spans the jump-augmented query grid, so
-            # the envelope max takes the discrete choice over each branch's one-sided
+            # The discrete actions are enveloped over per cell: each branch is one
+            # combination of their codes, solving the continuous subproblem with that
+            # combination bound into cash-on-hand against its own continuation slice,
+            # and the joint discrete choice is taken by the upper envelope. When an
+            # action feeds a co-state, the continuation core adds a leading branch
+            # axis over the same combinations (branch `pos` reads slice `pos`); when
+            # they feed only the budget those slices are identical. Under a published
+            # jump each branch's row spans the jump-augmented query grid, so the
+            # envelope max takes the discrete choice over each branch's one-sided
             # cliff limits and the carry keeps the augmented row.
             #
             # Shared-parent-grid invariant: the pointwise max over branches is valid
@@ -4166,30 +4294,35 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             # branch values and candidate sets, never the parent abscissae. The one
             # violation (an action moving a *published* parent jump preimage per
             # branch) is refused at build (`_fail_if_unsupported_ride_discrete`).
-            action_name = schedule_spec.discrete_action_name
-            if action_name is not None:
+            branch_action_names = tuple(
+                name for name, _ in schedule_spec.discrete_actions
+            )
+            if branch_action_names:
                 # `lax.map` compiles the branch subproblem once and streams it in
                 # `branch_batch_size` blocks (the whole axis in one vectorized pass
                 # by default) — per-branch EGM intermediates never all sit in
                 # flight, and the branch axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
-                branch_inputs: dict[str, Any] = {
-                    "code": jnp.asarray(
-                        schedule_spec.discrete_action_codes, dtype=jnp.int32
+                branch_inputs = _branch_inputs(
+                    codes=_stacked_branch_codes(
+                        branch_bindings=schedule_spec.branch_bindings,
+                        action_names=branch_action_names,
                     ),
-                    "cont_value": cont_value,
-                    "cont_marginal": cont_marginal,
-                }
-                if extra_cont_value is not None:
-                    branch_inputs["extra_cont_value"] = extra_cont_value
-                if cliff_savings is not None:
-                    branch_inputs["cliff_savings"] = cliff_savings
+                    cont_value=cont_value,
+                    cont_marginal=cont_marginal,
+                    extra_cont_value=extra_cont_value,
+                    cliff_savings=cliff_savings,
+                )
 
                 def solve_one_branch(
                     inputs: dict[str, Any],
                 ) -> tuple[Float1D, Float1D]:
+                    binding = {
+                        name: inputs["codes"][position]
+                        for position, name in enumerate(branch_action_names)
+                    }
                     step = solve_branch(
-                        {action_name: inputs["code"]},
+                        binding,
                         inputs["cont_value"],
                         inputs["cont_marginal"],
                         inputs.get("extra_cont_value"),
@@ -4197,7 +4330,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     )
                     return step[0], step[1]
 
-                n_branches = len(schedule_spec.discrete_action_codes)
+                n_branches = len(schedule_spec.branch_bindings)
                 value_stack, marginal_stack = jax.lax.map(
                     solve_one_branch,
                     branch_inputs,
@@ -4250,8 +4383,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             stacks=stacks,
             n_jumps=statics.n_published_jumps,
             carry_policy=(
-                schedule_spec.discrete_action_name is None
-                and statics.n_published_jumps == 0
+                not schedule_spec.discrete_actions and statics.n_published_jumps == 0
             ),
             liquid=liquid,
             ride_shape=ride_shape,
@@ -4273,17 +4405,20 @@ class _NBEGMDiscreteSpec:
     """
 
     coh_of_liquid_dag: Callable
-    """Composed `coh` as a function of the liquid state, the discrete action, and
+    """Composed `coh` as a function of the liquid state, the discrete actions, and
     qualified params."""
     coh_param_names: tuple[str, ...]
     """Qualified parameter names `coh` reads (excluding the liquid state and the
-    discrete action)."""
+    discrete actions)."""
     liquid_state_name: str
     """Name of the liquid state the budget varies in."""
-    discrete_action_name: str
-    """Name of the discrete action enveloped over."""
-    discrete_action_codes: tuple[int, ...]
-    """Integer codes of the discrete action's grid values."""
+    discrete_actions: DiscreteActionCodes
+    """Each discrete action enveloped over, paired with its grid codes."""
+
+    @property
+    def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
+        """One binding of every declared discrete action, per envelope branch."""
+        return _branch_bindings(self.discrete_actions)
 
 
 def _collect_nbegm_discrete_spec(
@@ -4293,7 +4428,7 @@ def _collect_nbegm_discrete_spec(
     post_decision_function: str | None = None,
     continuous_state: StateName | None = None,
 ) -> _NBEGMDiscreteSpec:
-    """Collect the single binary/multi-valued discrete action of a smooth regime.
+    """Collect the discrete actions of a smooth regime and their grid codes.
 
     `continuous_state` names the Euler (liquid) axis explicitly; without it
     the single-state inference `state_names[0]` applies — wrong for a regime
@@ -4303,37 +4438,31 @@ def _collect_nbegm_discrete_spec(
     import inspect  # noqa: PLC0415
 
     space = context.state_action_space
-    if len(space.discrete_actions) != 1:
-        msg = (
-            "NBEGM discrete-envelope path supports exactly one discrete action; "
-            f"the regime declares {len(space.discrete_actions)}."
-        )
-        raise RegimeInitializationError(msg)
-    discrete_action_name = next(iter(space.discrete_actions))
-    codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
+    discrete_actions = _discrete_actions_of(space=space)
+    action_names = frozenset(name for name, _ in discrete_actions)
     liquid_state_name = _single_liquid_state_name(
         context=context, declared=continuous_state, path="discrete-envelope path"
     )
-    _fail_if_discrete_action_feeds_continuation(
-        context=context,
-        action_name=discrete_action_name,
-        liquid_state_name=liquid_state_name,
-        budget_target=budget_target,
-        post_decision_function=post_decision_function,
-    )
+    for action_name in sorted(action_names):
+        _fail_if_discrete_action_feeds_continuation(
+            context=context,
+            action_name=action_name,
+            liquid_state_name=liquid_state_name,
+            budget_target=budget_target,
+            post_decision_function=post_decision_function,
+        )
     coh_dag = concatenate_functions(dict(context.functions), targets=budget_target)
     coh_args = tuple(inspect.signature(coh_dag).parameters)
     coh_param_names = tuple(
         name
         for name in coh_args
-        if name not in (liquid_state_name, discrete_action_name)
+        if name != liquid_state_name and name not in action_names
     )
     return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
-        discrete_action_name=discrete_action_name,
-        discrete_action_codes=codes,
+        discrete_actions=discrete_actions,
     )
 
 
@@ -4349,21 +4478,24 @@ class _NBEGMScheduleDiscreteSpec:
     """
 
     coh_of_liquid_action_dag: Callable
-    """Composed budget node as a function of the liquid state, the discrete action,
+    """Composed budget node as a function of the liquid state, the discrete actions,
     and qualified params."""
     coh_param_names: tuple[str, ...]
     """Qualified parameter names the budget reads (excluding the liquid state and the
-    discrete action)."""
+    discrete actions)."""
     liquid_state_name: str
     """Name of the liquid (Euler) state the budget varies in."""
-    discrete_action_name: str
-    """Name of the discrete action enveloped over."""
-    discrete_action_codes: tuple[int, ...]
-    """Integer codes of the discrete action's grid values."""
+    discrete_actions: DiscreteActionCodes
+    """Each discrete action enveloped over, paired with its grid codes."""
     threshold_param_names: tuple[str, ...]
     """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
+
+    @property
+    def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
+        """One binding of every declared discrete action, per envelope branch."""
+        return _branch_bindings(self.discrete_actions)
 
 
 def _collect_nbegm_schedule_discrete_spec(
@@ -4373,32 +4505,27 @@ def _collect_nbegm_schedule_discrete_spec(
     continuous_state: StateName | None = None,
     post_decision_function: str | None = None,
 ) -> _NBEGMScheduleDiscreteSpec:
-    """Collect a single discrete action layered over a single-liquid cliff schedule."""
+    """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
 
     from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
     space = context.state_action_space
-    if len(space.discrete_actions) != 1:
-        msg = (
-            "NBEGM schedule+discrete path supports exactly one discrete action; "
-            f"the regime declares {len(space.discrete_actions)}."
-        )
-        raise RegimeInitializationError(msg)
-    discrete_action_name = next(iter(space.discrete_actions))
-    codes = tuple(int(code) for code in space.discrete_actions[discrete_action_name])
+    discrete_actions = _discrete_actions_of(space=space)
+    action_names = frozenset(name for name, _ in discrete_actions)
 
     liquid_state_name = _single_liquid_state_name(
         context=context, declared=continuous_state, path="schedule+discrete path"
     )
 
-    _fail_if_discrete_action_feeds_continuation(
-        context=context,
-        action_name=discrete_action_name,
-        liquid_state_name=liquid_state_name,
-        budget_target=budget_target,
-        post_decision_function=post_decision_function,
-    )
+    for action_name in sorted(action_names):
+        _fail_if_discrete_action_feeds_continuation(
+            context=context,
+            action_name=action_name,
+            liquid_state_name=liquid_state_name,
+            budget_target=budget_target,
+            post_decision_function=post_decision_function,
+        )
     user_functions = {
         name: func for name, func in context.functions.items() if callable(func)
     }
@@ -4421,7 +4548,7 @@ def _collect_nbegm_schedule_discrete_spec(
     coh_param_names = tuple(
         name
         for name in coh_args
-        if name not in (liquid_state_name, discrete_action_name)
+        if name != liquid_state_name and name not in action_names
     )
     first = schedules[0]
     threshold_param_names = tuple(
@@ -4432,8 +4559,7 @@ def _collect_nbegm_schedule_discrete_spec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
-        discrete_action_name=discrete_action_name,
-        discrete_action_codes=codes,
+        discrete_actions=discrete_actions,
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
     )
@@ -4530,14 +4656,15 @@ def _build_nbegm_schedule_discrete_core(
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
         values: list[Float1D] = []
         marginals: list[Float1D] = []
-        for code in spec.discrete_action_codes:
+        for binding in spec.branch_bindings:
 
-            def coh_of_liquid(scalar_liquid: FloatND, code: int = code) -> FloatND:
+            def coh_of_liquid(
+                scalar_liquid: FloatND,
+                binding: MappingProxyType[ActionName, int] = binding,
+            ) -> FloatND:
                 return spec.coh_of_liquid_action_dag(
-                    **{
-                        spec.liquid_state_name: scalar_liquid,
-                        spec.discrete_action_name: jnp.asarray(code),
-                    },
+                    **{spec.liquid_state_name: scalar_liquid},
+                    **{name: jnp.asarray(code) for name, code in binding.items()},
                     **coh_params,
                 )
 
@@ -4629,14 +4756,15 @@ def _build_nbegm_discrete_core(
         coh_params = {name: params[name] for name in discrete_spec.coh_param_names}
         empty_breakpoints = jnp.zeros((0,), dtype=liquid.dtype)
         choices: list[dict[str, Float1D]] = []
-        for code in discrete_spec.discrete_action_codes:
+        for binding in discrete_spec.branch_bindings:
 
-            def coh_of_liquid(scalar_liquid: FloatND, code: int = code) -> FloatND:
+            def coh_of_liquid(
+                scalar_liquid: FloatND,
+                binding: MappingProxyType[ActionName, int] = binding,
+            ) -> FloatND:
                 return discrete_spec.coh_of_liquid_dag(
-                    **{
-                        discrete_spec.liquid_state_name: scalar_liquid,
-                        discrete_spec.discrete_action_name: jnp.asarray(code),
-                    },
+                    **{discrete_spec.liquid_state_name: scalar_liquid},
+                    **{name: jnp.asarray(code) for name, code in binding.items()},
                     **coh_params,
                 )
 

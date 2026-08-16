@@ -32,7 +32,7 @@ def test_an_empty_batch_has_empty_outputs() -> None:
     outputs = resolve(
         jnp.empty((0,), dtype=dtype),
         jnp.empty((0,), dtype=dtype),
-        jnp.empty((0, 3), dtype=jnp.int32),
+        jnp.empty((0, 3), dtype=jnp.bool_),
         jnp.empty((0, 3), dtype=jnp.int32),
         jnp.empty((0, 3), dtype=jnp.int32),
         jnp.empty((0, 8), dtype=dtype),
