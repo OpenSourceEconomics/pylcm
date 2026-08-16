@@ -152,11 +152,9 @@ def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
 def test_a_coefficient_cannot_be_supplied_to_the_average_without_its_scale():
     """`shifts` is required, so no call can leave the scale question unasked.
 
-    The collective analogue of upstream's pin on
-    `_expectation_over_stochastic_nodes` and `_as_lottery`. A weight that came
-    from `scaled_joint_weight` means nothing without the scale it is held at,
-    so the signature offers no way to omit it: a caller states the scales, or
-    states `None` to say its weights are already on one.
+    A weight that came from `scaled_joint_weight` means nothing without the
+    scale it is held at, so the signature offers no way to omit it: a caller
+    states the scales, or states `None` to say its weights are already on one.
     """
     parameter = inspect.signature(zero_safe_average).parameters["shifts"]
 

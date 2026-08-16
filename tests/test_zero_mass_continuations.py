@@ -22,10 +22,8 @@ import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.Q_and_F import (
-    _expectation_over_stochastic_nodes,
-    _scalar_target_contribution,
-)
+from _lcm.regime_building.Q_and_F import _scalar_target_contribution
+from _lcm.regime_building.zero_safe import zero_safe_average
 from lcm.typing import Float1D, ScalarFloat
 from tests.conftest import DECIMAL_PRECISION
 
@@ -57,10 +55,12 @@ def _expectation(*, values: Float1D, weights: Float1D) -> ScalarFloat:
 
     A node's probability is `coefficient * 2**-shift`; every witness in this
     file states its probabilities directly, so the shift is zero throughout and
-    the coefficient *is* the probability.
+    the coefficient *is* the probability. Stating the shifts rather than passing
+    `None` keeps these witnesses on the scaled branch of the reduction, which is
+    the one the engine's stochastic-node averages take.
     """
-    return _expectation_over_stochastic_nodes(
-        values=values,
+    return zero_safe_average(
+        values,
         weights=weights,
         shifts=jnp.zeros(jnp.shape(weights), dtype=jnp.int32),
     )
@@ -155,22 +155,24 @@ def test_nan_weight_stays_poison() -> None:
     assert bool(jnp.isnan(got))
 
 
-def test_target_with_no_mass_at_all_contributes_nothing() -> None:
-    """A target whose nodes carry no mass contributes zero, not NaN."""
-    got = _expectation(
-        values=_array([1.0, 2.0]),
-        weights=_array([0.0, 0.0]),
-    )
-    np.testing.assert_array_almost_equal(got, 0.0, decimal=DECIMAL_PRECISION)
+@pytest.mark.parametrize(
+    "values",
+    [[1.0, 2.0], [-jnp.inf, -jnp.inf]],
+    ids=["finite", "infinite"],
+)
+def test_weights_with_no_mass_anywhere_are_rejected_rather_than_averaged(
+    values: list[float],
+) -> None:
+    """An average with no supporting mass is undefined, and says so eagerly.
 
-
-def test_target_with_no_mass_contributes_nothing_even_carrying_infinities() -> None:
-    """No mass anywhere means no branch, whatever the dead nodes carry."""
-    got = _expectation(
-        values=_array([-jnp.inf, -jnp.inf]),
-        weights=_array([0.0, 0.0]),
-    )
-    np.testing.assert_array_almost_equal(got, 0.0, decimal=DECIMAL_PRECISION)
+    Zero mass at a single node is a null event, but zero mass across every node
+    leaves `0/0` — there is no lottery to take a mean of. That is a caller bug
+    rather than an extended-real value, so the reduction raises instead of
+    publishing a number that would read like an answer. What the dead nodes
+    carry makes no difference: the mass is gone either way.
+    """
+    with pytest.raises(ValueError, match="total weight is exactly zero"):
+        _expectation(values=_array(values), weights=_array([0.0, 0.0]))
 
 
 def test_a_null_node_leaves_both_cotangents_finite() -> None:

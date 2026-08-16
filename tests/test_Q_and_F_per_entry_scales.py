@@ -23,11 +23,8 @@ import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.probability import scaled_exact_product
-from _lcm.regime_building.Q_and_F import (
-    _aggregate_joint_lottery,
-    _as_lottery,
-    _expectation_over_stochastic_nodes,
-)
+from _lcm.regime_building.Q_and_F import _aggregate_joint_lottery, _as_lottery
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.typing import Float1D, Int1D
 from _lcm.zero_safe import scaled_joint_weight
 from tests.conftest import DECIMAL_PRECISION
@@ -42,7 +39,7 @@ class _InheritedLinearExpectation(LinearExpectation):
     """
 
 
-@pytest.mark.parametrize("consumer", [_expectation_over_stochastic_nodes, _as_lottery])
+@pytest.mark.parametrize("consumer", [zero_safe_average, _as_lottery])
 def test_a_coefficient_cannot_be_supplied_without_its_scale(
     consumer: Callable[..., object],
 ) -> None:
@@ -97,9 +94,7 @@ def test_per_target_reduction_reads_each_node_on_its_own_scale() -> None:
     coefficients, shifts = _wide_target()
     values = jnp.asarray([0.0, jnp.finfo(_dtype()).max], dtype=_dtype())
 
-    got = _expectation_over_stochastic_nodes(
-        values=values, weights=coefficients, shifts=shifts
-    )
+    got = zero_safe_average(values, weights=coefficients, shifts=shifts)
 
     assert int(got > _smallest_safe_value()) == 0
 
@@ -109,8 +104,8 @@ def test_per_target_reduction_reads_each_node_on_its_own_scale_under_jit() -> No
     coefficients, shifts = _wide_target()
     values = jnp.asarray([0.0, jnp.finfo(_dtype()).max], dtype=_dtype())
 
-    got = jax.jit(_expectation_over_stochastic_nodes)(
-        values=values, weights=coefficients, shifts=shifts
+    got = jax.jit(lambda a, w, s: zero_safe_average(a, weights=w, shifts=s))(
+        values, coefficients, shifts
     )
 
     assert int(got > _smallest_safe_value()) == 0

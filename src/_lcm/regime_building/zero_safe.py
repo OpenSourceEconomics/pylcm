@@ -211,9 +211,7 @@ def zero_safe_average(
     the latter replaced it; the two agree, as their bit-for-bit equality on
     non-positive shifts implies.
 
-    The two reductions treat the scale differently, following
-    `_expectation_over_stochastic_nodes` in `Q_and_F.py`, against which this is
-    tested:
+    The two reductions treat the scale differently:
 
     - the **mass** lowers each weight onto the common scale before summing. A
       live node too far below that scale to register contributes no share of a
