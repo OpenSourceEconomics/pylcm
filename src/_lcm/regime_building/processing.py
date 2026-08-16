@@ -765,9 +765,13 @@ def _attach_gated_edge_folds(
                     leg,
                     fallback_state_projector=build_fallback_state_projector(
                         ref=leg.fallback,
-                        fallback_v_info=regime_to_v_interpolation_info[
+                        # A routed row lands in the fallback regime as a
+                        # SIMULATED subject, so it owes a coordinate on every
+                        # state that regime carries in simulation — the states
+                        # it carries only there (no solve axis) included.
+                        fallback_simulate_state_names=canonical_regimes[
                             leg.fallback.regime
-                        ],
+                        ].simulation.state_names,
                         target_regime_name=target_name,
                         target_state_names=regime_to_v_interpolation_info[
                             target_name
@@ -1170,7 +1174,8 @@ def _fail_if_gated_edges_invalid(
     leg's OPEN-branch target component names a target stakeholder (or is `None`
     for a singleton target); each fallback and gate reference names an existing
     regime, with a stakeholder iff that regime is collective, and a projection
-    covering exactly that regime's states; and every regime the edge reads
+    covering exactly the states that reference's own consumer needs
+    (`_fail_if_ref_invalid`); and every regime the edge reads
     (fallbacks + gate references) is active in every period its target is active
     (co-activity: the edge's Wbar reads those same-period Vs whenever the
     target is solved, so a reference that was never solved cannot be read).
@@ -1201,6 +1206,7 @@ def _fail_if_gated_edges_invalid(
                     ref=leg.fallback,
                     user_regimes=user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                    projection_phase="simulate",
                 )
             _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
             for ref_name, ref in edge.gate_refs.items():
@@ -1209,6 +1215,7 @@ def _fail_if_gated_edges_invalid(
                     ref=ref,
                     user_regimes=user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                    projection_phase="solve",
                 )
             _fail_if_gated_edge_references_inactive(
                 prefix=prefix,
@@ -1345,8 +1352,25 @@ def _fail_if_ref_invalid(
     ref: SamePeriodRef,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    projection_phase: Literal["solve", "simulate"],
 ) -> None:
-    """Reject an edge fallback / gate reference with an invalid endpoint."""
+    """Reject an edge fallback / gate reference with an invalid endpoint.
+
+    `projection_phase` says which of the reference regime's state sets the
+    projection owes a coordinate function for, and the two consumers of a
+    `SamePeriodRef` answer that differently:
+
+    - `"solve"` — a GATE REFERENCE only reads the reference regime's value
+      function, whose axes are that regime's solve states. A coordinate on a
+      state the solve grid has no axis for would have nothing to index.
+    - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
+      stakeholder's next-period row into the fallback regime, and forward
+      simulation carries every one of that regime's simulate states per
+      subject. A state left unprojected keeps whatever the row held before
+      the edge routed it there. The solve states are a subset, so the same
+      projection still serves the fold's V read, which picks the axes it
+      interpolates over by name.
+    """
     reference = user_regimes.get(ref.regime)
     if reference is None:
         msg = (
@@ -1374,11 +1398,19 @@ def _fail_if_ref_invalid(
             f"reference regime's stakeholders {reference.stakeholders}."
         )
         raise ModelInitializationError(msg)
-    expected_states = set(regime_to_v_interpolation_info[ref.regime].state_names)
+    if projection_phase == "simulate":
+        # Read off the reference's own declaration rather than its solved grid:
+        # a carried state is a `Phased` entry in `states` and never an axis of
+        # the V-interpolation info.
+        expected_states = set(simulate_variables_from_regime(reference).state_names)
+        coverage = "state the reference regime carries in simulation"
+    else:
+        expected_states = set(regime_to_v_interpolation_info[ref.regime].state_names)
+        coverage = "state of the reference regime's value function"
     if set(ref.projection) != expected_states:
         msg = (
             f"{prefix}the projection must supply exactly one coordinate function "
-            f"per state of the reference regime ({sorted(expected_states)}); got "
+            f"per {coverage} ({sorted(expected_states)}); got "
             f"{sorted(ref.projection)}."
         )
         raise ModelInitializationError(msg)

@@ -36,7 +36,12 @@ from types import MappingProxyType
 from typing import NoReturn, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions, rename_arguments, with_signature
+from dags import (
+    concatenate_functions,
+    get_ancestors,
+    rename_arguments,
+    with_signature,
+)
 from dags.tree import qname_from_tree_path
 
 from _lcm.regime_building.Q_and_F import (
@@ -454,26 +459,22 @@ def _reached_target_param_leaves(
     helper the consumer never calls, is not a leaf reached HERE and must not trip
     the fence; unioning the whole pool would reject those valid topologies purely
     on a name collision.
+
+    The closure is `dags.get_ancestors` over `dag_pool`, the same walk the
+    `concatenate_functions` call that actually compiles the consumer performs, so
+    the fence sees exactly the arguments that compilation would bind. Two of its
+    conventions the seeds have to respect:
+
+    - A target with no function in the pool raises, and `targets=None` would walk
+      EVERY node -- the whole-pool union this fence must not take. So the seeds
+      are filtered to pool nodes and passed as a list, empty when the consumer
+      enters the target graph nowhere.
+    - Its ancestor set spans free-parameter nodes as well as function nodes, so
+      subtracting the pool's own node names leaves the free leaves.
     """
-    produced = set(dag_pool)
-    reached: set[str] = set()
-    frontier = [name for name in seed_args if name in dag_pool]
-    while frontier:
-        node = frontier.pop()
-        if node in reached:
-            continue
-        reached.add(node)
-        frontier.extend(
-            arg
-            for arg in get_union_of_args([dag_pool[node]])
-            if arg in dag_pool and arg not in reached
-        )
-    leaves: set[str] = set()
-    for node in reached:
-        leaves |= set(get_union_of_args([dag_pool[node]]))
-    leaves -= produced
-    leaves -= set(state_names)
-    return frozenset(leaves)
+    seeds = [name for name in seed_args if name in dag_pool]
+    ancestors = get_ancestors(dag_pool, targets=seeds, include_targets=False)
+    return frozenset(ancestors - set(dag_pool) - set(state_names))
 
 
 def _projection_seed_args(ref: ResolvedSamePeriodRef) -> frozenset[str]:
@@ -1300,6 +1301,15 @@ def get_edge_fold(
 
     singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
 
+    # Whether the state mesh below is read at all. `_assemble_gate_kwargs` is its
+    # only consumer -- the gate-ref and fallback readers take the raw 1-D grids
+    # straight from `kwargs` -- and there a gate argument reaches the state branch
+    # exactly by naming a target state: the branches ahead of it (the value
+    # components, `D_target`, the gate refs) cannot carry a state name, since
+    # `_reject_gate_operand_state_name_collision` rejects that aliasing when the
+    # gate is compiled.
+    gate_reads_a_state = bool(set(gate_arg_names) & set(state_names))
+
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
     def fold(**kwargs: _ParamsLeaf) -> FloatND:
         same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
@@ -1321,16 +1331,19 @@ def get_edge_fold(
         }
         # Broadcast the target state grids to the full grid for any gate that
         # reads a state directly (supported for generality; the usual gate
-        # reads only value operands).
-        state_mesh = dict(
-            zip(
-                state_names,
-                jnp.meshgrid(
-                    *[jnp.asarray(kwargs[s]) for s in state_names], indexing="ij"
-                ),
-                strict=True,
+        # reads only value operands, and then nothing looks the mesh up, so the
+        # outer product is never formed).
+        state_mesh: dict[StateName, ContinuousState | DiscreteState] = {}
+        if gate_reads_a_state:
+            state_mesh = dict(
+                zip(
+                    state_names,
+                    jnp.meshgrid(
+                        *[jnp.asarray(kwargs[s]) for s in state_names], indexing="ij"
+                    ),
+                    strict=True,
+                )
             )
-        )
         gate_kwargs = _assemble_gate_kwargs(
             gate_arg_names=gate_arg_names,
             target_components=target_components,
@@ -1741,7 +1754,7 @@ _FALLBACK_PROJECTION_TARGET_PREFIX = "__fallback_state__"
 def build_fallback_state_projector(
     *,
     ref: ResolvedSamePeriodRef,
-    fallback_v_info: VInterpolationInfo,
+    fallback_simulate_state_names: tuple[StateName, ...],
     target_regime_name: RegimeName,
     target_state_names: tuple[StateName, ...],
     target_functions: EconFunctionsMapping,
@@ -1760,6 +1773,16 @@ def build_fallback_state_projector(
     identical projection-function construction (same `dag_pool`, same
     `concatenate_functions` targets) so the coordinates are guaranteed
     consistent with whatever the fold read.
+
+    **Which states it projects.** A written row is a SIMULATE-phase object, so
+    the projector covers the fallback regime's simulate states — its solve
+    states plus the states it carries only in simulation
+    (`Phased(solve=..., simulate=Grid)`). A carried state is no axis of the
+    fallback's solved V, so the fold's reader has nothing to read on it and
+    stays on the solve states; but forward simulation carries it per subject,
+    and a slot the projector skips keeps whatever the row held before the edge
+    routed it there. The two consumers therefore read the same projection
+    mapping over different, nested name sets, each picking its own by name.
 
     **Provenance.** Consistency with the fold is a claim about the projection's
     INPUTS, not only about how it is built.
@@ -1800,8 +1823,9 @@ def build_fallback_state_projector(
 
     Args:
         ref: The leg's resolved fallback reference (`ResolvedEdgeLeg.fallback`).
-        fallback_v_info: V-interpolation info of the FALLBACK regime (`ref.regime`),
-            fixing which state names to project.
+        fallback_simulate_state_names: Simulate-phase state names of the FALLBACK
+            regime (`ref.regime`) — its solve states plus its carried-only ones,
+            i.e. exactly the slots a routed row occupies there.
         target_regime_name: The regime the gated edge lands on, which qualifies
             the projections' parameter names and names the fenced target.
         target_state_names: The TARGET regime's own state names, i.e. exactly
@@ -1843,7 +1867,7 @@ def build_fallback_state_projector(
     )
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}
-    for state_name in fallback_v_info.state_names:
+    for state_name in fallback_simulate_state_names:
         target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
         projection_funcs[state_name] = concatenate_functions(
             functions={**dag_pool, target: qualified_ref.projection[state_name]},
@@ -1876,7 +1900,7 @@ def build_fallback_state_projector(
             state_name: projection_funcs[state_name](
                 **{arg: kwargs[arg] for arg in projection_args[state_name]}
             )
-            for state_name in fallback_v_info.state_names
+            for state_name in fallback_simulate_state_names
         }
 
     # Published for `route_gated_edges`, exactly like the simulate gate
