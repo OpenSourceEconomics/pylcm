@@ -1,23 +1,16 @@
 """Public-API witnesses for query-side envelope certification.
 
 Every case here drives only the public `envelope_at_query`. Nothing touches an
-internal symbol, so the file is neutral between the tolerance-based kernel this
-branch ships today and any exact replacement — it states a requirement on the
-published triple, not on how the triple is produced.
+internal symbol, so the file states a requirement on the published triple, not
+on how the triple is produced, and stays valid across changes of kernel.
 
 The oracle is exact rational arithmetic (`fractions.Fraction`), so no case can
 pass vacuously against a tolerance.
 
-One of the four families is `xfail(strict=True)` on this branch. That is a
-recorded defect, not a quarantine. It is a range failure rather than a precision
-failure: a quantity the kernel forms on the way to a decision leaves the working
-dtype even though the decision itself is an ordinary one. Extending precision
-cannot reach it — a double-double widens the significand, not the exponent — so
-it needs the quantity formed at a scale where it fits.
-
-`strict=True` is deliberate. When the exact kernel is mounted here the case
-starts passing, and strict xfail turns that into a failure until the marker is
-removed — so the fix cannot land while the file still claims the defect exists.
+All four families pass, including the one whose abscissa span overflows the
+working format. The exact winner decodes the stored endpoints rather than
+differencing them, so the infinite divisor that made that family unreadable
+never forms.
 """
 
 from fractions import Fraction
