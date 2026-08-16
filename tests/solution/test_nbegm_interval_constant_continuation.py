@@ -5,12 +5,16 @@ binds the liquid state to each interval's node and reuses that continuation row
 across the interval. That is exact only when the law's liquid dependence is
 piecewise-constant — a level switched at a threshold, whose derivative between
 breakpoints is zero. A smoothly varying dependence makes the midpoint-bound row
-wrong for the interval's other liquid points, so it is refused at model build.
+wrong for the interval's other liquid points, so it is refused.
+
+The probe needs parameter values to differentiate the law, so it runs on the first
+solve rather than at model build. These tests drive it directly, without the
+backward induction that would follow it.
 """
 
 import inspect
 from collections.abc import Mapping
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import cast
 
 import jax.numpy as jnp
@@ -18,27 +22,40 @@ import pytest
 
 from _lcm.solution.nbegm import (
     _fail_if_liquid_reading_next_state_varies_within_interval,
+    _ProbeArguments,
 )
+from _lcm.solution.preconditions import check_solver_params
 from lcm.exceptions import RegimeInitializationError
+from lcm.model import Model
 from lcm.transition import MarkovTransition
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
 
 
-def test_costate_law_varying_smoothly_in_liquid_is_rejected_at_build() -> None:
-    """A co-state whose law varies smoothly in the liquid state fails model build."""
+def _check_probes(model: Model) -> None:
+    """Run the solver's parameter-dependent preconditions, and nothing else."""
+    check_solver_params(
+        regimes=model._regimes,
+        flat_params=model._process_params(ride_toy.build_params()),
+    )
+
+
+def test_costate_law_varying_smoothly_in_liquid_is_refused() -> None:
+    """A co-state whose law varies smoothly in the liquid state is refused."""
+    model = ride_toy.build_model(
+        variant="nbegm",
+        n_liquid=12,
+        liquid_max=30.0,
+        n_savings=20,
+        savings_max=28.0,
+        n_consumption=8,
+        costate_reads_liquid=True,
+        costate_smooth=True,
+    )
+
     with pytest.raises(
         RegimeInitializationError, match=r"liquid|interval|continuation"
     ):
-        ride_toy.build_model(
-            variant="nbegm",
-            n_liquid=12,
-            liquid_max=30.0,
-            n_savings=20,
-            savings_max=28.0,
-            n_consumption=8,
-            costate_reads_liquid=True,
-            costate_smooth=True,
-        )
+        _check_probes(model)
 
 
 def test_costate_law_piecewise_constant_in_liquid_builds() -> None:
@@ -60,21 +77,23 @@ def test_costate_law_piecewise_constant_in_liquid_builds() -> None:
     assert "tracker" in model.user_regimes["alive"].states
 
 
-def test_transition_prob_varying_smoothly_in_liquid_is_rejected_at_build() -> None:
-    """A regime-transition probability varying smoothly in liquid fails model build."""
+def test_transition_prob_varying_smoothly_in_liquid_is_refused() -> None:
+    """A regime-transition probability varying smoothly in liquid is refused."""
+    model = ride_toy.build_model(
+        variant="nbegm",
+        n_liquid=12,
+        liquid_max=30.0,
+        n_savings=20,
+        savings_max=28.0,
+        n_consumption=8,
+        transition_reads_liquid=True,
+        transition_smooth=True,
+    )
+
     with pytest.raises(
         RegimeInitializationError, match=r"regime-transition probabilities"
     ):
-        ride_toy.build_model(
-            variant="nbegm",
-            n_liquid=12,
-            liquid_max=30.0,
-            n_savings=20,
-            savings_max=28.0,
-            n_consumption=8,
-            transition_reads_liquid=True,
-            transition_smooth=True,
-        )
+        _check_probes(model)
 
 
 def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
@@ -99,39 +118,43 @@ def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
     assert "liquid" in inspect.signature(transition["alive"].func).parameters
 
 
-def test_costate_law_the_probe_cannot_evaluate_is_rejected_at_build() -> None:
+def test_costate_law_the_probe_cannot_evaluate_is_refused() -> None:
     """A liquid-reading co-state law the constancy probe cannot differentiate
-    fails model build — the interval path never assumes an unverifiable law is
+    is refused — the interval path never assumes an unverifiable law is
     piecewise-constant."""
+    model = ride_toy.build_model(
+        variant="nbegm",
+        n_liquid=12,
+        liquid_max=30.0,
+        n_savings=20,
+        savings_max=28.0,
+        n_consumption=8,
+        costate_reads_liquid=True,
+        costate_unprobeable=True,
+    )
+
     with pytest.raises(RegimeInitializationError, match=r"probe|verify|constan"):
-        ride_toy.build_model(
-            variant="nbegm",
-            n_liquid=12,
-            liquid_max=30.0,
-            n_savings=20,
-            savings_max=28.0,
-            n_consumption=8,
-            costate_reads_liquid=True,
-            costate_unprobeable=True,
-        )
+        _check_probes(model)
 
 
-def test_unprobeable_budget_builds_with_warning_under_assume_declared() -> None:
+def test_unprobeable_law_warns_under_assume_declared() -> None:
     """`probe_failure="assume_declared"` turns an unverifiable-probe rejection
-    into a loud warning: the model builds and the warning names the asserted
+    into a loud warning: the solve proceeds and the warning names the asserted
     precondition."""
+    model = ride_toy.build_model(
+        variant="nbegm",
+        n_liquid=12,
+        liquid_max=30.0,
+        n_savings=20,
+        savings_max=28.0,
+        n_consumption=8,
+        costate_reads_liquid=True,
+        costate_unprobeable=True,
+        probe_failure="assume_declared",
+    )
+
     with pytest.warns(UserWarning, match=r"assume_declared"):
-        ride_toy.build_model(
-            variant="nbegm",
-            n_liquid=12,
-            liquid_max=30.0,
-            n_savings=20,
-            savings_max=28.0,
-            n_consumption=8,
-            costate_reads_liquid=True,
-            costate_unprobeable=True,
-            probe_failure="assume_declared",
-        )
+        _check_probes(model)
 
 
 def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
@@ -164,5 +187,7 @@ def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
             continuation_plan=plan,
             liquid_name="liquid",
             regime_name="toy",
-            int_arg_values={"phase": (0, 1, 2, 3)},
+            probe_arguments=_ProbeArguments(
+                int_arg_values=MappingProxyType({"phase": (0, 1, 2, 3)})
+            ),
         )

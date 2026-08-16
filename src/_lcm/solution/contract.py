@@ -37,7 +37,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.engine import StateActionSpace
+from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
@@ -457,6 +457,17 @@ class SolutionKernels:
     `None` for a regime that publishes no continuation. Initializes the rolling
     `next_regime_to_continuation` mapping and serves as the lowering argument when
     AOT-compiling a parent's kernel.
+    """
+
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Preconditions the engine runs once, on the first solve, against real params.
+
+    A solver whose scope condition is a property of the *evaluated* model — the
+    budget's affinity in the liquid state, a carried law's constancy between
+    breakpoints — cannot check it in `validate`, which runs before any parameter
+    value exists. It publishes the check here instead, and the engine calls each
+    entry in order as `check(flat_params=...)` the first time the model is solved.
+    Empty for a solver whose scope is decided by structure alone.
     """
 
 

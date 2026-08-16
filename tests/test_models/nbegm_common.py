@@ -134,6 +134,7 @@ def make_alive_dead_model(
     model_states: Mapping[str, Grid] | None = None,
     liquid_grid: Grid | None = None,
     dead_functions: Mapping[str, Callable[..., object]] | None = None,
+    fixed_params: Mapping[str, Any] | None = None,
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -164,6 +165,8 @@ def make_alive_dead_model(
         dead_functions: Override for the dead regime's function pool (defaults
             to the CRRA bequest); e.g. a constant utility for a zero-marginal
             (flat) continuation.
+        fixed_params: Parameters fixed at model construction rather than supplied
+            to `solve`.
 
     Returns:
         The assembled `Model`.
@@ -223,4 +226,5 @@ def make_alive_dead_model(
         ages=ages,
         regime_id_class=RegimeId,
         states=dict(model_states) if model_states else {},
+        fixed_params=dict(fixed_params) if fixed_params else {},
     )

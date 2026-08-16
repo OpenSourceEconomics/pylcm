@@ -1550,7 +1550,6 @@ def _envelope_blocked(
     )
 
 
-# ---------------------------------------------------------------------------
 # PARKED -- this branch's envelope-query reduction, deliberately off the code path.
 #
 # `feat/nb-egm` and `feat/continuous-outer` independently rewrote
@@ -1564,7 +1563,6 @@ def _envelope_blocked(
 # verbatim, intentionally unreferenced. Every exact-arithmetic primitive it and
 # `nbegm_step.py` depend on stays defined, so nothing importing them breaks:
 # reviving it is a one-line rename back.
-# ---------------------------------------------------------------------------
 
 
 def _dekker_split_factor(dtype: jnp.dtype) -> float:
