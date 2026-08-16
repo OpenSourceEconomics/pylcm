@@ -947,25 +947,36 @@ def _iter_edge_topologies(
     through. A collective source folds one leg per stakeholder onto a trailing
     axis, which is replicated: the fold's legs differ in their gate and
     fallback, not in which slice of the target grid they read.
+
+    Both the state-action space and the sharding plan are the target's alone,
+    so they are built once per target however many sources reach it. The space
+    completes runtime grids from params, which is the expensive half.
     """
     n_devices = len(jax.devices())
+    target_shapes: dict[RegimeName, tuple[int, ...]] = {}
+    target_shardings: dict[RegimeName, jax.NamedSharding | None] = {}
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
         for target_name in source.gated_edges:
-            target = regimes[target_name]
-            target_states = target.solution.state_action_space(
-                regime_params=flat_params[target_name]
-            ).states
-            shape = tuple(len(v) for v in target_states.values())
-            sharding_plan = _build_regime_sharding(
-                grids=target.solution.grids, n_devices=n_devices
-            )
-            sharding = (
-                sharding_plan.V_arr_sharding(tuple(target_states))
-                if sharding_plan is not None
-                else None
-            )
+            if target_name not in target_shapes:
+                target = regimes[target_name]
+                target_states = target.solution.state_action_space(
+                    regime_params=flat_params[target_name]
+                ).states
+                target_shapes[target_name] = tuple(
+                    len(v) for v in target_states.values()
+                )
+                sharding_plan = _build_regime_sharding(
+                    grids=target.solution.grids, n_devices=n_devices
+                )
+                target_shardings[target_name] = (
+                    sharding_plan.V_arr_sharding(tuple(target_states))
+                    if sharding_plan is not None
+                    else None
+                )
+            shape = target_shapes[target_name]
+            sharding = target_shardings[target_name]
             if source.stakeholders is not None:
                 shape = (*shape, len(source.stakeholders))
                 if sharding is not None:
