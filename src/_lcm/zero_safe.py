@@ -252,6 +252,11 @@ def zero_safe_weighted_term(
     return balanced_product(effective_weight, safe_value)
 
 
+#: Longest permutable axis whose reduction order cannot matter: a single entry
+#: has no order, and two entries are one commutative addition.
+_MAX_ORDER_FREE_AXIS_LENGTH = 2
+
+
 def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
     """Sum `values` after canonicalising the floating-point reduction order.
 
@@ -264,6 +269,13 @@ def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
     This is not a correctly-rounded summation algorithm; it is the shared invariant
     used where identifier permutations must not select a different reduction tree.
 
+    Associativity is what fails; commutativity does not. An axis of one entry has
+    no order to canonicalise, and an axis of two is a single addition, which
+    IEEE-754 evaluates to the same bits in either operand order — signed zeros,
+    infinities and NaN included. So the sort provably changes nothing there and is
+    skipped, which is the ordinary path: a model whose regimes reach one or two
+    targets pays for the canonicalisation only where it can matter.
+
     Args:
         values: Contributions to sum.
         axis: Axis containing the permutable contributions.
@@ -272,6 +284,8 @@ def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
         The value-ordered sum over `axis`.
     """
     arr = jnp.asarray(values)
+    if arr.shape[axis] <= _MAX_ORDER_FREE_AXIS_LENGTH:
+        return jnp.sum(arr, axis=axis)
     return jnp.sum(jnp.sort(arr, axis=axis), axis=axis)
 
 
