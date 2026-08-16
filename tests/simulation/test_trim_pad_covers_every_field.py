@@ -142,14 +142,19 @@ def test_the_coverage_check_rejects_a_field_left_behind(skipped: str):
         f for f in dataclasses.fields(PeriodRegimeSimulationData) if f.name == skipped
     )
     padded_column = _column(field, _N_PADDED)
-    regression = dataclasses.replace(
-        trimmed_data,
-        **{
-            skipped: MappingProxyType({"a": padded_column, "b": padded_column})
-            if skipped in _MAPPING_FIELDS
-            else padded_column
-        },
+    value = (
+        MappingProxyType({"a": padded_column, "b": padded_column})
+        if skipped in _MAPPING_FIELDS
+        else padded_column
     )
+    # Written past the constructor rather than through `dataclasses.replace`.
+    # `PeriodRegimeSimulationData.__post_init__` rejects exactly the record this
+    # control needs to build — a per-subject field at a width its siblings do
+    # not share — so constructing it normally raises before the probe is
+    # reached. Setting the field afterwards produces the same object the defect
+    # would have produced, without asking the structure to accept it.
+    regression = dataclasses.replace(trimmed_data)
+    object.__setattr__(regression, skipped, value)
     widths = _widths(regression)
     assert any(w != _N_REAL for w in widths.values()), (
         f"leaving {skipped} untrimmed was not observable -- the check is blind"

@@ -815,11 +815,11 @@ class Regime:
     """This regime's gated edges keyed by TARGET regime name, or empty.
 
     Non-empty only for a source regime declaring
-    `gated_edges`: each entry folds a gated continuation object ``Wbar`` on the
+    `gated_edges`: each entry folds a gated continuation object `Wbar` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
 
-    Each entry carries its own compiled callables — the ``Wbar`` fold, the
+    Each entry carries its own compiled callables — the `Wbar` fold, the
     simulate-side gate evaluator, and one fallback state projector per leg —
     so a consumer reads them off the edge it is already holding rather than
     re-pairing parallel mappings by target name or by leg position.
@@ -957,6 +957,11 @@ def _distribute_states_to_devices(
     return MappingProxyType(placed)
 
 
+#: Highest rank a simulated value array can carry: the subject axis, plus at
+#: most one trailing stakeholder axis for a collective regime.
+_MAX_SIMULATED_V_RANK = 2
+
+
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
@@ -999,6 +1004,44 @@ class PeriodRegimeSimulationData:
     path must refuse whenever any entry is True — the recorded action there is
     the gridded fallback, not the model's off-grid optimum.
     """
+
+    def __post_init__(self) -> None:
+        """Check `V_arr` against the per-subject axis every other field carries.
+
+        `V_arr` is rank-polymorphic so a collective regime can publish one value
+        per stakeholder, which means its annotation admits any rank and cannot
+        state the agreement the record depends on: a leading subject axis
+        matching `in_regime`, and at most one trailing role axis. A `V_arr` that
+        disagrees misaligns every value in the simulated frame against the
+        actions and states beside it, and nothing downstream re-derives the
+        pairing.
+
+        Raises:
+            ValueError: `V_arr` has no subject axis, has more than one axis
+                beyond it, or its leading axis is not the subject axis.
+        """
+        # Reached with a non-array leaf whenever a pytree traversal rebuilds the
+        # record from something other than arrays — a shape-dtype struct still
+        # answers, an arbitrary placeholder does not. Topology is only defined
+        # for a leaf that carries a shape.
+        V_shape = getattr(self.V_arr, "shape", None)
+        mask_shape = getattr(self.in_regime, "shape", None)
+        if V_shape is None or mask_shape is None:
+            return
+        if not 1 <= len(V_shape) <= _MAX_SIMULATED_V_RANK:
+            msg = (
+                f"V_arr must be a per-subject value array, optionally with a "
+                f"trailing stakeholder axis for a collective regime, so its "
+                f"rank is 1 or 2; got shape {V_shape}."
+            )
+            raise ValueError(msg)
+        if V_shape[0] != mask_shape[0]:
+            msg = (
+                f"V_arr's leading axis is the subject axis and must match the "
+                f"per-subject `in_regime` mask: V_arr has {V_shape[0]} rows, "
+                f"`in_regime` has {mask_shape[0]}."
+            )
+            raise ValueError(msg)
 
 
 # Register as a JAX pytree so traversals like `jax.block_until_ready` and

@@ -236,13 +236,12 @@ def trim_pad_from_raw_results(
 
     Note:
         The fields are read off the dataclass rather than enumerated here. An
-        enumeration is a second, silent copy of the structure's definition, and it
-        went stale: `nested_policy_fallback` was added to
-        `PeriodRegimeSimulationData` without being added to this list, so
-        `dataclasses.replace` carried the untrimmed field straight through. The
-        result was a leaf `batch_size`-padded to 24 rows against a 21-row
-        `_in_regime` mask, and `to_dataframe` died on the boolean index. Deriving
-        the list means the next field added cannot reintroduce that.
+        enumeration is a second copy of the structure's definition that nothing
+        keeps in step, and a field it omits is carried through at its padded
+        width — a leaf padded to the batch multiple against a shorter
+        `_in_regime` mask, which `to_dataframe` then indexes out of bounds.
+        Deriving the list means a field added to the structure is trimmed
+        without editing this function.
 
     """
     trimmed: dict[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]] = {}
