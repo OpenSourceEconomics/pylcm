@@ -13,8 +13,16 @@ from tests.test_models import nbegm_ride_discrete_toy as toy
 
 # Partitioning the branch axis leaves every operation and its operand order
 # untouched, so the two solves differ only by the vectorized kernel XLA emits for
-# each block width — a gap of a few ULP, not of an economic magnitude.
-_PARTITION_ULP = 16
+# each block width — a gap of a few ULP, not of an economic magnitude. The band
+# is wider here than for the shallower partitions elsewhere in the suite because
+# the branch axis accumulates over every declared discrete-action combination.
+# Measured over the 3120 compared cells: at float32 the worst gap is 18 ULP with
+# five cells above 16, at float64 it is 12 with none; both precisions leave
+# everything else at or below 3 ULP and nothing anywhere near 64. The bound keeps
+# headroom over that band while staying orders of magnitude below what a
+# partition-dependent *reduction* — a sum or max taken over a block instead of
+# the whole branch axis — would cost.
+_PARTITION_ULP = 32
 
 
 def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
