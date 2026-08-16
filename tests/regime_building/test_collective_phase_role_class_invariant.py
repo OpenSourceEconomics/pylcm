@@ -1,42 +1,35 @@
 """Static class invariant: a collective builder may not drop a phase role.
 
-Round 2 found `_build_Q_and_F_per_period`'s collective branch calling
-`get_Q_and_F_collective` with only `(transitions, functions)`, dropping the arguments
-that carry the solve/simulate phase split. That witness was repaired -- and then the
-SAME class turned up one function away, in `get_Q_and_F_terminal_collective`. A
-signature that DEFAULTS a phase argument makes its omission silent by construction, so
-per-site repair keeps losing to the next collective twin.
+A collective builder is a twin of a singleton one, and the arguments carrying the
+solve/simulate phase split are exactly the ones a twin can quietly fail to thread. A
+signature that DEFAULTS such an argument makes its omission silent by construction, so
+repairing one call site does nothing about the next twin written beside it.
 
-This is the fail-closed replacement, at the level the class actually lives: the
-source is parsed and every collective twin is required to expose -- and correctly
-route -- every phase-role argument its singleton twin exposes. Adding a new
-`get_X_collective` next to a `get_X` that takes phase arguments FAILS THIS TEST until
-the twin threads them too.
+This checks the class rather than a site: the source is parsed, and every collective
+twin is required to expose -- and correctly route -- every phase-role argument its
+singleton twin exposes. Adding a `get_X_collective` next to a `get_X` that takes phase
+arguments FAILS THIS TEST until the twin threads them too.
 
-Three of the four roles this module originally tracked (`flow_transitions`,
-`flow_stochastic_transition_names`, `next_state_names`) no longer exist upstream:
-`next_<state>` is now reserved for a transition's OUTPUT, so no utility, feasibility or
-value constraint may read one, and the flow therefore holds no transition node to
-resolve and needs no pool of its own. What remains is the role that still splits the
-two phases -- `continuation_functions` -- plus the complementary requirement that the
-flow be built from `functions` and NOT from the continuation pool. The invariant is
-generic over `PHASE_ARGS`, so it re-arms automatically if a future role is added.
+One role splits the two phases today, `continuation_functions`, alongside the
+complementary requirement that the flow be built from `functions` and NOT from the
+continuation pool. `next_<state>` is reserved for a transition's OUTPUT, so no utility,
+feasibility or value constraint may read one and the flow holds no transition node to
+resolve. The invariant is generic over `PHASE_ARGS`, so it re-arms by itself if a role
+is added.
 
-The two twins share one continuation builder, `_get_compute_CE`, which takes the
-stakeholder axis as a parameter; the collective twin no longer holds a copy of the
-per-target continuation. So the pool now travels two hops, and the invariant follows
-it over both: the twins are pinned to hand `continuation_pool` to the aggregator, and
-the shared `_build_target_continuation` is pinned to resolve BOTH continuation roles --
-the state law and the stochastic weights -- against the pool it was handed. The
-per-role guard moved one frame down rather than going away, because the two roles did
-not merge when the two builders did, and a single-role bypass is still constructible
-there.
+Both twins reach the continuation through one builder, `_get_compute_CE`, which takes
+the stakeholder axis as a parameter, so the pool travels two hops and the invariant
+follows it over both: the twins are pinned to hand `continuation_pool` to the
+aggregator, and `_build_target_continuation` is pinned to resolve BOTH continuation
+roles -- the state law and the stochastic weights -- against the pool it was handed.
+Sharing a builder does not merge the two roles, and a single-role bypass is still
+constructible one frame down, which is where the per-role guard sits.
 
 The mutation catalogue below is the evidence that the checker has teeth: each
 mutation is one member of the counterexample class (drop the argument from the
 signature, drop it at the dispatch, pair a role with the wrong pool, skip age
 specialization, hide a builder in a stakeholder-only branch), and every one must be
-rejected. One reproduces the defect actually found.
+rejected.
 
 Checked against the REAL history, not only against synthetic mutations: at `f0f7173`
 `get_Q_and_F_collective` exposed NO phase argument and the dispatch passed none. The
