@@ -70,6 +70,17 @@ from lcm.exceptions import InvalidSimulationInputError, InvalidValueFunctionErro
 from lcm.result import SimulationResult
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
+# What `substitute_gated_edge_continuations` returns for one (regime, period):
+# the substituted continuation values, and the same-period mapping each firing
+# edge was folded on.
+type _GatedEdgeFolds = tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
+]
+
+# Gated-edge folds already evaluated, keyed by source regime and period.
+type _GatedEdgeFoldCache = dict[tuple[RegimeName, int], _GatedEdgeFolds]
+
 
 def simulate(
     *,
@@ -188,6 +199,24 @@ def simulate(
     # round-trip for downstream targets).
     host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
 
+    # A gated edge's `Wbar` fold reads the solved value arrays, the dissolution
+    # flags, the params and the target's own period-`t + 1` grid — nothing that
+    # says which subjects are being simulated — so every chunk after the first
+    # would recompute an identical array. Memoize it per (source regime,
+    # period) and share it across chunks.
+    #
+    # The store keeps one target-V-shaped `Wbar` per (regime, period, edge)
+    # alive until the last chunk finishes, rather than letting each period's
+    # drop. A chunked run pays that to stop re-folding; a single pass visits
+    # each (regime, period) once and has nothing to save, so it keeps nothing —
+    # and neither does a model that declares no edge.
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = (
+        {}
+        if batch_size < n_subjects
+        and any(regime.gated_edges for regime in regimes.values())
+        else None
+    )
+
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
         # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
@@ -215,6 +244,7 @@ def simulate(
             seed=seed,
             logger=logger,
             own_stakeholder=own_stakeholder,
+            gated_edge_fold_cache=gated_edge_fold_cache,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -301,6 +331,7 @@ def _simulate_subject_chunk(
     logger: logging.Logger,
     own_stakeholder: str | None = None,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -310,6 +341,8 @@ def _simulate_subject_chunk(
     sliced by global index. The key stream is re-derived from `seed` here so the
     per-period carry is identical across chunks (it is subject-count-independent).
     `own_stakeholder`: see `simulate()`'s docstring (ROW-SPLIT synthetic mode).
+    `gated_edge_fold_cache`: the caller's chunk-spanning store of gated-edge
+    folds, or `None` to evaluate each fold locally.
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
@@ -395,6 +428,7 @@ def _simulate_subject_chunk(
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
                     own_stakeholder=own_stakeholder,
+                    gated_edge_fold_cache=gated_edge_fold_cache,
                 )
             )
             states = new_states
@@ -549,6 +583,7 @@ def _simulate_regime_in_period(
     original_n_subjects: int | None = None,
     own_stakeholder: str | None = None,
     sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None = None,
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -595,6 +630,12 @@ def _simulate_regime_in_period(
         sim_policy: The regime's published off-grid simulation policy for this
             period, or `None`. Consumed only where the regime qualifies
             (`regime.simulation.egm_policy_read`).
+        gated_edge_fold_cache: Store of gated-edge folds already evaluated for
+            some (regime, period), shared across subject chunks by `simulate`.
+            The fold depends on no subject, so a chunk that finds its
+            (regime, period) there reuses it instead of recomputing an
+            identical array. `None` evaluates the fold locally and keeps
+            nothing, which is what an unchunked run wants.
 
     Returns:
         Tuple containing:
@@ -638,17 +679,29 @@ def _simulate_regime_in_period(
     # these rather than interpolating a baked boolean.
     # No-op (returns the inputs unchanged) for a regime without
     # `gated_edges`.
-    next_regime_to_V_arr, same_period_mappings = substitute_gated_edge_continuations(
-        regime=regime,
-        regime_name=regime_name,
-        regimes=regimes,
-        period=period,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        base_state_action_spaces=base_state_action_spaces,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-        flat_params=flat_params,
-    )
+    #
+    # Every input the fold reads is fixed for the whole `simulate` call, so a
+    # chunked run evaluates it once per (regime, period) and reads the rest off
+    # `gated_edge_fold_cache` (see `simulate`). Both halves of the result are
+    # immutable and consumed read-only, so sharing them across chunks is a
+    # reuse, not an aliasing hazard.
+    cache = gated_edge_fold_cache if regime.gated_edges else None
+    folds = None if cache is None else cache.get((regime_name, period))
+    if folds is None:
+        folds = substitute_gated_edge_continuations(
+            regime=regime,
+            regime_name=regime_name,
+            regimes=regimes,
+            period=period,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            base_state_action_spaces=base_state_action_spaces,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+            flat_params=flat_params,
+        )
+        if cache is not None:
+            cache[regime_name, period] = folds
+    next_regime_to_V_arr, same_period_mappings = folds
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we

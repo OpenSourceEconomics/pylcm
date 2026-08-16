@@ -77,6 +77,7 @@ from collections.abc import Callable, Mapping
 from inspect import signature
 from types import MappingProxyType
 from typing import cast
+from weakref import WeakKeyDictionary
 
 import jax
 import jax.numpy as jnp
@@ -523,18 +524,75 @@ def _call_vmapped_with_accepted_kwargs(
     Passing the population size explicitly makes the stateless case a
     legal broadcast instead of a crash.
     """
-    accepted = set(signature(func).parameters)
+    accepted = _accepted_arg_names(func)
     static = {name: value for name, value in static_kwargs.items() if name in accepted}
     batched = {
         name: value
         for name, value in batched_kwargs.items()
         if name in accepted and name not in static
     }
+    return _population_call(func, axis_size=axis_size)(batched, static)
 
-    def _call_one_subject(one_subject_kwargs: Mapping[str, object]) -> object:
-        return func(**one_subject_kwargs, **static)
 
-    return jax.vmap(_call_one_subject, axis_size=axis_size)(batched)
+# What each edge callable was built once and for all with. Weakly keyed, so a
+# model's compiled artifacts are released together with the model.
+_ACCEPTED_ARG_NAMES: WeakKeyDictionary[Callable, frozenset[str]] = WeakKeyDictionary()
+_POPULATION_CALLS: WeakKeyDictionary[Callable, dict[int, Callable]] = (
+    WeakKeyDictionary()
+)
+
+
+def _accepted_arg_names(func: Callable) -> frozenset[str]:
+    """Return the argument names `func` accepts, read off its signature once.
+
+    An edge callable's signature is fixed at model build, while the router asks
+    for it once per edge per period per subject chunk.
+    """
+    accepted = _ACCEPTED_ARG_NAMES.get(func)
+    if accepted is None:
+        accepted = frozenset(signature(func).parameters)
+        _ACCEPTED_ARG_NAMES[func] = accepted
+    return accepted
+
+
+def _population_call(func: Callable, *, axis_size: int) -> Callable:
+    """Return `func` mapped over a population of `axis_size` subjects, compiled.
+
+    Built ONCE per `(func, axis_size)` and reused for every later call.
+    Rebuilding it per call would leave the compiled executable unreachable —
+    `jax.jit` keys its cache on the wrapped function object, so a fresh
+    closure each time recompiles each time — and every period and every
+    subject chunk calls the same edge callable again over the same population
+    size.
+
+    The per-subject and the shared arguments enter as two POSITIONAL
+    arguments, because `in_axes` addresses positional arguments only: a
+    keyword argument is always mapped along axis 0, which is exactly what the
+    shared arguments (regime params, whole-grid value arrays) must not be.
+    Passing them through rather than closing over them is what makes the built
+    call reusable across periods, whose params and value arrays differ.
+
+    `jax.jit` wraps the `vmap` rather than the scalar function, so the whole
+    population is one compiled executable and one dispatch instead of an
+    op-by-op eager traversal per call. Its cache keys on the arguments'
+    shapes, dtypes and pytree structure, all of which are properties of the
+    model rather than of the period or chunk, so the compilation is paid once.
+    """
+    per_axis_size = _POPULATION_CALLS.setdefault(func, {})
+    call = per_axis_size.get(axis_size)
+    if call is None:
+
+        def _call_one_subject(
+            one_subject_kwargs: Mapping[str, object],
+            shared_kwargs: Mapping[str, object],
+        ) -> object:
+            return func(**one_subject_kwargs, **shared_kwargs)
+
+        call = jax.jit(
+            jax.vmap(_call_one_subject, in_axes=(0, None), axis_size=axis_size)
+        )
+        per_axis_size[axis_size] = call
+    return call
 
 
 def _select_own_leg(
