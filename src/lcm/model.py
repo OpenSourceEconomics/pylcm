@@ -59,6 +59,7 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.preconditions import check_solver_params
 from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -177,6 +178,15 @@ class Model:
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
+    _solver_param_checks_done: bool
+    """Whether the solvers' parameter-dependent preconditions have been checked.
+
+    Set on the first solve. Those checks differentiate the model's DAG, so an
+    estimation loop pays for them once; what they test — the budget's affinity
+    in the liquid state, a carried law's constancy between breakpoints — is a
+    property of the model's functional structure, not of the parameter vector.
+    """
+
     _simulate_compile_lock: threading.Lock
     """Serialises mutations of `_simulate_compile_cache` and
     `_warned_n_subjects`.
@@ -258,6 +268,7 @@ class Model:
         self.n_subjects = n_subjects
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
+        self._solver_param_checks_done = False
         self._simulate_compile_lock = threading.Lock()
 
         # The single canonical activity schedule: every regime's `active`
@@ -536,6 +547,9 @@ class Model:
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
+        if not self._solver_param_checks_done:
+            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            self._solver_param_checks_done = True
         try:
             internal_result = solve(
                 flat_params=flat_params,

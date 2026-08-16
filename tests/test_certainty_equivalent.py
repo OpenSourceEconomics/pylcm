@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from fractions import Fraction
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ import pytest
 
 from _lcm.certainty_equivalent import power_inverse, power_transform
 from _lcm.probability import normalized_scaled_weights, scaled_exact_product
+from _lcm.solution.preconditions import check_solver_params
 from lcm import (
     AgeGrid,
     CertaintyEquivalent,
@@ -187,6 +188,27 @@ def _next_regime() -> ScalarInt:
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 _CONSUMPTION = LinSpacedGrid(start=0.5, stop=5.0, n_points=5)
+
+
+def _check_probes(model: Model) -> None:
+    """Run the solver's parameter-dependent preconditions, and nothing else.
+
+    Those preconditions run on the first solve, because differentiating a budget
+    or a period flow needs parameter values. The flow probe sweeps consumption
+    and the discrete states, so every declared parameter can take the same
+    stand-in value here.
+    """
+
+    def _fill(node: object) -> object:
+        if isinstance(node, Mapping):
+            return {key: _fill(value) for key, value in node.items()}
+        return 1.0
+
+    params = cast("dict[str, Any]", _fill(model.get_params_template()))
+    check_solver_params(
+        regimes=model._regimes,
+        flat_params=model._process_params(params),
+    )
 
 
 def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
@@ -464,13 +486,12 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
 
 
 def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
-    """A flow that is not a single power of consumption is rejected at build.
+    """A flow that is not a single power of consumption is refused.
 
     The Epstein-Zin Euler inversion is closed-form only for `q = A c^phi` with
     `phi > 0`; the flow's consumption elasticity `c q'(c)/q(c)` is probed at
-    several points, so a varying-elasticity flow (here `c + 0.1 c^2`) fails at
-    model build instead of silently solving a locally fitted power's
-    first-order condition.
+    several points, so a varying-elasticity flow (here `c + 0.1 c^2`) is refused
+    instead of silently solving a locally fitted power's first-order condition.
     """
 
     @categorical(ordered=False)
@@ -521,12 +542,14 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         },
         functions={"utility": _dead_utility},
     )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=40, stop=41, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
     with pytest.raises(RegimeInitializationError, match="single power"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=40, stop=41, step="Y"),
-            regime_id_class=_RegimeId,
-        )
+        _check_probes(model)
 
 
 def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
@@ -606,7 +629,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
 
 
 def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
-    """A flow that is negative at the probe points is rejected at build.
+    """A flow that is negative at the probe points is refused.
 
     The Epstein-Zin recursion requires a strictly positive period flow
     `q = A c^phi` with `A > 0`: the power mean and the aggregator take
@@ -663,12 +686,14 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         },
         functions={"utility": _dead_utility},
     )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=40, stop=41, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
     with pytest.raises(RegimeInitializationError, match="positive"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=40, stop=41, step="Y"),
-            regime_id_class=_RegimeId,
-        )
+        _check_probes(model)
 
 
 def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():

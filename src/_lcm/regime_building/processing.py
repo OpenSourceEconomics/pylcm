@@ -1115,6 +1115,7 @@ def _build_solution_phase(
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_template=continuation_template,
+        param_checks=solver_kernels.param_checks,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )

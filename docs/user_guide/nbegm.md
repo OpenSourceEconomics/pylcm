@@ -287,11 +287,19 @@ it, stating the domain on which it is smooth.
 When the continuation reads the *current* liquid state (a co-state's next-state law or a
 regime-transition probability switched at a declared threshold), `NBEGM` solves one
 continuation row per declared interval. This is exact only if that liquid dependence is
-piecewise-constant on the declared partition. A build-time probe screens for it and
-**refuses by default** (`probe_failure="reject"`) when it detects smooth dependence or
-cannot evaluate the model's DAG. Passing `probe_failure="assume_declared"` asserts the
+piecewise-constant on the declared partition. A probe screens for it and **refuses by
+default** (`probe_failure="reject"`) when it detects smooth dependence or cannot
+differentiate the model's DAG. Passing `probe_failure="assume_declared"` asserts the
 precondition explicitly (emitting a warning); every exactness claim is then conditional
 on that assertion, which must be discharged by independent validation.
+
+The probe — and the affine-budget probe alongside it — runs on the **first solve**, not
+at model build, because it needs parameter *values*: a budget reading tax schedules or a
+law reading an interpolation table cannot be differentiated until those are supplied.
+Running it there is also what makes it meaningful, since the real bracket structure is
+what gets differentiated. It runs once per model: what it tests is a property of the
+model's functional structure, so an estimation loop pays for it on its first iteration
+only.
 
 The probe is a finite diagnostic, not a certificate — a dependence whose derivative
 vanishes at every probed point passes undetected.
