@@ -29,6 +29,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
+    ParamCheck,
     PeriodKernel,
     SolutionKernels,
     Solver,
@@ -273,6 +274,7 @@ class NEGM(Solver):
         template_period = (
             all_periods[0] if all_periods else (active[0] if active else 0)
         )
+        keeper_param_checks: tuple[ParamCheck, ...] = ()
         for group_periods in groups:
             representative_period = (
                 group_periods[0] if group_periods else (template_period)
@@ -298,6 +300,7 @@ class NEGM(Solver):
             group_keeper_kernels = self.inner.build_period_kernels(
                 context=keeper_context
             )
+            keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = group_keeper_kernels.continuation_template
             group_coh_shift_func = _build_coh_shift_function(
                 functions=group_functions,
@@ -348,6 +351,9 @@ class NEGM(Solver):
                 template=keeper_continuation_template,
                 n_candidates=outer_grid_values.shape[0] + 1,
             ),
+            # Both inner margins are solved by the inner solver, so both sets of
+            # parameter-dependent preconditions still apply to this regime.
+            param_checks=(*adjuster_kernels.param_checks, *keeper_param_checks),
         )
 
 
