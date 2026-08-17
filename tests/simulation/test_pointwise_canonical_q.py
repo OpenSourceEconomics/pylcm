@@ -27,13 +27,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.envelope_configs import envelope_config
 
 _DISCOUNT_FACTOR = 0.98
 _BONUS = 10.0

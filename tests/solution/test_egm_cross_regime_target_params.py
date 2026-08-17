@@ -202,12 +202,8 @@ def _params(*, factor_is_fixed: bool) -> dict:
     if not factor_is_fixed:
         # Free param: supplied at solve time under the target regime's
         # pension function.
-        params["young"] = {
-            "pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}
-        }
-        params["old"] = {
-            "pension_value": {"pension_factor": OLD_PENSION_FACTOR}
-        }
+        params["young"] = {"pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}}
+        params["old"] = {"pension_value": {"pension_factor": OLD_PENSION_FACTOR}}
     return params
 
 
@@ -289,9 +285,7 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
     )
     fixed_params = (
         {
-            "young": {
-                "pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}
-            },
+            "young": {"pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}},
             "old": {"pension_value": {"pension_factor": OLD_PENSION_FACTOR}},
         }
         if factor_is_fixed

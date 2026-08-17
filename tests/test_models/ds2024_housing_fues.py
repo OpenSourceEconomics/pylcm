@@ -44,12 +44,12 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 from tests.test_models.ds2024_housing import (
     Income,
     income_transition,
     income_value,
 )
-from tests.envelope_configs import envelope_config
 
 START_AGE = 60
 

@@ -1,5 +1,7 @@
 """The consumption-savings specialization owns roles without shrinking the DAG."""
 
+from typing import cast
+
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
@@ -10,9 +12,9 @@ from lcm import (
     ConsumptionSavingsRegime,
     FUESEnvelope,
     GridSearch,
-    LinSpacedGrid,
     LinearAggregator,
     LinearExpectation,
+    LinSpacedGrid,
 )
 from lcm.exceptions import RegimeInitializationError
 
@@ -89,7 +91,7 @@ def test_plain_egm_omits_the_post_decision_role_owned_by_the_regime():
     """Plain EGM receives its one named accounting role from the regime."""
     regime = _regime(solver=EGM(savings_grid=_GRID))
 
-    assert regime.solver.post_decision_function == "savings"
+    assert cast("EGM", regime.solver).post_decision_function == "savings"
 
 
 def test_negm_inner_solver_uses_the_same_regime_owned_roles():
@@ -103,10 +105,11 @@ def test_negm_inner_solver_uses_the_same_regime_owned_roles():
     )
     regime = _regime(solver=solver)
 
-    assert regime.solver.inner.continuous_state == "wealth"
-    assert regime.solver.inner.continuous_action == "consumption"
-    assert regime.solver.inner.resources == "resources"
-    assert regime.solver.inner.post_decision_function == "savings"
+    inner = cast("NEGM", regime.solver).inner
+    assert inner.continuous_state == "wealth"
+    assert inner.continuous_action == "consumption"
+    assert inner.resources == "resources"
+    assert inner.post_decision_function == "savings"
 
 
 def test_conflicting_solver_duplicate_is_rejected_at_regime_construction():
@@ -147,4 +150,4 @@ def test_replace_preserves_the_specialized_type_and_role_binding():
     replaced = _regime().replace(solver=EGM(savings_grid=_GRID))
 
     assert isinstance(replaced, ConsumptionSavingsRegime)
-    assert replaced.solver.post_decision_function == "savings"
+    assert cast("EGM", replaced.solver).post_decision_function == "savings"

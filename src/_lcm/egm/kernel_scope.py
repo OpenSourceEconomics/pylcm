@@ -20,8 +20,8 @@ from _lcm.egm.regime_introspection import (
     _get_process_state_names,
 )
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.solution.continuation_target import _namespace_target_param_names
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.solution.continuation_target import _namespace_target_param_names
 from _lcm.transition_laws import TransitionLaws, is_stochastic
 from _lcm.typing import (
     ActionName,

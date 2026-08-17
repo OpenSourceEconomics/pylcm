@@ -346,9 +346,7 @@ class SolutionPhase:
     def continuation_template(self) -> ContinuationPayload | None:
         """Return the opaque payload template used by generic engine code."""
         return (
-            None
-            if self.continuation_spec is None
-            else self.continuation_spec.template
+            None if self.continuation_spec is None else self.continuation_spec.template
         )
 
     validation_regime_transition_probs: RegimeTransitionFunction | None

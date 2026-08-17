@@ -15,7 +15,7 @@ pulls in no numerical engine modules.
 import functools
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 import jax
@@ -28,6 +28,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
@@ -36,7 +37,6 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
-from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
 from _lcm.typing import (
     EGMStepFunction,
     FlatParams,
@@ -212,7 +212,7 @@ class DCEGM(Solver):
     across periods.
     """
 
-    envelope: EnvelopeConfig = ExactEnvelope()
+    envelope: EnvelopeConfig = field(default_factory=ExactEnvelope)
     """Typed upper-envelope backend configuration.
 
     Backend-specific controls live on the selected frozen configuration object,

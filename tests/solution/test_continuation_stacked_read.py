@@ -808,6 +808,4 @@ def test_passive_boundary_uses_nearest_segment_extrapolation() -> None:
         child_passive_grids=(jnp.asarray([1.0, 2.0]),),
         n_outer_candidates=0,
     )
-    np.testing.assert_allclose(
-        np.asarray([value, marginal]), np.asarray([0.0, 1.0])
-    )
+    np.testing.assert_allclose(np.asarray([value, marginal]), np.asarray([0.0, 1.0]))

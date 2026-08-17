@@ -333,7 +333,9 @@ def get_model(
                 "dead": liquid_retired,
             }
         },
-        constraints={} if isinstance(retired_solver, EGM) else {"feasible": feasible_retired},
+        constraints={}
+        if isinstance(retired_solver, EGM)
+        else {"feasible": feasible_retired},
         transition={
             "retired": MarkovTransition(prob_stay_retired),
             "dead": MarkovTransition(prob_die),

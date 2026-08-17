@@ -437,9 +437,7 @@ class ConsumptionSavingsRegime(Regime):
             )
 
 
-def _bind_dcegm_roles(
-    *, solver: DCEGM, regime: ConsumptionSavingsRegime
-) -> DCEGM:
+def _bind_dcegm_roles(*, solver: DCEGM, regime: ConsumptionSavingsRegime) -> DCEGM:
     """Return a DC-EGM config resolved against one regime-owned role contract."""
     return dataclasses.replace(
         solver,

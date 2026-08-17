@@ -15,7 +15,6 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from tests.test_models.ds2024_housing_fues import build_model, build_params
-from tests.envelope_configs import envelope_config
 
 pytestmark = pytest.mark.slow
 
@@ -47,14 +46,17 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
         assert np.isfinite(np.asarray(solution[period]["alive"])[..., 2:-1]).all()
 
 
-def _solve(variant: Literal["dcegm", "brute"], envelope: str) -> PeriodToRegimeToVArr:
+def _solve(
+    variant: Literal["dcegm", "brute"],
+    envelope: Literal["fues", "mss", "ltm", "rfc"],
+) -> PeriodToRegimeToVArr:
     model = build_model(
         variant=variant,
         n_grid=N_GRID,
         n_housing=N_HOUSING,
         n_consumption=N_CONSUMPTION,
         n_periods=N_PERIODS,
-        envelope=envelope_config(envelope),  # ty: ignore[invalid-argument-type]
+        envelope=envelope,
     )
     return model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="debug"
@@ -62,7 +64,9 @@ def _solve(variant: Literal["dcegm", "brute"], envelope: str) -> PeriodToRegimeT
 
 
 @pytest.mark.parametrize("envelope", ["rfc", "fues"])
-def test_ds2024_housing_dcegm_matches_brute_in_bulk(envelope: str):
+def test_ds2024_housing_dcegm_matches_brute_in_bulk(
+    envelope: Literal["fues", "mss", "ltm", "rfc"],
+):
     """Each discrete-housing DC-EGM backend bulk-agrees with its grid-search twin.
 
     On the liquid interior the mean value difference is sub-unit and the large

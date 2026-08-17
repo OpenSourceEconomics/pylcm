@@ -14,8 +14,8 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import EGMContinuationSpec
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
@@ -791,7 +791,6 @@ def _has_valid_state_handoff(
 
     law = source_slice.state_transitions.get(state_name)
     return law is not None and (not isinstance(law, Mapping) or target in law)
-
 
 
 def _continuation_targets(

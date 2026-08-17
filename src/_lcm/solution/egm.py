@@ -96,7 +96,9 @@ class EGM(Solver):
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return True
 
-    def validate_model(self, *, context: SolverModelContext) -> None:
+    def validate_model(  # noqa: C901, PLR0912, PLR0915
+        self, *, context: SolverModelContext
+    ) -> None:
         """Validate assumptions shared by the envelope-free EGM kernel."""
         from dags import concatenate_functions  # noqa: PLC0415
 
@@ -181,9 +183,7 @@ class EGM(Solver):
         functions = _resolve_solve_functions(user_regime=user_regime)
         post_func = functions[self.post_decision_function]
         post_ancestors = _dag_ancestors(functions=functions, target_func=post_func)
-        missing_roles = sorted(
-            {liquid_state, consumption_action} - set(post_ancestors)
-        )
+        missing_roles = sorted({liquid_state, consumption_action} - set(post_ancestors))
         if missing_roles:
             msg = (
                 f"The post-decision function '{self.post_decision_function}' "
@@ -245,9 +245,7 @@ class EGM(Solver):
                     },
                 )
                 expected = state_value - action_value
-                if not _isclose(
-                    actual=actual, expected=expected, rtol=rtol, atol=atol
-                ):
+                if not _isclose(actual=actual, expected=expected, rtol=rtol, atol=atol):
                     msg = (
                         f"Consumption recovery fails in EGM regime "
                         f"'{regime_name}': '{self.post_decision_function}' must "

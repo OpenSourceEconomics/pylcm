@@ -22,6 +22,7 @@ import pytest
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
@@ -30,7 +31,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
-from tests.envelope_configs import envelope_config
 
 # MSS inserts the same exact crossing FUES does, so the published value functions
 # agree far tighter than the LTM no-insertion tolerance (5e-3): the residual is
@@ -50,9 +50,9 @@ def _retirement_only_model(*, envelope, n_periods):
     last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "retirement": _with_backend(dcegm_retirement, envelope=envelope_config(envelope)).replace(
-                active=lambda age, la=last_age: age < la
-            ),
+            "retirement": _with_backend(
+                dcegm_retirement, envelope=envelope_config(envelope)
+            ).replace(active=lambda age, la=last_age: age < la),
             "dead": dead,
         },
         ages=ages,

@@ -116,7 +116,7 @@ def finalize_regimes(
             raise RegimeInitializationError(
                 f"In regime '{regime_name}': {format_messages(error_messages)}"
             )
-        finalized._validate_finalized_structure(regime_name=regime_name)
+        finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
 

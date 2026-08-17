@@ -13,13 +13,14 @@ from lcm import (
     AgeGrid,
     FUESEnvelope,
     LinSpacedGrid,
-    MSSEnvelope,
     Model,
+    MSSEnvelope,
     NormalIIDProcess,
     fixed_transition,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
+from tests.envelope_configs import EnvelopeName, envelope_config
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
@@ -27,7 +28,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     dead,
 )
 from tests.test_models.ds2024_housing import build_model
-from tests.envelope_configs import envelope_config
 
 
 def test_negm_regime_does_not_qualify_for_the_policy_read():
@@ -42,7 +42,7 @@ def test_negm_regime_does_not_qualify_for_the_policy_read():
 
 
 @pytest.mark.parametrize("backend", ["rfc", "ltm"])
-def test_non_crossing_envelope_backends_do_not_qualify(backend: str):
+def test_non_crossing_envelope_backends_do_not_qualify(backend: EnvelopeName):
     """RFC/LTM rows keep the grid path: they publish no crossing topology.
 
     Those backends leave the envelope switch between two retained nodes, so
@@ -174,7 +174,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def _retirement_model_with_backend(backend: str) -> Model:
+def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(backend))
     return _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)

@@ -191,8 +191,8 @@ import lcm
 - **`No C++ compiler found` during install**: install one, or install without the
   certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1` (see above), accepting that
   DC-EGM will not run on its defaults.
-- **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped
-  the kernel, or carries one built by a different toolchain. Rebuild in the current
+- **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
+  kernel, or carries one built by a different toolchain. Rebuild in the current
   environment with `pixi run build-exact-affine`, or explicitly select another typed
   envelope under its approximation contract.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is

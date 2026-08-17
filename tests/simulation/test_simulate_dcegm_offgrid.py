@@ -23,13 +23,13 @@ from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Phased, fixed_tran
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, dcegm_variants, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.envelope_configs import envelope_config
 
 pytestmark = pytest.mark.slow
 

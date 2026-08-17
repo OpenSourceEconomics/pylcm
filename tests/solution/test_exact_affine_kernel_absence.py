@@ -18,16 +18,12 @@ from tests.conftest import X64_ENABLED
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
-
 def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
     """A model cannot defer an unavailable selected backend until `solve()`."""
-    monkeypatch.setattr(
-        ffi, "kernel_available_for_current_backend", lambda: False
-    )
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
     with pytest.raises(ModelInitializationError, match="ExactEnvelope"):
         build_dcegm_model()
-
 
 
 def test_a_gpu_backend_requires_the_cuda_exact_kernel(monkeypatch):

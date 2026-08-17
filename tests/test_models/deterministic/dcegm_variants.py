@@ -34,8 +34,8 @@ from lcm_examples.iskhakov_et_al_2017 import (
     utility_retirement,
     utility_working,
 )
-from tests.test_models.deterministic import base, retirement_only
 from tests.envelope_configs import envelope_config
+from tests.test_models.deterministic import base, retirement_only
 
 # Exogenous end-of-period savings grid; the lower bound is the borrowing limit
 # (savings >= 0 encodes the original `consumption <= wealth` constraint).

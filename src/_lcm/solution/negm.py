@@ -373,13 +373,17 @@ class NEGM(Solver):
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
         )
+        stacked_template = _stack_carry_template(
+            template=keeper_continuation_template,
+            n_candidates=outer_grid_values.shape[0] + 1,
+        )
+        # `_stack_carry_template` passes `None` through, and the keeper template
+        # was established as present above, so the stacked template is too.
+        assert stacked_template is not None  # noqa: S101
         return SolutionKernels(
             period_kernels=period_kernels,
             continuation_spec=EGMContinuationSpec(
-                template=_stack_carry_template(
-                    template=keeper_continuation_template,
-                    n_candidates=outer_grid_values.shape[0] + 1,
-                ),
+                template=stacked_template,
                 layout=self.egm_continuation_layout,
             ),
         )

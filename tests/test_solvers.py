@@ -8,6 +8,7 @@ discrete-continuous endogenous grid method; its configuration is validated at
 model build.
 """
 
+import re
 from dataclasses import replace
 
 import pytest
@@ -21,8 +22,8 @@ from lcm import (
     FUESEnvelope,
     GridSearch,
     LinSpacedGrid,
-    MSSEnvelope,
     Model,
+    MSSEnvelope,
     NormalIIDProcess,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -154,7 +155,9 @@ def test_dcegm_non_finite_or_too_small_refined_grid_factor_is_rejected(
 @pytest.mark.parametrize("jump_thresh", [0.0, -1.0, float("nan"), float("inf")])
 def test_fues_non_finite_or_non_positive_jump_thresh_is_rejected(jump_thresh):
     """The segment-switch threshold must be finite and positive (NaN/inf rejected)."""
-    with pytest.raises(RegimeInitializationError, match="FUESEnvelope.jump_thresh"):
+    with pytest.raises(
+        RegimeInitializationError, match=re.escape("FUESEnvelope.jump_thresh")
+    ):
         FUESEnvelope(jump_thresh=jump_thresh)
 
 

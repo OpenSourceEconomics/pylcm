@@ -2141,8 +2141,7 @@ def _build_child_reads(
         )
         resources_param_names = resources_arg_names - child_binding_names
         child_carry_rows_uniform = (
-            layout.rows_share_state_grid
-            and not layout.retains_discrete_action_rows
+            layout.rows_share_state_grid and not layout.retains_discrete_action_rows
         )
         # No solver here publishes a one-sided jump read, so no state is
         # pinned by a jump source reading its node value.

@@ -36,6 +36,7 @@ still unbracketed after expansion fails loudly with NaN; a root below the positi
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -104,7 +105,12 @@ def numeric_inverse_marginal_utility(
     # is static, so the path remains jit- and vmap-safe; if no finite bracket is
     # found, `upper_bracketed` below poisons the result instead of publishing an
     # arbitrary generated endpoint with a zero derivative.
-    def expand_upper(_index, state):
+    # `fori_loop` passes the index and carry positionally, so this body cannot
+    # take keyword-only arguments.
+    def expand_upper(
+        _index: Any,  # noqa: ANN401  -- the loop index follows the x64 policy
+        state: tuple[ScalarFloat, ScalarFloat],
+    ) -> tuple[ScalarFloat, ScalarFloat]:
         upper, mu_at_upper = state
         needs_expansion = (
             (mu_at_upper > m)
@@ -184,8 +190,12 @@ def numeric_inverse_marginal_utility(
     # constant `1/u''` Jacobian, never differentiated itself.
     second_derivative = jax.lax.stop_gradient(marginal_curvature(c_star))
     interior = c_star - (marginal_utility(c_star) - m) / second_derivative
-    root = jnp.where(bracketed, interior, jnp.where(lower_bound_active, c_lower, jnp.nan))
+    root = jnp.where(
+        bracketed, interior, jnp.where(lower_bound_active, c_lower, jnp.nan)
+    )
     # Fail loud where the log-space preconditions do not hold or the fixed-count
     # expansion could not find an upper bracket: NaN surfaces in the kernel's
     # diagnostics instead of a silently wrong generated endpoint.
-    return jnp.where(log_well_defined & (upper_bracketed | lower_bound_active), root, jnp.nan)
+    return jnp.where(
+        log_well_defined & (upper_bracketed | lower_bound_active), root, jnp.nan
+    )

@@ -182,7 +182,7 @@ def _build_regimes_and_template_with_fixed_params(
     )
 
 
-def validate_model_inputs(
+def validate_model_inputs(  # noqa: C901
     *,
     n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],

@@ -84,7 +84,12 @@ from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
-from lcm.typing import UserFunction
+from lcm.typing import FloatND, IntND, ScalarFloat, UserFunction
+
+# A cross-difference needs two distinct points on each margin: the check varies
+# consumption and the durable independently and compares the mixed second
+# difference against zero, which a single point on either axis cannot form.
+_MIN_CROSS_DIFFERENCE_POINTS = 2
 
 
 def validate_negm_regimes(
@@ -455,12 +460,16 @@ def _fail_if_utility_couples_action_and_outer_margin(
         return
     action_sample = _grid_sample(grid=grids[inner.continuous_action])
     outer_sample = _grid_sample(grid=solver.outer_grid)
-    if action_sample.shape[0] < 2 or outer_sample.shape[0] < 2:
+    too_few_points = (
+        action_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
+        or outer_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
+    )
+    if too_few_points:
         return
     c0 = action_sample[0]
     z0 = outer_sample[0]
 
-    def value(*, consumption: object, outer: object) -> object:
+    def value(*, consumption: ScalarFloat, outer: ScalarFloat) -> FloatND | IntND:
         return _call_with_varied(
             func=utility_func,
             fixed=fixed,
@@ -498,8 +507,9 @@ def _fail_if_utility_couples_action_and_outer_margin(
                     f"is {float(cross_difference)} at "
                     f"{inner.continuous_action}={float(consumption)}, "
                     f"{solver.outer_post_decision}={float(outer)}. The inner "
-                    "marginal utility therefore depends on the outer choice; use "
-                    "a two-dimensional EGM solver or GridSearch."
+                    "marginal utility therefore depends on the outer choice; if "
+                    "the two margins genuinely interact, use the 2-D EGM "
+                    "foundation (G2EGM / multidim-RFC), not NEGM."
                 )
                 raise ModelInitializationError(msg)
 

@@ -64,9 +64,7 @@ def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
-def doubled_savings(
-    wealth: ContinuousState, consumption: ContinuousAction
-) -> FloatND:
+def doubled_savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return 2.0 * (wealth - consumption)
 
 
@@ -78,9 +76,7 @@ def next_regime() -> ScalarInt:
     return RegimeId.done
 
 
-def consumption_cap(
-    wealth: ContinuousState, consumption: ContinuousAction
-) -> BoolND:
+def consumption_cap(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= 0.2 * wealth
 
 
@@ -154,6 +150,6 @@ def test_egm_rejects_a_discrete_state_during_model_construction() -> None:
 def test_egm_rejects_a_terminal_target_with_an_action() -> None:
     """A terminal carry cannot stand in for a final-period optimization."""
     with pytest.raises(
-        ModelInitializationError, match="terminal regime 'done'.*actions"
+        ModelInitializationError, match=r"terminal regime 'done'.*actions"
     ):
         _model(terminal_action=True)

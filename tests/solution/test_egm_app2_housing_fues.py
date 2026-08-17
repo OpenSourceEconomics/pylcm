@@ -29,7 +29,6 @@ import numpy as np
 import pytest
 
 from tests.test_models.ds_app2_housing_fues import build_model, build_params
-from tests.envelope_configs import envelope_config
 
 # Small construction-scale grids: a single local solve stays fast. The wealth
 # interior excludes the constrained low-wealth nodes (steep-CES VFI floor) and
@@ -85,7 +84,7 @@ def test_app2_fues_matches_vfi_on_liquid_interior(
         n_housing=N_HOUSING,
         n_periods=N_PERIODS,
         n_consumption=N_CONSUMPTION,
-        envelope=envelope_config(envelope),
+        envelope=envelope,
     )
     brute_model = build_model(
         variant="brute",

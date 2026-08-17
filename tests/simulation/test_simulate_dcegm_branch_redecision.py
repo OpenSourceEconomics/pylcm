@@ -25,13 +25,13 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.envelope_configs import envelope_config
 
 pytestmark = pytest.mark.slow
 

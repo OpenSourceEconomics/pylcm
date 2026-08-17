@@ -188,8 +188,8 @@ from _lcm.typing import (
     StateOrActionName,
     TransitionFunctionsMapping,
 )
-from lcm.exceptions import ModelInitializationError
 from _lcm.utils.dispatchers import productmap
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
 from lcm.typing import (

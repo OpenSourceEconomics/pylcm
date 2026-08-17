@@ -40,8 +40,8 @@ from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, rfc
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
-from tests.solution._envelope_rows import drop_nan as _drop_nan
 from tests.envelope_configs import envelope_config
+from tests.solution._envelope_rows import drop_nan as _drop_nan
 
 # Interpolated bracket reads are float-eps-limited at the active precision.
 _BRACKET_ATOL = 1e-10 if X64_ENABLED else 1e-5

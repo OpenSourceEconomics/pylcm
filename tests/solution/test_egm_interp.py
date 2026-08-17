@@ -1022,11 +1022,11 @@ def test_stochastic_prefold_declares_the_hermite_limiter_tradeoff() -> None:
     values = jnp.asarray([[0.0, 0.0, 1.0], [0.0, 2.0, 2.0]])
     slopes = jnp.asarray([[0.1, 3.0, 10.0], [1.0, 0.0, 100.0]])
     per_node = jax.vmap(
-        lambda fp, fp_slopes: interp_on_padded_grid(
+        lambda fp, fp_slopes: interp.interp_on_padded_grid(
             x_query=query, xp=xp, fp=fp, fp_slopes=fp_slopes
         )
     )(values, slopes).mean()
-    pre_folded = interp_on_padded_grid(
+    pre_folded = interp.interp_on_padded_grid(
         x_query=query,
         xp=xp,
         fp=values.mean(axis=0),

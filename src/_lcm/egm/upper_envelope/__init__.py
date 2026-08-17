@@ -100,6 +100,9 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
     """
     if isinstance(solver.envelope, FUESEnvelope):
+        jump_thresh = solver.envelope.jump_thresh
+        n_points_to_scan = solver.envelope.n_points_to_scan
+        scan_unroll = solver.envelope.scan_unroll
 
         def fues_backend(
             *,
@@ -121,18 +124,20 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 policy=policy,
                 value=value,
                 n_refined=n_refined,
-                jump_thresh=solver.envelope.jump_thresh,
-                n_points_to_scan=solver.envelope.n_points_to_scan,
+                jump_thresh=jump_thresh,
+                n_points_to_scan=n_points_to_scan,
                 savings=savings,
-                scan_unroll=solver.envelope.scan_unroll,
+                scan_unroll=scan_unroll,
             )
 
         return fues_backend
 
     if isinstance(solver.envelope, ExactEnvelope):
-        return _build_exact_backend(solver=solver, n_refined=n_refined)
+        return _build_exact_backend(envelope=solver.envelope, n_refined=n_refined)
 
     if isinstance(solver.envelope, RFCEnvelope):
+        search_radius = solver.envelope.search_radius
+        jump_thresh = solver.envelope.jump_thresh
 
         def rfc_backend(
             *,
@@ -154,8 +159,8 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 value=value,
                 marginal_utility=marginal_utility,
                 n_refined=n_refined,
-                search_radius=solver.envelope.search_radius,
-                jump_thresh=solver.envelope.jump_thresh,
+                search_radius=search_radius,
+                jump_thresh=jump_thresh,
             )
 
         return rfc_backend
@@ -245,6 +250,9 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
     """
     if isinstance(solver.envelope, FUESEnvelope):
+        jump_thresh = solver.envelope.jump_thresh
+        n_points_to_scan = solver.envelope.n_points_to_scan
+        scan_unroll = solver.envelope.scan_unroll
 
         def fues_bracket_finder(
             *,
@@ -271,15 +279,17 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 value=value,
                 x_query=x_query,
                 n_refined=n_refined,
-                jump_thresh=solver.envelope.jump_thresh,
-                n_points_to_scan=solver.envelope.n_points_to_scan,
+                jump_thresh=jump_thresh,
+                n_points_to_scan=n_points_to_scan,
                 savings=savings,
-                scan_unroll=solver.envelope.scan_unroll,
+                scan_unroll=scan_unroll,
             )
 
         return fues_bracket_finder
 
     if isinstance(solver.envelope, RFCEnvelope):
+        search_radius = solver.envelope.search_radius
+        jump_thresh = solver.envelope.jump_thresh
 
         def rfc_bracket_finder(
             *,
@@ -306,8 +316,8 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 value=value,
                 marginal_utility=marginal_utility,
                 n_refined=n_refined,
-                search_radius=solver.envelope.search_radius,
-                jump_thresh=solver.envelope.jump_thresh,
+                search_radius=search_radius,
+                jump_thresh=jump_thresh,
             )
             return _bracket_from_refined_row(
                 refined_grid=refined_grid,
@@ -398,13 +408,17 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
         return mss_bracket_finder
 
     if isinstance(solver.envelope, ExactEnvelope):
-        return _build_exact_bracket_finder(solver=solver, n_refined=n_refined)
+        return _build_exact_bracket_finder(
+            envelope=solver.envelope, n_refined=n_refined
+        )
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
 
 
-def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend:
+def _build_exact_backend(
+    *, envelope: ExactEnvelope, n_refined: int
+) -> UpperEnvelopeBackend:
     """Build the exact segment-envelope backend."""
 
     def exact_backend(
@@ -427,15 +441,15 @@ def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBacke
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=solver.envelope.max_runs,
-            cell_batch_size=solver.envelope.cell_batch_size,
+            max_runs=envelope.max_runs,
+            cell_batch_size=envelope.cell_batch_size,
         )
 
     return exact_backend
 
 
 def _build_exact_bracket_finder(
-    *, solver: DCEGM, n_refined: int
+    *, envelope: ExactEnvelope, n_refined: int
 ) -> Callable[..., QueryBracket]:
     """Build the single-query bracket finder backed by the exact envelope."""
 
@@ -459,8 +473,8 @@ def _build_exact_bracket_finder(
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=solver.envelope.max_runs,
-            cell_batch_size=solver.envelope.cell_batch_size,
+            max_runs=envelope.max_runs,
+            cell_batch_size=envelope.cell_batch_size,
         )
         return _bracket_from_refined_row(
             refined_grid=refined_grid,

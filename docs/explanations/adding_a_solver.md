@@ -29,11 +29,11 @@ Concretely:
   `Solver.requires_continuation` at build time,
   `Regime.solution.solves_from_continuation` engine-side. Adding a solver must not add
   an `isinstance` check to `backward_induction.py` or `contract.py`.
-- The generic continuation channel has one definition in `_lcm.continuation`.
-  Backward induction threads `ContinuationPayload` opaquely; current endogenous-grid
-  solvers additionally publish an `EGMContinuationSpec` bundling the concrete carry
-  template with the static layout a reading parent needs. A future representation adds
-  its own operations instead of redefining the alias in multiple engine modules.
+- The generic continuation channel has one definition in `_lcm.continuation`. Backward
+  induction threads `ContinuationPayload` opaquely; current endogenous-grid solvers
+  additionally publish an `EGMContinuationSpec` bundling the concrete carry template
+  with the static layout a reading parent needs. A future representation adds its own
+  operations instead of redefining the alias in multiple engine modules.
 - `SimulationPolicy` is likewise threaded as an optional artifact. Collection and host
   transfer are demand-driven: they occur only for an explicit inspection request or an
   actual simulation-policy consumer.
@@ -65,8 +65,8 @@ equivalent, and the distributed co-map axes. Each solver reads only the fields i
 **`SolutionKernels`.** What `build_period_kernels` hands back: an immutable mapping of
 period to `PeriodKernel`, plus an optional `continuation_spec`. The current
 `EGMContinuationSpec` contains both an all-finite payload template and its immutable
-layout metadata. The template initializes the rolling continuation mapping and serves
-as the lowering argument when a *parent's* kernel is AOT-compiled, so it must match every
+layout metadata. The template initializes the rolling continuation mapping and serves as
+the lowering argument when a *parent's* kernel is AOT-compiled, so it must match every
 real payload structurally; bundling the layout prevents producer and reader metadata
 from drifting apart.
 
@@ -123,8 +123,8 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
    - `V_arr` always enters `period_solution` (and the NaN/Inf diagnostics — automatic
      for every solver, no kernel involvement).
    - `continuation`, if present, enters `period_continuations`.
-   - `simulation_policy`, if present, is retained and copied to host only when the
-     solve request asks for the inspection artifact or fresh simulation has a qualifying
+   - `simulation_policy`, if present, is retained and copied to host only when the solve
+     request asks for the inspection artifact or fresh simulation has a qualifying
      policy-read consumer. Otherwise the output is discarded immediately.
 
    After the period, the loop rolls `next_regime_to_V_arr` and

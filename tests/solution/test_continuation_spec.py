@@ -1,16 +1,21 @@
 """Continuation demand and representation travel through one explicit contract."""
 
-from types import SimpleNamespace
+from collections.abc import Mapping
+from typing import cast
 
 import jax.numpy as jnp
 
-import _lcm.engine as engine
-import _lcm.solution.contract as contract
+from _lcm import engine
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.reachability import build_phase_reachability
 from _lcm.regime_building.processing import _continuation_targets
-from lcm.solvers import GridSearch
+from _lcm.solution import contract
+from _lcm.typing import RegimeName
+from lcm.grids import LinSpacedGrid
+from lcm.regime import Regime as UserRegime
+from lcm.solvers import EGM, GridSearch
+from tests.mock_regime import MockRegime
 
 
 def _template() -> EGMCarry:
@@ -40,7 +45,7 @@ def test_solution_kernels_bundle_template_with_its_layout():
     kernels = contract.SolutionKernels(period_kernels={}, continuation_spec=spec)
 
     assert kernels.continuation_template is spec.template
-    assert kernels.continuation_spec.layout is layout
+    assert cast("EGMContinuationSpec", kernels.continuation_spec).layout is layout
 
 
 def test_grid_search_declares_the_layout_of_engine_produced_carries():
@@ -69,19 +74,14 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
         },
         terminal_regimes=("needed", "unused"),
     )
-    regimes = {
-        "reader": SimpleNamespace(
-            solver=SimpleNamespace(requires_continuation=True)
-        ),
-        "value_only": SimpleNamespace(
-            solver=SimpleNamespace(requires_continuation=False)
-        ),
-        "needed": SimpleNamespace(
-            solver=SimpleNamespace(requires_continuation=False)
-        ),
-        "unused": SimpleNamespace(
-            solver=SimpleNamespace(requires_continuation=False)
-        ),
+    continuation_reader = EGM(
+        savings_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=4)
+    )
+    regimes: Mapping[RegimeName, UserRegime] = {
+        "reader": MockRegime(solver=continuation_reader),
+        "value_only": MockRegime(solver=GridSearch()),
+        "needed": MockRegime(solver=GridSearch()),
+        "unused": MockRegime(solver=GridSearch()),
     }
 
     assert _continuation_targets(

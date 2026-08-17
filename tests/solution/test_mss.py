@@ -32,9 +32,9 @@ from _lcm.egm.upper_envelope import get_upper_envelope, mss
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
+from tests.envelope_configs import envelope_config
 from tests.solution._envelope_rows import drop_nan as _drop_nan
 from tests.solution._envelope_rows import envelope_interp as _envelope_interp
-from tests.envelope_configs import envelope_config
 
 
 def _mss_solver():

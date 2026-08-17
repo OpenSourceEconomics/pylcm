@@ -13,12 +13,24 @@ from types import MappingProxyType, SimpleNamespace
 import jax.numpy as jnp
 import pytest
 
-from _lcm.egm.published_policy import EGMSimPolicy
 import _lcm.simulation.simulate as simulation_module
+from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.engine import Regime
 from _lcm.simulation.simulate import (
     _interp_rows_with_support,
     _replace_continuous_action_with_policy_read,
 )
+
+
+class _StubRegime(Regime):
+    """Engine regime carrying only the fields the policy read reaches.
+
+    Subclasses the real class so the runtime-typed perimeter accepts it, and
+    writes the one field directly rather than building a whole compiled regime.
+    """
+
+    def __init__(self, *, simulation: object) -> None:
+        object.__setattr__(self, "simulation", simulation)
 
 
 def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
@@ -70,7 +82,7 @@ def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch)
         action_name="consumption",
         savings_lower_bound=0.0,
     )
-    regime = SimpleNamespace(
+    regime = _StubRegime(
         simulation=SimpleNamespace(
             egm_policy_read=read,
             grids={},
@@ -85,17 +97,17 @@ def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch)
     monkeypatch.setattr(
         simulation_module,
         "_resources_at_subjects",
-        lambda **kwargs: jnp.array([1.0]),
+        lambda **_kwargs: jnp.array([1.0]),
     )
     monkeypatch.setattr(
         simulation_module,
         "_interp_rows_with_support",
-        lambda **kwargs: (jnp.array([0.6]), jnp.array([True])),
+        lambda **_kwargs: (jnp.array([0.6]), jnp.array([True])),
     )
     monkeypatch.setattr(
         simulation_module,
         "_canonical_Q_at_actions",
-        lambda **kwargs: (jnp.array([7.0]), jnp.array([True])),
+        lambda **_kwargs: (jnp.array([7.0]), jnp.array([True])),
     )
 
     _, reported_value = _replace_continuous_action_with_policy_read(

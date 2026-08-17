@@ -41,7 +41,7 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND
 
 
-def solve(
+def solve(  # noqa: C901, PLR0915
     *,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -243,7 +243,7 @@ def solve(
         )
         solution[period] = MappingProxyType(period_solution)
         if collect_simulation_policies:
-            assert host_device is not None
+            assert host_device is not None  # noqa: S101
             simulation_policies[period] = MappingProxyType(
                 {
                     regime_name: jax.block_until_ready(

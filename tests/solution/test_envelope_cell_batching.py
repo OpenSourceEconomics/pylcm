@@ -7,6 +7,8 @@ it is a pure partition of the work — it may change how much memory the solve
 needs but may never change a published value or policy.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -95,5 +97,7 @@ def test_cell_batch_size_accepts_an_integer_to_resolve_cells_in_parallel():
 @pytest.mark.parametrize("invalid", [0, -1])
 def test_non_positive_cell_batch_size_is_rejected(invalid):
     """A batch size below one partitions nothing and is refused at construction."""
-    with pytest.raises(RegimeInitializationError, match="ExactEnvelope.cell_batch_size"):
+    with pytest.raises(
+        RegimeInitializationError, match=re.escape("ExactEnvelope.cell_batch_size")
+    ):
         _solver(cell_batch_size=invalid)

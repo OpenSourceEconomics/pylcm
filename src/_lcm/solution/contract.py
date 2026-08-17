@@ -383,9 +383,7 @@ class SolutionKernels:
     def continuation_template(self) -> ContinuationPayload | None:
         """Return the template payload for generic rolling and lowering code."""
         return (
-            None
-            if self.continuation_spec is None
-            else self.continuation_spec.template
+            None if self.continuation_spec is None else self.continuation_spec.template
         )
 
 

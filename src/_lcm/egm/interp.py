@@ -28,7 +28,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarInt
 
 
 def interp_on_regular_grid(
@@ -1128,9 +1128,9 @@ def interp_and_derivative_on_prepared_grid(
 
 def locate_on_grid(
     *,
-    x_query: ScalarFloat,
+    x_query: FloatND,
     grid: Float1D,
-) -> tuple[ScalarInt, ScalarInt, ScalarFloat]:
+) -> tuple[IntND, IntND, FloatND]:
     """Locate nearest-segment brackets and an extrapolating upper weight.
 
     Queries outside support retain the first or last bracket and receive a
@@ -1151,8 +1151,11 @@ def locate_on_grid(
     """
     n_nodes = grid.shape[0]
     if n_nodes == 1:
-        zero = jnp.asarray(0, dtype=jnp.int32)
-        return zero, zero, jnp.asarray(0.0, dtype=grid.dtype)
+        # The brackets follow the query's shape, not the grid's, so a batched
+        # query still gathers one index per element.
+        query_shape = jnp.shape(x_query)
+        zero = jnp.zeros(query_shape, dtype=jnp.int32)
+        return zero, zero, jnp.zeros(query_shape, dtype=grid.dtype)
     # int32 bracket indices: the grid has at most a few hundred nodes, so the
     # x64-default int64 only doubles the index buffers for nothing.
     upper = jnp.clip(
