@@ -39,6 +39,14 @@ _POLISH = 24
 _RELATIVE_STEP = 1e-2
 _N_CELLS = 1
 
+# `capture_pilot_problem` builds the real paper-mode period-36 adjuster node
+# problem, so every gate in this module is GPU-scale, not merely `slow`: on a
+# CPU-only runner they do not finish inside the per-test timeout. `gpu` fires at
+# collection, so `pilot_report` is never instantiated there.
+_NEEDS_GPU = pytest.mark.gpu(
+    reason="captures the real paper-mode period-36 problem; CPU-infeasible"
+)
+
 
 @pytest.fixture(scope="module")
 def pilot_report() -> PilotReport:
@@ -56,6 +64,7 @@ def pilot_report() -> PilotReport:
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None:
     assert np.isfinite(pilot_report.f_star).all()
     assert (pilot_report.f_star > 0.0).all()
@@ -65,6 +74,7 @@ def test_pilot_optimum_is_interior_and_finite(pilot_report: PilotReport) -> None
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
     pilot_report: PilotReport,
 ) -> None:
@@ -110,6 +120,7 @@ def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_real_model_kink_is_materially_nonstationary(
     pilot_report: PilotReport,
 ) -> None:

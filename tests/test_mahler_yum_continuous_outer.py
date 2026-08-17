@@ -39,6 +39,22 @@ from lcm_examples.mahler_yum_2024.paper import (
 
 _CAPTURE_PERIOD = 36
 
+# The slow gates below solve the real paper-mode model at outer-mesh scale, so
+# they are GPU tests, not merely `slow` ones. On a quiet CPU box the four of
+# them together need ~4000 s, `test_captured_period_is_fully_finite` being the
+# long pole; on a shared runner that test alone spent ~588 s against a 600 s
+# per-test budget, timed out, and — because the phase runs with
+# `--max-worker-restart` — was respawned onto the same test until the job hit
+# GitHub's six-hour ceiling.
+#
+# The marker is attached per test rather than to the module: the fast gates
+# above cost ~2 s on CPU and are worth keeping there. `gpu` fires at
+# collection, so the module-scoped capture fixtures are never instantiated on a
+# CPU-only box.
+_NEEDS_GPU = pytest.mark.gpu(
+    reason="solves the real paper-mode model at outer-mesh scale; CPU-infeasible"
+)
+
 
 # ---------------------------------------------------------------------------
 # Fast gates: paper-mode equation regressions
@@ -223,12 +239,14 @@ def fine_capture() -> dict:
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_captured_period_is_fully_finite(coarse_capture: dict) -> None:
     for name in ("keeper_V", "V", "p_adjust"):
         assert np.isfinite(coarse_capture[name]).all(), name
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_exact_keeper_dominance_under_the_fixed_cost_fold(
     coarse_capture: dict,
 ) -> None:
@@ -250,6 +268,7 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_coarse_fine_outer_convergence(
     coarse_capture: dict, fine_capture: dict
 ) -> None:
@@ -267,6 +286,7 @@ def test_coarse_fine_outer_convergence(
 
 
 @pytest.mark.slow
+@_NEEDS_GPU
 def test_next_habit_is_continuous_not_grid_snapped(coarse_capture: dict) -> None:
     """A material share of cells selects an off-node continuous next habit.
 
