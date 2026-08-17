@@ -6,12 +6,12 @@ title: Mahler & Yum (2024)
 
 Example implementation of the lifecycle model from @mahler2024.
 
-Two regimes (alive/dead). The alive regime has nine states: wealth, health, productivity
-shock, lagged effort, adjustment cost, education, productivity type, health type, and
-discount type. The dead regime carries discount type only. Three actions: labor supply,
-saving, and health effort. Features stochastic health and regime transitions, AR(1)
-productivity shocks, and discount-factor heterogeneity. Ships with calibrated data files
-for survival probabilities and initial distributions.
+Three regimes represent working life, mandatory retirement from age 65, and death. The
+working regime has nine states and three actions. Retirement removes labor supply,
+productivity, and the productivity shock because they no longer affect the model. The
+model features stochastic health and regime transitions, AR(1) productivity shocks, and
+discount-factor heterogeneity. It ships with calibrated data files for survival
+probabilities and initial distributions.
 
 ::::\{important} This model is computationally intensive. A GPU is recommended; run it
 in a CUDA environment (e.g., `pixi run -e cuda13 python your_script.py`). ::::
@@ -34,7 +34,7 @@ model_params, initial_conditions = create_inputs(
 )
 
 result = MAHLER_YUM_MODEL.simulate(
-    params={"alive": model_params},
+    params=model_params,
     initial_conditions=initial_conditions,
     period_to_regime_to_V_arr=None,
     log_level="debug",

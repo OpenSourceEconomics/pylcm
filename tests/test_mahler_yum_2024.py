@@ -52,11 +52,11 @@ _ADDITIONAL_TARGETS = [
 
 def test_model_solves_and_simulates():
     """Smoke test: model runs end-to-end with small n."""
-    common_params, ic_df = create_inputs(
+    model_params, ic_df = create_inputs(
         seed=0, n_simulation_subjects=4, params=START_PARAMS
     )
     result = MAHLER_YUM_MODEL.simulate(
-        params={"alive": common_params},
+        params=model_params,
         initial_conditions=ic_df,
         period_to_regime_to_V_arr=None,
         seed=12345,
@@ -72,18 +72,18 @@ def test_model_solves_and_simulates():
 @pytest.fixture(scope="module")
 def simulation_result():
     """Full simulation with START_PARAMS (seed=32, n=10000)."""
-    common_params, initial_conditions = create_inputs(
+    model_params, initial_conditions = create_inputs(
         seed=32, n_simulation_subjects=10000, params=START_PARAMS
     )
     result = MAHLER_YUM_MODEL.simulate(
-        params={"alive": common_params},
+        params=model_params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=42,
         log_level="debug",
     )
     res = result.to_dataframe(additional_targets=_ADDITIONAL_TARGETS)
-    return res[res["regime_name"] == "alive"].copy()
+    return res[res["regime_name"] != "dead"].copy()
 
 
 @pytest.mark.parametrize(
@@ -188,20 +188,16 @@ def test_income_by_education(simulation_result):
     assert inc.loc["high"] > inc.loc["low"]
 
 
-def test_all_retired_after_retirement_period(simulation_result):
-    """All agents must choose retired labor supply at and after retirement."""
+def test_retirement_regime_starts_at_retirement_period(simulation_result):
+    """Living agents enter the retirement regime at the mandatory age."""
     post_ret = simulation_result[simulation_result["period"] >= retirement_period]
-    assert (post_ret["labor_supply"] == "retired").all()
+    assert (post_ret["regime_name"] == "retirement").all()
+    assert post_ret["labor_supply"].isna().all()
+    assert post_ret["income"].isna().all()
 
 
-def test_no_income_after_retirement(simulation_result):
-    """Labor income must be zero after retirement."""
-    post_ret = simulation_result[simulation_result["period"] >= retirement_period]
-    np.testing.assert_allclose(post_ret["income"].values, 0.0, atol=1e-10)
-
-
-def test_total_alive_rows(simulation_result):
-    """Total number of alive-regime rows must match reference."""
+def test_total_living_rows(simulation_result):
+    """Total number of living-regime rows must match reference."""
     assert abs(len(simulation_result) - 294959) <= 50
 
 
