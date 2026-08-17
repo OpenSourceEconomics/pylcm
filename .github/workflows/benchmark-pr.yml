@@ -54,6 +54,15 @@ jobs:
         run: git fetch origin main:main || true
       - name: Install environment
         run: pixi install -e benchmarks-cuda12
+      # The exact-affine kernel is a gitignored build artifact living in the
+      # source tree. `actions/checkout` cleans the work tree, which removes it,
+      # while `pixi install` re-runs the build hook only when it decides the
+      # editable package needs reinstalling. Whether the kernel survives a run
+      # is therefore leftover state from the previous one, and the DC-EGM
+      # benchmarks — the only ones that reach it — fail outright when it is
+      # gone. Build it explicitly so the job does not depend on that.
+      - name: Build the exact-affine kernel
+        run: pixi run -e benchmarks-cuda12 build-exact-affine
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"

@@ -69,6 +69,15 @@ def _register_platform(*, library: Path, platform: str) -> None:
 # Whether a kernel for the CUDA platform exists to be registered.
 CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
 
+# Backend names that mean "device compiles will look for the CUDA target".
+_GPU_BACKENDS: frozenset[str] = frozenset({"gpu", "cuda"})
+
+
+def _default_backend() -> str:
+    """Return JAX's default backend name, as its own seam so tests can set it."""
+    return jax.default_backend()
+
+
 # Whether the targets have been registered with XLA in this process.
 _REGISTERED: bool = False
 
@@ -108,8 +117,9 @@ def _ensure_registered() -> None:
     else.
 
     Raises:
-        ExactAffineKernelUnavailableError: If the CPU library is missing, or is
-            present but cannot be loaded by this interpreter.
+        ExactAffineKernelUnavailableError: If the CPU library is missing, if the
+            default backend is a GPU and the CUDA half was never built, or if a
+            library is present but cannot be loaded by this interpreter.
 
     """
     global _REGISTERED  # noqa: PLW0603
@@ -122,6 +132,21 @@ def _ensure_registered() -> None:
             "is compiled when pylcm is installed; after editing its C++ sources, "
             "or in a checkout installed before the kernel existed, rebuild it "
             "with `pixi run build-exact-affine`."
+        )
+        raise ExactAffineKernelUnavailableError(msg)
+
+    # The CPU library alone satisfies registration, so a solve on a CUDA backend
+    # would otherwise reach the first compile needing the device target before
+    # anything objects — and on a production mesh that compile is hours in. The
+    # CUDA half is skipped whenever the build ran without `nvcc`, which is a
+    # property of the environment rather than of the run, so it is knowable here.
+    if not CUDA_AVAILABLE and _default_backend() in _GPU_BACKENDS:
+        msg = (
+            f"The exact-affine kernel has no CUDA half: {_CUDA_LIBRARY} is "
+            "missing while JAX's default backend is a GPU, so every certified "
+            "read would fail at its first device compile. The CUDA half is built "
+            "only where `nvcc` is on PATH at install time; add it to this "
+            "environment and rebuild with `pixi run build-exact-affine`."
         )
         raise ExactAffineKernelUnavailableError(msg)
 
