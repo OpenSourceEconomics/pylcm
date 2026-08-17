@@ -22,10 +22,17 @@ that: the projection is owed on such a state, and supplying it builds.
 """
 
 import re
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.gated_edges import build_fallback_state_projector
+from _lcm.regime_building.Q_and_F import (
+    ResolvedSamePeriodRef,
+    _build_same_period_ref_reader,
+)
+from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
@@ -134,6 +141,66 @@ def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
     model = _build_age_specialized_model(fallback_projects_principal=True)
 
     assert set(model.regime_names_to_ids) == {"src", "src_exit", "annuity"}
+
+
+def test_same_period_ref_reader_names_the_state_a_short_projection_omits():
+    """A reader built below `Model` refuses a short projection by name.
+
+    `Model` rejects an incomplete projection before any kernel is built, so a
+    caller reaching the reader directly is the only one that can still hand it
+    one. It gets the same account of what is missing — which reference regime,
+    which state, and what the projection does supply — rather than a bare
+    lookup failure naming a state and nothing around it.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=re.escape(
+            "The projection onto reference regime 'annuity' supplies no "
+            "coordinate function for state 'principal'. It supplies []."
+        ),
+    ):
+        _build_same_period_ref_reader(
+            ref=_short_ref(),
+            v_interpolation_info=VInterpolationInfo(
+                state_names=("principal",),
+                discrete_states=MappingProxyType({}),
+                continuous_states=MappingProxyType({"principal": _principal_grid(0.0)}),
+            ),
+            functions=MappingProxyType({}),
+        )
+
+
+def test_fallback_state_projector_names_the_state_a_short_projection_omits():
+    """A projector built below `Model` refuses a short projection by name.
+
+    The simulate-side projector owes a coordinate on every state a routed row
+    occupies, and answers a missing one the same way its solve-side companion
+    does.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=re.escape(
+            "The projection onto reference regime 'annuity' supplies no "
+            "coordinate function for state 'principal'. It supplies []."
+        ),
+    ):
+        build_fallback_state_projector(
+            ref=_short_ref(),
+            fallback_simulate_state_names=("principal",),
+            target_regime_name="src_exit",
+            target_state_names=("wage",),
+            target_functions=MappingProxyType({}),
+            target_deterministic_transitions=MappingProxyType({}),
+        )
+
+
+def _short_ref() -> ResolvedSamePeriodRef:
+    """A reference onto `annuity` whose projection supplies no coordinate."""
+    return ResolvedSamePeriodRef(
+        regime="annuity",
+        projection=MappingProxyType({}),
+        stakeholder_index=None,
+    )
 
 
 def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:

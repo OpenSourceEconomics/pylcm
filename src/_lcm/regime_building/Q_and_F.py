@@ -659,6 +659,38 @@ class ResolvedSamePeriodRef:
     """Index into the reference V's trailing stakeholder axis, or `None`."""
 
 
+def projection_func_or_fail(
+    *, ref: ResolvedSamePeriodRef, state_name: StateName
+) -> Callable[..., Any]:
+    """Return the coordinate function a reference's projection gives one state.
+
+    Model build rejects an incomplete projection before any kernel exists, so
+    only a caller reaching an engine entry point directly can still present
+    one. Naming the reference regime, the state, and what the projection does
+    supply says which declaration is short; the lookup alone would name the
+    state and nothing around it.
+
+    Args:
+        ref: Resolved same-period reference whose projection is read.
+        state_name: State of the reference regime a coordinate is owed on.
+
+    Returns:
+        The projection's coordinate function for that state.
+
+    Raises:
+        ModelInitializationError: If the projection has no entry for the state.
+
+    """
+    if state_name not in ref.projection:
+        msg = (
+            f"The projection onto reference regime '{ref.regime}' supplies no "
+            f"coordinate function for state '{state_name}'. It supplies "
+            f"{sorted(ref.projection)}."
+        )
+        raise ModelInitializationError(msg)
+    return ref.projection[state_name]
+
+
 def _build_same_period_ref_reader(
     *,
     ref: ResolvedSamePeriodRef,
@@ -732,7 +764,10 @@ def _build_same_period_ref_reader(
     for state_name in v_interpolation_info.state_names:
         target = f"{_REF_STATE_PREFIX}{state_name}"
         projection_funcs[state_name] = concatenate_functions(
-            functions={**dag_pool, target: ref.projection[state_name]},
+            functions={
+                **dag_pool,
+                target: projection_func_or_fail(ref=ref, state_name=state_name),
+            },
             targets=target,
             enforce_signature=False,
             set_annotations=True,

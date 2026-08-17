@@ -49,6 +49,7 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_V_ARG,
     ResolvedSamePeriodRef,
     _build_same_period_ref_reader,
+    projection_func_or_fail,
 )
 from _lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from _lcm.typing import (
@@ -1968,7 +1969,12 @@ def build_fallback_state_projector(
     for state_name in fallback_simulate_state_names:
         target = f"{_FALLBACK_PROJECTION_TARGET_PREFIX}{state_name}"
         projection_funcs[state_name] = concatenate_functions(
-            functions={**dag_pool, target: qualified_ref.projection[state_name]},
+            functions={
+                **dag_pool,
+                target: projection_func_or_fail(
+                    ref=qualified_ref, state_name=state_name
+                ),
+            },
             targets=target,
             enforce_signature=False,
             set_annotations=True,
