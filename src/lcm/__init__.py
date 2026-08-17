@@ -131,6 +131,7 @@ from lcm.processes import (  # noqa: E402
     UniformIIDProcess,
 )
 from lcm.regime import (  # noqa: E402
+    ConsumptionSavingsRegime,
     MarkovTransition,
     Regime,
 )
@@ -177,6 +178,7 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
     "ExactEnvelope",
