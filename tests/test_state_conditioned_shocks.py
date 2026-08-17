@@ -149,7 +149,7 @@ def test_iid_conditional_variance_matches_sigma_on_fine_grid():
     assert abs(var - sigma**2) < 1e-3
 
 
-# --- StateConditioned value object + code-ordered sigma resolver (F5) ------------- #
+# StateConditioned value object + code-ordered sigma resolver.
 
 
 def test_sigma_array_ordered_by_code_not_insertion():
