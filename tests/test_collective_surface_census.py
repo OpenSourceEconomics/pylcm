@@ -19,7 +19,7 @@ named in a docstring or commented out does not count as exercising it.
 """
 
 import ast
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 
 import pytest
 
@@ -77,6 +77,11 @@ def _exercises_the_surface(source: str) -> bool:
     )
 
 
+def _module_name(*, path: PurePath, root: PurePath) -> str:
+    """Name one module the way the pinned set spells it: relative, `/`-separated."""
+    return path.relative_to(root).as_posix()
+
+
 def _census() -> tuple[frozenset[str], frozenset[str]]:
     """Split the modules exercising the surface into public-route and engine-level.
 
@@ -86,13 +91,52 @@ def _census() -> tuple[frozenset[str], frozenset[str]]:
     reaching: set[str] = set()
     not_reaching: set[str] = set()
     for path in sorted(_TESTS_ROOT.rglob("*.py")):
-        source = path.read_text()
+        # Named, not defaulted: house style puts literal UTF-8 in sources, and a
+        # platform whose default codec is not UTF-8 cannot decode them.
+        source = path.read_text(encoding="utf-8")
         if not _exercises_the_surface(source):
             continue
-        relative = str(path.relative_to(_TESTS_ROOT.parent))
+        relative = _module_name(path=path, root=_TESTS_ROOT.parent)
         target = reaching if _calls(source, name="Model") else not_reaching
         target.add(relative)
     return frozenset(reaching), frozenset(not_reaching)
+
+
+def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
+    """The census decodes every source as UTF-8, not as the locale's codec.
+
+    House style puts literal `—`, `→` and `μ` in source files, and a platform
+    whose default codec is not UTF-8 cannot decode them: the read raises before
+    the census can parse anything. Naming the encoding at the read makes the
+    census independent of the machine it runs on.
+    """
+    recorded: list[str | None] = []
+    original = Path.read_text
+
+    def recording_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        recorded.append(kwargs.get("encoding"))  # ty: ignore[invalid-argument-type]
+        return original(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "read_text", recording_read_text)
+        _census()
+
+    assert set(recorded) == {"utf-8"}
+
+
+def test_module_names_are_posix_whatever_the_platform_separator_is():
+    """A module's census name uses `/`, so the pinned set is platform-independent.
+
+    The pinned set is written with forward slashes. A name built from the
+    platform separator spells the same module `tests\\solution\\x.py` on Windows,
+    so every entry would read as both added and removed at once.
+    """
+    windows_path = PureWindowsPath(r"D:\a\pylcm\pylcm\tests\solution\test_x.py")
+
+    assert (
+        _module_name(path=windows_path, root=PureWindowsPath(r"D:\a\pylcm\pylcm"))
+        == "tests/solution/test_x.py"
+    )
 
 
 def test_the_engine_level_set_is_exactly_the_pinned_one():
