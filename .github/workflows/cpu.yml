@@ -57,6 +57,15 @@ jobs:
           environments: tests-cpu
           activate-environment: true
           frozen: true
+      - name: Build the exact-affine kernel
+        # The kernel is a gitignored build artifact living in the source tree,
+        # so a checkout never brings it and an environment cache cannot carry
+        # it. `pixi install` builds it only when it decides the editable
+        # package needs reinstalling, which makes its presence a function of
+        # whether the project cache hit. Tests that ask for an exact verdict
+        # without a kernel are reported as skipped, so a cache hit would turn
+        # the certified suite green by removing it. Build it explicitly.
+        run: pixi run -e tests-cpu build-exact-affine
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
@@ -243,6 +252,11 @@ jobs:
           environments: tests-cpu
           activate-environment: true
           frozen: true
+      - name: Build the exact-affine kernel
+        # Same rationale as the `tests` job's build step above: the kernel is a
+        # source-tree artifact that neither the checkout nor the environment
+        # cache carries, and a missing one turns certified tests into skips.
+        run: pixi run -e tests-cpu build-exact-affine
       - name: Cache JAX compiled programs
         # Same rationale as the `tests` job's cache step above, keyed apart
         # (`jax-fp32-...`) so this leg never shares -- or fights over -- the
