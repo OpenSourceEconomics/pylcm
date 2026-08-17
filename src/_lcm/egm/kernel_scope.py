@@ -1,9 +1,8 @@
 """Build-time scope checks for the DC-EGM kernel.
 
-A validated DC-EGM regime always builds a `Model` successfully; features the
-kernel does not cover yet are reported here, per period and target, so the
-kernel build can install a step that raises `NotImplementedError` at solve
-time with a precise message. These checks read the processed kernel-build
+Features the numerical kernel does not cover are reported here, per period
+and target, during the build-stage solver validation inside `Model(...)`.
+These checks read the processed kernel-build
 context (period carry targets, qualified flat params, the regime's
 `VInterpolationInfo`, the processed transition functions), which the
 model-time `validation` module does not have — so they live alongside the
@@ -22,6 +21,7 @@ from _lcm.egm.regime_introspection import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.solution.continuation_target import _namespace_target_param_names
 from _lcm.transition_laws import TransitionLaws, is_stochastic
 from _lcm.typing import (
     ActionName,
@@ -72,7 +72,13 @@ def _find_unsupported_feature(
             own_discrete_state_names=own_discrete_state_names,
             euler_state_name=solver.continuous_state,
             own_passive_state_names=own_passive_state_names,
-            allowed_param_names=flat_param_names | regime_to_flat_param_names[target],
+            allowed_param_names=(
+                flat_param_names
+                | _namespace_target_param_names(
+                    target_name=target,
+                    param_names=regime_to_flat_param_names[target],
+                )
+            ),
         )
         if message is not None:
             break
@@ -150,7 +156,7 @@ def _find_unsupported_target_feature(
             )
     child_state_name = _get_child_state_name(user_regime=user_regimes[target])
     resources_arg_names = _get_child_resources_arg_names(
-        user_regime=user_regimes[target]
+        regime_name=target, user_regime=user_regimes[target]
     )
     child_action_names, _ = _get_child_discrete_actions(
         user_regime=user_regimes[target]

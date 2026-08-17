@@ -60,7 +60,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
-        constraints={"feasible": feasible},
+        constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         transition={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),

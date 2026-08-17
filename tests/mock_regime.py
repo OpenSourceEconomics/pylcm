@@ -5,6 +5,7 @@ from typing import Literal, cast
 from _lcm.grids import Grid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import GridSearch, Solver
 from lcm.typing import UserFunction
 
 
@@ -37,6 +38,7 @@ class MockRegime(UserRegime):
         # `Phased`) alongside plain callables.
         functions: Mapping[str, object] | None = None,
         koopmans_aggregator: object | None = None,
+        solver: Solver | None = None,
     ) -> None:
         object.__setattr__(self, "n_periods", n_periods)
         object.__setattr__(self, "actions", actions if actions is not None else {})
@@ -61,6 +63,9 @@ class MockRegime(UserRegime):
             koopmans_aggregator
             if koopmans_aggregator is not None or self.transition is None
             else LinearAggregator(),
+        )
+        object.__setattr__(
+            self, "solver", solver if solver is not None else GridSearch()
         )
         # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "active", lambda _age: True)

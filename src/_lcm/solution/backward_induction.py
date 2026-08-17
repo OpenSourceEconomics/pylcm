@@ -64,6 +64,7 @@ def solve(  # noqa: C901, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
+    collect_simulation_policies: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
 ) -> BackwardInductionResult:
@@ -80,6 +81,10 @@ def solve(  # noqa: C901, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        collect_simulation_policies: Whether to retain and copy published off-grid
+            policies to the host. The solve kernels may publish an internal policy
+            alongside their other outputs, but a value-only solve drops it at the
+            period boundary instead of retaining one device-sized artifact per period.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         retain_dissolution_flags: Whether a caller wants the per-period
@@ -92,11 +97,12 @@ def solve(  # noqa: C901, PLR0915
         to regime value-function arrays, the immutable mapping of periods to each
         regime's published simulation policy (the off-grid policy artifact
         simulation can interpolate; regimes whose kernels publish none have no
-        entry), and the immutable mapping of periods to each COLLECTIVE regime's
-        dissolution flag `D` — `True` on the state cells whose action mask is
-        empty, distinct from a numeric `-inf` value; empty inner mappings
-        for models without collective regimes, so the default path only gains an
-        empty dissolution mapping.
+        entry, and the whole mapping is empty when
+        `collect_simulation_policies` is false), and the immutable mapping of
+        periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
+        state cells whose action mask is empty, distinct from a numeric `-inf`
+        value; empty inner mappings for models without collective regimes, so
+        the default path only gains an empty dissolution mapping.
 
     """
     # The state-action spaces and the fence that reads them depend only on
@@ -191,13 +197,13 @@ def solve(  # noqa: C901, PLR0915
     logger.info("Starting solution")
     total_start = time.monotonic()
 
-    # A published simulation policy is a solve *output*, accumulated for
-    # every period; no backward step reads it. Its buffers can alias the
-    # period's continuation buffer, so leaving policies on device pins one
-    # continuation-sized buffer per period for the whole induction. Evict each
-    # period's policies to host as they are produced; simulation
-    # re-materializes them on device.
-    host_device = jax.devices("cpu")[0]
+    # A published simulation policy is a solve output; no backward step reads
+    # it. Its buffers can alias the period's continuation buffer, so retaining
+    # one per period pins a continuation-sized device buffer per period for the
+    # whole induction. Value-only solves therefore discard it at the period
+    # boundary; a requesting consumer receives host copies, which simulation
+    # re-materializes on device.
+    host_device = jax.devices("cpu")[0] if collect_simulation_policies else None
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
@@ -259,7 +265,7 @@ def solve(  # noqa: C901, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if result.simulation_policy is not None:
+            if collect_simulation_policies and result.simulation_policy is not None:
                 period_simulation_policies[regime_name] = result.simulation_policy
             # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
@@ -333,14 +339,18 @@ def solve(  # noqa: C901, PLR0915
             if publish_dissolution_flags
             else _NO_DISSOLUTION_FLAGS
         )
-        simulation_policies[period] = MappingProxyType(
-            {
-                regime_name: jax.block_until_ready(
-                    jax.device_put(simulation_policy, host_device)
-                )
-                for regime_name, simulation_policy in period_simulation_policies.items()
-            }
-        )
+        if collect_simulation_policies:
+            assert host_device is not None  # noqa: S101
+            simulation_policies[period] = MappingProxyType(
+                {
+                    regime_name: jax.block_until_ready(
+                        jax.device_put(simulation_policy, host_device)
+                    )
+                    for regime_name, simulation_policy in (
+                        period_simulation_policies.items()
+                    )
+                }
+            )
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)

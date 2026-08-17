@@ -101,7 +101,7 @@ def _model(*, solver, n_consumption=200):
         state_transitions={
             "wealth": {"saving": next_wealth, "done": next_wealth},
         },
-        constraints={"feasible": feasible},
+        constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         transition={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),

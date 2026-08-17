@@ -810,18 +810,20 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
-    optimal_actions, nested_fallback = _replace_continuous_action_with_policy_read(
-        optimal_actions=optimal_actions,
-        regime=regime,
-        sim_policy=sim_policy,
-        states=states[regime_name],
-        flat_params=flat_params[regime_name],
-        period=period,
-        age=age,
-        canonical_states=state_action_space.states,
-        action_names=state_action_space.action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        grid_values=V_arr,
+    optimal_actions, V_arr, nested_fallback = (
+        _replace_continuous_action_with_policy_read(
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            flat_params=flat_params[regime_name],
+            period=period,
+            age=age,
+            canonical_states=state_action_space.states,
+            action_names=state_action_space.action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            grid_values=V_arr,
+        )
     )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
@@ -925,11 +927,12 @@ def _replace_continuous_action_with_policy_read(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND | None]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
-    Replaces the grid-argmax value of the EGM continuous action with the
-    off-grid solve-phase optimum. Discrete-state axes index the row at the
+    Replaces the grid-argmax continuous action with the off-grid solve-phase
+    optimum and reports the canonical value attained by the emitted pair.
+    Discrete-state axes index the row at the
     subject's state (positions located on the variable's grid), and the row is
     interpolated at the subject's resources. For a regime with discrete
     actions the discrete branch is re-decided first: each branch's conditional
@@ -948,19 +951,28 @@ def _replace_continuous_action_with_policy_read(
       read is non-finite, non-positive, or outside the intrinsic budget
       (`action <= resources - savings_lower_bound`).
 
-    Returns the recovered actions and a nested-fallback flag: the per-subject
-    Boolean array from `_read_nested_policy` on the continuous-outer path, or
-    `None` on every other path (no policy, the flat single-EGM read, passive
-    rows, the discrete-branch redecide). The caller resolves `None` to all-False
-    where the regime's subject count is known.
+    Returns three things, and the second two are independent of each other:
+
+    - the recovered actions;
+    - the value to report for the emitted pair. Every path that keeps the grid
+      pair returns `grid_values` unchanged; only the flat single-EGM read, which
+      is the one path that moves the action off the grid here, recomputes it.
+      The nested (continuous-outer) path also moves the action, but it reports
+      its own value through the payload rather than through this return, so it
+      passes `grid_values` straight back;
+    - a nested-fallback flag: the per-subject Boolean array from
+      `_read_nested_policy` on the continuous-outer path, or `None` on every
+      other path (no policy, the flat single-EGM read, passive rows, the
+      discrete-branch redecide). The caller resolves `None` to all-False where
+      the regime's subject count is known.
     """
     if sim_policy is None:
-        return optimal_actions, None
+        return optimal_actions, grid_values, None
     if isinstance(sim_policy, NestedEGMSimPolicy):
         # The nested (continuous-outer) payload is self-describing (it names
         # both actions, the liquid state, and the search settings), so it
         # needs no build-time `egm_policy_read` qualification of its own.
-        return _read_nested_policy(
+        nested_actions, nested_fallback = _read_nested_policy(
             payload=sim_policy,
             optimal_actions=optimal_actions,
             regime=regime,
@@ -969,11 +981,12 @@ def _replace_continuous_action_with_policy_read(
             period=period,
             age=age,
         )
+        return nested_actions, grid_values, nested_fallback
     read = regime.simulation.egm_policy_read
     if read is None:
-        return optimal_actions, None
+        return optimal_actions, grid_values, None
     if sim_policy.row_passive_state_names:
-        return optimal_actions, None
+        return optimal_actions, grid_values, None
 
     n_subjects = next(iter(states.values())).shape[0]
 
@@ -1000,23 +1013,21 @@ def _replace_continuous_action_with_policy_read(
     )
 
     if sim_policy.row_discrete_action_names:
-        return (
-            _redecide_branch_and_read_policy(
-                score_actions=score_actions,
-                grid_values=grid_values,
-                optimal_actions=optimal_actions,
-                regime=regime,
-                sim_policy=sim_policy,
-                states=states,
-                flat_params=flat_params,
-                period=period,
-                age=age,
-                read=read,
-                n_subjects=n_subjects,
-                state_positions=state_positions,
-            ),
-            None,
+        redecided_actions, redecided_value = _redecide_branch_and_read_policy(
+            score_actions=score_actions,
+            grid_values=grid_values,
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            read=read,
+            n_subjects=n_subjects,
+            state_positions=state_positions,
         )
+        return redecided_actions, redecided_value, None
 
     resources = _resources_at_subjects(
         read=read,
@@ -1060,9 +1071,11 @@ def _replace_continuous_action_with_policy_read(
         & (off_grid_value >= grid_values)
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
+    reported_value = jnp.where(accepted, off_grid_value, grid_values)
 
     return (
         MappingProxyType({**optimal_actions, read.action_name: off_grid_action}),
+        reported_value,
         None,
     )
 
@@ -1081,7 +1094,7 @@ def _redecide_branch_and_read_policy(
     read: EGMPolicyRead,
     n_subjects: int,
     state_positions: tuple[IntND, ...],
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Re-decide the discrete branch off-grid and read the winner's policy.
 
     Each discrete-action combo's published rows are the solve-phase optimum
@@ -1111,7 +1124,7 @@ def _redecide_branch_and_read_policy(
         # keeps the constraint-masked grid pair. (The re-decision itself reads
         # the branch action from the published policy row, not the inverse, but
         # broadening the scope to numeric-inverse regimes is left to a follow-up.)
-        return MappingProxyType(dict(optimal_actions))
+        return MappingProxyType(dict(optimal_actions)), grid_values
 
     action_names = sim_policy.row_discrete_action_names
     action_grids = tuple(
@@ -1211,7 +1224,8 @@ def _redecide_branch_and_read_policy(
         new_actions[name] = jnp.where(
             accepted, grid[positions].astype(current.dtype), current
         )
-    return MappingProxyType(new_actions)
+    reported_value = jnp.where(accepted, winner_objective, grid_values)
+    return MappingProxyType(new_actions), reported_value
 
 
 # Numerical tolerance certifying the outer transition's unit action slope

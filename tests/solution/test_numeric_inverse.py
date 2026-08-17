@@ -118,26 +118,41 @@ def test_numeric_inverse_clamps_unbracketed_target_with_zero_gradient():
     assert float(jax.grad(invert)(jnp.asarray(100.0))) == 0.0
 
 
-@pytest.mark.parametrize(
-    ("target", "bound"),
-    [(100.0, 0.5), (0.01, 2.0)],
-    ids=["root_below_bracket", "root_above_bracket"],
-)
-def test_an_unbracketed_target_returns_the_bound_itself(target, bound):
-    """An unbracketed target returns a bracket bound exactly, never a point outside.
-
-    The bracket states which actions are feasible — `c_upper` comes from the
-    resources upper bound — so an action outside it is not a slightly imprecise
-    answer but an infeasible one. Whether the returned action is admissible is a
-    decision the bracket already made, not a quantity a tolerance may absorb.
-    """
+def test_a_root_below_the_positive_floor_returns_the_floor_itself():
+    """The numerical positive floor remains an active lower bound."""
     got = numeric_inverse_marginal_utility(
-        marginal_continuation=jnp.asarray(target),
+        marginal_continuation=jnp.asarray(100.0),
         marginal_utility=_crra_marginal(2.0),
         c_lower=jnp.asarray(0.5),
         c_upper=jnp.asarray(2.0),
     )
-    assert float(got) == bound
+    assert float(got) == 0.5
+
+
+def test_numeric_inverse_expands_an_initial_upper_bracket() -> None:
+    """A log-utility root above the savings-scale bracket is recovered exactly."""
+    got = numeric_inverse_marginal_utility(
+        marginal_continuation=jnp.asarray(1e-6),
+        marginal_utility=_crra_marginal(1.0),
+        c_lower=jnp.asarray(1e-8),
+        c_upper=jnp.asarray(2_000.0),
+    )
+    np.testing.assert_allclose(float(got), 1_000_000.0, rtol=1e-5)
+
+
+def test_expanded_numeric_inverse_keeps_the_implicit_derivative() -> None:
+    """Bracket expansion does not replace the analytical root derivative by zero."""
+
+    def invert(m_value):
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=m_value,
+            marginal_utility=_crra_marginal(1.0),
+            c_lower=jnp.asarray(1e-8),
+            c_upper=jnp.asarray(2_000.0),
+        )
+
+    got = jax.grad(invert)(jnp.asarray(1e-6))
+    np.testing.assert_allclose(float(got), -1e12, rtol=1e-4)
 
 
 @pytest.mark.parametrize("crra", [1.5, 2.0, 3.0])

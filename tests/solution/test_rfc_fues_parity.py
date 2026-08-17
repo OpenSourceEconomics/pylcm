@@ -25,6 +25,7 @@ import pytest
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
@@ -44,7 +45,7 @@ _PARITY_RTOL = 1e-3
 
 def _with_backend(regime, *, envelope):
     """Rebuild a DC-EGM regime with the chosen upper-envelope backend."""
-    solver = dataclasses.replace(regime.solver, envelope=envelope)
+    solver = dataclasses.replace(regime.solver, envelope=envelope_config(envelope))
     return regime.replace(solver=solver)
 
 
@@ -53,9 +54,9 @@ def _retirement_only_model(*, envelope, n_periods):
     last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "retirement": _with_backend(dcegm_retirement, envelope=envelope).replace(
-                active=lambda age, la=last_age: age < la
-            ),
+            "retirement": _with_backend(
+                dcegm_retirement, envelope=envelope_config(envelope)
+            ).replace(active=lambda age, la=last_age: age < la),
             "dead": dead,
         },
         ages=ages,

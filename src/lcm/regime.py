@@ -17,7 +17,7 @@ from typing import Any, Literal, cast
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
-from _lcm.grids import DiscreteGrid, Grid
+from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
@@ -34,7 +34,7 @@ from _lcm.utils.containers import (
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import GridSearch, Solver
+from lcm.solvers import DCEGM, EGM, NEGM, GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import UserFunction
@@ -314,9 +314,14 @@ class Regime:
     """Solution algorithm for this regime during backward induction.
 
     - `GridSearch()` (default): grid search over the full state-action product.
-    - `DCEGM(...)`: endogenous grid method for one continuous state and one
-      continuous action; the regime must satisfy the DC-EGM model contract,
-      which is validated at `Model` construction time.
+    - `EGM(...)`: envelope-free one-asset endogenous grid method.
+    - `DCEGM(...)`: discrete-continuous endogenous grid method.
+    - `NEGM(...)`: an outer continuous search nesting an inner `DCEGM`.
+
+    The endogenous-grid solvers validate their structural contracts during
+    `Model(...)`. `ConsumptionSavingsRegime` may own their shared state, action,
+    resources, and post-decision role names so those names need not be repeated
+    on each solver configuration.
     """
 
     taste_shocks: ExtremeValueTasteShocks | None = None
@@ -551,6 +556,10 @@ class Regime:
         # builds is consumed during model processing.
         normalize_regime_phases(self)
 
+    def _validate_finalized_structure(self, *, regime_name: RegimeName) -> None:
+        """Validate subclass-owned structure after model-level slots are merged."""
+        _ = regime_name
+
     def get_koopmans_aggregator(
         self,
         phase: Literal["solve", "simulate"] = "solve",
@@ -650,3 +659,122 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class ConsumptionSavingsRegime(Regime):
+    """Regime with named consumption-savings roles and an otherwise general DAG.
+
+    The class owns the four identities shared by grid search and the endogenous-grid
+    solver family. `GridSearch` can solve the regime without using the extra contract;
+    `DCEGM`, `EGM`, and the inner `DCEGM` of `NEGM` bind omitted duplicate role fields
+    from it. Explicit solver fields remain supported for ordinary `Regime` instances
+    and may be repeated here only when they agree exactly.
+
+    Functions beyond the named resources and post-decision nodes remain ordinary DAG
+    functions: the specialization constrains the accounting seam, not the rest of the
+    model.
+    """
+
+    continuous_state: StateName
+    """Euler-state role, such as `"wealth"`."""
+
+    continuous_action: ActionName
+    """Consumption-action role, such as `"consumption"`."""
+
+    resources: FunctionName
+    """Resources node from which consumption is paid."""
+
+    post_decision_function: FunctionName
+    """End-of-period balance node satisfying resources minus consumption."""
+
+    def __post_init__(self) -> None:
+        """Bind specialized solvers to the regime-owned role names."""
+        solver = self.solver
+        if isinstance(solver, DCEGM):
+            solver = _bind_dcegm_roles(solver=solver, regime=self)
+        elif isinstance(solver, NEGM):
+            solver = dataclasses.replace(
+                solver,
+                inner=_bind_dcegm_roles(solver=solver.inner, regime=self),
+            )
+        elif isinstance(solver, EGM):
+            post_decision_function = _bind_role(
+                owner="EGM.post_decision_function",
+                explicit=solver.post_decision_function,
+                canonical=self.post_decision_function,
+            )
+            solver = dataclasses.replace(
+                solver, post_decision_function=post_decision_function
+            )
+        object.__setattr__(self, "solver", solver)
+        super().__post_init__()
+
+    def _validate_finalized_structure(self, *, regime_name: RegimeName) -> None:
+        """Validate the named roles after broadcast slots and NEGM synthesis."""
+        messages: list[str] = []
+        state = self.states.get(self.continuous_state)
+        state = state.solve if isinstance(state, Phased) else state
+        if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
+            messages.append(
+                f"continuous_state {self.continuous_state!r} must name a continuous "
+                "solve-state grid"
+            )
+
+        action = self.actions.get(self.continuous_action)
+        if not isinstance(action, ContinuousGrid):
+            messages.append(
+                f"continuous_action {self.continuous_action!r} must name a "
+                "continuous action grid"
+            )
+
+        for label, name in (
+            ("resources", self.resources),
+            ("post_decision_function", self.post_decision_function),
+        ):
+            if self.functions.get(name) is None:
+                messages.append(f"{label} {name!r} must name a regime function")
+
+        if messages:
+            joined = "; ".join(messages)
+            raise RegimeInitializationError(
+                f"In consumption-savings regime {regime_name!r}: {joined}."
+            )
+
+
+def _bind_dcegm_roles(*, solver: DCEGM, regime: ConsumptionSavingsRegime) -> DCEGM:
+    """Return a DC-EGM config resolved against one regime-owned role contract."""
+    return dataclasses.replace(
+        solver,
+        continuous_state=_bind_role(
+            owner="DCEGM.continuous_state",
+            explicit=solver.continuous_state,
+            canonical=regime.continuous_state,
+        ),
+        continuous_action=_bind_role(
+            owner="DCEGM.continuous_action",
+            explicit=solver.continuous_action,
+            canonical=regime.continuous_action,
+        ),
+        resources=_bind_role(
+            owner="DCEGM.resources",
+            explicit=solver.resources,
+            canonical=regime.resources,
+        ),
+        post_decision_function=_bind_role(
+            owner="DCEGM.post_decision_function",
+            explicit=solver.post_decision_function,
+            canonical=regime.post_decision_function,
+        ),
+    )
+
+
+def _bind_role(*, owner: str, explicit: str, canonical: str) -> str:
+    """Bind one optional solver duplicate or reject conflicting ownership."""
+    if explicit and explicit != canonical:
+        raise RegimeInitializationError(
+            f"{owner} is {explicit!r}, but ConsumptionSavingsRegime owns this role "
+            f"as {canonical!r}. Omit the solver field or make the names identical."
+        )
+    return canonical

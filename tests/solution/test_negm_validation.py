@@ -172,6 +172,34 @@ def test_utility_coupling_the_two_margins_is_rejected_with_2d_pointer():
         _validate(regime)
 
 
+def _consumption_part(consumption: ContinuousAction) -> FloatND:
+    return consumption
+
+
+def _durable_part(new_durable: ContinuousState) -> FloatND:
+    return 1.0 + 0.01 * new_durable
+
+
+def _multiplicative_utility(
+    _consumption_part: FloatND, _durable_part: FloatND
+) -> FloatND:
+    return _consumption_part * _durable_part
+
+
+def test_utility_coupling_through_helper_branches_is_rejected() -> None:
+    """Separability is checked after composing every helper in the utility DAG."""
+    regime = _VALID.replace(
+        functions={
+            **dict(_VALID.functions),
+            "_consumption_part": _consumption_part,
+            "_durable_part": _durable_part,
+            "utility": _multiplicative_utility,
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="not additively separable"):
+        _validate(regime)
+
+
 @categorical(ordered=False)
 class _Work:
     work: ScalarInt
@@ -227,13 +255,12 @@ def test_hard_discrete_action_is_rejected_with_carry_layout_explanation():
         _validate(regime)
 
 
-def test_passive_state_after_the_durable_is_rejected_with_layout_explanation():
-    """A passive continuous state declared after the durable violates the layout.
+def test_passive_state_after_the_durable_is_order_independent():
+    """A passive state may follow the durable in declaration order.
 
-    The stacked outer carry lifts each candidate by a per-durable-state credited
-    cost, addressing the durable as the last passive axis; a passive state
-    declared after it would occupy that axis instead. The regime is rejected
-    with the required layout named.
+    State names determine the carry layout. The durable axis is located by name,
+    so adding an otherwise passive ride-along state after it does not change
+    whether the economic model is admissible.
     """
     regime = _VALID.replace(
         states={
@@ -241,8 +268,7 @@ def test_passive_state_after_the_durable_is_rejected_with_layout_explanation():
             "ride_along": negm_kinked_toy.ILLIQUID_GRID,
         },
     )
-    with pytest.raises(ModelInitializationError, match="last"):
-        _validate(regime)
+    assert _validate(regime) is None
 
 
 def _credited_reading_the_euler_state(

@@ -16,23 +16,19 @@ from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
-from _lcm.egm.negm_validation import validate_negm_regimes
-from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
     get_stateless_terminal_carry_producer,
     get_terminal_wealth_carry_producer,
 )
-from _lcm.egm.validation import (
-    savings_stage_reads_euler_state,
-    validate_dcegm_regimes,
-)
+from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
     Regime,
@@ -123,6 +119,7 @@ from _lcm.solution.contract import (
     KernelResult,
     PeriodKernel,
     SolverBuildContext,
+    SolverModelContext,
 )
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
@@ -325,15 +322,18 @@ def process_regimes(
     # DC-EGM regimes must satisfy the EGM model contract before any kernel is built.
     # `Model.__init__` validates earlier (so contract violations beat the generic
     # unused-variable check); this call covers direct `process_regimes` callers.
-    # All three read the representative regimes: the contract is about a state's kind
-    # and shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is
-    # not a `Grid`, so a type-filtered collection of continuous states would drop it.
-    validate_dcegm_regimes(
-        user_regimes=representative_user_regimes,
-        solution_reachability=reachability.solution,
-    )
-    validate_negm_regimes(user_regimes=representative_user_regimes)
-    validate_nnbegm_regimes(user_regimes=representative_user_regimes)
+    # Validation reads the representative regimes: the contract is about a state's
+    # kind and shape, both invariant across ages, and a raw `AgeSpecializedGrid`
+    # marker is not a `Grid`, so a type-filtered collection of continuous states
+    # would drop it.
+    for regime_name, user_regime in representative_user_regimes.items():
+        user_regime.solver.validate_model(
+            context=SolverModelContext(
+                regime_name=regime_name,
+                user_regimes=representative_user_regimes,
+                solution_reachability=reachability.solution,
+            )
+        )
 
     # Per-period continuation interpolation info, built from the schedule's cached
     # concrete grids (never an age factory). `None` for an age-invariant model.
@@ -459,17 +459,15 @@ def process_regimes(
     # read per node — see the function docstring.
     _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
 
-    # The regimes an endogenous-grid regime can transition into. Only these owe
-    # a continuation carry, so only these get the engine-side carry producer
+    # The regimes a continuation-based solver can transition into. Only these
+    # owe a continuation carry, so only these get the engine-side carry producer
     # composed around their period kernels. A regime no such solver reaches
     # keeps whatever kernel its own solver built, however its states are
     # shaped — a `GridSearch` regime whose first declared state happens to be
-    # continuous is not thereby anyone's endogenous-grid child.
-    egm_child_regimes = frozenset(
-        target
-        for regime_name, user_regime in user_regimes.items()
-        if user_regime.solver.requires_continuation
-        for target in reachability.solution.union_targets(source=regime_name)
+    # continuous is not thereby anyone's continuation target.
+    continuation_targets = _continuation_targets(
+        user_regimes=user_regimes,
+        phase_reachability=reachability.solution,
     )
 
     # Each regime's flat param names in the engine's binding vocabulary, keyed
@@ -598,7 +596,7 @@ def process_regimes(
             enable_jit=enable_jit,
             certainty_equivalent=user_regime.certainty_equivalent,
             solver=user_regime.solver,
-            is_egm_carry_target=regime_name in egm_child_regimes,
+            continuation_demanded=regime_name in continuation_targets,
             has_taste_shocks=user_regime.taste_shocks is not None,
             value_aware_feasibility=value_aware_feasibility,
             stakeholders=stakeholders,
@@ -2008,6 +2006,20 @@ def _has_valid_state_handoff(
     return law is not None and (not isinstance(law, Mapping) or target in law)
 
 
+def _continuation_targets(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    phase_reachability: PhaseReachability,
+) -> frozenset[RegimeName]:
+    """Return targets with incoming demand from a continuation-based source."""
+    return frozenset(
+        target
+        for source, source_regime in user_regimes.items()
+        if source_regime.solver.requires_continuation
+        for target in phase_reachability.union_targets(source=source)
+    )
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -2034,7 +2046,7 @@ def _build_solution_phase(
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None,
     solver: Solver,
-    is_egm_carry_target: bool,
+    continuation_demanded: bool,
     has_taste_shocks: bool,
     value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
@@ -2077,9 +2089,9 @@ def _build_solution_phase(
             regime, or `None`.
         solver: The regime's solver; the engine calls `validate` then
             `build_period_kernels` on it to obtain the per-period kernels.
-        is_egm_carry_target: Whether an endogenous-grid regime of the model can
-            transition into this one, so this regime owes that parent the
-            closed-form carry it interpolates.
+        continuation_demanded: Whether an incoming edge from a continuation-
+            based source reaches this regime in any active period. Only demanded
+            targets receive an engine-produced EGM continuation.
         has_taste_shocks: Whether the regime declares EV1 taste shocks on its
             discrete actions.
         value_aware_feasibility: The regime's value constraints and resolved
@@ -2299,7 +2311,7 @@ def _build_solution_phase(
         edge_target_regimes=edge_target_regimes,
         fold_state_names=fold_state_names,
     )
-    solver.validate(context=context)
+    solver.validate_build(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
 
     # The terminal continuation publisher is a cross-solver concern, not the
@@ -2313,12 +2325,12 @@ def _build_solution_phase(
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
-        is_egm_carry_target=is_egm_carry_target,
-        solver_produces_carry=solver_kernels.continuation_template is not None,
+        continuation_demanded=continuation_demanded,
+        solver_produces_carry=solver_kernels.continuation_spec is not None,
         enable_jit=enable_jit,
     )
     period_kernels = solver_kernels.period_kernels
-    continuation_template = solver_kernels.continuation_template
+    continuation_spec = solver_kernels.continuation_spec
     if egm_carry_producer is not None:
         period_kernels = MappingProxyType(
             {
@@ -2330,7 +2342,11 @@ def _build_solution_phase(
                 for period, kernel in period_kernels.items()
             }
         )
-        continuation_template = egm_carry_template
+        assert egm_carry_template is not None  # noqa: S101
+        continuation_spec = EGMContinuationSpec(
+            template=egm_carry_template,
+            layout=solver.egm_continuation_layout,
+        )
 
     # The published function set is consumed unresolved by feasibility checks and
     # additional-target computation, so resolve any `PeriodizedEconFunction` to its
@@ -2367,7 +2383,7 @@ def _build_solution_phase(
         period_kernels=period_kernels,
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
-        continuation_template=continuation_template,
+        continuation_spec=continuation_spec,
         param_checks=solver_kernels.param_checks,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
@@ -2550,7 +2566,7 @@ def _build_egm_child_carry_producer(
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
-    is_egm_carry_target: bool,
+    continuation_demanded: bool,
     solver_produces_carry: bool,
     enable_jit: bool,
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
@@ -2574,11 +2590,11 @@ def _build_egm_child_carry_producer(
 
     Returns:
         Tuple of the producer and the regime's carry template, both `None` for
-        a regime no endogenous-grid regime transitions into, for regimes whose
-        own solver already produces a carry, and for unsupported shapes.
+        regimes without incoming continuation demand, for regimes whose own
+        solver already produces a carry, and for unsupported shapes.
 
     """
-    if not is_egm_carry_target or solver_produces_carry:
+    if not continuation_demanded or solver_produces_carry:
         return None, None
     producer: EGMCarryProducer
     discrete_state_names = tuple(
@@ -2978,43 +2994,20 @@ def _build_simulation_phase(
         enable_jit=enable_jit,
     )
 
-    # Replaying the solve-phase EGM policy in simulation is valid only when
-    # the simulate-phase decision problem is the one the solve optimized and
-    # the published rows carry both the coordinates and the branch topology
-    # the read interpolates over at every state dimension:
-    # - a standalone `DCEGM` solver — a NEGM regime maximizes its value over
-    #   keeper and adjuster candidates but publishes only the keeper's inner
-    #   consumption function, so replaying it would pair an adjuster-won
-    #   value with the keeper's policy;
-    # - a crossing-certifying upper-envelope backend (MSS only) — RFC and LTM
-    #   leave the envelope switch between two retained nodes, and FUES decides
-    #   segment identity by a slope-threshold heuristic with no labels from
-    #   the kernel, so its row can bridge a missed switch; only MSS inserts
-    #   the exact crossing by construction (see
-    #   `_envelope_publishes_crossings`);
-    # - the single-post-state kernel (not asset-row mode) — when a
-    #   savings-stage function reads the Euler state, DC-EGM solves per
-    #   exogenous asset node and publishes one optimal point per node, not a
-    #   crossing-complete resources-space row, so interpolating across nodes
-    #   would mix branches wherever the winner changes between adjacent nodes;
-    # - no continuous stochastic-process state — a process is stored as a
-    #   node-valued row axis, but its simulation transition draws a continuous
-    #   value that need not land on a node, so nearest-node row selection
-    #   reads the wrong conditional policy;
-    # - no passive continuous state — each row is the upper-envelope policy
-    #   conditional on one passive node, and blending two rows across a
-    #   passive-dimension branch switch yields an action from neither branch;
-    # - no `Phased` declaration anywhere on the regime (a phase-variant
-    #   utility, budget, transition, or state domain changes the
-    #   simulate-phase FOC or the policy-row coordinates even under an
-    #   unchanged `W`) — `Phased` is the grammar's only source of phase
-    #   variance, so its absence is the exact test;
-    # - no carried-only states (their simulate-phase domain has no solve-side
-    #   row coordinates to read the policy on);
-    # - no taste shocks (the realized discrete draw perturbs the decision).
-    # The process, passive, and asset-row exclusions each lift once the read
-    # publishes conditional values and re-decides the branch at the simulated
-    # state; today the gate keeps those regimes on the grid-argmax path.
+    # Replaying a solve-phase EGM policy is disabled until an envelope backend
+    # proves the complete read contract. The required proof covers both branch
+    # topology (every interior and exact-node switch is represented with
+    # one-sided records) and row support (a compacted gap is reported rather
+    # than bridged by interpolation). No shipped backend currently proves both:
+    # MSS can omit an owner that wins only inside one candidate interval, FUES
+    # can merge branches when its slope heuristic misses a switch, RFC and LTM
+    # leave switches between retained nodes, and the exact backend publishes no
+    # support verdict for a split segment chain.
+    #
+    # The remaining conditions below define the other invariants a future
+    # crossing-complete backend must satisfy: standalone DC-EGM, phase-invariant
+    # declarations, no taste shocks, no process or passive continuous-state row
+    # axes, and the single-post-state kernel.
     phase_invariant = (
         not regime_declares_phased(user_regime) and not spec.carried_only_state_names
     )
@@ -3097,7 +3090,7 @@ def _build_simulation_phase(
 # Empty: no shipped backend provides the guarantee, so the branch-faithful policy
 # read is off and simulation keeps its grid-argmax. An envelope earns a place here
 # by passing the crossing- and support-completeness suites, not by intending to.
-_CROSSING_COMPLETE_ENVELOPES: frozenset[str] = frozenset()
+_CROSSING_COMPLETE_ENVELOPES: tuple[type[object], ...] = ()
 
 
 def _envelope_publishes_crossings(solver: DCEGM) -> bool:
@@ -3106,7 +3099,8 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
     No shipped backend qualifies, so the read is off everywhere and simulation
     keeps its grid-argmax. A branch-faithful policy read interpolates a row whose
     envelope switches sit at duplicated abscissae carrying both branch records:
-    - `"mss"` ⇒ no: the refinement inserts crossings only between adjacent query
+
+    - `MSSEnvelope` ⇒ no: the refinement inserts crossings only between adjacent query
       winners, so a branch that owns ground strictly inside one candidate
       interval leaves no record in the row, and a switch landing exactly on a
       candidate abscissa is suppressed by the strict-interior test. Opening the
@@ -3114,27 +3108,26 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
       different action, and one the canonical-Q safeguard cannot recover,
       because that safeguard rescores the emitted candidate against the finite
       action grid and an omitted owner is in neither set.
-    - `"exact"` ⇒ no, and this is the default, so the branch-faithful read is
-      off unless a regime asks for `"mss"`. The exclusion is narrower than the
-      ones below: ownership is resolved per node cell and certified, a boundary
-      whose sides differ in value *or* policy already emits both one-sided
+    - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
+      a boundary whose sides differ in value or policy emits both one-sided
       records, and a chain with more owned sub-cells than the row has slots
-      overflows loudly through `n_kept`. What is missing is the other half of
-      MSS's guarantee — the exact backend publishes no read-support verdict, so
-      a row whose segment chain splits (NaN-dead candidates, or a value
-      decrease between consecutive candidates) carries no signal that the
-      reader would be bridging a gap rather than interpolating one branch.
-    - `"fues"` ⇒ no: segment identity is decided by thresholding the
-      implied-savings slope (`fues_jump_thresh`) — a heuristic — and the
+      overflows loudly through `n_kept`. The backend nevertheless publishes no
+      read-support verdict, so a row whose segment chain splits (NaN-dead
+      candidates, or a value decrease between consecutive candidates) carries
+      no signal that the reader would be bridging a gap rather than
+      interpolating one branch.
+    - `FUESEnvelope` ⇒ no: segment identity is decided by thresholding the
+      implied-savings slope (`FUESEnvelope.jump_thresh`) — a heuristic — and the
       DC-EGM kernel supplies no segment labels. Two value branches whose
       cross-segment slope stays below the threshold merge into one row with
       no crossing inserted; the row then bridges the switch, and neither an
       exhaustive scan nor a wider window repairs that, because the scan can
       only search within the segment identity it was given. A FUES row is
       therefore not certified crossing-complete for the read.
-    - `"rfc"` / `"ltm"` ⇒ no: the switch lands between retained nodes.
+    - `RFCEnvelope` / `LTMEnvelope` ⇒ no: the switch lands between retained
+      nodes.
     """
-    return solver.envelope in _CROSSING_COMPLETE_ENVELOPES
+    return isinstance(solver.envelope, _CROSSING_COMPLETE_ENVELOPES)
 
 
 def _regime_has_process_state(v_interpolation_info: VInterpolationInfo) -> bool:

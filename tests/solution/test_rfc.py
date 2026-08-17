@@ -40,6 +40,7 @@ from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, rfc
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
+from tests.envelope_configs import envelope_config
 from tests.solution._envelope_rows import drop_nan as _drop_nan
 
 # Interpolated bracket reads are float-eps-limited at the active precision.
@@ -54,7 +55,7 @@ def _rfc_solver():
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-        envelope="rfc",
+        envelope=envelope_config("rfc"),
     )
 
 
@@ -302,7 +303,7 @@ def test_overflow_is_reported_via_n_kept():
 
 
 def test_rfc_backend_is_selected_by_solver_config():
-    """`envelope="rfc"` dispatches to the RFC backend.
+    """`RFCEnvelope()` dispatches to the RFC backend.
 
     The backend selected for an `rfc` solver must reproduce the standalone
     RFC kernel on a non-concave candidate set, while `"fues"` stays on FUES.
@@ -324,8 +325,8 @@ def test_rfc_backend_is_selected_by_solver_config():
         value=value,
         marginal_utility=marginal,
         n_refined=12,
-        search_radius=solver.rfc_search_radius,
-        jump_thresh=solver.rfc_jump_thresh,
+        search_radius=solver.envelope.search_radius,
+        jump_thresh=solver.envelope.jump_thresh,
     )
     for via_arr, direct_arr in zip(via_backend, direct, strict=True):
         np.testing.assert_array_equal(np.asarray(via_arr), np.asarray(direct_arr))
