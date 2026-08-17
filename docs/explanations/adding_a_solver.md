@@ -29,22 +29,31 @@ Concretely:
   `Solver.requires_continuation` at build time,
   `Regime.solution.solves_from_continuation` engine-side. Adding a solver must not add
   an `isinstance` check to `backward_induction.py` or `contract.py`.
-- The only solver-specific types the generic layer names are the two aliases in
-  `contract.py` — `ContinuationPayload` and `SimulationPolicy`. The engine threads both
-  opaquely.
+- The generic continuation channel has one definition in `_lcm.continuation`.
+  Backward induction threads `ContinuationPayload` opaquely; current endogenous-grid
+  solvers additionally publish an `EGMContinuationSpec` bundling the concrete carry
+  template with the static layout a reading parent needs. A future representation adds
+  its own operations instead of redefining the alias in multiple engine modules.
+- `SimulationPolicy` is likewise threaded as an optional artifact. Collection and host
+  transfer are demand-driven: they occur only for an explicit inspection request or an
+  actual simulation-policy consumer.
 
 ## The contract objects
 
 **`Solver` (abstract base class).** The user-facing configuration object, attached as
-`Regime(solver=...)`. A frozen dataclass carrying the solver's settings (grid names,
-batch sizes, thresholds). Two methods and one property matter:
+`Regime(solver=...)`. A frozen dataclass carrying the solver's settings (grids, batch
+sizes, thresholds). Three methods and two properties matter:
 
+- `validate_model(context) -> None`: validate finalized user declarations, before the
+  numerical build. Default: no-op.
+- `validate_build(context) -> None`: validate processed period/layout information that
+  does not exist at the earlier stage. Default: no-op.
 - `build_period_kernels(context) -> SolutionKernels` (abstract): build the regime's
-  per-period solve adapters.
-- `validate(context) -> None`: build-time scope check; raise a loud, typed error for any
-  regime the solver cannot handle correctly. Default: no-op.
-- `requires_continuation -> bool`: whether this solver reads a continuation payload from
-  its target regimes. Default: `False`.
+  per-period solve adapters after both validation stages pass.
+- `requires_continuation -> bool`: whether this solver reads continuation payloads from
+  reachable targets. Default: `False`.
+- `egm_continuation_layout -> EGMContinuationLayout`: interpretation of a current EGM
+  carry. Override only when the solver's row/candidate layout differs.
 
 **`SolverBuildContext`.** Everything a solver may read at build time, bundled so the
 method signature stays stable as solvers with different needs are added: the regime's
@@ -54,11 +63,12 @@ names (own and per-regime), JIT and taste-shock flags, the optional certainty
 equivalent, and the distributed co-map axes. Each solver reads only the fields it uses.
 
 **`SolutionKernels`.** What `build_period_kernels` hands back: an immutable mapping of
-period to `PeriodKernel`, plus an optional `continuation_template` — an all-finite
-payload with the regime's static shapes. The template initializes the rolling
-continuation mapping and serves as the lowering argument when a *parent's* kernel is
-AOT-compiled, so it must be shaped exactly like every real payload the kernels will
-publish.
+period to `PeriodKernel`, plus an optional `continuation_spec`. The current
+`EGMContinuationSpec` contains both an all-finite payload template and its immutable
+layout metadata. The template initializes the rolling continuation mapping and serves
+as the lowering argument when a *parent's* kernel is AOT-compiled, so it must match every
+real payload structurally; bundling the layout prevents producer and reader metadata
+from drifting apart.
 
 **`PeriodKernel` (protocol).** The loop's uniform call target — one non-jitted adapter
 per regime-period. Plain closures or small frozen dataclasses satisfy it structurally.
@@ -93,11 +103,15 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
 
 ## The lifecycle
 
-1. **Build.** `process_regimes` builds a `SolverBuildContext` per regime and calls
-   `solver.validate(context)`, then `solver.build_period_kernels(context)`
-   (`src/_lcm/regime_building/processing.py`). Terminal regimes produce their
-   closed-form continuation payloads only when some regime's solver reports
-   `requires_continuation` — the build reads the capability, not the type.
+1. **Model validation.** After model-level slots are merged and regimes finalized,
+   central model processing calls `solver.validate_model(context)` uniformly. A known
+   incompatibility raises `ModelInitializationError` during `Model(...)`.
+
+1. **Build validation and construction.** `process_regimes` builds a
+   `SolverBuildContext`, calls `solver.validate_build(context)`, then
+   `solver.build_period_kernels(context)`. Engine-produced terminal/GridSearch EGM
+   carries are added only to targets with an incoming retained edge from a solver whose
+   `requires_continuation` is true; unreachable eligible regimes publish nothing.
 
 1. **AOT compilation.** The loop collects every kernel's `cores()`, dedupes them by
    identity, and lowers each with the kwargs from `build_lower_args`. Continuation
@@ -109,9 +123,9 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
    - `V_arr` always enters `period_solution` (and the NaN/Inf diagnostics — automatic
      for every solver, no kernel involvement).
    - `continuation`, if present, enters `period_continuations`.
-   - `simulation_policy`, if present, enters `period_simulation_policies` and is evicted
-     to host memory (policies are solve *outputs*; no backward step reads them, and
-     leaving them on device would pin one continuation-sized buffer per period).
+   - `simulation_policy`, if present, is retained and copied to host only when the
+     solve request asks for the inspection artifact or fresh simulation has a qualifying
+     policy-read consumer. Otherwise the output is discarded immediately.
 
    After the period, the loop rolls `next_regime_to_V_arr` and
    `next_regime_to_continuation` forward. Both mappings keep their full template key
@@ -125,8 +139,9 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
   `KernelResult`. The loop owns accumulation, rolling, host eviction, and diagnostics.
 - **Assemble outside JIT.** The adapter is non-jitted; only the cores are compiled.
   Anything shape-dynamic belongs in the adapter, anything hot in a core.
-- **Stable pytrees.** Whatever a kernel publishes as `continuation` must match the
-  regime's `continuation_template` in structure, shapes, and dtypes, every period.
+- **Stable pytrees and layout.** Whatever a kernel publishes as `continuation` must
+  match `continuation_spec.template` in structure, shapes, and dtypes every period, and
+  its leading axes must obey `continuation_spec.layout`.
 - **Capability checks, not identity checks.** If the engine needs to treat your solver
   differently somewhere, express the difference as a property on the contract (as
   `requires_continuation` does) — never as an `isinstance` in generic code. Note the
@@ -138,11 +153,10 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
   carry-producer's targets. The diagnostics' U/F/E/Q breakdown skip is robust to either
   check (a terminal carry producer exposes an empty intermediates map, so the skip is a
   no-op there regardless).
-- **Fail loud at build time.** `validate` is the place to reject regimes outside the
-  solver's scope (wrong number of continuous states, missing declared functions, a
-  certainty equivalent a linear-expectation method cannot honor). A solver that silently
-  produces wrong numbers on an out-of-scope regime is a correctness bug, not a
-  limitation.
+- **Fail at the earliest informed stage.** `validate_model` rejects incompatibilities
+  visible after finalization; `validate_build` handles processed layouts and period
+  information. A solver that silently produces wrong numbers on an out-of-scope regime
+  is a correctness bug, not a limitation.
 
 ## Where the code goes
 
@@ -175,7 +189,7 @@ and cover at minimum:
   possible, otherwise a brute-force `GridSearch` twin on a dense grid or an independent
   VFI implementation — and assert concrete values with explicit tolerances (the DS-2024
   housing tests under `tests/test_models/` are the pattern).
-- **Scope rejection.** One test per `validate` failure mode.
+- **Scope rejection.** One test per model-stage and build-stage validation mode.
 - **Both precisions.** The suite runs with `--precision 32` on GPU CI; precision-scale
   any tolerance (grep for `X64_ENABLED` in existing tests).
 - **Cross-backend stability.** Comparisons inside a solver's numerics must not make
