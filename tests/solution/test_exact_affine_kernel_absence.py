@@ -176,3 +176,30 @@ def test_registration_is_reported_as_done_only_once(monkeypatch):
     ffi._ensure_registered()
 
     assert calls.count("cpu") == 1
+
+
+def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkeypatch):
+    """Registering on a CUDA backend with no CUDA kernel raises, naming the build.
+
+    The CPU kernel alone satisfies registration, so a CUDA-backed solve reaches
+    the first compile that needs the device target before anything objects — and
+    that compile can be hours into a job. The refusal states what to build while
+    the process is still cheap to restart.
+    """
+    monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "_default_backend", lambda: "gpu")
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+        ffi._ensure_registered()
+
+
+def test_a_cpu_backend_without_a_cuda_kernel_registers(monkeypatch):
+    """A CPU-backed solve needs no CUDA kernel, including on a machine with a GPU."""
+    monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "_default_backend", lambda: "cpu")
+
+    ffi._ensure_registered()
+
+    assert ffi._REGISTERED is True
