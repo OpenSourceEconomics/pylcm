@@ -44,6 +44,7 @@ from dags import (
 )
 from dags.tree import qname_from_tree_path
 
+from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
@@ -960,6 +961,7 @@ def _build_target_dag_pool(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
+    edge_target: RegimeName,
 ) -> dict[FunctionName | TransitionFunctionName, Callable[..., FloatND]]:
     """Return the target-regime nodes a gate or projection resolves against.
 
@@ -976,17 +978,43 @@ def _build_target_dag_pool(
         target_functions: The target regime's processed functions.
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
+        edge_target: Regime the edge lands on, named in the diagnostic.
 
     Returns:
         Dict of node name to callable, the DAG pool every edge-side consumer of
         this target is concatenated with. Keys are the target's function names
         and its deterministic `next_<state>` transition names.
 
+    Raises:
+        ModelInitializationError: If a node still varies with age.
+
     """
-    return {
+    pool = {
         **dict(target_deterministic_transitions),
         **{k: v for k, v in target_functions.items() if k != "H"},
     }
+    # Callers hand over the target's PUBLISHED function set, resolved at its
+    # representative age, so every node here is one concrete callable. Folds are
+    # grouped by grid signature alone, which is only sound while that holds: a
+    # node that still varied with age would be frozen at the representative
+    # age's closure for every period the group covers, and it would return a
+    # number rather than complain. Stated rather than assumed, so a change in
+    # what callers publish is caught here instead of in a solved value.
+    age_specialized = sorted(
+        name for name, node in pool.items() if isinstance(node, PeriodizedEconFunction)
+    )
+    if age_specialized:
+        msg = (
+            f"the DAG pool of target regime '{edge_target}' carries "
+            f"age-specialized node(s) {age_specialized}. An edge's gate and "
+            "projections compile against one pool per fold group, and those "
+            "groups are keyed by grid signature alone, so an age-varying node "
+            "would be frozen at one age's closure for every period in the "
+            "group. Hand over the target's published (representative-age "
+            "resolved) functions."
+        )
+        raise ModelInitializationError(msg)
+    return pool
 
 
 def _fence_edge_consumer(
@@ -1132,6 +1160,7 @@ def _compile_edge_gate(
     dag_pool = _build_target_dag_pool(
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
+        edge_target=edge.target,
     )
     target_component_names = (
         tuple(f"V_target_{s}" for s in target_stakeholders)
@@ -1944,6 +1973,7 @@ def build_fallback_state_projector(
     dag_pool = _build_target_dag_pool(
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
+        edge_target=target_regime_name,
     )
     # The same fences the solve-side fold runs over this very leg's fallback
     # projections, from the same helper. `dag_pool` is the GATED TARGET's nodes, so
