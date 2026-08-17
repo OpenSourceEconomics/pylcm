@@ -776,19 +776,19 @@ def _attach_gated_edge_folds(
             # forward simulation at the source's `period + 1`, which is the
             # same period seen from the consumer's side.
             fold_periods = canonical_regimes[target_name].active_periods
-            # The fold reads the target's value array as a RUNTIME argument and
-            # takes only its state names from the interpolation info, so the
-            # target's own nodes never enter it: it groups on the reference
-            # regimes alone. The gate evaluator interpolates that same array at
-            # a realized point, so it closes over the target's nodes too and
-            # groups on the target as well. Sharing one key would recompile the
-            # fold per target grid for nothing.
+            # The fold takes the target's value array as a RUNTIME argument and
+            # needs only its state names, so it groups on the grids its own
+            # readers interpolate -- `interpolated_regimes`, which names the
+            # target when a reference names it and omits it otherwise. The gate
+            # evaluator interpolates that array at a realized point, so the
+            # target's grid enters it whether or not a reference names it.
+            fold_read_regimes = resolved_edge.interpolated_regimes
             grouped_fold_periods = group_periods_by_key(
                 fold_periods,
                 functools.partial(
                     _edge_grid_group_key,
                     grid_schedule=grid_schedule,
-                    read_regimes=resolved_edge.reference_regimes,
+                    read_regimes=fold_read_regimes,
                 ),
             )
             grouped_evaluator_periods = group_periods_by_key(
@@ -796,7 +796,7 @@ def _attach_gated_edge_folds(
                 functools.partial(
                     _edge_grid_group_key,
                     grid_schedule=grid_schedule,
-                    read_regimes=(target_name, *resolved_edge.reference_regimes),
+                    read_regimes=(target_name, *fold_read_regimes),
                 ),
             )
             folds_by_group: dict[Hashable, Callable] = {}

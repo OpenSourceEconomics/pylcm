@@ -382,7 +382,13 @@ class ResolvedGatedEdge:
 
     reference_regimes: tuple[RegimeName, ...]
     """Deduplicated real regimes whose same-period V the fold reads (fallbacks +
-    gate refs), excluding the target itself."""
+    gate refs), excluding the target itself.
+
+    Excluding the target is right for the consumers that ask "which OTHER
+    regimes must be solved and supplied before this edge can fold" — the target
+    is already theirs by definition. It is the wrong set for asking which grids
+    the fold closes over, because a reference may name the target: use
+    `interpolated_regimes`."""
 
     folds_by_period: MappingProxyType[int, Callable] = MappingProxyType({})
     """Compiled `Wbar` producers, keyed by the FOLD PERIOD — the period whose
@@ -430,6 +436,28 @@ class ResolvedGatedEdge:
     alone: it interpolates the TARGET's own value array too, so an
     age-specialized grid on the target moves its nodes as well.
     """
+
+    @property
+    def interpolated_regimes(self) -> tuple[RegimeName, ...]:
+        """Every regime whose value the FOLD interpolates, the target included.
+
+        `get_edge_fold` builds one same-period reader per gate reference and per
+        leg fallback, each closing over the grid of the regime that reference
+        NAMES. A reference may name the gated target — a self-referencing edge —
+        and then the fold closes over the target's grid too, which
+        `reference_regimes` omits by design.
+
+        This is the set to fingerprint when deciding which fold periods may
+        share a compiled object: it is exactly the grids the compiled object
+        depends on, so a target no reference names stays out of it and costs
+        nothing.
+        """
+        return tuple(
+            dict.fromkeys(
+                [leg.fallback.regime for leg in self.legs]
+                + [ref.regime for ref in self.gate_refs.values()]
+            )
+        )
 
     def fold_at(self, *, period: int) -> Callable:
         """Return the `Wbar` producer for the period whose arrays it folds."""
