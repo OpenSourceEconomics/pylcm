@@ -108,6 +108,25 @@ repos:
         exclude: docs/index\.md
   - repo: local
     hooks:
+      # Gates the bare ruler only — a comment line that is nothing but fill
+      # characters. A titled `# --- Section ---`, a ruler under ten fill
+      # characters, and a ruler in a notebook or a Markdown file all stay a
+      # review responsibility; docstring underlines carry no `#` and are not
+      # in scope.
+      #
+      # Override, where a ruler earns its place: state the reason on the ruler
+      # line itself, e.g. `# ---- 8< ---- everything below is generated`. The
+      # line stops being decoration and the reason lands in the diff, so the
+      # override is self-documenting. `SKIP=no-section-separator-comments git
+      # commit …` also works but drops the hook from the run *without printing
+      # a line for it*, leaving no record; if you use it, put the reason in the
+      # commit message.
+      - id: no-section-separator-comments
+        name: no decorative section-separator comments
+        language: pygrep
+        entry: ^\s*#\s*[-=#_*]{10,}\s*$
+        types:
+          - python
       # Catches the labelled forms only — PR/issue numbers, `E<n>`/`F<n>`
       # finding labels, `round-<n>`, `pre-fix`. Prose that rehearses history
       # without a label stays a review responsibility.

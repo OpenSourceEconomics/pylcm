@@ -1490,7 +1490,6 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
 # cannot, and these tests pin the two things that replaced it: exponents carried
 # as integers, and a fixed-point accumulator wide enough that no term can fall
 # out of it.
-# ---------------------------------------------------------------------------
 
 
 def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):

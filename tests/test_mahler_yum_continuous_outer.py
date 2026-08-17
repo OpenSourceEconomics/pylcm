@@ -53,11 +53,6 @@ from lcm_examples.mahler_yum_2024.paper import (
 _CAPTURE_PERIOD = 36
 
 
-# ---------------------------------------------------------------------------
-# Fast gates: paper-mode equation regressions
-# ---------------------------------------------------------------------------
-
-
 def test_floored_budget_matches_brute_consumption_off_the_floor() -> None:
     """Off the floor, the declared schedule reproduces the brute budget.
 
@@ -148,11 +143,6 @@ def test_paper_solver_wiring_matches_the_plan_interface() -> None:
     assert isinstance(aggregator, UniformObservedFixedCost)
     assert aggregator.scale_function == "adjustment_cost_scale"
     assert (aggregator.lower, aggregator.upper) == (0.0, 1.0)
-
-
-# ---------------------------------------------------------------------------
-# Slow gates: terminal-period kernel on the real model
-# ---------------------------------------------------------------------------
 
 
 class _StopAfterCaptureError(Exception):

@@ -249,7 +249,6 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
 # Class boundaries: a subnormal's mantissa is part of the model.
 # The largest-subnormal fixture alone cannot distinguish preserving the
 # weight from replacing every subnormal by the smallest normal magnitude.
-# ---------------------------------------------------------------------------
 
 
 def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> None:

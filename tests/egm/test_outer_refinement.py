@@ -24,11 +24,6 @@ from lcm.typing import Float1D, FloatND
 _GOLDEN_ITERATIONS = 40
 
 
-# ---------------------------------------------------------------------------
-# Safeguarded continuous argmax
-# ---------------------------------------------------------------------------
-
-
 def test_unimodal_interior_maxima_beat_the_coarse_grid() -> None:
     centers = jnp.array([0.31, 0.57, 0.82])
 
@@ -132,10 +127,6 @@ def test_broken_surrogate_cannot_lose_the_exact_winner() -> None:
     assert float(result.refinement_gain[0]) == 0.0
     assert float(result.bracket_width[0]) == 0.0
 
-
-# ---------------------------------------------------------------------------
-# Adaptive shared outer mesh
-# ---------------------------------------------------------------------------
 
 _MESH_CONFIG = AdaptiveOuterMesh(
     initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=9),

@@ -21,13 +21,15 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    EdgeLeg,
+    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     Regime,
+    SamePeriodRef,
     categorical,
 )
-from lcm.regime import EdgeLeg, GatedEdge, SamePeriodRef
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
