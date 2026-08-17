@@ -22,8 +22,27 @@ def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
     """A model cannot defer an unavailable selected backend until `solve()`."""
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
-    with pytest.raises(ModelInitializationError, match="ExactEnvelope"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
         build_dcegm_model()
+
+
+def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(monkeypatch):
+    """Selecting an unavailable exact backend raises the kernel-absence error.
+
+    A platform that builds no kernel cannot construct a model that selects
+    `ExactEnvelope`, and that failure is the kernel's absence rather than a
+    defect in the model. Reporting it as `ModelInitializationError` would name
+    the wrong condition and leave every such test failing on that platform,
+    since only the kernel-absence error identifies a failure a kernelless host
+    is entitled to skip.
+    """
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError) as excinfo:
+        build_dcegm_model()
+
+    assert excinfo.errisinstance(ExactAffineKernelUnavailableError)
+    assert not excinfo.errisinstance(ModelInitializationError)
 
 
 def test_a_gpu_backend_requires_the_cuda_exact_kernel(monkeypatch):
