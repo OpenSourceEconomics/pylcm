@@ -21,7 +21,7 @@ def test_oracle_recovers_v_shape_on_exact_node_crossing():
     They cross exactly at the node `R = 0.5`. The exact envelope is
     `max(R, 1 - R)` with its minimum `0.5` at the crossing, and the winning policy
     switches from branch 1 (left) to branch 0 (right). This is the case the
-    production FUES collapses to a flat envelope (audit F5).
+    production FUES collapses to a flat envelope.
     """
     endog_grid = np.array([0.0, 0.5, 1.0, 0.0, 0.5, 1.0])
     value = np.array([0.0, 0.5, 1.0, 1.0, 0.5, 0.0])
