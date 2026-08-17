@@ -1013,3 +1013,27 @@ def test_left_germ_flags_a_neg_inf_bracket_as_not_left_finite():
 
     assert not bool(left_finite.any())
     np.testing.assert_allclose(np.asarray(first), [0.0, 0.0], atol=1e-12)
+
+
+def test_stochastic_prefold_declares_the_hermite_limiter_tradeoff() -> None:
+    """Folding rows before a limiter-bound Hermite read changes the interpolant."""
+    xp = jnp.asarray([0.0, 1.0, 2.0])
+    query = jnp.asarray(0.5)
+    values = jnp.asarray([[0.0, 0.0, 1.0], [0.0, 2.0, 2.0]])
+    slopes = jnp.asarray([[0.1, 3.0, 10.0], [1.0, 0.0, 100.0]])
+    per_node = jax.vmap(
+        lambda fp, fp_slopes: interp.interp_on_padded_grid(
+            x_query=query, xp=xp, fp=fp, fp_slopes=fp_slopes
+        )
+    )(values, slopes).mean()
+    pre_folded = interp.interp_on_padded_grid(
+        x_query=query,
+        xp=xp,
+        fp=values.mean(axis=0),
+        fp_slopes=slopes.mean(axis=0),
+    )
+    np.testing.assert_allclose(
+        np.asarray([per_node, pre_folded]),
+        np.asarray([0.5625, 0.38125]),
+        rtol=1e-5,
+    )

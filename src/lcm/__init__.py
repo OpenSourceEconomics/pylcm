@@ -144,6 +144,7 @@ from lcm.processes import (  # noqa: E402
     UniformIIDProcess,
 )
 from lcm.regime import (  # noqa: E402
+    ConsumptionSavingsRegime,
     MarkovTransition,
     Regime,
 )
@@ -154,7 +155,12 @@ from lcm.solvers import (  # noqa: E402
     NBEGM,
     NEGM,
     NNBEGM,
+    ExactEnvelope,
+    FUESEnvelope,
     GridSearch,
+    LTMEnvelope,
+    MSSEnvelope,
+    RFCEnvelope,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
@@ -189,15 +195,20 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "ConsumptionSavingsRegime",
     "DiscreteGrid",
+    "ExactEnvelope",
     "ExtremeValueTasteShocks",
+    "FUESEnvelope",
     "GridSearch",
     "IrregSpacedGrid",
+    "LTMEnvelope",
     "LinSpacedGrid",
     "LinearAggregator",
     "LinearExpectation",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
+    "MSSEnvelope",
     "MarkovTransition",
     "Model",
     "NormalIIDProcess",
@@ -208,6 +219,7 @@ __all__ = [
     "PiecewiseLogSpacedGrid",
     "PowerMean",
     "QuasiArithmeticMean",
+    "RFCEnvelope",
     "Regime",
     "RouwenhorstAR1Process",
     "SimulateSnapshot",

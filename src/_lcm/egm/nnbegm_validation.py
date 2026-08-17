@@ -77,13 +77,13 @@ def validate_nnbegm_regimes(
     """
     for regime_name, user_regime in user_regimes.items():
         if isinstance(user_regime.solver, NNBEGM):
-            _validate_nnbegm_regime(
+            validate_nnbegm_regime(
                 regime_name=regime_name,
                 user_regime=user_regime,
             )
 
 
-def _validate_nnbegm_regime(
+def validate_nnbegm_regime(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,

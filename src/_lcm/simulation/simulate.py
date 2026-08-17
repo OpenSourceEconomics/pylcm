@@ -598,7 +598,7 @@ def _simulate_regime_in_period(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
-    optimal_actions = _replace_continuous_action_with_policy_read(
+    optimal_actions, V_arr = _replace_continuous_action_with_policy_read(
         optimal_actions=optimal_actions,
         regime=regime,
         sim_policy=sim_policy,
@@ -681,11 +681,12 @@ def _replace_continuous_action_with_policy_read(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Interpolate the published EGM policy at each subject's resources.
 
-    Replaces the grid-argmax value of the EGM continuous action with the
-    off-grid solve-phase optimum. Discrete-state axes index the row at the
+    Replaces the grid-argmax continuous action with the off-grid solve-phase
+    optimum and reports the canonical value attained by the emitted pair.
+    Discrete-state axes index the row at the
     subject's state (positions located on the variable's grid), and the row is
     interpolated at the subject's resources. For a regime with discrete
     actions the discrete branch is re-decided first: each branch's conditional
@@ -706,9 +707,9 @@ def _replace_continuous_action_with_policy_read(
     """
     read = regime.simulation.egm_policy_read
     if sim_policy is None or read is None:
-        return optimal_actions
+        return optimal_actions, grid_values
     if sim_policy.row_passive_state_names:
-        return optimal_actions
+        return optimal_actions, grid_values
 
     n_subjects = next(iter(states.values())).shape[0]
 
@@ -792,8 +793,12 @@ def _replace_continuous_action_with_policy_read(
         & (off_grid_value >= grid_values)
     )
     off_grid_action = jnp.where(accepted, off_grid_action, grid_action)
+    reported_value = jnp.where(accepted, off_grid_value, grid_values)
 
-    return MappingProxyType({**optimal_actions, read.action_name: off_grid_action})
+    return (
+        MappingProxyType({**optimal_actions, read.action_name: off_grid_action}),
+        reported_value,
+    )
 
 
 def _redecide_branch_and_read_policy(
@@ -810,7 +815,7 @@ def _redecide_branch_and_read_policy(
     read: EGMPolicyRead,
     n_subjects: int,
     state_positions: tuple[IntND, ...],
-) -> MappingProxyType[ActionName, FloatND | IntND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Re-decide the discrete branch off-grid and read the winner's policy.
 
     Each discrete-action combo's published rows are the solve-phase optimum
@@ -840,7 +845,7 @@ def _redecide_branch_and_read_policy(
         # keeps the constraint-masked grid pair. (The re-decision itself reads
         # the branch action from the published policy row, not the inverse, but
         # broadening the scope to numeric-inverse regimes is left to a follow-up.)
-        return MappingProxyType(dict(optimal_actions))
+        return MappingProxyType(dict(optimal_actions)), grid_values
 
     action_names = sim_policy.row_discrete_action_names
     action_grids = tuple(
@@ -940,7 +945,8 @@ def _redecide_branch_and_read_policy(
         new_actions[name] = jnp.where(
             accepted, grid[positions].astype(current.dtype), current
         )
-    return MappingProxyType(new_actions)
+    reported_value = jnp.where(accepted, winner_objective, grid_values)
+    return MappingProxyType(new_actions), reported_value
 
 
 def _interp_rows_with_support(

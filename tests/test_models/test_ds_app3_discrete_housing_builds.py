@@ -29,6 +29,7 @@ import pytest
 
 from lcm import DiscreteGrid, Model
 from lcm.solvers import DCEGM, GridSearch
+from tests.envelope_configs import envelope_config
 from tests.test_models import ds_app3_discrete_housing
 
 
@@ -94,7 +95,7 @@ def test_dcegm_accepts_each_table4_upper_envelope(
     )
     solver = model.user_regimes["working"].solver
     assert isinstance(solver, DCEGM)
-    assert solver.envelope == envelope
+    assert solver.envelope == envelope_config(envelope)
 
 
 def test_brute_regime_uses_grid_search():
