@@ -60,7 +60,7 @@ F1_VALUE = [1.0, 1.1, 0.84, 0.84 + 1.0 / 3.0, 0.8, 1.4]
 
 
 def test_a_middle_branch_owning_an_interior_interval_is_published():
-    """The round-15 F1 witness: branch B owns R in [0.686, 0.96] and must survive."""
+    """A middle branch owning R in [0.686, 0.96] survives the refinement."""
     grid, policy, value, _ = _refine(F1_GRID, F1_POLICY, F1_VALUE)
     # Exact envelope at R=0.8 is B: value 0.84 + 0.8/3, policy 3.
     assert _read(grid, value, 0.8) == pytest.approx(0.84 + 0.8 / 3.0, abs=_tolerance())
@@ -68,7 +68,7 @@ def test_a_middle_branch_owning_an_interior_interval_is_published():
 
 
 def test_an_exact_node_aligned_crossing_separates_the_two_policies():
-    """The round-15 F3 witness: A and B meet exactly at R=10, B owns the right."""
+    """Two branches meeting exactly at R=10 leave B owning everything right of it."""
     grid, policy, value, _ = _refine(
         [9.0, 10.0, 9.5, 10.5], [8.0, 8.0, 2.0, 2.0], [4.875, 5.0, 4.75, 5.25]
     )
@@ -77,7 +77,7 @@ def test_an_exact_node_aligned_crossing_separates_the_two_policies():
 
 
 def test_a_strictly_dominant_branch_is_not_masked_by_a_large_value_level():
-    """The round-15 F2 witness: a few-ULP gap at a large level still decides."""
+    """A few-ULP gap at a large value level still decides which branch wins."""
     level = 1.0e12 if jnp.zeros(()).dtype == jnp.float64 else 1.0e5
     gap = 2.0 * float(jnp.spacing(jnp.asarray(level)))
     grid, policy, _value, _ = _refine(
@@ -124,7 +124,7 @@ def test_dead_candidates_are_excluded_from_the_envelope():
 
 
 def _oracle_branches() -> tuple[Branch, ...]:
-    """The F1 witness expressed for the exact rational oracle."""
+    """The three-branch witness expressed for the exact rational oracle."""
     return (
         Branch("A", (F(0), F(1)), (F(1), F(11, 10)), (F(10), F(10))),
         Branch("B", (F(0), F(1)), (F(21, 25), F(88, 75)), (F(3), F(3))),

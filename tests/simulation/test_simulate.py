@@ -462,9 +462,8 @@ def test_additional_targets_all(regression_simulation_result):
 def test_additional_targets_all_with_stochastic_transitions():
     """Test that additional_targets='all' works with stochastic transition models.
 
-    This is a regression test for issue #215: stochastic weight functions
-    (e.g., weight_next_health) were incorrectly included in available_targets,
-    causing additional_targets='all' to fail.
+    Stochastic weight functions (e.g. `weight_next_health`) are not offered as
+    available targets, so asking for every target does not reach one.
     """
     from lcm_examples.mortality import RegimeId as StochasticRegimeId  # noqa: PLC0415
     from tests.test_models.stochastic import (  # noqa: PLC0415

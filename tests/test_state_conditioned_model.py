@@ -305,8 +305,9 @@ def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma():
     high = drawn[drawn["uncertainty"] == "high"]["resid"].to_numpy()
     assert low.size > 100
     assert high.size > 100
-    # The F1 defect drew both regimes at the common grid sigma (0.30), so the low
-    # residual std collapsed to ~0.30 rather than 0.05.
+    # Each regime must be drawn at its OWN sigma, not at the common grid sigma
+    # (0.30). Drawing both at the grid sigma collapses the low regime's residual
+    # std to ~0.30 instead of 0.05, which is what these two asserts separate.
     assert low.std() == pytest.approx(sigma_low, rel=0.15)
     assert high.std() == pytest.approx(sigma_high, rel=0.15)
 
