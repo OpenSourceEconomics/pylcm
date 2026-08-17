@@ -105,7 +105,6 @@ def calculate_next_states(
 
     """
     # Identify stochastic transitions and generate random keys
-    # ---------------------------------------------------------------------------------
     transition_laws = regime.simulation.transition_laws
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
@@ -125,7 +124,6 @@ def calculate_next_states(
     )
 
     # Compute next states using regime's transition functions
-    # ---------------------------------------------------------------------------------
     next_state_vmapped = regime.simulation.next_state[period]
 
     # Carried states are true values that the decision's state-action space
@@ -227,7 +225,6 @@ def calculate_next_regime_membership(
 
     """
     # Compute regime transition probabilities
-    # ---------------------------------------------------------------------------------
     # The realized draw is built against the published pair-free pool, so it
     # reads each carried state as the subject's true carried value — feed
     # those values like `calculate_next_states` does.
@@ -256,7 +253,6 @@ def calculate_next_regime_membership(
     )
 
     # Generate random keys and draw next regimes
-    # ---------------------------------------------------------------------------------
     key, regime_transition_key = generate_simulation_keys(
         key=key,
         names=["regime_transition"],
@@ -272,7 +268,6 @@ def calculate_next_regime_membership(
     )
 
     # Update global regime membership array
-    # ---------------------------------------------------------------------------------
     return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
