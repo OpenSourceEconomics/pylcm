@@ -360,7 +360,7 @@ def test_interpolant_read_is_invariant_to_state_axis_flattening() -> None:
     assert jnp.array_equal(d_flat, d_nd.reshape(6))
 
 
-# --- F4 (round-2 audit): rounded ties must not flip the discrete outer action ---
+# Rounded ties must not flip the discrete outer action.
 #
 # Two coupled defects let backend/precision rounding pick a different outer
 # action despite the declared value tolerance: (a) the four-point slope
@@ -521,7 +521,6 @@ def test_tie_band_does_not_swallow_a_genuine_off_node_advantage() -> None:
     assert float(won[0]) == 0.5
 
 
-# --- F3 -----------------------------------------------------------------
 # Nonfinite-sentinel arithmetic in the mesh validator discarded a finite
 # feasible island and reported a zero residual over a genuinely-unresolved
 # interval. Two reachable cases, each RED before the `_mark_intervals` fix.
@@ -617,7 +616,6 @@ def test_fail_closed_raises_on_unresolved_beats_best_interval() -> None:
         )
 
 
-# --- F1 -----------------------------------------------------------------
 # The fixed-radius two-sided slope probe accepted small but derivative-critical
 # kinks: its threshold `rtol*|Q_ff|*delta` scales with the probe radius, so a
 # kink whose slope jump is below it passes as stationary while the IFT tangent
@@ -752,7 +750,6 @@ def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
     assert bool(diag.branch_certified)
 
 
-# --- F2 -----------------------------------------------------------------
 # Midpoint-only validation is mesh-relative, not a global safeguard: a peak
 # narrower than the mesh that misses every sampled midpoint is neither seen nor
 # bounded. An opt-in Lipschitz constant upgrades refinement to a certified

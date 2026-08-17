@@ -182,7 +182,7 @@ def safeguarded_continuous_argmax(
         valid=bracket_valid,
     )
 
-    # --- Coarse selection: fold the exact nodes in increasing order. ---
+    # Coarse selection: fold the exact nodes in increasing order.
     best_x = jnp.broadcast_to(nodes[0], state_shape)
     best_v = finite_values[0]
     second_x = jnp.broadcast_to(nodes[0], state_shape)
@@ -202,7 +202,7 @@ def safeguarded_continuous_argmax(
     coarse_x = best_x
     coarse_v = best_v
 
-    # --- Refined bracket optima join the competition. ---
+    # Refined bracket optima join the competition.
     refined_width = refined.upper - refined.lower
     for index in range(n_brackets):
         best_x, best_v, second_x, second_v, width = _consider(

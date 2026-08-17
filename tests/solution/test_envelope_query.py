@@ -1482,7 +1482,6 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
     assert float(sign[0]) == 1.0
 
 
-# ---------------------------------------------------------------------------
 # Round-13: the exponent-preserving exact ordering kernel.
 #
 # Rounds 6 to 12 each repaired the SITE a witness pointed at — a value
@@ -1493,7 +1492,6 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
 # cannot, and these tests pin the two things that replaced it: exponents carried
 # as integers, and a fixed-point accumulator wide enough that no term can fall
 # out of it.
-# ---------------------------------------------------------------------------
 
 
 def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):
