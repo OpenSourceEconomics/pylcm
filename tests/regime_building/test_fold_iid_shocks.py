@@ -46,12 +46,20 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, NormalIIDProcess, categorical
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    LinSpacedGrid,
+    NormalIIDProcess,
+    Regime,
+    SamePeriodRef,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 from tests.conftest import build_prepared_structure

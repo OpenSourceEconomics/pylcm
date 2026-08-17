@@ -25,14 +25,16 @@ from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     Regime,
+    SamePeriodRef,
     categorical,
     fixed_transition,
 )
-from lcm.regime import EdgeLeg, GatedEdge, SamePeriodRef
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 

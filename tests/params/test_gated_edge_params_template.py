@@ -21,9 +21,18 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    SamePeriodRef,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,

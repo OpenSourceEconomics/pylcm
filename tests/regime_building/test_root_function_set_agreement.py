@@ -19,13 +19,16 @@ from _lcm.regime_building import broadcast
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    Regime,
+    SamePeriodRef,
     categorical,
     fixed_transition,
 )
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,

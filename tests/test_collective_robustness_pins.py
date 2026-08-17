@@ -143,7 +143,12 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
 
 
 def test_gated_edge_declaration_types_are_exported_from_the_package():
-    """A gated edge is declared from the top-level package, like every other slot."""
+    """A gated edge is declared from the top-level package, like every other slot.
+
+    The comparison needs the defining module's objects on one side, which is why
+    this module alone imports the two names from `lcm.regime`: reading both
+    sides off `lcm` would compare each name against itself and pin nothing.
+    """
     exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "EdgeLeg", None))
 
     assert exported == (GatedEdge, EdgeLeg)

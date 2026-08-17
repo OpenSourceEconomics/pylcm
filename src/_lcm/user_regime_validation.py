@@ -1472,12 +1472,12 @@ def _fail_if_collective_regime_folds(
     any dissolving node at all. A state that dissolves with small probability
     would be stored as dissolving with certainty.
 
-    `Regime.stakeholders` lists transient-node shock folding among the
-    deliberately deferred parts of the collective envelope; this is where that
-    deferral is enforced. The regime name lives in the model's `regimes` dict
-    rather than on the regime, so the check runs at model build rather than in
-    the regime-local `_validate_fold_declarations` — which lets the message
-    name the regime the author has to edit.
+    `Regime.stakeholders` states the same refusal, so an author meets it both
+    where the combination is declared and where it is caught. The regime name
+    lives in the model's `regimes` dict rather than on the regime, so the check
+    runs at model build rather than in the regime-local
+    `_validate_fold_declarations` — which lets the message name the regime the
+    author has to edit.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
@@ -1497,10 +1497,8 @@ def _fail_if_collective_regime_folds(
         "as a not-sustainable sentinel, which a gated edge resolves to the "
         "outside option rather than reading as a value. Averaging that "
         "sentinel over the shock's nodes would price a household that "
-        "dissolves at one node as dissolving at all of them. Transient-node "
-        "shock folding is deliberately deferred for collective regimes (see "
-        "`Regime.stakeholders`). Drop `fold=True` on the shock, or drop "
-        "`stakeholders` on the regime."
+        "dissolves at one node as dissolving at all of them. Drop `fold=True` "
+        "on the shock, or drop `stakeholders` on the regime."
         for regime_name, regime in user_regimes.items()
         if regime.stakeholders is not None and (fold_names := _fold_state_names(regime))
     ]

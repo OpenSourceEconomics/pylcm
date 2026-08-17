@@ -375,6 +375,14 @@ class Regime:
     and non-GridSearch solvers on a collective regime raise
     `NotImplementedError`.
 
+    A shock declared `fold=True` is refused when the model is built, naming the
+    regime and the state. A collective regime writes `-inf` where no action
+    satisfies every stakeholder's participation constraint — a sentinel a gated
+    edge resolves to the outside option, not a value on the household's own
+    scale — and quadrature over that sentinel is not an expectation: a
+    household dissolving at one node would be stored as dissolving at all of
+    them. The same shock folds normally in a singleton regime.
+
     Three things to know before simulating one:
 
     - The population is one fixed-size cohort of independent rows. A

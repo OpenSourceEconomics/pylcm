@@ -16,12 +16,15 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
     LinSpacedGrid,
     Model,
+    Regime,
+    SamePeriodRef,
     categorical,
     fixed_transition,
 )
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import AGES, Work

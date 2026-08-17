@@ -28,11 +28,20 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    SamePeriodRef,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,

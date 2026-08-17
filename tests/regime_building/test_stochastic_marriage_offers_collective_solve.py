@@ -54,10 +54,18 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, Model, categorical, fixed_transition
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    Model,
+    Regime,
+    SamePeriodRef,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,

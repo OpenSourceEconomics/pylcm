@@ -32,11 +32,18 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
-from lcm import DiscreteGrid, NormalIIDProcess, categorical
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    NormalIIDProcess,
+    Regime,
+    SamePeriodRef,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure

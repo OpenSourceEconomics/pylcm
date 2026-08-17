@@ -28,8 +28,17 @@ absence.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
+from lcm import (
+    AgeGrid,
+    EdgeLeg,
+    GatedEdge,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    SamePeriodRef,
+    categorical,
+)
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,

@@ -98,9 +98,16 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, categorical
+from lcm import (
+    DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
+    LinSpacedGrid,
+    Regime,
+    SamePeriodRef,
+    categorical,
+)
 from lcm.ages import AgeGrid
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import _solve_and_process

@@ -56,6 +56,24 @@ def test_collective_regime_declaring_a_folded_state_is_rejected(
         )
 
 
+def test_the_fold_refusal_reads_as_a_limit_rather_than_as_pending_work() -> None:
+    """The refusal explains what it cannot average, not a release schedule.
+
+    An author who reads the combination as merely unbuilt waits for it to
+    arrive. What the refusal has to convey is that a dissolution cell carries a
+    not-sustainable sentinel instead of a value, so there is nothing on the
+    household's scale for quadrature to average.
+    """
+    with pytest.raises(ModelInitializationError) as excinfo:
+        Model(
+            regimes=make_folding_collective_regimes(),
+            ages=AGES,
+            regime_id_class=CoupleRegimeId,
+        )
+
+    assert "defer" not in str(excinfo.value).lower()
+
+
 def test_collective_fold_under_a_participation_constraint_is_rejected() -> None:
     """A folded collective regime is refused however its dissolution arises.
 

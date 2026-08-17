@@ -47,15 +47,18 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
+    EdgeLeg,
+    GatedEdge,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    Regime,
+    SamePeriodRef,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.regime import EdgeLeg, GatedEdge, Regime, SamePeriodRef
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
