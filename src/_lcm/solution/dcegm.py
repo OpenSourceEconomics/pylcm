@@ -35,6 +35,7 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
 )
+from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
 from _lcm.typing import (
     EGMStepFunction,
     FlatParams,
@@ -406,12 +407,11 @@ class _DCEGMPeriodKernel:
         restores the values removed from the live `flat_params` for all of them
         at once.
         """
-        egm_fixed = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
-        for target_name in self.transition_target_names:
-            for key, value in fixed_flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                egm_fixed.setdefault(key, value)
+        egm_fixed = _union_fixed_params(
+            fixed_flat_params=fixed_flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
         if not egm_fixed:
             return self
         return replace(self, core=functools.partial(self.core, **egm_fixed))
@@ -481,13 +481,11 @@ class _DCEGMPeriodKernel:
         binding done at model build (`_partial_fixed_params_into_regimes`) for
         the free-param path.
         """
-        params: dict[str, object] = dict(flat_params[self.regime_name])
-        for target_name in self.transition_target_names:
-            for key, value in flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                params.setdefault(key, value)
-        return params
+        return _union_free_params(
+            flat_params=flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
 
 
 def _carry_subset(

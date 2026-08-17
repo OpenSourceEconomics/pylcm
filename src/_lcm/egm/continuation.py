@@ -2106,9 +2106,13 @@ def _build_child_reads(
             )
         else:
             action_names, action_values = (), ()
-        resources_func = _get_child_resources_function(user_regime=target_regime)
+        resources_func = _get_child_resources_function(
+            regime_name=target, user_regime=target_regime
+        )
         resources_arg_names = frozenset(
-            _get_child_resources_arg_names(user_regime=target_regime)
+            _get_child_resources_arg_names(
+                regime_name=target, user_regime=target_regime
+            )
         )
         # Everything the resources function reads beyond the child's own
         # states and discrete actions is a (qualified) param or `age` /

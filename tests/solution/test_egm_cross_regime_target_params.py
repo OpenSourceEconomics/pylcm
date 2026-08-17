@@ -1,12 +1,10 @@
-"""DC-EGM cross-regime carry: a target's resources reads a model-level param.
+"""DC-EGM cross-regime carry preserves regime-local parameter identity.
 
 A DC-EGM regime may carry into a *different* target regime whose `resources`
-function reaches a model-level (shared) parameter that the source regime's own
-DAG never touches — for example a pension factor that the source, lacking the
-pension function, prunes from its parameter template. Such a parameter is a
-genuine model-level value, identical across regimes; the per-exogenous-asset-
-node solve must evaluate the target's resources with it, exactly as the
-brute-force solver does.
+function exposes the same inner qualified parameter name as the source, but a
+different regime-local value. The per-exogenous-asset-node solve must evaluate
+the target's resources with the target value, exactly as the brute-force solver
+does; flattening both namespaces into one source-first mapping is invalid.
 
 The asset-row solve is active because the source regime's regime-transition
 probability reads the Euler state (wealth). The oracle for the solved value
@@ -55,10 +53,12 @@ SURVIVAL_HIGH = 0.95
 # wealth queries away from the grid's lower edge.
 LABOR_INCOME = 5.0
 
-# Pension factor scaling the target regime's accrued pension into resources.
-# A model-level value supplied through `fixed_params`; the source regime has
-# no pension function, so its template never carries this parameter.
-PENSION_FACTOR = 0.6
+# Pension factors scaling the same-named source and target functions. The
+# values deliberately differ: both regimes therefore carry the identical inner
+# qualified name `pension_value__pension_factor`, and the cross-regime carry
+# must retain which regime owns each value.
+YOUNG_PENSION_FACTOR = 0.15
+OLD_PENSION_FACTOR = 0.6
 
 # Accrued pension level the target regime adds to wealth (times the factor).
 ACCRUED_PENSION = 12.0
@@ -140,7 +140,7 @@ def young_death_prob(wealth: ContinuousState) -> FloatND:
     return 1.0 - survival_of_wealth(wealth)
 
 
-# Target-regime (old) resources: reads the model-level pension factor
+# Target-regime (old) resources: reads the old regime's pension factor
 
 
 def accrued_pension() -> FloatND:
@@ -148,7 +148,7 @@ def accrued_pension() -> FloatND:
 
 
 def pension_value(accrued_pension: FloatND, pension_factor: float) -> FloatND:
-    """Pension income, scaling the accrued pension by the model-level factor."""
+    """Pension income, scaling accrued pension by its regime-local factor."""
     return accrued_pension * pension_factor
 
 
@@ -162,17 +162,18 @@ def budget_constraint_old(
     return consumption <= wealth + pension_value
 
 
-# Source-regime (young) resources: plain wealth
+# Source-regime (young) resources use the same function-qualified parameter
+# name as the target, but a different regime-local value.
 
 
-def resources_young(wealth: ContinuousState) -> FloatND:
-    return wealth
+def resources_young(wealth: ContinuousState, pension_value: FloatND) -> FloatND:
+    return wealth + pension_value
 
 
 def budget_constraint_young(
-    consumption: ContinuousAction, wealth: ContinuousState
+    consumption: ContinuousAction, wealth: ContinuousState, pension_value: FloatND
 ) -> BoolND:
-    return consumption <= wealth
+    return consumption <= wealth + pension_value
 
 
 def next_old_stay_prob(wealth: ContinuousState, age: int) -> FloatND:
@@ -201,7 +202,12 @@ def _params(*, factor_is_fixed: bool) -> dict:
     if not factor_is_fixed:
         # Free param: supplied at solve time under the target regime's
         # pension function.
-        params["old"] = {"pension_value": {"pension_factor": PENSION_FACTOR}}
+        params["young"] = {
+            "pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}
+        }
+        params["old"] = {
+            "pension_value": {"pension_factor": OLD_PENSION_FACTOR}
+        }
     return params
 
 
@@ -209,12 +215,12 @@ def _params(*, factor_is_fixed: bool) -> dict:
 def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
     """Young (DC-EGM, asset-row) carries into a different regime `old`.
 
-    `old`'s resources reach the model-level `pension_factor` through the
-    pension chain; the source `young` regime has no pension function, so its
-    parameter template never carries `pension_factor`. When `factor_is_fixed`
-    the factor is supplied through `fixed_params` (partialled at model build
-    and dropped from the live template); otherwise it is a free solve param of
-    the target regime.
+    `young` and `old` both expose `pension_value__pension_factor`, but each
+    owns a different regime-local value. The target resources map must read
+    the `old` value rather than the source-first value from `young`. When
+    `factor_is_fixed`, both values are supplied through `fixed_params`
+    (partialled at model build and dropped from the live template); otherwise
+    they are free solve params.
     """
     is_dcegm = solver == "dcegm"
     young = UserRegime(
@@ -237,9 +243,16 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
                 "resources": resources_young,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
+                "accrued_pension": accrued_pension,
+                "pension_value": pension_value,
             }
             if is_dcegm
-            else {"utility": utility, "resources": resources_young}
+            else {
+                "utility": utility,
+                "resources": resources_young,
+                "accrued_pension": accrued_pension,
+                "pension_value": pension_value,
+            }
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
     )
@@ -275,7 +288,12 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
         active=lambda _age: True,
     )
     fixed_params = (
-        {"old": {"pension_value": {"pension_factor": PENSION_FACTOR}}}
+        {
+            "young": {
+                "pension_value": {"pension_factor": YOUNG_PENSION_FACTOR}
+            },
+            "old": {"pension_value": {"pension_factor": OLD_PENSION_FACTOR}},
+        }
         if factor_is_fixed
         else {}
     )
@@ -310,16 +328,14 @@ def _assert_young_V_matches(
 def test_cross_regime_target_resources_param_matches_brute_force(
     factor_is_fixed: bool,  # noqa: FBT001
 ):
-    """A target regime's resources reading a model-level param matches brute.
+    """Same-named source and target parameters remain regime-local.
 
-    The source `young` regime carries into the different `old` regime, whose
-    resources reach the model-level `pension_factor` through the pension chain
-    — a parameter the source regime's template never carries. The asset-row
-    solve must evaluate the target's resources with the model-level parameter
-    value, whether the factor is a fixed param (partialled into the prebuilt
-    kernel) or a free solve param (threaded from the target regime's live
-    params). The source regime's value function agrees with the dense-grid
-    brute-force oracle.
+    The source `young` regime carries into the different `old` regime. Source
+    and target resources expose the same inner qualified parameter name but
+    receive different regime-local values. The asset-row solve must evaluate
+    each resources map with its owning regime's value, whether the values are
+    fixed params or free solve params. The source value function agrees with
+    the dense-grid brute-force oracle.
     """
     params = _params(factor_is_fixed=factor_is_fixed)
     dcegm_solution = _cross_regime_model(
