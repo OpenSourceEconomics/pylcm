@@ -1,9 +1,8 @@
-"""The certified path reports a missing kernel when used, not when imported.
+"""Native exact-kernel availability is checked at the earliest owning boundary.
 
-Importing the upper envelope must not require a compiled kernel: a platform
-without one still runs every part of pylcm that does not ask for an exact
-verdict. The refusal belongs at the point a verdict is requested, where it can
-name what to build.
+Importing pylcm remains possible without a compiled kernel. Selecting
+`ExactEnvelope` for a model fails during `Model(...)`; low-level verdict entry
+points retain their own fail-loud guard.
 """
 
 import re
@@ -13,9 +12,27 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import ffi
-from lcm.exceptions import ExactAffineKernelUnavailableError
+from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from tests import conftest
 from tests.conftest import X64_ENABLED
+from tests.test_models.dcegm_paper_twin import build_dcegm_model
+
+
+def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
+    """A model cannot defer an unavailable selected backend until `solve()`."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ModelInitializationError, match="ExactEnvelope"):
+        build_dcegm_model()
+
+
+def test_a_gpu_backend_requires_the_cuda_exact_kernel(monkeypatch):
+    """A CPU library alone cannot satisfy a selected GPU exact backend."""
+    monkeypatch.setattr(ffi, "kernel_available", lambda: True)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
+
+    assert ffi.kernel_available_for_current_backend() is False
 
 
 def test_a_missing_kernel_is_reported_when_a_verdict_is_requested(monkeypatch):

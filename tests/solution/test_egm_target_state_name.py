@@ -120,7 +120,7 @@ def _model(*, solver, n_consumption=14):
             # declared here as the entry law into `gone`.
             "estate": {"gone": next_estate},
         },
-        constraints={"feasible": feasible},
+        constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         transition={
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),

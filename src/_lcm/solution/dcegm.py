@@ -15,25 +15,27 @@ pulls in no numerical engine modules.
 import functools
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverModelContext,
 )
 from _lcm.typing import (
     EGMStepFunction,
@@ -41,13 +43,89 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
     ActionName,
     FloatND,
     FunctionName,
     StateName,
 )
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class ExactEnvelope:
+    """Certified segment-envelope backend configuration.
+
+    The native exact-affine library must be available when a regime selects this
+    backend. The backend is exact for the finite candidate set supplied to it;
+    discretization of a continuous constrained branch remains controlled by
+    `DCEGM.n_constrained_points`.
+    """
+
+    max_runs: int = 24
+    """Maximum resource-increasing runs folded into one node cell."""
+
+    cell_batch_size: int | None = None
+    """Number of independent node cells resolved in parallel; `None` is serial."""
+
+    def __post_init__(self) -> None:
+        _fail_if_envelope_max_runs_too_few(self.max_runs)
+        _fail_if_envelope_cell_batch_size_non_positive(self.cell_batch_size)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class FUESEnvelope:
+    """Fast Upper-Envelope Scan configuration."""
+
+    jump_thresh: float = 2.0
+    """Segment-switch threshold on `|ΔA / ΔR|`."""
+
+    n_points_to_scan: int | None = None
+    """Forward-scan width; `None` performs the exhaustive scan."""
+
+    scan_unroll: int = 1
+    """Loop-unroll factor for the sequential candidate scan."""
+
+    def __post_init__(self) -> None:
+        _fail_if_fues_jump_thresh_non_positive(self.jump_thresh)
+        _fail_if_fues_n_points_to_scan_too_few(self.n_points_to_scan)
+        _fail_if_fues_scan_unroll_too_few(self.scan_unroll)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class RFCEnvelope:
+    """Rooftop-Cut upper-envelope configuration."""
+
+    jump_thresh: float = 2.0
+    """Segment-switch threshold on `|Δc / ΔR|`."""
+
+    search_radius: int = 10
+    """Neighbors inspected on each side of a candidate."""
+
+    def __post_init__(self) -> None:
+        _fail_if_rfc_jump_thresh_non_positive(self.jump_thresh)
+        _fail_if_rfc_search_radius_too_few(self.search_radius)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class LTMEnvelope:
+    """Local-upper-bound brute-force envelope configuration."""
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class MSSEnvelope:
+    """HARK-style left-to-right segment envelope configuration."""
+
+
+type EnvelopeConfig = (
+    ExactEnvelope | FUESEnvelope | RFCEnvelope | LTMEnvelope | MSSEnvelope
+)
+
 
 # A non-concave candidate chain folds into at least two resource-increasing runs,
 # so a smaller fold capacity could never publish one.
@@ -63,25 +141,17 @@ class DCEGM(Solver):
     (post-decision) grid instead of searching a dense grid for the continuous
     action. It requires a specific model structure — exactly one continuous
     (*Euler*) state and one continuous action, a declared resources function
-    `R` with consumption recovery `c = R - A`, a post-decision function `A`,
-    and an `inverse_marginal_utility` regime function — which is validated at
-    `Model` construction time.
+    `R` with consumption recovery `c = R - A`, and a post-decision function `A`.
+    An analytical `inverse_marginal_utility` function is optional: when it is
+    absent, pylcm differentiates `utility` and numerically inverts the marginal
+    utility with an expanding bracket. Structural and per-period applicability
+    checks run during `Model(...)` through the solver's staged validation hooks.
 
-    That validation covers the structural contract, not the kernel's coverage.
-    A regime can satisfy the contract and still use a feature the kernel does
-    not implement yet; such a regime builds a `Model` successfully and raises
-    `NotImplementedError` naming the feature when it is solved. The deferred
-    checks are the ones needing per-period build context the model-time
-    validators do not have (see `_lcm.egm.kernel_scope`).
-
-    A solve publishes the off-grid EGM policy alongside the value functions.
-    Where the regime qualifies, forward simulation interpolates that policy at
-    the subject's resources, so the simulated continuous action is not confined
-    to the action grid; the qualifying conditions are stated in
-    `_lcm.egm.published_policy`, which lists what keeps a regime on the
-    grid-argmax path (a `Phased` declaration, an envelope backend that does not
-    certify every crossing, a passive or process continuous state, the
-    asset-row form, taste shocks).
+    A solve can publish the off-grid EGM policy as an inspection artifact when
+    `return_simulation_policy=True`. Collection and host transfer are skipped
+    otherwise, except when fresh simulation has an internal policy-read consumer.
+    No shipped envelope currently satisfies the conservative off-grid read gate,
+    so ordinary simulation recomputes the action on its grid.
 
     Otherwise — and whenever `simulate` is handed user-supplied value arrays,
     which carry no policy — `simulate` recomputes the argmax over the regime's
@@ -95,17 +165,22 @@ class DCEGM(Solver):
 
     """
 
-    continuous_state: StateName
+    continuous_state: StateName = ""
     """Name of the Euler continuous state (e.g. `"wealth"`).
 
     Its transition must consume the post-decision function and reach the
-    state and the continuous action only through it.
+    state and the continuous action only through it. May be omitted only when
+    the solver is attached to a `ConsumptionSavingsRegime`, which owns the role.
     """
 
-    continuous_action: ActionName
-    """Name of the continuous action (e.g. `"consumption"`)."""
+    continuous_action: ActionName = ""
+    """Name of the continuous action (e.g. `"consumption"`).
 
-    resources: FunctionName
+    May be omitted only when the solver is attached to a
+    `ConsumptionSavingsRegime`.
+    """
+
+    resources: FunctionName = ""
     """Name of the resources function `R` in `Regime.functions`.
 
     Resources are what consumption is paid out of; the endogenous grid lives
@@ -118,7 +193,7 @@ class DCEGM(Solver):
     by the regime.
     """
 
-    post_decision_function: FunctionName
+    post_decision_function: FunctionName = ""
     """Name of the post-decision function in `Regime.functions`.
 
     The end-of-period state (e.g. savings), satisfying
@@ -128,139 +203,33 @@ class DCEGM(Solver):
     savings_grid: ContinuousGrid
     """Exogenous end-of-period grid; its lower bound is the borrowing limit.
 
-    The endogenous grid inherits this grid's spacing, and the published value
-    function is interpolated linearly between endogenous points — so this grid
-    controls where the solution is accurate. With sharply curved utility (e.g.
-    CRRA), cluster the nodes toward the borrowing limit (`LogSpacedGrid`, or
-    an `IrregSpacedGrid` clustered at the low end): a uniform grid
-    under-resolves the value function near the limit, and that interpolation
-    error compounds across periods.
+    The endogenous grid inherits this grid's spacing, so it controls where the
+    solution is accurate. Value reads use a slope-limited cubic Hermite
+    interpolant when marginal-utility slopes are available; policy reads remain
+    piecewise linear. Reads extrapolate along the nearest segment below support
+    and use the endpoint above support. With sharply curved utility (e.g. CRRA),
+    cluster nodes toward the borrowing limit: interpolation error there compounds
+    across periods.
     """
 
-    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] = "exact"
-    """Upper-envelope refinement backend removing dominated Euler candidates.
+    envelope: EnvelopeConfig = field(default_factory=ExactEnvelope)
+    """Typed upper-envelope backend configuration.
 
-    `"exact"` is pylcm's own construction and the default. The other four are
-    faithful ports of the method columns of Dobrescu & Shanker 2024, kept for
-    method comparison and speed; each carries the accepted limitation of its
-    lineage, so prefer the default unless you are reproducing a method.
+    Backend-specific controls live on the selected frozen configuration object,
+    so controls for an inactive algorithm cannot be supplied accidentally:
 
-    - `"exact"`: the exact segment envelope. Splits the candidate chain into
-      x-monotone runs and partitions resources at the live abscissae. Every run
-      covering a cell covers all of it, so the envelope there is the maximum of
-      full lines — convex, with owners in increasing slope order — and its owner
-      sequence is resolved per cell. A branch owning only a subinterval survives,
-      and a crossing landing exactly on a node separates the two policies. All
-      structural decisions use a certified sign of the value difference, exact
-      for the represented inputs and invariant to a common value level, and every
-      live branch is certified against the owners rather than only the runner-up;
-      an undecidable comparison, a branch escaping certification, or a chain
-      folding into more than `envelope_max_runs` runs poisons the row rather than
-      publishing a guess. Costs several times the fast scans (see
-      `envelope_max_runs`).
-    - `"fues"`: the Fast Upper-Envelope Scan — a sequential scan that inserts
-      exact segment-crossing points. Fastest, but shares the fast-scan lineage's
-      accepted limitation at *exact* endogenous-grid coincidence across branches
-      (pointwise-node reduction can bridge a coincident-node crossing; endpoint
-      crossings are snapped within a fixed band). Prefer `"mss"` when a model can
-      realize exact coincidence and needs it resolved exactly.
-    - `"rfc"`: the Rooftop-Cut algorithm — a parallel dominance test that only
-      deletes points (a kink lands between retained points, recovered by the
-      Hermite carry read) and generalizes to multidimensional grids.
-    - `"ltm"`: the local-upper-bound brute method — an `O(K^2)` dense segment
-      scan that evaluates the envelope at every candidate abscissa (the
-      quadratic baseline of Dobrescu & Shanker 2024; a kink lands between
-      output nodes, recovered by the downstream read).
-    - `"mss"`: HARK's EGM upper envelope — a left-to-right sweep that keeps the
-      max-value branch at every abscissa *and* inserts the exact
-      segment-crossing point, so it tracks the FUES envelope tightly (the `MSS`
-      method of Dobrescu & Shanker 2024). It resolves exact coincident-node
-      interval ownership that the fast scans miss, but samples winners only at
-      candidate abscissae: a branch owning just an interior subinterval is
-      dropped, a crossing landing exactly on a node is not emitted, and its
-      tie band scales with the value level rather than the compared margin.
-      Use `"exact"` unless you are reproducing the published method.
+    - `ExactEnvelope`: certified ownership of the represented candidates. It
+      requires pylcm's native exact-affine library and fails during `Model(...)`
+      when that library is unavailable.
+    - `FUESEnvelope`: Fast Upper-Envelope Scan.
+    - `RFCEnvelope`: Rooftop-Cut algorithm.
+    - `LTMEnvelope`: quadratic local-upper-bound baseline.
+    - `MSSEnvelope`: HARK-style left-to-right segment sweep.
+
+    `ExactEnvelope` certifies the envelope of the candidates actually supplied;
+    it does not turn the sampled credit-constrained branch into a continuous
+    exact representation.
     """
-
-    envelope_max_runs: int = 24
-    """Fold capacity of the `"exact"` upper envelope.
-
-    The candidate chain is split into maximal resource-increasing runs; this
-    bounds how many such runs a cell may fold into. It is a validated capacity,
-    not an assumed bound — one discrete action can fold arbitrarily often, so a
-    chain exceeding it poisons the row and surfaces through the solve loop's NaN
-    diagnostics instead of silently dropping a branch.
-
-    Three costs scale differently in this value, and the difference matters when
-    tuning it:
-
-    - **memory** is linear. Ownership is resolved per cell, so the capacity sets
-      how wide each cell's working set is; the published row is row-sized
-      whatever the capacity, but the intermediates that produce it are not. What
-      bounds the peak is `envelope_cell_batch_size`, which caps how many cells
-      are in flight at once.
-    - **certified comparisons** are linear. Clearing a branch that owns nothing
-      takes one exact comparison, at the breakpoint where the envelope's slope
-      brackets the branch's own — not one against every rival.
-    - **ordinary arithmetic** is quadratic: the owner walk can open one piece per
-      run, and each step reads every run covering the cell.
-
-    `24` covers the fold counts pylcm's own NEGM and DC-EGM models realize, with
-    headroom; lower it for a model known to stay concave to buy back some speed.
-    The quadratic term is the one that pays for it, and it is also what dominates
-    XLA compile time for the solve kernel on GPU.
-    """
-
-    envelope_cell_batch_size: int | None = None
-    """How many node cells the `"exact"` envelope resolves in parallel.
-
-    Node cells are independent — each is resolved from the links covering it
-    alone — so this partitions the work and can never change a published value or
-    policy. What it sets is how much of that work is in flight, and so the
-    working set: an intermediate of this value times `envelope_max_runs` per row,
-    with the rows themselves mapped over, so the peak carries the product of all
-    three.
-
-    `None` resolves the cells one at a time and is the floor on the working set.
-    An integer trades that memory for parallelism across cells, which pays when a
-    single cell leaves the device idle and costs both memory and time when it
-    does not — so measure on the model at hand rather than raising it on
-    principle. A chain with fewer cells than the batch size resolves in one step
-    either way, so small models pay nothing for the knob.
-    """
-
-    fues_jump_thresh: float = 2.0
-    """Segment-switch threshold on `|ΔA / ΔR|` in the FUES scan."""
-
-    fues_n_points_to_scan: int | None = None
-    """Number of points the FUES forward scan inspects after a candidate.
-
-    `None` (the default) scans exhaustively — every other candidate. That is the
-    only width proven correct when more than the window's worth of off-segment
-    candidates interleave between two points of one segment: a bounded window
-    then misses the segment's continuation and silently accepts the dominated
-    interlopers. A finite value keeps the cheaper bounded scan for models known
-    to stay within the window, trading that correctness guarantee for speed.
-    """
-
-    fues_scan_unroll: int = 1
-    """Loop-unroll factor for the FUES candidate `lax.scan`.
-
-    Passed to `jax.lax.scan(..., unroll=fues_scan_unroll)` in the full-envelope
-    scan of `refine_envelope`. The bracket path slices that same full row, so
-    there is no separate streaming scan to unroll. The scan is sequential and
-    latency-bound on accelerators; unrolling `k` iterations into one loop body
-    trades compile time and code size for fewer loop-carry round trips, which can
-    cut the per-row exec wall on GPU. `1` (no unroll) is the default; the refined
-    envelope is numerically identical across values, so this is a pure
-    performance knob.
-    """
-
-    rfc_jump_thresh: float = 2.0
-    """Segment-switch threshold on `|Δc / ΔR|` in the rooftop cut."""
-
-    rfc_search_radius: int = 10
-    """Number of neighbors on each side the rooftop-cut dominance test inspects."""
 
     refined_grid_factor: float = 2.0
     """Headroom factor sizing the refined (NaN-padded) envelope arrays.
@@ -276,7 +245,15 @@ class DCEGM(Solver):
     """
 
     n_constrained_points: int = 20
-    """Number of closed-form points on the credit-constrained segment."""
+    """Resolution of the sampled credit-constrained branch.
+
+    The current period evaluates the analytical constrained value as a floor,
+    but the continuation carry handed to a parent contains only these sampled
+    constrained candidates. Increasing the count can therefore improve values
+    and policies in earlier periods at the cost of larger envelope rows, longer
+    compilation, and more execution work. `ExactEnvelope` is exact only for this
+    supplied finite candidate set, not for the unsampled continuous branch.
+    """
 
     stochastic_node_batch_size: int = 0
     """Block size for splaying the child stochastic-node expectation.
@@ -294,14 +271,7 @@ class DCEGM(Solver):
     def __post_init__(self) -> None:
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
         _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
-        _fail_if_fues_jump_thresh_non_positive(self.fues_jump_thresh)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
-        _fail_if_fues_n_points_to_scan_too_few(self.fues_n_points_to_scan)
-        _fail_if_fues_scan_unroll_too_few(self.fues_scan_unroll)
-        _fail_if_envelope_max_runs_too_few(self.envelope_max_runs)
-        _fail_if_envelope_cell_batch_size_non_positive(self.envelope_cell_batch_size)
-        _fail_if_rfc_jump_thresh_non_positive(self.rfc_jump_thresh)
-        _fail_if_rfc_search_radius_too_few(self.rfc_search_radius)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
     @property
@@ -309,15 +279,58 @@ class DCEGM(Solver):
         """DC-EGM inverts the Euler equation against its targets' marginals."""
         return True
 
+    def validate_model(self, *, context: SolverModelContext) -> None:
+        """Validate the user-level DC-EGM contract for this regime."""
+        missing_roles = tuple(
+            name
+            for name, value in (
+                ("continuous_state", self.continuous_state),
+                ("continuous_action", self.continuous_action),
+                ("resources", self.resources),
+                ("post_decision_function", self.post_decision_function),
+            )
+            if not value
+        )
+        if missing_roles:
+            msg = (
+                f"DCEGM regime {context.regime_name!r} has no value for "
+                f"{', '.join(missing_roles)}. Supply those fields on DCEGM, or "
+                "attach the solver to ConsumptionSavingsRegime so the regime's "
+                "canonical consumption-savings roles are bound automatically."
+            )
+            raise ModelInitializationError(msg)
+
+        if isinstance(self.envelope, ExactEnvelope):
+            from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
+
+            if not ffi.kernel_available_for_current_backend():
+                msg = (
+                    f"Regime {context.regime_name!r} selects ExactEnvelope, but "
+                    "the native exact-affine library is unavailable or unloadable. "
+                    "Install a pylcm build carrying the library or build it with "
+                    "`pixi run build-exact-affine`; select another envelope only "
+                    "when its documented approximation contract is acceptable."
+                )
+                raise ModelInitializationError(msg)
+
+        from _lcm.egm.validation import validate_dcegm_regime  # noqa: PLC0415
+
+        validate_dcegm_regime(
+            regime_name=context.regime_name,
+            user_regime=context.user_regimes[context.regime_name],
+            user_regimes=context.user_regimes,
+            solution_reachability=context.solution_reachability,
+        )
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.
 
-        The standalone `validate_dcegm_regimes` model-contract check (run during
-        regime processing) guarantees the regime is non-terminal, so the regime
-        transition probability function exists. Periods sharing one EGM-step core
-        reuse a single jitted core, and therefore a single compiled program.
-        Numerical-builder imports are function-local so the public `lcm.solvers`
-        façade stays a thin re-export that pulls in no engine modules.
+        The solver's model-stage and build-stage validation hooks guarantee the
+        regime is non-terminal, so the regime-transition probability function
+        exists. Periods sharing one EGM-step core reuse a single jitted core, and
+        therefore a single compiled program. Numerical-builder imports are
+        function-local so the public `lcm.solvers` façade stays a thin re-export
+        that pulls in no engine modules.
         """
 
         from _lcm.egm.step import build_egm_step_functions  # noqa: PLC0415
@@ -364,7 +377,10 @@ class DCEGM(Solver):
         )
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=egm_carry_template,
+            continuation_spec=EGMContinuationSpec(
+                template=egm_carry_template,
+                layout=self.egm_continuation_layout,
+            ),
         )
 
 
@@ -406,12 +422,11 @@ class _DCEGMPeriodKernel:
         restores the values removed from the live `flat_params` for all of them
         at once.
         """
-        egm_fixed = dict(fixed_flat_params.get(self.regime_name, MappingProxyType({})))
-        for target_name in self.transition_target_names:
-            for key, value in fixed_flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                egm_fixed.setdefault(key, value)
+        egm_fixed = _union_fixed_params(
+            fixed_flat_params=fixed_flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
         if not egm_fixed:
             return self
         return replace(self, core=functools.partial(self.core, **egm_fixed))
@@ -481,13 +496,11 @@ class _DCEGMPeriodKernel:
         binding done at model build (`_partial_fixed_params_into_regimes`) for
         the free-param path.
         """
-        params: dict[str, object] = dict(flat_params[self.regime_name])
-        for target_name in self.transition_target_names:
-            for key, value in flat_params.get(
-                target_name, MappingProxyType({})
-            ).items():
-                params.setdefault(key, value)
-        return params
+        return _union_free_params(
+            flat_params=flat_params,
+            regime_name=self.regime_name,
+            transition_target_names=self.transition_target_names,
+        )
 
 
 def _carry_subset(
@@ -545,7 +558,7 @@ def _fail_if_fues_jump_thresh_non_positive(fues_jump_thresh: float) -> None:
     # switch comparison would silently misbehave on a non-finite threshold.
     if not (math.isfinite(fues_jump_thresh) and fues_jump_thresh > 0.0):
         msg = (
-            f"DCEGM.fues_jump_thresh must be a finite positive value, got "
+            f"FUESEnvelope.jump_thresh must be a finite positive value, got "
             f"{fues_jump_thresh}. It is the segment-switch threshold on "
             "`|ΔA / ΔR|` in the FUES scan."
         )
@@ -557,7 +570,7 @@ def _fail_if_rfc_jump_thresh_non_positive(rfc_jump_thresh: float) -> None:
     # switch comparison would silently misbehave on a non-finite threshold.
     if not (math.isfinite(rfc_jump_thresh) and rfc_jump_thresh > 0.0):
         msg = (
-            f"DCEGM.rfc_jump_thresh must be a finite positive value, got "
+            f"RFCEnvelope.jump_thresh must be a finite positive value, got "
             f"{rfc_jump_thresh}. It is the segment-switch threshold on "
             "`|Δc / ΔR|` in the rooftop cut."
         )
@@ -567,7 +580,7 @@ def _fail_if_rfc_jump_thresh_non_positive(rfc_jump_thresh: float) -> None:
 def _fail_if_rfc_search_radius_too_few(rfc_search_radius: int) -> None:
     if rfc_search_radius < 1:
         msg = (
-            f"DCEGM.rfc_search_radius must be at least 1, got "
+            f"RFCEnvelope.search_radius must be at least 1, got "
             f"{rfc_search_radius}. The rooftop-cut dominance test must inspect "
             "at least one neighbor on each side of a candidate."
         )
@@ -588,7 +601,7 @@ def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) ->
     # `None` requests the exhaustive scan; only an explicit finite width is bounded.
     if fues_n_points_to_scan is not None and fues_n_points_to_scan < 1:
         msg = (
-            f"DCEGM.fues_n_points_to_scan must be at least 1, got "
+            f"FUESEnvelope.n_points_to_scan must be at least 1, got "
             f"{fues_n_points_to_scan}. The FUES forward scan must inspect at "
             "least one point after each candidate."
         )
@@ -598,7 +611,7 @@ def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) ->
 def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
     if fues_scan_unroll < 1:
         msg = (
-            f"DCEGM.fues_scan_unroll must be at least 1, got "
+            f"FUESEnvelope.scan_unroll must be at least 1, got "
             f"{fues_scan_unroll}. It is the `lax.scan` unroll factor for the "
             "FUES candidate scan; 1 means no unrolling."
         )
@@ -608,7 +621,7 @@ def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
 def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
     if envelope_max_runs < _MIN_ENVELOPE_MAX_RUNS:
         msg = (
-            f"DCEGM.envelope_max_runs must be at least {_MIN_ENVELOPE_MAX_RUNS}, "
+            f"ExactEnvelope.max_runs must be at least {_MIN_ENVELOPE_MAX_RUNS}, "
             f"got {envelope_max_runs}. It is the fold capacity of the exact "
             "upper envelope; a non-concave candidate chain folds into at "
             "least two resource-increasing runs."
@@ -621,7 +634,7 @@ def _fail_if_envelope_cell_batch_size_non_positive(
 ) -> None:
     if envelope_cell_batch_size is not None and envelope_cell_batch_size < 1:
         msg = (
-            f"DCEGM.envelope_cell_batch_size must be at least 1, got "
+            f"ExactEnvelope.cell_batch_size must be at least 1, got "
             f"{envelope_cell_batch_size}. It is how many node cells the exact "
             "upper envelope resolves in parallel; use None to resolve them one "
             "at a time."

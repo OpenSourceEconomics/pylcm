@@ -523,6 +523,7 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
+            collect_simulation_policies=return_simulation_policy,
         )
         if return_simulation_policy:
             return internal_result.value_functions, internal_result.simulation_policies
@@ -537,11 +538,13 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
+        collect_simulation_policies: bool,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        Returns the named backward-induction outputs (value-function arrays and
-        each regime's published per-period simulation policy). With `log_path`
+        Returns the named backward-induction outputs. Per-period simulation
+        policies are retained only when `collect_simulation_policies` is true.
+        With `log_path`
         set, a snapshot is written at `log_level="debug"` (every solve) and at
         `"warning"` / `"progress"` whenever the returned solution contains
         NaN. `_enforce_retention` caps the snapshot count at
@@ -557,6 +560,7 @@ class Model:
                 regimes=self._regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
+                collect_simulation_policies=collect_simulation_policies,
                 max_compilation_workers=max_compilation_workers,
             )
         except InvalidValueFunctionError as exc:
@@ -804,6 +808,18 @@ class Model:
             # regime qualifies (`SimulationPhase.egm_policy_read`). With
             # user-supplied V arrays there is no published policy, so the
             # grid-argmax path decides the continuous action.
+            # Two signals, because the flat and nested reads qualify
+            # differently. The flat endogenous-grid read is announced
+            # regime-side by `egm_policy_read`; a self-describing payload
+            # (N-NB-EGM's `NestedEGMSimPolicy`) is announced solver-side and
+            # deliberately leaves that field unset. Testing only the first drops
+            # the nested payload before simulation sees it, and simulation then
+            # falls back to the grid argmax with nothing reporting that it did.
+            collect_simulation_policies = any(
+                regime.simulation.egm_policy_read is not None
+                or self.user_regimes[regime_name].solver.publishes_simulation_policy
+                for regime_name, regime in self._regimes.items()
+            )
             internal_result = self._solve_compiled(
                 flat_params=flat_params,
                 params=params,
@@ -811,6 +827,7 @@ class Model:
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
+                collect_simulation_policies=collect_simulation_policies,
             )
             period_to_regime_to_V_arr = internal_result.value_functions
             period_to_regime_to_sim_policy = internal_result.simulation_policies

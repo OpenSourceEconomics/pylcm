@@ -44,6 +44,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 from tests.test_models.ds2024_housing import (
     Income,
     income_transition,
@@ -286,7 +287,7 @@ def build_model(  # noqa: C901
         resources="resources",
         post_decision_function="savings",
         savings_grid=savings_grid,
-        envelope=envelope,
+        envelope=envelope_config(envelope),
         n_constrained_points=32,
     )
     alive = UserRegime(

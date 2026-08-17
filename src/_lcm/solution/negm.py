@@ -22,6 +22,7 @@ from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
@@ -34,6 +35,7 @@ from _lcm.solution.contract import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverModelContext,
 )
 from _lcm.solution.dcegm import DCEGM
 from _lcm.typing import (
@@ -82,7 +84,7 @@ class NEGM(Solver):
     DC-EGM" literal: it reuses every inner field and its upper-envelope backend,
     reuses `DCEGM.__post_init__` validation wholesale, and keeps the
     outer-margin contract in one place. The model-contract check
-    `validate_negm_regimes` rejects, at `Model` construction, any model NEGM
+    The model-stage validation hook rejects, at `Model` construction, any model NEGM
     does not fit (no outer margin, a coupled-2-Euler pension shape, a
     taste-shock-ordering violation), naming the offending feature and the
     correct alternative solver.
@@ -191,22 +193,32 @@ class NEGM(Solver):
         return True
 
     @property
-    def n_stacked_carry_candidates(self) -> int:
-        """The published carry stacks the keeper plus one row per outer node."""
-        return int(self.outer_grid.to_jax().shape[0]) + 1
+    def egm_continuation_layout(self) -> EGMContinuationLayout:
+        """The carry stacks the keeper plus one row per outer-grid node."""
+        return EGMContinuationLayout(
+            n_stacked_candidates=int(self.outer_grid.to_jax().shape[0]) + 1
+        )
+
+    def validate_model(self, *, context: SolverModelContext) -> None:
+        """Validate the user-level nested-EGM contract for this regime."""
+        from _lcm.egm.negm_validation import validate_negm_regime  # noqa: PLC0415
+
+        validate_negm_regime(
+            regime_name=context.regime_name,
+            user_regime=context.user_regimes[context.regime_name],
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
-        The standalone `validate_negm_regimes` model-contract check (run during
-        regime processing) guarantees the outer margin is present and distinct
-        from the inner margin, that the outer margin is not Euler-coupled to the
-        inner state, and that any taste-shocked discrete choice is the outermost
-        aggregation. The inner DC-EGM period kernels are built once (with the
-        outer margin bound so it enters the inner resources and utility as a
-        constant and indexes the child durable state); each is wrapped in an
-        outer adapter that sweeps the outer grid plus the mandatory per-node
-        candidates and collapses the outer axis by `max`.
+        The model-stage and build-stage validation hooks guarantee the outer
+        margin is present and distinct from the inner margin, that it is not
+        Euler-coupled to the inner state, and that any taste-shocked discrete
+        choice is the outermost aggregation. The inner DC-EGM period kernels are
+        built once (with the outer margin bound so it enters the inner resources
+        and utility as a constant and indexes the child durable state); each is
+        wrapped in an outer adapter that sweeps the outer grid plus the mandatory
+        per-node candidates and collapses the outer axis by `max`.
         """
         # The adjuster is the inner DC-EGM with the outer post-decision supplied
         # per outer-grid node rather than recomputed from the outer action:
@@ -252,6 +264,20 @@ class NEGM(Solver):
 
         outer_grid_values = self.outer_grid.to_jax()
         durable_state = self.outer_state
+        own_v_info = context.regime_to_v_interpolation_info[context.regime_name]
+        discrete_state_names = tuple(
+            name
+            for name in own_v_info.state_names
+            if name in own_v_info.discrete_states
+        )
+        passive_state_names = tuple(
+            name
+            for name in own_v_info.continuous_states
+            if name != self.inner.continuous_state
+        )
+        durable_axis_in_carry = len(discrete_state_names) + passive_state_names.index(
+            durable_state
+        )
         # Both outer helpers are read here, one layer above the inner builder that
         # resolves periodized nodes — so they must be resolved first. An
         # `AgeSpecializedFunction` is a different function at each age, and the
@@ -301,7 +327,11 @@ class NEGM(Solver):
                 context=keeper_context
             )
             keeper_param_checks += group_keeper_kernels.param_checks
-            keeper_continuation_template = group_keeper_kernels.continuation_template
+            keeper_continuation_template = (
+                None
+                if group_keeper_kernels.continuation_spec is None
+                else group_keeper_kernels.continuation_spec.template
+            )
             group_coh_shift_func = _build_coh_shift_function(
                 functions=group_functions,
                 durable_state_name=durable_state,
@@ -340,16 +370,24 @@ class NEGM(Solver):
                     outer_post_decision=self.outer_post_decision,
                     coh_shift_func=coh_shift_by_period[period],
                     durable_grid_values=_durable_values_at(period),
+                    durable_axis_in_carry=durable_axis_in_carry,
                     outer_batch_size=self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
         )
+        stacked_template = _stack_carry_template(
+            template=keeper_continuation_template,
+            n_candidates=outer_grid_values.shape[0] + 1,
+        )
+        # `_stack_carry_template` passes `None` through, and the keeper template
+        # was established as present above, so the stacked template is too.
+        assert stacked_template is not None  # noqa: S101
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=_stack_carry_template(
-                template=keeper_continuation_template,
-                n_candidates=outer_grid_values.shape[0] + 1,
+            continuation_spec=EGMContinuationSpec(
+                template=stacked_template,
+                layout=self.egm_continuation_layout,
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
@@ -440,11 +478,10 @@ class _NEGMPeriodKernel:
     """
 
     durable_grid_values: Float1D
-    """The durable state's grid — the carry's last leading (passive) axis.
+    """The durable state's grid used for the credited-cost lift."""
 
-    Any discrete/process states precede the passive durable margin in the carry's
-    leading axes, so the durable is carry axis `-2`.
-    """
+    durable_axis_in_carry: int
+    """Position of the durable state among the carry's leading state axes."""
 
     outer_batch_size: int
     """Outer-grid nodes solved per chunk of the outer sweep.
@@ -639,6 +676,7 @@ class _NEGMPeriodKernel:
             keeper_carry=keeper_carry,
             adjuster_carries=tuple(adjuster_carries),
             coh_shifts=coh_shifts,
+            durable_axis=self.durable_axis_in_carry,
         )
         # The simulate phase re-optimizes the outer durable action by grid argmax
         # over the next-period value array, so the published `sim_policy` (the

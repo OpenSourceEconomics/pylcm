@@ -93,6 +93,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 
 # Lifecycle: T = 20 periods. The last period is the terminal bequest regime, so
 # there are 19 decision periods. Ages are abstract unit steps from 0.
@@ -581,7 +582,7 @@ def build_model(
             resources="resources",
             post_decision_function="savings",
             savings_grid=savings_grid,
-            envelope=envelope,
+            envelope=envelope_config(envelope),
             n_constrained_points=32,
         ),
     )
