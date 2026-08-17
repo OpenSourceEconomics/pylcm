@@ -458,6 +458,15 @@ def process_regimes(
     # rejected here, regardless of stakeholder cardinality: folding averages
     # the node axis away before value constraints or gated edges can route or
     # read per node — see the function docstring.
+    #
+    # Ordering is load-bearing, not incidental: this walks each edge's endpoints
+    # and stakeholders by name, so it needs the call above to have established
+    # that each one exists. Run first, it raises `KeyError` on an edge naming an
+    # unknown regime and `ValueError` on one naming a missing stakeholder,
+    # instead of the diagnostic that call produces. Reporting a folded endpoint
+    # ahead of a short projection therefore needs the endpoint-existence checks
+    # split out of `_fail_if_gated_edges_invalid` first, not the two calls
+    # swapped.
     _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
 
     # The regimes an endogenous-grid regime can transition into. Only these owe
