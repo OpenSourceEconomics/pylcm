@@ -33,6 +33,7 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
 from _lcm.egm.continuation_grids import (
@@ -286,21 +287,19 @@ class NBEGM(Solver):
         return True
 
     @property
-    def carry_retains_discrete_action_rows(self) -> bool:
-        """The case-piece carry publishes a value maxed over the continuous action."""
-        return False
-
-    @property
-    def carry_rows_share_state_grid(self) -> bool:
-        """The case-piece ride-along carry sits on the shared liquid grid."""
-        return True
+    def egm_continuation_layout(self) -> EGMContinuationLayout:
+        """The carry is maxed over the continuous action, on the liquid grid."""
+        return EGMContinuationLayout(
+            retains_discrete_action_rows=False,
+            rows_share_state_grid=True,
+        )
 
     @property
     def publishes_one_sided_jump_reads(self) -> bool:
         """One-sided jump resolution duplicates abscissae across each jump."""
         return self.jump_read == "one_sided"
 
-    def validate(self, *, context: SolverBuildContext) -> None:
+    def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.
 
         Collecting the metadata enforces strict coverage (each split output has a
@@ -531,8 +530,9 @@ class NBEGM(Solver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
-            continuation_template=_build_one_asset_carry_template(
-                liquid_grid=liquid_grid
+            continuation_spec=EGMContinuationSpec(
+                template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
+                layout=self.egm_continuation_layout,
             ),
             param_checks=(
                 schedule_spec.param_checks if schedule_spec is not None else ()
@@ -829,18 +829,21 @@ class NBEGM(Solver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
-            continuation_template=_shard_ride_carry_template(
-                template=_build_ride_along_carry_template(
-                    liquid_grid=liquid_grid,
-                    ride_shape=ride_shape,
-                    n_breakpoints=(
-                        next(iter(statics_by_key.values())).n_published_jumps
-                        if statics_by_key
-                        else 0
+            continuation_spec=EGMContinuationSpec(
+                template=_shard_ride_carry_template(
+                    template=_build_ride_along_carry_template(
+                        liquid_grid=liquid_grid,
+                        ride_shape=ride_shape,
+                        n_breakpoints=(
+                            next(iter(statics_by_key.values())).n_published_jumps
+                            if statics_by_key
+                            else 0
+                        ),
                     ),
+                    grids=context.grids,
+                    ride_along_state_names=schedule_spec.ride_along_state_names,
                 ),
-                grids=context.grids,
-                ride_along_state_names=schedule_spec.ride_along_state_names,
+                layout=self.egm_continuation_layout,
             ),
             param_checks=tuple(param_checks),
         )

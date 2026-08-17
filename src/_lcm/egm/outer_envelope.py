@@ -48,6 +48,7 @@ def build_stacked_outer_carry(
     keeper_carry: EGMCarry,
     adjuster_carries: tuple[EGMCarry, ...],
     coh_shifts: FloatND,
+    durable_axis: int,
 ) -> EGMCarry:
     """Stack the outer durable candidates into a common-coh candidate axis.
 
@@ -70,18 +71,30 @@ def build_stacked_outer_carry(
         coh_shifts: Per durable state (rows) and adjuster node (columns), the
             credited cost added to that adjuster's endogenous grid to map it into
             coh space. Shape `(n_durable, n_adjusters)`.
+        durable_axis: Position of the durable state among the carry's leading
+            axes. The lift addresses this named axis and broadcasts over every
+            other discrete or passive-state axis.
 
     Returns:
-        A carry whose leading shape is `(discrete..., durable, n_candidates)` and
-        whose trailing axis is the grid: `carry[cell]` is the `(n_candidates,
-        n_pad)` block `outer_envelope_at_query` consumes.
+        A carry whose existing leading state axes are preserved, followed by
+        `n_candidates`, with the row grid trailing. `carry[cell]` is the
+        `(n_candidates, n_pad)` block `outer_envelope_at_query` consumes.
 
     """
     leading_shape = keeper_carry.endog_grid.shape[:-1]
-    n_durable = leading_shape[-1]
-    # The durable margin is the last leading axis; broadcast a per-durable shift
-    # over the leading discrete axes and the grid axis.
-    broadcast = (1,) * (len(leading_shape) - 1) + (n_durable, 1)
+    normalized_axis = durable_axis % len(leading_shape)
+    n_durable = leading_shape[normalized_axis]
+    if coh_shifts.shape[0] != n_durable:
+        msg = (
+            "The credited-cost shift's durable dimension does not match the "
+            f"carry axis: {coh_shifts.shape[0]} != {n_durable}."
+        )
+        raise ValueError(msg)
+    # Address the durable margin by its named axis and broadcast over every
+    # other leading state axis plus the trailing row grid.
+    broadcast_list = [1] * (len(leading_shape) + 1)
+    broadcast_list[normalized_axis] = n_durable
+    broadcast = tuple(broadcast_list)
 
     lifted_endog = [keeper_carry.endog_grid]
     for adjuster_index, adjuster_carry in enumerate(adjuster_carries):

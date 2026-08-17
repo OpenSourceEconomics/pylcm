@@ -73,14 +73,10 @@ def test_backward_induction():
     to produce.
 
     """
-    # ==================================================================================
     # create the params
-    # ==================================================================================
     flat_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
-    # ==================================================================================
     # create the list of state_action_spaces
-    # ==================================================================================
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType(
             {
@@ -103,9 +99,7 @@ def test_backward_induction():
         ),
         state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
-    # ==================================================================================
     # create the Q_and_F functions
-    # ==================================================================================
 
     def _Q_and_F(
         consumption,
@@ -140,9 +134,7 @@ def test_backward_induction():
         batch_sizes={"lazy": 0, "wealth": 0},
     )
 
-    # ==================================================================================
     # call solve function
-    # ==================================================================================
 
     regime = MockRegime(
         solution=MockSolutionPhase(

@@ -7,6 +7,34 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### PR #390 maintainer-review follow-up
+
+- `ConsumptionSavingsRegime` can own the liquid state, consumption action,
+  resources node, and post-decision node while retaining an arbitrary regime
+  function DAG. `EGM`, `DCEGM`, and the inner solver of `NEGM` inherit omitted
+  role names from it; ordinary `Regime` remains supported.
+- Every solver now participates in model-stage and build-stage validation
+  through the common solver contract. Plain `EGM` rejects constraints,
+  discrete/process axes, incompatible terminal targets, and a post-decision
+  function that is not resources minus the continuous action before solving.
+- Cross-regime endogenous-grid continuation calls preserve target-regime
+  parameter identity for both runtime and fixed parameters.
+- Upper-envelope selection uses typed backend configurations
+  (`ExactEnvelope`, `FUESEnvelope`, `RFCEnvelope`, `LTMEnvelope`, and
+  `MSSEnvelope`). Selecting the exact backend requires a loadable native kernel
+  during model construction.
+- EGM continuation templates and their static layouts are bundled in one
+  `EGMContinuationSpec`, and GridSearch/terminal carries are published only for
+  reachable targets that have an incoming endogenous-grid consumer.
+- Simulation-policy host copies and retention are demand-driven. When an
+  off-grid policy replacement is accepted, the reported value is the canonical
+  value attained by that same emitted action.
+- NEGM locates its durable carry axis by name rather than declaration order and
+  checks utility separability through the complete composed utility DAG.
+- Negative Euler targets fail loudly, numerical marginal-utility inversion
+  expands its initial bracket, and ordinary one-dimensional continuation reads
+  use nearest-segment extrapolation outside support.
+
 ### Fixes
 
 - The marginal a brute (`GridSearch`) child publishes to an endogenous-grid

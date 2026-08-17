@@ -8,7 +8,7 @@ import jax
 from jax import Array
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.egm.carry import EGMCarry
+from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -45,12 +45,6 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
-
-# The cross-period continuation channel a parent interpolates; today the only
-# payload is the EGM carry. Aliased here (rather than imported from
-# `_lcm.solution.contract`) because that module imports this one — naming the
-# carry directly keeps the engine a leaf of the contract, not a peer in a cycle.
-type ContinuationPayload = EGMCarry
 
 if TYPE_CHECKING:
     from _lcm.solution.contract import PeriodKernel
@@ -357,14 +351,16 @@ class SolutionPhase:
     it additionally publishes the regime's closed-form continuation carry.
     """
 
-    continuation_template: ContinuationPayload | None = None
-    """All-finite template continuation with the regime's static shapes.
+    continuation_spec: EGMContinuationSpec | None = None
+    """Concrete EGM continuation template bundled with its static layout."""
 
-    Populated for every continuation-producing regime (DC-EGM regimes and
-    terminal regimes in a model with a DC-EGM regime). Initializes the rolling
-    `next_regime_to_continuation` mapping and serves as the lowering argument when
-    AOT-compiling a parent's kernel; `None` for a regime that publishes none.
-    """
+    @property
+    def continuation_template(self) -> ContinuationPayload | None:
+        """Return the opaque payload template used by generic engine code."""
+        return (
+            None if self.continuation_spec is None else self.continuation_spec.template
+        )
+
     validation_regime_transition_probs: RegimeTransitionFunction | None
     """Probability function retaining declared cells for runtime validation."""
 

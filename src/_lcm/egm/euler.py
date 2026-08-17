@@ -64,4 +64,5 @@ def invert_euler(
     """
     discounted = discount_factor * expected_marginal_continuation
     eps = jnp.finfo(discounted.dtype).eps
-    return inverse_marginal_utility(jnp.maximum(discounted, eps))
+    valid_target = jnp.where(discounted < 0.0, jnp.nan, jnp.maximum(discounted, eps))
+    return inverse_marginal_utility(valid_target)

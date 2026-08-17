@@ -109,7 +109,7 @@ def validate_dcegm_regimes(
     """
     for regime_name, user_regime in user_regimes.items():
         if isinstance(user_regime.solver, DCEGM):
-            _validate_dcegm_regime(
+            validate_dcegm_regime(
                 regime_name=regime_name,
                 user_regime=user_regime,
                 user_regimes=user_regimes,
@@ -188,7 +188,7 @@ def fail_if_custom_koopmans_aggregator(
         raise ModelInitializationError(msg)
 
 
-def _validate_dcegm_regime(
+def validate_dcegm_regime(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,

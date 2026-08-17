@@ -19,7 +19,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousAction, DiscreteAction, FloatND, ScalarInt
@@ -76,7 +76,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         active=lambda age: age >= _LAST_AGE,
         solver=GridSearch(),
     )
-    with pytest.raises(RegimeInitializationError, match="effort"):
+    with pytest.raises(ModelInitializationError, match="effort"):
         Model(
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),

@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
@@ -31,6 +32,7 @@ from _lcm.solution.contract import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverModelContext,
 )
 from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.nbegm import NBEGM
@@ -212,16 +214,22 @@ class NNBEGM(Solver):
         return self.inner.supports_nonlinear_certainty_equivalent
 
     @property
-    def carry_retains_discrete_action_rows(self) -> bool:
-        """The inner NB-EGM merges discrete branches inside its envelope."""
-        return self.inner.carry_retains_discrete_action_rows
+    def egm_continuation_layout(self) -> EGMContinuationLayout:
+        """The bridged outer envelope republishes the inner solver's rows."""
+        return self.inner.egm_continuation_layout
 
-    @property
-    def carry_rows_share_state_grid(self) -> bool:
-        """The inner NB-EGM publishes carry rows on the shared state grid."""
-        return self.inner.carry_rows_share_state_grid
+    def validate_model(self, *, context: SolverModelContext) -> None:
+        """Validate the user-level nested NB-EGM contract for this regime."""
+        from _lcm.egm.nnbegm_validation import (  # noqa: PLC0415
+            validate_nnbegm_regime,
+        )
 
-    def validate(self, *, context: SolverBuildContext) -> None:
+        validate_nnbegm_regime(
+            regime_name=context.regime_name,
+            user_regime=context.user_regimes[context.regime_name],
+        )
+
+    def validate_build(self, *, context: SolverBuildContext) -> None:
         """Apply the inner solver's build-time gates to the liquid margin.
 
         The inner NB-EGM kernels run unchanged inside every outer candidate, so
@@ -315,7 +323,14 @@ class NNBEGM(Solver):
         # no carry widening.
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_template=template,
+            continuation_spec=(
+                None
+                if template is None
+                else EGMContinuationSpec(
+                    template=template,
+                    layout=self.egm_continuation_layout,
+                )
+            ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
             param_checks=(
@@ -577,14 +592,14 @@ def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:
     candidate and rides the keeper's `endog_grid` through unchanged, which is
     only correct when every candidate publishes rows at the same abscissae.
     """
-    if not inner.carry_rows_share_state_grid:
+    if not inner.egm_continuation_layout.rows_share_state_grid:
         msg = (
             f"NNBEGM's inner solver {type(inner).__name__} publishes carry rows "
             "off the shared state grid, but the bridged outer envelope folds "
             "candidates pointwise and reuses the keeper's `endog_grid`, so the "
             "folded rows would pair one candidate's values with another's "
             "abscissae. Use an inner solver whose "
-            "`carry_rows_share_state_grid` is True."
+            "`egm_continuation_layout.rows_share_state_grid` is True."
         )
         raise RegimeInitializationError(msg)
 

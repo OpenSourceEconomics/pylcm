@@ -1,12 +1,13 @@
 """The solver contract: what every regime solver provides to the engine.
 
 A regime's `solver` field selects its backward-induction algorithm. The engine
-dispatches polymorphically on the solver instance — `solver.validate(context)`
-then `solver.build_period_kernels(context)` — with no switch on solver type.
-Add a solver by subclassing `Solver` and implementing `build_period_kernels`;
-override `validate` for a build-time model-contract check (the default is a
-no-op). `SolverBuildContext` carries everything a solver may read to build one
-regime's kernels; `SolutionKernels` is what it hands back.
+dispatches polymorphically on the solver instance. Model finalization calls
+`solver.validate_model(context)`; the processed build calls
+`solver.validate_build(context)` and then
+`solver.build_period_kernels(context)`, with no switch on solver type. Add a
+solver by subclassing `Solver` and implementing `build_period_kernels`; override
+either validation hook for the stage whose information it needs (both default
+to no-ops).
 
 Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
 non-jitted period adapter that wraps the solver's shared jitted core, calls it
@@ -34,7 +35,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.egm.carry import EGMCarry
+from _lcm.continuation import (
+    ContinuationPayload,
+    EGMContinuationLayout,
+    EGMContinuationSpec,
+)
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.grids import Grid
@@ -57,23 +62,9 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.typing import Float1D, FloatND
 
-# Both names below state a rule the engine must obey, not a fact about which
-# concrete type they happen to bind to today. Neither is a polymorphism point:
-# a second implementation does not arrive by widening the alias to a union,
-# which would say nothing about what may be done with a value. It arrives as a
-# protocol, because the engine would then need a declared operation to call.
-# Each is a documented single-implementation seam, not an abstraction that
-# happens to have one subclass so far.
-
-# The cross-period continuation channel a continuation-based parent
-# interpolates. The rule is **opacity**: backward induction stores this, threads
-# it to the next period, and hands it back to a solver without reading a field.
-# The solver-agnostic name is what keeps that ignorance checkable — an
-# `.endog_grid` access inside the induction loop reads as a layering violation
-# at the call site rather than as an ordinary attribute read. Reaching for one
-# is the signal to introduce a protocol. Solvers own the carry and read it
-# freely; the rule binds the engine that threads it, not the code that fills it.
-type ContinuationPayload = EGMCarry
+# The continuation channel is defined once in `_lcm.continuation`. Backward
+# induction treats `ContinuationPayload` opaquely; EGM solvers additionally
+# publish one `EGMContinuationSpec` bundling the template and layout metadata.
 
 # The published off-grid simulation-policy artifact. The rule here is a **fixed
 # read set** rather than opacity, because simulation genuinely interpolates the
@@ -102,6 +93,20 @@ else:
     # above; the beartype claw checks only the outer container at runtime.
     UserRegimesMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
+
+
+@dataclass(frozen=True, kw_only=True)
+class SolverModelContext:
+    """Finalized user-level information available to solver validation."""
+
+    regime_name: RegimeName
+    """Name of the regime whose solver is being validated."""
+
+    user_regimes: UserRegimesMapping
+    """Mapping of every finalized user regime in the model."""
+
+    solution_reachability: PhaseReachability | None = None
+    """Static solution graph when available; `None` during early validation."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -371,33 +376,36 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
-    continuation_template: ContinuationPayload | None = None
-    """All-finite template continuation with the regime's static shapes.
-
-    `None` for a regime that publishes no continuation. Initializes the rolling
-    `next_regime_to_continuation` mapping and serves as the lowering argument when
-    AOT-compiling a parent's kernel.
-    """
+    continuation_spec: EGMContinuationSpec | None = None
+    """Concrete EGM continuation template bundled with its static layout."""
 
     param_checks: tuple[ParamCheck, ...] = ()
     """Preconditions the engine runs once, on the first solve, against real params.
 
     A solver whose scope condition is a property of the *evaluated* model — the
     budget's affinity in the liquid state, a carried law's constancy between
-    breakpoints — cannot check it in `validate`, which runs before any parameter
-    value exists. It publishes the check here instead, and the engine calls each
-    entry in order as `check(flat_params=...)` the first time the model is solved.
-    Empty for a solver whose scope is decided by structure alone.
+    breakpoints — cannot check it in `validate_build`, which runs before any
+    parameter value exists. It publishes the check here instead, and the engine
+    calls each entry in order as `check(flat_params=...)` the first time the
+    model is solved. Empty for a solver whose scope is decided by structure
+    alone.
     """
+
+    @property
+    def continuation_template(self) -> ContinuationPayload | None:
+        """Return the template payload for generic rolling and lowering code."""
+        return (
+            None if self.continuation_spec is None else self.continuation_spec.template
+        )
 
 
 class Solver(ABC):
     """Base class for regime solvers — the polymorphic dispatch target.
 
-    The engine calls `validate` then `build_period_kernels` on the instance,
-    matching the engine's own polymorphism (`Grid(ABC)`, the stochastic
-    processes). Subclasses are frozen dataclasses carrying the solver's
-    configuration.
+    The engine calls `validate_model`, then later `validate_build` and
+    `build_period_kernels` on the instance, matching the engine's own
+    polymorphism (`Grid(ABC)`, the stochastic processes). Subclasses are frozen
+    dataclasses carrying the solver's configuration.
     """
 
     @abstractmethod
@@ -405,28 +413,14 @@ class Solver(ABC):
         """Build the regime's per-period solve adapters."""
 
     @property
-    def carry_retains_discrete_action_rows(self) -> bool:
-        """Whether this regime's continuation carry keeps per-discrete-action rows.
+    def egm_continuation_layout(self) -> EGMContinuationLayout:
+        """Declare how a reading parent interprets this solver's EGM carry.
 
-        A reading parent aggregates the child's discrete choices (the DC-EGM
-        logsum) only when the carry retains a row per discrete-action combo. A
-        value-only solver that publishes an already-action-maxed value array
-        (brute `GridSearch`, the case-piece `NBEGM`) sets this `False`, so the
-        parent reads the maxed value directly without spurious action rows.
+        The default is an endogenous-grid row per discrete-action combination,
+        with row-specific abscissae and no stacked outer-candidate axis. Solvers
+        whose representation differs override this one bundled declaration.
         """
-        return True
-
-    @property
-    def carry_rows_share_state_grid(self) -> bool:
-        """Whether every published carry row shares the state grid as abscissae.
-
-        Grid-aligned rows (a value array published on the regime's own state
-        grid) all interpolate with the same bracket structure, so reads that
-        are linear in the rows commute with expectations over the carry's
-        node axes. Endogenous-grid solvers publish per-row abscissae and set
-        this `False`.
-        """
-        return False
+        return EGMContinuationLayout()
 
     @property
     def publishes_one_sided_jump_reads(self) -> bool:
@@ -440,22 +434,11 @@ class Solver(ABC):
         """
         return False
 
-    @property
-    def n_stacked_carry_candidates(self) -> int:
-        """Length of the published carry's stacked outer-candidate axis.
+    def validate_model(self, *, context: SolverModelContext) -> None:  # noqa: B027
+        """Validate finalized user declarations. Default: no-op."""
 
-        A solver that publishes one carry row per outer durable candidate
-        (keeper plus one per outer-grid node), stacked on an axis before the
-        grid axis, declares that axis length here; a reading parent broadcasts
-        its queries over exactly that many candidates and collapses them by
-        the hard max. A solver whose carry has no candidate axis — no outer
-        margin, or an outer margin already folded inside the solve — declares
-        `0`, and the parent queries each carry row once.
-        """
-        return 0
-
-    def validate(self, *, context: SolverBuildContext) -> None:  # noqa: B027
-        """Check the regime is in scope for this solver. Default: no-op."""
+    def validate_build(self, *, context: SolverBuildContext) -> None:  # noqa: B027
+        """Validate processed period/build context. Default: no-op."""
 
     @property
     def requires_continuation(self) -> bool:

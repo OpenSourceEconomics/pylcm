@@ -15,9 +15,6 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
-from _lcm.egm.negm_validation import validate_negm_regimes
-from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
-from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -43,6 +40,7 @@ from _lcm.regime_building.processing import (
     process_regimes,
 )
 from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
+from _lcm.solution.contract import SolverModelContext
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -186,7 +184,7 @@ def _build_regimes_and_template_with_fixed_params(
     )
 
 
-def validate_model_inputs(
+def validate_model_inputs(  # noqa: C901
     *,
     n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -223,9 +221,13 @@ def validate_model_inputs(
     solver_validation_regimes = _representative_for_validation(
         user_regimes=user_regimes, ages=ages
     )
-    validate_dcegm_regimes(user_regimes=solver_validation_regimes)
-    validate_negm_regimes(user_regimes=solver_validation_regimes)
-    validate_nnbegm_regimes(user_regimes=solver_validation_regimes)
+    for regime_name, user_regime in solver_validation_regimes.items():
+        user_regime.solver.validate_model(
+            context=SolverModelContext(
+                regime_name=regime_name,
+                user_regimes=solver_validation_regimes,
+            )
+        )
 
     error_messages: list[str] = []
 

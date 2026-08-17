@@ -8,6 +8,7 @@ numerical engine modules.
 """
 
 import functools
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -18,6 +19,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
@@ -34,6 +36,7 @@ from _lcm.solution.contract import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverModelContext,
 )
 from _lcm.typing import (
     EconFunction,
@@ -42,7 +45,7 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -75,8 +78,11 @@ class EGM(Solver):
     The corner is read off this bound rather than assumed to be zero savings.
     """
 
-    post_decision_function: FunctionName
+    post_decision_function: FunctionName = ""
     """Name of the post-decision function in `Regime.functions`.
+
+    May be omitted only when the solver is attached to a
+    `ConsumptionSavingsRegime`, which owns the role.
 
     The end-of-period balance (e.g. savings) the liquid state's transition is
     written through. The Euler inversion needs where a level of savings lands
@@ -90,7 +96,167 @@ class EGM(Solver):
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return True
 
-    def validate(self, *, context: SolverBuildContext) -> None:
+    def validate_model(  # noqa: C901, PLR0912, PLR0915
+        self, *, context: SolverModelContext
+    ) -> None:
+        """Validate assumptions shared by the envelope-free EGM kernel."""
+        from dags import concatenate_functions  # noqa: PLC0415
+
+        from _lcm.egm.validation import (  # noqa: PLC0415
+            _call_with_varied,
+            _continuous_non_process_names,
+            _dag_ancestors,
+            _grid_sample,
+            _isclose,
+            _resolve_solve_functions,
+            _solve_grids,
+            fail_if_custom_koopmans_aggregator,
+        )
+
+        regime_name = context.regime_name
+        user_regime = context.user_regimes[regime_name]
+        if not self.post_decision_function:
+            msg = (
+                f"EGM regime {regime_name!r} has no post_decision_function. "
+                "Supply it on EGM, or attach the solver to "
+                "ConsumptionSavingsRegime so the regime's canonical role is "
+                "bound automatically."
+            )
+            raise ModelInitializationError(msg)
+        fail_if_custom_koopmans_aggregator(
+            regime_name=regime_name,
+            user_regime=user_regime,
+            solver_name="EGM",
+        )
+        if user_regime.terminal:
+            msg = (
+                f"Regime '{regime_name}' is terminal but configured with EGM. "
+                "Terminal regimes have no optimization problem; remove the "
+                "solver setting."
+            )
+            raise ModelInitializationError(msg)
+
+        state_grids = _solve_grids(slot=user_regime.states)
+        action_grids = _solve_grids(slot=user_regime.actions)
+        continuous_states = _continuous_non_process_names(grids=state_grids)
+        continuous_actions = _continuous_non_process_names(grids=action_grids)
+        if len(continuous_states) != 1:
+            msg = (
+                f"EGM regime '{regime_name}' must have exactly one continuous "
+                f"state, but has {len(continuous_states)}: "
+                f"{list(continuous_states)}."
+            )
+            raise ModelInitializationError(msg)
+        if len(continuous_actions) != 1:
+            msg = (
+                f"EGM regime '{regime_name}' must have exactly one continuous "
+                f"action, but has {len(continuous_actions)}: "
+                f"{list(continuous_actions)}."
+            )
+            raise ModelInitializationError(msg)
+        discrete_states = sorted(set(state_grids) - set(continuous_states))
+        if discrete_states:
+            msg = (
+                f"EGM regime '{regime_name}' has discrete or process states "
+                f"{discrete_states}. The envelope-free one-row kernel publishes "
+                "a one-dimensional continuation and cannot carry those axes; "
+                "use DCEGM or GridSearch."
+            )
+            raise ModelInitializationError(msg)
+        discrete_actions = sorted(set(action_grids) - set(continuous_actions))
+        if discrete_actions:
+            msg = (
+                f"EGM regime '{regime_name}' has discrete actions "
+                f"{discrete_actions}. A discrete choice makes the candidate "
+                "correspondence multi-valued; use DCEGM."
+            )
+            raise ModelInitializationError(msg)
+
+        liquid_state = continuous_states[0]
+        consumption_action = continuous_actions[0]
+        if self.post_decision_function not in user_regime.functions:
+            msg = (
+                f"EGM regime '{regime_name}' is missing the declared "
+                f"post-decision function '{self.post_decision_function}'."
+            )
+            raise ModelInitializationError(msg)
+        functions = _resolve_solve_functions(user_regime=user_regime)
+        post_func = functions[self.post_decision_function]
+        post_ancestors = _dag_ancestors(functions=functions, target_func=post_func)
+        missing_roles = sorted({liquid_state, consumption_action} - set(post_ancestors))
+        if missing_roles:
+            msg = (
+                f"The post-decision function '{self.post_decision_function}' "
+                f"of EGM regime '{regime_name}' must depend on the state "
+                f"'{liquid_state}' and action '{consumption_action}'; its DAG "
+                f"does not reach {missing_roles}."
+            )
+            raise ModelInitializationError(msg)
+
+        if user_regime.constraints:
+            constraint_names = sorted(user_regime.constraints)
+            msg = (
+                f"EGM regime '{regime_name}' declares constraints "
+                f"{constraint_names}. Plain EGM evaluates no user constraint; "
+                "encode the borrowing limit in `savings_grid.start` and the "
+                "budget identity in the post-decision function, or use "
+                "GridSearch."
+            )
+            raise ModelInitializationError(msg)
+
+        utility_ancestors = _dag_ancestors(
+            functions=functions, target_func=functions["utility"]
+        )
+        if liquid_state in utility_ancestors:
+            msg = (
+                f"The utility DAG of EGM regime '{regime_name}' depends on "
+                f"the continuous state '{liquid_state}'. The envelope-free "
+                "kernel evaluates utility as a function of the continuous "
+                f"action '{consumption_action}' only."
+            )
+            raise ModelInitializationError(msg)
+
+        composed_post = concatenate_functions(
+            functions, targets=self.post_decision_function
+        )
+        post_arguments = set(inspect.signature(composed_post).parameters)
+        expected_arguments = {liquid_state, consumption_action}
+        if post_arguments != expected_arguments:
+            msg = (
+                f"The post-decision DAG '{self.post_decision_function}' of EGM "
+                f"regime '{regime_name}' must be exactly a function of "
+                f"'{liquid_state}' and '{consumption_action}', but its leaf "
+                f"arguments are {sorted(post_arguments)}."
+            )
+            raise ModelInitializationError(msg)
+        state_sample = _grid_sample(grid=state_grids[liquid_state])
+        action_sample = _grid_sample(grid=action_grids[consumption_action])
+        x64_enabled = bool(jax.config.read("jax_enable_x64"))
+        atol = 1e-8 if x64_enabled else 1e-4
+        rtol = 1e-6 if x64_enabled else 1e-3
+        for state_value in state_sample:
+            for action_value in action_sample:
+                actual = _call_with_varied(
+                    func=composed_post,
+                    fixed={},
+                    varied={
+                        liquid_state: state_value,
+                        consumption_action: action_value,
+                    },
+                )
+                expected = state_value - action_value
+                if not _isclose(actual=actual, expected=expected, rtol=rtol, atol=atol):
+                    msg = (
+                        f"Consumption recovery fails in EGM regime "
+                        f"'{regime_name}': '{self.post_decision_function}' must "
+                        f"equal `{liquid_state} - {consumption_action}`. At "
+                        f"{liquid_state}={float(state_value)}, "
+                        f"{consumption_action}={float(action_value)}, it returns "
+                        f"{float(actual)} rather than {float(expected)}."
+                    )
+                    raise ModelInitializationError(msg)
+
+    def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check the regime and its targets are 1-D consumption--saving problems.
 
         The solver's liquid role is filled positionally, which is only
@@ -124,7 +290,7 @@ class EGM(Solver):
                 f"envelope-free one-asset step does not solve. Use DCEGM, "
                 f"which refines the candidates to their upper envelope."
             )
-            raise RegimeInitializationError(msg)
+            raise ModelInitializationError(msg)
         continuous = tuple(
             context.regime_to_v_interpolation_info[
                 context.regime_name
@@ -137,8 +303,19 @@ class EGM(Solver):
                 f"Use a solver that handles more than one Euler state, or move the "
                 f"extra states to discrete grids."
             )
-            raise RegimeInitializationError(msg)
+            raise ModelInitializationError(msg)
         for target in set(_period_to_continuation_target(context=context).values()):
+            target_user_regime = context.user_regimes[target]
+            if target_user_regime.terminal and target_user_regime.actions:
+                msg = (
+                    f"EGM regime '{context.regime_name}' continues into terminal "
+                    f"regime '{target}', which has actions "
+                    f"{list(target_user_regime.actions)}. A terminal EGM carry "
+                    "is utility on the state grid and cannot represent a final-"
+                    "period optimization; remove the actions or use GridSearch "
+                    "for the parent."
+                )
+                raise ModelInitializationError(msg)
             target_states = tuple(
                 context.regime_to_v_interpolation_info[target].continuous_states
             )
@@ -150,7 +327,18 @@ class EGM(Solver):
                     f"continuation state, so the target must declare exactly one — "
                     f"its name need not match this regime's '{continuous[0]}'."
                 )
-                raise RegimeInitializationError(msg)
+                raise ModelInitializationError(msg)
+            target_discrete = tuple(
+                context.regime_to_v_interpolation_info[target].discrete_states
+            )
+            if target_discrete:
+                msg = (
+                    f"EGM regime '{context.regime_name}' continues into target "
+                    f"regime '{target}', whose discrete/process states are "
+                    f"{sorted(target_discrete)}. The one-row continuation "
+                    "kernel cannot carry those axes."
+                )
+                raise ModelInitializationError(msg)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one 1-D EGM period adapter per active period.
@@ -232,8 +420,9 @@ class EGM(Solver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
-            continuation_template=_build_one_asset_carry_template(
-                liquid_grid=liquid_grid
+            continuation_spec=EGMContinuationSpec(
+                template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
+                layout=self.egm_continuation_layout,
             ),
         )
 

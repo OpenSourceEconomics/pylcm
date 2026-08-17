@@ -52,7 +52,6 @@ def test_analytical_solution(model_name, model_and_params):
 
     """
     # Compute LCM solution
-    # ==================================================================================
     model = model_and_params["model"]
     params = model_and_params["params"]
 
@@ -85,7 +84,6 @@ def test_analytical_solution(model_name, model_and_params):
     }
 
     # Load analytical solution
-    # ==================================================================================
     analytical = {
         _type: np.genfromtxt(
             TEST_DATA.joinpath(
@@ -98,7 +96,6 @@ def test_analytical_solution(model_name, model_and_params):
     }
 
     # Compare
-    # ==================================================================================
     for _type in ["worker", "retired"]:
         _analytical = np.array(analytical[_type])
         _numerical = numerical[_type]

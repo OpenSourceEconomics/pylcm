@@ -6,7 +6,10 @@ target regime each active period continues into, and bind or admit the union
 of the source's and target's flat params in the kernel build.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
+
+from dags.tree import qname_from_tree_path
 
 from _lcm.solution.contract import (
     SolverBuildContext,
@@ -62,8 +65,12 @@ def _union_free_params(
     """
     params: dict[str, object] = dict(flat_params[regime_name])
     for target_name in transition_target_names:
-        for key, value in flat_params.get(target_name, MappingProxyType({})).items():
-            params.setdefault(key, value)
+        params.update(
+            _namespace_target_params(
+                target_name=target_name,
+                params=flat_params.get(target_name, MappingProxyType({})),
+            )
+        )
     return params
 
 
@@ -76,11 +83,32 @@ def _union_fixed_params(
     """Union the regime's and its targets' fixed params for core binding."""
     bound = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
     for target_name in transition_target_names:
-        for key, value in fixed_flat_params.get(
-            target_name, MappingProxyType({})
-        ).items():
-            bound.setdefault(key, value)
+        bound.update(
+            _namespace_target_params(
+                target_name=target_name,
+                params=fixed_flat_params.get(target_name, MappingProxyType({})),
+            )
+        )
     return bound
+
+
+def _namespace_target_param_names(
+    *, target_name: RegimeName, param_names: frozenset[str]
+) -> frozenset[str]:
+    """Prefix a target regime's flat parameter names with its regime identity."""
+    return frozenset(
+        qname_from_tree_path((target_name, param_name)) for param_name in param_names
+    )
+
+
+def _namespace_target_params(
+    *, target_name: RegimeName, params: Mapping[str, object]
+) -> dict[str, object]:
+    """Return target parameters under keys that retain the target regime name."""
+    return {
+        qname_from_tree_path((target_name, param_name)): value
+        for param_name, value in params.items()
+    }
 
 
 def target_period_grid(
