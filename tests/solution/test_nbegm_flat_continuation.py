@@ -22,8 +22,9 @@ from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
     make_alive_dead_model,
-    next_liquid,
+    next_liquid_from_savings,
     resolve_solver,
+    savings,
     utility,
 )
 
@@ -66,8 +67,20 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
         n_liquid=_N_LIQUID,
         liquid_max=30.0,
         n_consumption=120,
-        alive_functions={"utility": utility, "resources": _resources},
-        liquid_law=next_liquid,
+        alive_functions={
+            "utility": utility,
+            "resources": _resources,
+            # NBEGM inverts the Euler equation on post-decision savings, so the
+            # regime has to name the function computing them. Without it the
+            # model is rejected at construction and the test fails at both
+            # precisions in under a second, well before any of the flat-
+            # continuation behaviour it was written to pin is reached.
+            "savings": savings,
+        },
+        # The savings-form law, not the cash-on-hand one: NBEGM reads the law at
+        # each level of post-decision savings, so a law stated from `resources`
+        # is rejected at construction.
+        liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
             "nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),
