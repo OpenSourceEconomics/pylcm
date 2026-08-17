@@ -300,12 +300,7 @@ _MASKED_BRANCH_CALLS = {
 
 @pytest.mark.parametrize(
     "segment_block_size",
-    [
-        0,
-        1,
-        pytest.param(2, marks=pytest.mark.skipif_cpu),
-        pytest.param(3, marks=pytest.mark.skipif_cpu),
-    ],
+    [0, 1, 2, 3],
 )
 @pytest.mark.parametrize("call", sorted(_MASKED_BRANCH_CALLS))
 def test_a_masked_branch_never_turns_a_bracketed_query_into_an_abstention(
