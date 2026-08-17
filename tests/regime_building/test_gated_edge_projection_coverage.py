@@ -14,6 +14,11 @@ need different coordinates of the regime it names:
 Both properties are pinned on the same reference regime, `fallback`, which
 carries `career` in simulation but solves on `wage` alone: the projection that
 the leg owes is exactly the one the gate reference may not declare.
+
+A state whose grid is declared with `AgeSpecializedGrid` is a state its regime
+carries in simulation like any other — the marker says only that the grid's
+bounds move with age. A second reference regime, `annuity`, pins both halves of
+that: the projection is owed on such a state, and supplying it builds.
 """
 
 import re
@@ -23,6 +28,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeSpecializedGrid,
     DiscreteGrid,
     EdgeLeg,
     GatedEdge,
@@ -43,6 +49,12 @@ _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 _CAREER = LinSpacedGrid(start=0.0, stop=10.0, n_points=3)
 _GATE_THRESHOLD = 1.5
 
+# The annuity's principal grid keeps three nodes at every age and moves its
+# ceiling once, which is the whole point of the marker: nothing about the shape
+# of the regime's arrays records that its states are age-specialized.
+_PRINCIPAL_CEILING_EARLY = 8.0
+_PRINCIPAL_CEILING_LATE = 6.0
+
 
 @categorical(ordered=True)
 class Work:
@@ -60,6 +72,15 @@ class RegimeId:
     src_exit: ScalarInt
     fallback: ScalarInt
     fallback_exit: ScalarInt
+
+
+@categorical(ordered=False)
+class AgeSpecializedRegimeId:
+    """Regime ids of the model whose fallback holds an age-varying grid."""
+
+    src: ScalarInt
+    src_exit: ScalarInt
+    annuity: ScalarInt
 
 
 def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime():
@@ -88,6 +109,86 @@ def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes(
         match=re.escape("(['wage']); got ['career', 'wage']"),
     ):
         _build_model(fallback_projects_career=True, gate_ref_projects_career=True)
+
+
+def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime():
+    """A leg's fallback projection owes a coordinate on an age-varying state.
+
+    `annuity` holds `principal` on a grid whose ceiling moves with age. That
+    makes it no less a state the regime carries in simulation, so a leg routing
+    a subject there must say where on that axis it lands. An empty projection is
+    rejected at model build, naming the state it has to supply.
+    """
+    with pytest.raises(
+        ModelInitializationError, match=re.escape("(['principal']); got []")
+    ):
+        _build_age_specialized_model(fallback_projects_principal=False)
+
+
+def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
+    """A projection onto an age-varying state is a complete one.
+
+    Supplying the coordinate the previous test says is owed leaves nothing
+    outstanding, so the model builds.
+    """
+    model = _build_age_specialized_model(fallback_projects_principal=True)
+
+    assert set(model.regime_names_to_ids) == {"src", "src_exit", "annuity"}
+
+
+def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
+    """Build a source whose leg fallback holds an age-varying grid.
+
+    Args:
+        fallback_projects_principal: Whether the leg's fallback projection
+            supplies a coordinate for the annuity's age-specialized state.
+
+    Returns:
+        The built model.
+
+    """
+    projection = (
+        {"principal": _project_principal} if fallback_projects_principal else {}
+    )
+    src = Regime(
+        transition={"src_exit": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility_src},
+        gated_edges={
+            "src_exit": GatedEdge(
+                gate=_wage_gate,
+                legs={
+                    "only": EdgeLeg(
+                        fallback=SamePeriodRef(regime="annuity", projection=projection)
+                    )
+                },
+            )
+        },
+    )
+    src_exit = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wage": _WAGE},
+        functions={"utility": _utility_no_payoff},
+    )
+    annuity = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={
+            "principal": AgeSpecializedGrid(
+                build=_principal_grid, signature=_principal_ceiling
+            )
+        },
+        functions={"utility": _utility_annuity},
+    )
+    return Model(
+        regimes={"src": src, "src_exit": src_exit, "annuity": annuity},
+        ages=_AGES,
+        regime_id_class=AgeSpecializedRegimeId,
+    )
 
 
 def _build_model(
@@ -179,6 +280,31 @@ def _prob_one(age: FloatND) -> FloatND:
 def _gate(V_fallback_ref: FloatND, wage: ContinuousState) -> BoolND:
     """The edge stays open above a wage, reading the fallback's value too."""
     return (wage > _GATE_THRESHOLD) | (V_fallback_ref < 0.0)
+
+
+def _wage_gate(wage: ContinuousState) -> BoolND:
+    """The edge stays open above a wage, reading no other regime's value."""
+    return wage > _GATE_THRESHOLD
+
+
+def _principal_ceiling(age: float) -> float:
+    """The highest principal the annuity's grid reaches at this age."""
+    return _PRINCIPAL_CEILING_EARLY if age <= 1 else _PRINCIPAL_CEILING_LATE
+
+
+def _principal_grid(age: float) -> LinSpacedGrid:
+    """The annuity's principal grid: zero to the age's ceiling, on three nodes."""
+    return LinSpacedGrid(start=0.0, stop=_principal_ceiling(age), n_points=3)
+
+
+def _project_principal(wage: ContinuousState) -> FloatND:
+    """The principal a subject rolls into the annuity on entering it."""
+    return 2.0 * wage
+
+
+def _utility_annuity(principal: ContinuousState) -> FloatND:
+    """The annuity pays out its principal."""
+    return principal
 
 
 def _identity_wage(wage: ContinuousState) -> ContinuousState:

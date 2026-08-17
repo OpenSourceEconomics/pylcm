@@ -448,6 +448,7 @@ def process_regimes(
     # before any kernel is built.
     _fail_if_gated_edges_invalid(
         user_regimes=user_regimes,
+        representative_user_regimes=representative_user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
     )
@@ -1314,6 +1315,7 @@ def _fail_if_same_period_refs_invalid(
 def _fail_if_gated_edges_invalid(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
 ) -> None:
@@ -1354,6 +1356,7 @@ def _fail_if_gated_edges_invalid(
                     prefix=f"{leg_prefix}fallback ",
                     ref=leg.fallback,
                     user_regimes=user_regimes,
+                    representative_user_regimes=representative_user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                     projection_phase="simulate",
                 )
@@ -1363,6 +1366,7 @@ def _fail_if_gated_edges_invalid(
                     prefix=f"{prefix}gate_refs['{ref_name}'] ",
                     ref=ref,
                     user_regimes=user_regimes,
+                    representative_user_regimes=representative_user_regimes,
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                     projection_phase="solve",
                 )
@@ -1500,6 +1504,7 @@ def _fail_if_ref_invalid(
     prefix: str,
     ref: SamePeriodRef,
     user_regimes: Mapping[RegimeName, UserRegime],
+    representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     projection_phase: Literal["solve", "simulate"],
 ) -> None:
@@ -1550,8 +1555,16 @@ def _fail_if_ref_invalid(
     if projection_phase == "simulate":
         # Read off the reference's own declaration rather than its solved grid:
         # a carried state is a `Phased` entry in `states` and never an axis of
-        # the V-interpolation info.
-        expected_states = set(simulate_variables_from_regime(reference).state_names)
+        # the V-interpolation info. The REPRESENTATIVE form is the declaration to
+        # read: it resolves an `AgeSpecializedGrid` to that regime's
+        # representative-age grid, so such a state is classified as the grid
+        # state it is, while `Phased` entries are preserved verbatim, so a
+        # carried state is still visible as one.
+        expected_states = set(
+            simulate_variables_from_regime(
+                representative_user_regimes[ref.regime]
+            ).state_names
+        )
         coverage = "state the reference regime carries in simulation"
     else:
         expected_states = set(regime_to_v_interpolation_info[ref.regime].state_names)
