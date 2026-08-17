@@ -44,7 +44,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime
-from lcm.solvers import GridSearch, Solver
+from lcm.solvers import EGM, GridSearch, Solver
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -333,7 +333,7 @@ def get_model(
                 "dead": liquid_retired,
             }
         },
-        constraints={"feasible": feasible_retired},
+        constraints={} if isinstance(retired_solver, EGM) else {"feasible": feasible_retired},
         transition={
             "retired": MarkovTransition(prob_stay_retired),
             "dead": MarkovTransition(prob_die),

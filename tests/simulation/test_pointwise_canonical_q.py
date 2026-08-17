@@ -33,6 +33,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
+from tests.envelope_configs import envelope_config
 
 _DISCOUNT_FACTOR = 0.98
 _BONUS = 10.0
@@ -68,7 +69,7 @@ def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
 
 
 def _bonus_model() -> Model:
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope="mss")
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
         active=lambda age: age < 50,
         solver=solver,
@@ -176,12 +177,11 @@ def test_off_grid_replacement_never_scores_below_the_grid_pair():
     original = simulate_module._redecide_branch_and_read_policy
 
     def record(**kwargs):
-        emitted_actions = original(**kwargs)
-        emitted_values, _ = kwargs["score_actions"](candidate_actions=emitted_actions)
+        emitted_actions, emitted_values = original(**kwargs)
         emitted_vs_grid.append(
             (np.asarray(emitted_values), np.asarray(kwargs["grid_values"]))
         )
-        return emitted_actions
+        return emitted_actions, emitted_values
 
     simulate_module._redecide_branch_and_read_policy = record  # ty: ignore[invalid-assignment]
     try:

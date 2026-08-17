@@ -31,6 +31,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
+from tests.envelope_configs import envelope_config
 
 pytestmark = pytest.mark.slow
 
@@ -73,7 +74,7 @@ def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
 def _bonus_model(constraints: dict | None = None) -> Model:
     # MSS is the only backend whose rows certify every envelope crossing, so
     # it is the only one that qualifies for the off-grid read.
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope="mss")
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
         active=lambda age: age < 50,
         solver=solver,

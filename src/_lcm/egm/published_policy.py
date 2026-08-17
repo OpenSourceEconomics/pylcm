@@ -10,9 +10,9 @@ nodes the read carries the interpolation error of a finite row; the envelope
 gate below buys branch faithfulness at the switches, not exactness within a
 branch.
 
-It is produced and carried for *every* solved period alongside the
-value-function arrays. Forward simulation consumes it where the regime
-qualifies (`SimulationPhase.egm_policy_read`): the subject's row — indexed by
+A requesting solve can retain it alongside the value-function arrays. Forward
+simulation requests it only when a regime qualifies
+(`SimulationPhase.egm_policy_read`): the subject's row — indexed by
 its discrete states — is interpolated at the subject's resources, replacing the
 action-grid argmax value of the continuous action, subject to a post-read
 feasibility check (in-support, finite, positive, within the intrinsic budget).
@@ -37,12 +37,12 @@ the grid-argmax path:
   transition, or state domain (not only `W`, e.g. naive present bias) makes
   the stored policy solve the wrong simulate-phase FOC or puts the policy
   rows on the wrong coordinates;
-- regimes whose upper-envelope backend does not certify every crossing —
-  only MSS enumerates the complete envelope-switch sequence (interior
-  crossings, exact-node switches, value jumps; loud overflow past its
-  budget); FUES decides segment identity by a slope-threshold heuristic (no
-  labels from the kernel), so its row can silently bridge a missed switch,
-  and RFC/LTM leave switches between retained nodes;
+- every currently shipped upper-envelope backend — none has yet passed the
+  crossing- and support-completeness contract required by the read. MSS can
+  omit an owner that wins only inside one candidate interval; FUES can merge
+  branches when its slope heuristic misses a switch; RFC and LTM leave
+  switches between retained nodes; and the exact backend does not yet publish
+  a support verdict for compacted gaps;
 - regimes with a passive continuous state — each row is the envelope policy
   conditional on one passive node, so blending rows across a passive-dimension
   branch switch would read an action from neither branch;
@@ -58,9 +58,9 @@ re-deciding across those axes the way the discrete-action axis already is
 lifts the passive, process, and asset-row exclusions (the tracked follow-up).
 
 Unlike the rolling `EGMCarry` (the cross-period continuation channel, overwritten
-each period), this is saved for every solved period and travels to `simulate`
-alongside the value-function arrays. Its rows are shared with the period's
-carry; only the `policy` row is additional state.
+each period), this is retained only when inspection or an eligible simulation
+read requests it. Its rows are shared with the period's carry; only the `policy`
+row is additional state.
 """
 
 from collections.abc import Sequence
@@ -92,11 +92,10 @@ class EGMSimPolicy:
     """Endogenous grid in resources space, NaN-padded in the tail.
 
     Shared with the period's `EGMCarry.endog_grid`; weakly ascending per row.
-    Under MSS the envelope-switch abscissae are duplicated with one-sided
-    policy copies — the topology the off-grid read requires; FUES rows are
-    not certified crossing-complete (segment identity is a slope-threshold
-    heuristic) and RFC/LTM rows leave switches between retained nodes, so
-    neither qualifies for the read.
+    The off-grid read requires duplicated one-sided records at every switch
+    and an explicit support verdict for every compacted gap. No shipped
+    envelope currently proves both properties, so every backend remains on the
+    grid-argmax simulation path.
     """
 
     policy: FloatND

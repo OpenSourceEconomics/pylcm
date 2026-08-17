@@ -201,10 +201,10 @@ class _ChildRead:
 
     - the child's resources DAG does not read the dimension's node value;
     - the child's carry rows share the state grid as abscissae
-      (`Solver.carry_rows_share_state_grid`), so every node row interpolates
-      with the same bracket structure;
+      (`Solver.egm_continuation_layout.rows_share_state_grid`), so every node
+      row interpolates with the same bracket structure;
     - the carry keeps no per-discrete-action rows
-      (`Solver.carry_retains_discrete_action_rows` is `False`), so no
+      (`Solver.egm_continuation_layout.retains_discrete_action_rows` is `False`), so no
       per-node choice aggregation sits between interpolation and the fold;
     - for a topology-publishing child, no jump source reads the dimension's
       node value, so the published jump preimages (and the rows' duplicated
@@ -738,14 +738,16 @@ def _get_child_carry_reader(
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
     # A foldable dim of a topology-bearing carry shares the duplicated jump
-    # abscissae across its rows (no jump source reads it — enforced by the
-    # fold flags), so averaging the rows preserves both one-sided limits and
-    # the fold applies exactly as for a smooth carry. Folding is a linear
-    # expectation over the dim's rows, so it is valid only for the linear
-    # expected-utility read: a nonlinear certainty equivalent must transform
-    # every node's value before the lottery sum (`E[g(V)] != g(E[V])`), so
-    # under Epstein-Zin the node axis stays and the per-node loop transforms
-    # each row.
+    # abscissae across its rows (no jump source reads it — enforced by the fold
+    # flags), so averaging preserves both one-sided limits. This is exact for a
+    # linear value interpolant. The monotone Hermite read is nonlinear where its
+    # slope limiter binds, so the optimized ordering `interp(E[V])` may differ
+    # from `E[interp(V)]` at interpolation-error order; the focused regression in
+    # `test_egm_interp.py` pins that declared accuracy-for-runtime tradeoff.
+    # Folding is still valid only for the linear *lottery* expectation: a
+    # nonlinear certainty equivalent must transform every node's value before
+    # the lottery sum (`E[g(V)] != g(E[V])`), so under Epstein-Zin the node axis
+    # stays and the per-node loop transforms each row.
     if risk_aversion is None and any(read.foldable_stochastic_flags):
         read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
             read=read,
@@ -1372,8 +1374,8 @@ def _aggregate_child_choices(
     multiplied by its own composed gradient $(\\partial R'/\\partial A)$ —
     per row, because each row's envelope lives in its own resources space.
     The passive axes are then blended away (`_blend_passive_axes`) with
-    edge-clamped linear weights on the two neighboring nodes of each passive
-    grid — *before* the choice aggregation, so the logsum sees blended
+    nearest-segment linear interpolation or extrapolation on each passive grid
+    — *before* the choice aggregation, so the logsum sees blended
     choice-specific values. Finally
     the discrete-action rows are aggregated with the child's taste-shock
     scale: the smoothed value is the logsum and the smoothed marginal is
@@ -1538,7 +1540,7 @@ def _blend_passive_axes(
     child_passive_grids: tuple[Float1D, ...],
     n_outer_candidates: int,
 ) -> tuple[FloatND, FloatND]:
-    """Blend each passive axis away with edge-clamped linear node weights.
+    """Blend each passive axis with canonical nearest-segment boundary weights.
 
     Runs before the choice aggregation, so the logsum sees blended
     choice-specific values. Every marginal-like payload is blended through the
@@ -1571,17 +1573,30 @@ def _blend_passive_axes(
             x_query=passive_value, grid=passive_grid
         )
         weight_lower = 1.0 - weight_upper
-        # Blend on results: a zero-weight neighbor contributes exactly 0.0,
-        # so an on-node read reproduces the node rows and a -inf neighbor
-        # never turns into 0 * inf = NaN; a positive-weight -inf neighbor
-        # correctly forces the blend to -inf.
-        value_at_child = jnp.where(
-            weight_lower > 0.0, weight_lower * value_at_child[lower], 0.0
-        ) + jnp.where(weight_upper > 0.0, weight_upper * value_at_child[upper], 0.0)
-        # Marginal-like payloads are finite everywhere (exactly 0.0 on
-        # infeasible rows), so a plain blend never produces NaN.
+        # Blend through exact-zero short circuits, not positivity gates:
+        # nearest-segment extrapolation legitimately carries a negative weight.
+        # An on-node zero-weight neighbor contributes exactly zero even when its
+        # row is infinite, matching the canonical multidimensional state read.
+        value_at_child = zero_safe_weighted_term(
+            weight=weight_lower,
+            value=value_at_child[lower],
+            subnormal_is_accounted_for=True,
+        ) + zero_safe_weighted_term(
+            weight=weight_upper,
+            value=value_at_child[upper],
+            subnormal_is_accounted_for=True,
+        )
         marginal_arrays = [
-            weight_lower * arr[lower] + weight_upper * arr[upper]
+            zero_safe_weighted_term(
+                weight=weight_lower,
+                value=arr[lower],
+                subnormal_is_accounted_for=True,
+            )
+            + zero_safe_weighted_term(
+                weight=weight_upper,
+                value=arr[upper],
+                subnormal_is_accounted_for=True,
+            )
             for arr in marginal_arrays
         ]
 
@@ -1619,7 +1634,7 @@ def _fail_if_carry_shape_mismatches_declaration(
         msg = (
             "The child's published carry block has leading shape "
             f"{block_shape}, but its solver declares "
-            f"n_stacked_carry_candidates={n_outer_candidates}, which requires "
+            f"n_stacked_candidates={n_outer_candidates}, which requires "
             f"{expected_block_shape}. The solver's declaration must match the "
             "candidate-axis structure of the carry it publishes."
         )
@@ -2096,11 +2111,12 @@ def _build_child_reads(
             )
             for name in passive_state_names
         )
+        layout = target_regime.solver.egm_continuation_layout
         # A value-only child (brute `GridSearch`, the case-piece `NBEGM`)
         # publishes a value array already maxed over its discrete actions, so the
         # read carries no per-action rows; only a choice-retaining child (DC-EGM)
         # leaves them for the parent to aggregate.
-        if target_regime.solver.carry_retains_discrete_action_rows:
+        if layout.retains_discrete_action_rows:
             action_names, action_values = _get_child_discrete_actions(
                 user_regime=target_regime
             )
@@ -2125,8 +2141,8 @@ def _build_child_reads(
         )
         resources_param_names = resources_arg_names - child_binding_names
         child_carry_rows_uniform = (
-            target_regime.solver.carry_rows_share_state_grid
-            and not target_regime.solver.carry_retains_discrete_action_rows
+            layout.rows_share_state_grid
+            and not layout.retains_discrete_action_rows
         )
         # No solver here publishes a one-sided jump read, so no state is
         # pinned by a jump source reading its node value.
@@ -2152,7 +2168,7 @@ def _build_child_reads(
         # folds its outer axis before publishing (the nested N-NB-EGM upper
         # envelope) carries no candidate axis, and broadcasting queries over a
         # phantom axis would desync rows and queries in the read.
-        n_outer_candidates = target_regime.solver.n_stacked_carry_candidates
+        n_outer_candidates = layout.n_stacked_candidates
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
                 transitions=transitions[target],

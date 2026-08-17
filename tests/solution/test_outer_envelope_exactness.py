@@ -158,6 +158,7 @@ def test_stacked_carry_lifts_candidates_into_common_coh_and_round_trips():
         keeper_carry=keeper,
         adjuster_carries=(adjuster,),
         coh_shifts=jnp.asarray([[0.5]]),
+        durable_axis=-1,
     )
     # Leading shape is (durable=1, n_candidates=2); the trailing axis is the grid.
     assert stacked.endog_grid.shape == (1, 2, 3)

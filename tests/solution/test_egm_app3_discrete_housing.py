@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from tests.test_models.ds_app3_discrete_housing import build_model, build_params
+from tests.envelope_configs import envelope_config
 
 # Small construction-scale grids: a single local solve stays fast. The wealth
 # interior excludes the constrained low-wealth nodes (VFI undershoots) and the
@@ -52,7 +53,7 @@ def test_app3_dcegm_matches_vfi_on_wealth_interior(
         n_wage_nodes=N_WAGE_NODES,
         n_periods=N_PERIODS,
         n_consumption=N_CONSUMPTION,
-        envelope=envelope,
+        envelope=envelope_config(envelope),
     )
     brute_model = build_model(
         variant="brute",

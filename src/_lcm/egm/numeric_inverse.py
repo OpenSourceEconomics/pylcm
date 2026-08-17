@@ -27,10 +27,12 @@ independent of the iteration count. Differentiating through the iteration
 branches instead would yield a wrong or iteration-dependent gradient, which is a
 bug in a JAX solver — hence the detached forward solve plus analytic corrector.
 
-The inverse is defined for an *interior* root: the target must be bracketed by
-`[c_lower, c_upper]`. The borrowing-constrained corner is represented separately
-(the closed-form constrained candidate), and the Euler step's epsilon clamp keeps
-a near-zero marginal continuation from forcing the root to the upper bound.
+The supplied upper endpoint is an initial numerical bracket, not an economic
+consumption bound. If the marginal target lies below `u'(c_upper)`, the bracket is
+expanded by a fixed-count, jittable loop before Newton starts. This matters because
+the post-decision savings grid need not bound current consumption. A root that is
+still unbracketed after expansion fails loudly with NaN; a root below the positive
+`c_lower` floor retains the floor as its active numerical bound.
 """
 
 from collections.abc import Callable
@@ -41,6 +43,8 @@ import jax.numpy as jnp
 from lcm.typing import ScalarFloat
 
 _NEWTON_ITERATIONS = 30
+_BRACKET_EXPANSIONS = 32
+_BRACKET_GROWTH = 4.0
 
 
 def numeric_inverse_marginal_utility(
@@ -66,7 +70,8 @@ def numeric_inverse_marginal_utility(
         marginal_utility: The marginal utility $u'$ as a callable of the action,
             with every utility parameter already bound. Strictly decreasing.
         c_lower: Lower bracket on the action (a small positive floor).
-        c_upper: Upper bracket on the action (from the resources upper bound).
+        c_upper: Initial upper bracket on the action. It is expanded
+            geometrically when the target root lies above it.
         n_iter: Fixed safeguarded-Newton iteration count; quadratic convergence
             reaches a smooth root well below machine epsilon in a handful of
             steps, and the bisection fallback guarantees progress otherwise.
@@ -91,7 +96,35 @@ def numeric_inverse_marginal_utility(
     # so the solve's NaN diagnostics name the offending (regime, period) rather
     # than the log path silently returning a clamped bound.
     mu_lower = marginal_utility(c_lower)
-    mu_upper = marginal_utility(c_upper)
+
+    # The savings grid sets a useful *scale* for the initial action bracket, but
+    # it is not a consumption feasibility bound: current resources may be much
+    # larger than post-decision assets. Expand only while a positive decreasing
+    # marginal still sits above the target at the upper endpoint. The loop count
+    # is static, so the path remains jit- and vmap-safe; if no finite bracket is
+    # found, `upper_bracketed` below poisons the result instead of publishing an
+    # arbitrary generated endpoint with a zero derivative.
+    def expand_upper(_index, state):
+        upper, mu_at_upper = state
+        needs_expansion = (
+            (mu_at_upper > m)
+            & (mu_at_upper > 0.0)
+            & jnp.isfinite(mu_at_upper)
+            & jnp.isfinite(upper)
+        )
+        candidate = upper * _BRACKET_GROWTH
+        candidate_mu = marginal_utility(candidate)
+        return (
+            jnp.where(needs_expansion, candidate, upper),
+            jnp.where(needs_expansion, candidate_mu, mu_at_upper),
+        )
+
+    c_upper, mu_upper = jax.lax.fori_loop(
+        0,
+        _BRACKET_EXPANSIONS,
+        expand_upper,
+        (c_upper, marginal_utility(c_upper)),
+    )
     log_m = jnp.log(m)
     # A bracket marginal that overflows to `+inf` (a power-law `u'` at a
     # near-zero `c_lower`) is `> 0.0` but not finite: `log(+inf)` is `+inf`, not
@@ -137,20 +170,13 @@ def numeric_inverse_marginal_utility(
 
     # The implicit-derivative corrector below is valid only at an *interior,
     # bracketed* root. `u'` is decreasing, so the target is bracketed iff
-    # `u'(c_upper) <= m <= u'(c_lower)`; outside that the root the iteration
-    # converges toward is a bound, and the interior `1/u''` Jacobian would
-    # silently extrapolate a wrong gradient. At a binding bound the active-set
-    # derivative is zero, so the unbracketed branch returns the bound detached
-    # (`dc/dm = 0`) rather than the bogus interior slope.
-    #
-    # The bound is taken from the bracket, not from the final iterate. Bisecting
-    # in `log c` and exponentiating back lands within rounding of the bound but
-    # on either side of it, and `c_upper` is the resources upper bound — an
-    # action above it is infeasible, not imprecise. Which side of the bracket a
-    # value falls on is a decision, so it is made by construction here rather
-    # than left to the width of the rounding error.
-    bracketed = (mu_upper <= m) & (mu_lower >= m)
-    at_bound = jnp.where(m > mu_lower, c_lower, c_upper)
+    # `u'(c_upper) <= m <= u'(c_lower)`. A root below the positive lower floor
+    # keeps that floor as an active numerical bound with zero derivative. A root
+    # still above the expanded upper bracket is not a legitimate corner — the
+    # endpoint was generated from a scale heuristic — and fails loudly instead.
+    upper_bracketed = mu_upper <= m
+    bracketed = upper_bracketed & (mu_lower >= m)
+    lower_bound_active = m > mu_lower
 
     # Implicit-derivative corrector: detached root + one Newton-style step whose
     # value is ~`c_star` (residual ≈ 0 at convergence) but whose gradient is the
@@ -158,7 +184,8 @@ def numeric_inverse_marginal_utility(
     # constant `1/u''` Jacobian, never differentiated itself.
     second_derivative = jax.lax.stop_gradient(marginal_curvature(c_star))
     interior = c_star - (marginal_utility(c_star) - m) / second_derivative
-    root = jnp.where(bracketed, interior, at_bound)
-    # Fail loud where the log-space preconditions do not hold: NaN surfaces in the
-    # kernel's NaN diagnostics instead of a silently-wrong clamped bound.
-    return jnp.where(log_well_defined, root, jnp.nan)
+    root = jnp.where(bracketed, interior, jnp.where(lower_bound_active, c_lower, jnp.nan))
+    # Fail loud where the log-space preconditions do not hold or the fixed-count
+    # expansion could not find an upper bracket: NaN surfaces in the kernel's
+    # diagnostics instead of a silently wrong generated endpoint.
+    return jnp.where(log_well_defined & (upper_bracketed | lower_bound_active), root, jnp.nan)

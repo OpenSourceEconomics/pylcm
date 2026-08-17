@@ -1,9 +1,8 @@
 """Build-time scope checks for the DC-EGM kernel.
 
-A validated DC-EGM regime always builds a `Model` successfully; features the
-kernel does not cover yet are reported here, per period and target, so the
-kernel build can install a step that raises `NotImplementedError` at solve
-time with a precise message. These checks read the processed kernel-build
+Features the numerical kernel does not cover are reported here, per period
+and target, during the build-stage solver validation inside `Model(...)`.
+These checks read the processed kernel-build
 context (period carry targets, qualified flat params, the regime's
 `VInterpolationInfo`, the processed transition functions), which the
 model-time `validation` module does not have — so they live alongside the

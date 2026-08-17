@@ -30,6 +30,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
+from tests.envelope_configs import envelope_config
 
 # MSS inserts the same exact crossing FUES does, so the published value functions
 # agree far tighter than the LTM no-insertion tolerance (5e-3): the residual is
@@ -40,7 +41,7 @@ _PARITY_RTOL = 1e-5
 
 def _with_backend(regime, *, envelope):
     """Rebuild a DC-EGM regime with the chosen upper-envelope backend."""
-    solver = dataclasses.replace(regime.solver, envelope=envelope)
+    solver = dataclasses.replace(regime.solver, envelope=envelope_config(envelope))
     return regime.replace(solver=solver)
 
 
@@ -49,7 +50,7 @@ def _retirement_only_model(*, envelope, n_periods):
     last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "retirement": _with_backend(dcegm_retirement, envelope=envelope).replace(
+            "retirement": _with_backend(dcegm_retirement, envelope=envelope_config(envelope)).replace(
                 active=lambda age, la=last_age: age < la
             ),
             "dead": dead,

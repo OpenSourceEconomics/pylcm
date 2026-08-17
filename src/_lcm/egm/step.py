@@ -188,9 +188,10 @@ from _lcm.typing import (
     StateOrActionName,
     TransitionFunctionsMapping,
 )
+from lcm.exceptions import ModelInitializationError
 from _lcm.utils.dispatchers import productmap
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, MSSEnvelope
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -449,33 +450,32 @@ def build_egm_step_functions(
             asset_row_mode=asset_row_mode,
         )
         if unsupported is not None:
-            kernel = _get_raising_egm_step(reason=unsupported)
-        else:
-            kernel = _get_egm_step(
-                solver=solver,
-                user_regimes=user_regimes,
-                functions=group_functions,
-                koopmans_aggregator=koopmans_aggregator,
-                constraints=group_constraints,
-                transitions=transitions,
-                transition_laws=transition_laws,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                stateful_targets=stateful_targets,
-                scalar_targets=scalar_targets,
-                n_pad=n_pad,
-                n_carry_rows=n_carry_rows,
-                own_discrete_state_names=own_discrete_state_names,
-                own_passive_state_names=own_passive_state_names,
-                own_discrete_action_values=own_discrete_action_values,
-                own_runtime_process_names=own_runtime_process_names,
-                euler_axis_in_V=euler_axis_in_V,
-                has_taste_shocks=has_taste_shocks,
-                regime_to_v_interpolation_info=group_v_interp,
-                asset_row_mode=asset_row_mode,
-                euler_batch_size=euler_batch_size,
-                savings_batch_size=savings_batch_size,
-                combo_state_batch_sizes=combo_state_batch_sizes,
-            )
+            raise ModelInitializationError(unsupported)
+        kernel = _get_egm_step(
+            solver=solver,
+            user_regimes=user_regimes,
+            functions=group_functions,
+            koopmans_aggregator=koopmans_aggregator,
+            constraints=group_constraints,
+            transitions=transitions,
+            transition_laws=transition_laws,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            stateful_targets=stateful_targets,
+            scalar_targets=scalar_targets,
+            n_pad=n_pad,
+            n_carry_rows=n_carry_rows,
+            own_discrete_state_names=own_discrete_state_names,
+            own_passive_state_names=own_passive_state_names,
+            own_discrete_action_values=own_discrete_action_values,
+            own_runtime_process_names=own_runtime_process_names,
+            euler_axis_in_V=euler_axis_in_V,
+            has_taste_shocks=has_taste_shocks,
+            regime_to_v_interpolation_info=group_v_interp,
+            asset_row_mode=asset_row_mode,
+            euler_batch_size=euler_batch_size,
+            savings_batch_size=savings_batch_size,
+            combo_state_batch_sizes=combo_state_batch_sizes,
+        )
         built[group_key] = kernel
 
     result: dict[int, EGMStepFunction] = {}
@@ -602,7 +602,7 @@ def _get_egm_step(
     # `False` on a channel the policy-read gate never consumes from them.
     # Masking on that constant would blank every published row, so the gap
     # mask applies only where the verdict is actually computed.
-    mask_gap_rows = solver.envelope == "mss" and not asset_row_mode
+    mask_gap_rows = isinstance(solver.envelope, MSSEnvelope) and not asset_row_mode
     pieces = _build_kernel_pieces(
         solver=solver,
         user_regimes=user_regimes,
@@ -970,21 +970,3 @@ def _build_feasibility_function(
         return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))
 
     return feasibility
-
-
-def _get_raising_egm_step(*, reason: str) -> EGMStepFunction:
-    """Build a kernel that raises at solve time for unsupported configurations.
-
-    `Model` construction with a validated DC-EGM regime always succeeds;
-    features the kernel does not cover yet surface as `NotImplementedError`
-    when the model is solved.
-    """
-
-    def raising_egm_step(
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        **kwargs: Any,  # noqa: ANN401
-    ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
-        raise NotImplementedError(reason)
-
-    return raising_egm_step

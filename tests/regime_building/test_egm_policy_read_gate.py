@@ -9,7 +9,15 @@ import dataclasses
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, NormalIIDProcess, fixed_transition
+from lcm import (
+    AgeGrid,
+    FUESEnvelope,
+    LinSpacedGrid,
+    MSSEnvelope,
+    Model,
+    NormalIIDProcess,
+    fixed_transition,
+)
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.test_models.deterministic import retirement_only
@@ -19,6 +27,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dead,
 )
 from tests.test_models.ds2024_housing import build_model
+from tests.envelope_configs import envelope_config
 
 
 def test_negm_regime_does_not_qualify_for_the_policy_read():
@@ -63,7 +72,7 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     """FUES rows keep the grid path: segment identity is a heuristic.
 
     FUES groups candidates into segments by thresholding the implied-savings
-    slope (`fues_jump_thresh`), and the DC-EGM kernel supplies no segment
+    slope (`FUESEnvelope.jump_thresh`), and the DC-EGM kernel supplies no segment
     labels. A cross-segment slope below the threshold merges two value
     branches into one row — no crossing is inserted and the row bridges the
     gap between them — regardless of the scan width, so even the exhaustive
@@ -71,7 +80,8 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     interpolates over (see `test_fues_segment_detection.py`).
     """
     solver = dataclasses.replace(
-        DCEGM_SOLVER, envelope="fues", fues_n_points_to_scan=n_points_to_scan
+        DCEGM_SOLVER,
+        envelope=FUESEnvelope(n_points_to_scan=n_points_to_scan),
     )
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
@@ -79,13 +89,9 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_bounded_scan_setting_leaves_the_mss_backend_disqualified():
-    """`fues_n_points_to_scan` is FUES-only and cannot qualify MSS either way.
-
-    The knob never touches an MSS row, so it neither opens nor closes the gate;
-    MSS stays on the grid path because its refinement is not crossing-complete.
-    """
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope="mss", fues_n_points_to_scan=8)
+def test_mss_backend_remains_disqualified_without_fues_controls():
+    """MSS has no FUES controls and remains outside the policy-read gate."""
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
     model = _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
@@ -169,7 +175,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
 
 
 def _retirement_model_with_backend(backend: str) -> Model:
-    solver = dataclasses.replace(DCEGM_SOLVER, envelope=backend)
+    solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(backend))
     return _model_from_alive(
         dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )

@@ -16,6 +16,7 @@ import pytest
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.continuation import (
     _aggregate_child_choices,
+    _blend_passive_axes,
     _collapse_stacked_candidates,
 )
 from _lcm.egm.interp import interp_on_padded_grid, prepare_padded_grid
@@ -577,7 +578,7 @@ def test_negm_solver_declares_its_stacked_candidate_count():
     declaration, so it must equal the outer-grid length plus the keeper slot.
     """
     assert (
-        negm_toy.NEGM_SOLVER.n_stacked_carry_candidates
+        negm_toy.NEGM_SOLVER.egm_continuation_layout.n_stacked_candidates
         == negm_toy.OUTER_GRID.n_points + 1
     )
 
@@ -590,7 +591,7 @@ def test_non_stacking_solvers_declare_zero_stacked_candidates():
     query each carry row once instead of broadcasting queries over a
     phantom axis.
     """
-    assert GridSearch().n_stacked_carry_candidates == 0
+    assert GridSearch().egm_continuation_layout.n_stacked_candidates == 0
 
 
 def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error():
@@ -609,7 +610,7 @@ def test_a_carry_without_the_declared_candidate_axis_fails_with_a_contract_error
     )
     prepared_search_grid, prepared_valid_length = _prepare(carry)
 
-    with pytest.raises(ValueError, match="n_stacked_carry_candidates"):
+    with pytest.raises(ValueError, match="n_stacked_candidates"):
         _aggregate_child_choices(
             carry=carry,
             prepared_search_grid=prepared_search_grid,
@@ -796,3 +797,17 @@ def test_passive_blend_publishes_a_marginal_inside_the_clarke_interval():
 
     np.testing.assert_allclose(float(value), 100.0, atol=_READ_ATOL)
     assert 1.0 - _READ_ATOL <= float(marginal) <= 5.5 + _READ_ATOL
+
+
+def test_passive_boundary_uses_nearest_segment_extrapolation() -> None:
+    """A passive transition below support continues the first state-grid segment."""
+    value, marginal = _blend_passive_axes(
+        value_at_child=jnp.asarray([1.0, 2.0]),
+        marginal_arrays=[jnp.asarray([1.0, 1.0])],
+        child_passive_values=(jnp.asarray(0.0),),
+        child_passive_grids=(jnp.asarray([1.0, 2.0]),),
+        n_outer_candidates=0,
+    )
+    np.testing.assert_allclose(
+        np.asarray([value, marginal]), np.asarray([0.0, 1.0])
+    )

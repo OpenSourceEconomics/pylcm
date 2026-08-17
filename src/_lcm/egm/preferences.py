@@ -41,16 +41,12 @@ NEWTON_ACTION_FLOOR = 1e-8
 
 
 def newton_action_ceiling(scale_grid: Float1D) -> ScalarFloat:
-    """Return an upper action bracket dominating every feasible action.
+    """Return the initial upper action bracket for the numerical inverse.
 
-    The bound is derived from a post-decision grid's top node — the model's own
-    resources scale — rather than from a resources value, since the Euler
-    inversion runs per post-decision node with no single current-state
-    resources to read. A model whose optimal action can genuinely exceed this
-    multiple of its own savings scale (income far above the savings scale) is
-    mis-scaled for its grid: the root is clamped to the bound and reported with
-    a zero derivative, as a binding corner is. Widen the grid or declare an
-    analytic `inverse_marginal_utility` in that case.
+    The post-decision grid supplies a stable model-specific scale, not a hard
+    consumption bound. `numeric_inverse_marginal_utility` expands this initial
+    endpoint geometrically when the Euler root lies above it, so income or
+    current resources may legitimately exceed the savings grid's scale.
     """
     return scale_grid[-1] * 1000.0 + 1000.0
 
@@ -95,8 +91,8 @@ def get_preferences_builder(
         action_lower: Lower bracket for the Newton inverse — a small positive
             floor on the action. Unused when the regime declares an analytic
             inverse.
-        action_upper: Upper bracket for the Newton inverse; must dominate every
-            feasible action.
+        action_upper: Initial upper bracket for the Newton inverse. The numerical
+            solver expands it when necessary.
 
     Returns:
         Callable mapping the regime's flat parameters to the bound

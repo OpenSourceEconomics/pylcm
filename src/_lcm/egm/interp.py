@@ -7,9 +7,10 @@ such rows without ever dividing by a zero-width bracket; passing the row's
 exact slopes upgrades the linear interpolant to a monotone cubic Hermite one.
 Value jumps ride on rows as duplicated abscissae carrying one-sided limits,
 so reads near a jump are one-sided by construction.
-`locate_on_grid` produces edge-clamped bracket indices and weights on
-ordinary (unpadded) grids, e.g. the passive-state grids of the mixed carry
-read.
+`locate_on_grid` produces nearest-segment bracket indices and extrapolating
+weights on ordinary (unpadded) grids, e.g. the passive-state grids of the mixed
+carry read. `interp_on_regular_grid` applies those weights with the same
+zero-weight safeguards as the canonical multidimensional state-grid read.
 
 The `bracket_width == 0.0` tests throughout are exact on purpose, against the
 project's usual rule for comparing floats. A duplicated abscissa is a *bit-exact*
@@ -26,7 +27,37 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, Float1D, FloatND, ScalarFloat, ScalarInt
+
+
+def interp_on_regular_grid(
+    *,
+    x_query: FloatND,
+    xp: Float1D,
+    fp: Float1D,
+) -> FloatND:
+    """Linearly interpolate or nearest-segment extrapolate on a regular row.
+
+    This is the one-dimensional spelling of the canonical state-grid read:
+    values below or above support continue the nearest segment rather than
+    clamping to a boundary node. A one-node row is necessarily constant. Exact
+    zero weights contribute zero even when the corresponding endpoint is
+    non-finite; negative extrapolation weights remain live.
+    """
+    if xp.shape[0] == 1:
+        return jnp.broadcast_to(fp[0], jnp.asarray(x_query).shape)
+    lower, upper, weight_upper = locate_on_grid(x_query=x_query, grid=xp)
+    weight_lower = 1.0 - weight_upper
+    return zero_safe_weighted_term(
+        weight=weight_lower,
+        value=fp[lower],
+        subnormal_is_accounted_for=True,
+    ) + zero_safe_weighted_term(
+        weight=weight_upper,
+        value=fp[upper],
+        subnormal_is_accounted_for=True,
+    )
 
 
 def interp_on_padded_grid(
@@ -1100,23 +1131,18 @@ def locate_on_grid(
     x_query: ScalarFloat,
     grid: Float1D,
 ) -> tuple[ScalarInt, ScalarInt, ScalarFloat]:
-    """Locate the bracketing nodes and upper weight of a query on a sorted grid.
+    """Locate nearest-segment brackets and an extrapolating upper weight.
 
-    The bracket is edge-clamped: queries below the first node get upper
-    weight `0.0` on the first bracket, queries above the last node get upper
-    weight `1.0` on the last bracket, so the linear blend
-    `(1 - weight) * f[lower] + weight * f[upper]` never extrapolates. A query
-    exactly on a node yields a weight of exactly `0.0` or `1.0`, so on-node
-    reads reproduce the node values without interpolation error.
-
-    `_lcm.grids.coordinates.get_irreg_coordinate` brackets a query on a sorted
-    grid the same way and differs deliberately at the edges: it extrapolates along
-    the nearest segment's slope, whereas this one clamps. A bug found in one
-    bracket lookup is worth checking against the other.
+    Queries outside support retain the first or last bracket and receive a
+    weight below zero or above one, continuing that segment's slope. This is the
+    boundary convention of the canonical continuous-state read. A query exactly
+    on a node yields a weight of exactly `0.0` or `1.0`, so on-node reads
+    reproduce node values without interpolation error. A one-node grid returns
+    that node with zero upper weight.
 
     Args:
         x_query: The query point.
-        grid: Strictly ascending grid nodes (at least two).
+        grid: Strictly ascending grid nodes.
 
     Returns:
         Tuple of the lower node index, the upper node index, and the weight
@@ -1124,6 +1150,9 @@ def locate_on_grid(
 
     """
     n_nodes = grid.shape[0]
+    if n_nodes == 1:
+        zero = jnp.asarray(0, dtype=jnp.int32)
+        return zero, zero, jnp.asarray(0.0, dtype=grid.dtype)
     # int32 bracket indices: the grid has at most a few hundred nodes, so the
     # x64-default int64 only doubles the index buffers for nothing.
     upper = jnp.clip(
@@ -1133,12 +1162,7 @@ def locate_on_grid(
     ).astype(jnp.int32)
     lower = upper - 1
     bracket_width = grid[upper] - grid[lower]
-    safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
-    weight_upper = jnp.where(
-        bracket_width == 0.0,
-        1.0,
-        jnp.clip((x_query - grid[lower]) / safe_width, 0.0, 1.0),
-    )
+    weight_upper = (x_query - grid[lower]) / bracket_width
     return lower, upper, weight_upper
 
 

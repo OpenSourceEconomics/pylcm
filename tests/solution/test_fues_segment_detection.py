@@ -1,7 +1,7 @@
 """FUES segment identity is a heuristic: an undetected switch bridges branches.
 
 FUES groups candidates into value-function segments by thresholding the
-implied-savings slope (`fues_jump_thresh`); crossings are inserted only
+implied-savings slope (`FUESEnvelope.jump_thresh`); crossings are inserted only
 *between* detected segments. When the cross-segment slope stays below the
 threshold and no explicit `segment_id` labels are supplied — the DC-EGM kernel
 supplies none — two distinct value branches merge into one row: no crossing is

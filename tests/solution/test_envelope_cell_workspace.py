@@ -7,7 +7,7 @@ exhausts memory on a large solve long before any value is wrong.
 
 The row is therefore compacted as it is built: cells are visited in ascending
 order and their owned sub-cells appended to the finished row, so nothing of size
-`n_cells * max_runs` is ever materialized. `envelope_cell_batch_size` selects how
+`n_cells * max_runs` is ever materialized. `ExactEnvelope.cell_batch_size` selects how
 many cells are resolved together, and because cells are independent it changes
 the working set without changing anything published.
 """

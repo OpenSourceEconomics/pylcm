@@ -15,6 +15,7 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from tests.test_models.ds2024_housing_fues import build_model, build_params
+from tests.envelope_configs import envelope_config
 
 pytestmark = pytest.mark.slow
 
@@ -53,7 +54,7 @@ def _solve(variant: Literal["dcegm", "brute"], envelope: str) -> PeriodToRegimeT
         n_housing=N_HOUSING,
         n_consumption=N_CONSUMPTION,
         n_periods=N_PERIODS,
-        envelope=envelope,  # ty: ignore[invalid-argument-type]
+        envelope=envelope_config(envelope),  # ty: ignore[invalid-argument-type]
     )
     return model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="debug"

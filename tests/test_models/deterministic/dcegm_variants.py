@@ -35,6 +35,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
     utility_working,
 )
 from tests.test_models.deterministic import base, retirement_only
+from tests.envelope_configs import envelope_config
 
 # Exogenous end-of-period savings grid; the lower bound is the borrowing limit
 # (savings >= 0 encodes the original `consumption <= wealth` constraint).
@@ -150,7 +151,7 @@ def get_full_model(
     dcegm_solver = (
         DCEGM_SOLVER
         if envelope is None
-        else dataclasses.replace(DCEGM_SOLVER, envelope=envelope)
+        else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
         regimes={

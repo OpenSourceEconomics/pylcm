@@ -80,6 +80,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 
 # Lifecycle anchors. The working life starts at 20, retires at 60, and the
 # terminal bequest regime is entered at T = 70. The short default horizon keeps
@@ -436,7 +437,7 @@ def build_model(  # noqa: C901
         resources="resources",
         post_decision_function="savings",
         savings_grid=savings_grid,
-        envelope=envelope,
+        envelope=envelope_config(envelope),
         n_constrained_points=32,
     )
     working = UserRegime(

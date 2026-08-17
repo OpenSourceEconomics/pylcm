@@ -8,11 +8,17 @@ convention implies — a linear read of the same row can rank two close branches
 differently.
 """
 
+from types import MappingProxyType, SimpleNamespace
+
 import jax.numpy as jnp
 import pytest
 
 from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.simulation.simulate import _interp_rows_with_support
+import _lcm.simulation.simulate as simulation_module
+from _lcm.simulation.simulate import (
+    _interp_rows_with_support,
+    _replace_continuous_action_with_policy_read,
+)
 
 
 def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
@@ -56,3 +62,54 @@ def test_policy_read_stays_piecewise_linear():
         n_subjects=1,
     )
     assert float(policy[0]) == pytest.approx(0.75, abs=1e-9)
+
+
+def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch):
+    """An accepted off-grid action and its canonical value are published together."""
+    read = SimpleNamespace(
+        action_name="consumption",
+        savings_lower_bound=0.0,
+    )
+    regime = SimpleNamespace(
+        simulation=SimpleNamespace(
+            egm_policy_read=read,
+            grids={},
+        )
+    )
+    sim_policy = EGMSimPolicy(
+        endog_grid=jnp.array([0.0, 1.0]),
+        policy=jnp.array([0.2, 0.8]),
+        value=jnp.array([1.0, 2.0]),
+        marginal_utility=jnp.array([1.0, 0.5]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_resources_at_subjects",
+        lambda **kwargs: jnp.array([1.0]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_interp_rows_with_support",
+        lambda **kwargs: (jnp.array([0.6]), jnp.array([True])),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_canonical_Q_at_actions",
+        lambda **kwargs: (jnp.array([7.0]), jnp.array([True])),
+    )
+
+    _, reported_value = _replace_continuous_action_with_policy_read(
+        optimal_actions=MappingProxyType({"consumption": jnp.array([0.5])}),
+        regime=regime,
+        sim_policy=sim_policy,
+        states=MappingProxyType({"wealth": jnp.array([1.0])}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+        canonical_states=MappingProxyType({"wealth": jnp.array([1.0])}),
+        action_names=("consumption",),
+        next_regime_to_V_arr=MappingProxyType({}),
+        grid_values=jnp.array([5.0]),
+    )
+
+    assert float(reported_value[0]) == 7.0

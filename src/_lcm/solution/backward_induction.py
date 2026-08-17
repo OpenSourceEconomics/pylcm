@@ -48,6 +48,7 @@ def solve(
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
+    collect_simulation_policies: bool = False,
     max_compilation_workers: int | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
@@ -63,15 +64,18 @@ def solve(
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        collect_simulation_policies: Whether to retain and copy published off-grid
+            policies to the host. The solve kernels may publish an internal policy
+            alongside their other outputs, but a value-only solve drops it at the
+            period boundary instead of retaining one device-sized artifact per period.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
-        to regime value-function arrays, and the immutable mapping of periods
-        to each regime's published simulation policy — the off-grid policy
-        artifact simulation can interpolate; regimes whose kernels publish
-        none have no entry.
+        to regime value-function arrays, and, when requested, the immutable
+        mapping of periods to each regime's published simulation policy. The
+        policy mapping is empty when `collect_simulation_policies` is false.
 
     """
     next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
@@ -142,13 +146,11 @@ def solve(
         regimes=regimes, flat_params=flat_params
     )
 
-    # A published simulation policy is a solve *output*, accumulated for
-    # every period; no backward step reads it. Its buffers can alias the
-    # period's continuation buffer, so leaving policies on device pins one
-    # continuation-sized buffer per period for the whole induction. Evict each
-    # period's policies to host as they are produced; simulation
-    # re-materializes them on device.
-    host_device = jax.devices("cpu")[0]
+    # A published simulation policy is a solve output; no backward step reads
+    # it. Retaining one per period can pin continuation-sized device buffers, so
+    # value-only solves discard it at the period boundary. A requesting consumer
+    # receives host copies, which simulation re-materializes on device.
+    host_device = jax.devices("cpu")[0] if collect_simulation_policies else None
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
@@ -198,7 +200,7 @@ def solve(
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if result.simulation_policy is not None:
+            if collect_simulation_policies and result.simulation_policy is not None:
                 period_simulation_policies[regime_name] = result.simulation_policy
             running_any_nan, running_any_inf = _fold_period_diagnostics(
                 V_arr=V_arr,
@@ -240,14 +242,18 @@ def solve(
             next_regime_to_continuation=next_regime_to_continuation,
         )
         solution[period] = MappingProxyType(period_solution)
-        simulation_policies[period] = MappingProxyType(
-            {
-                regime_name: jax.block_until_ready(
-                    jax.device_put(simulation_policy, host_device)
-                )
-                for regime_name, simulation_policy in period_simulation_policies.items()
-            }
-        )
+        if collect_simulation_policies:
+            assert host_device is not None
+            simulation_policies[period] = MappingProxyType(
+                {
+                    regime_name: jax.block_until_ready(
+                        jax.device_put(simulation_policy, host_device)
+                    )
+                    for regime_name, simulation_policy in (
+                        period_simulation_policies.items()
+                    )
+                }
+            )
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)

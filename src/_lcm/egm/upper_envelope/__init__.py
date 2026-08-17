@@ -6,20 +6,20 @@ dominated candidates. The EGM step obtains its backend through
 `get_upper_envelope`, so additional algorithms slot in without touching the
 step itself. Currently implemented:
 
-- `"exact"` (`_lcm.egm.upper_envelope.segment_envelope`), the default: a
+- `ExactEnvelope` (`_lcm.egm.upper_envelope.segment_envelope`), the default: a
   cell-driven construction that settles ownership by certified comparison, so
   it recovers a branch owning an interior subinterval even where that branch
   wins at no candidate abscissa,
-- `"fues"` (`_lcm.egm.upper_envelope.fues`), the Fast Upper-Envelope Scan — a
+- `FUESEnvelope` (`_lcm.egm.upper_envelope.fues`), the Fast Upper-Envelope Scan — a
   sequential scan that inserts crossing points between the segments its
   jump-threshold heuristic identifies,
-- `"rfc"` (`_lcm.egm.upper_envelope.rfc`), the Rooftop-Cut algorithm — a
+- `RFCEnvelope` (`_lcm.egm.upper_envelope.rfc`), the Rooftop-Cut algorithm — a
   parallel dominance test that only deletes points (no crossing insertion) and
   generalizes to multidimensional endogenous grids,
-- `"ltm"` (`_lcm.egm.upper_envelope.ltm`), the local-upper-bound brute method —
+- `LTMEnvelope` (`_lcm.egm.upper_envelope.ltm`), the local-upper-bound brute method —
   an $O(K^2)$ dense segment scan that evaluates the envelope at every candidate
   abscissa (the quadratic baseline of Dobrescu & Shanker 2024), and
-- `"mss"` (`_lcm.egm.upper_envelope.mss`), HARK's EGM upper envelope — a
+- `MSSEnvelope` (`_lcm.egm.upper_envelope.mss`), HARK's EGM upper envelope — a
   left-to-right sweep that keeps the max-value branch at every abscissa *and*
   inserts the exact segment-crossing point (the `MSS` method of Dobrescu &
   Shanker 2024).
@@ -49,7 +49,14 @@ from _lcm.egm.upper_envelope.ltm import refine_envelope as refine_envelope_ltm
 from _lcm.egm.upper_envelope.mss import refine_envelope as refine_envelope_mss
 from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_envelope_rfc
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
-from lcm.solvers import DCEGM
+from _lcm.solution.dcegm import (
+    DCEGM,
+    ExactEnvelope,
+    FUESEnvelope,
+    LTMEnvelope,
+    MSSEnvelope,
+    RFCEnvelope,
+)
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 
@@ -84,16 +91,15 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
     """Build the upper-envelope backend selected by the solver configuration.
 
     Args:
-        solver: The regime's DC-EGM solver configuration; `envelope`
-            selects the backend and the `fues_*` / `rfc_*` fields parametrize
-            it.
+        solver: The regime's DC-EGM solver configuration; its typed `envelope`
+            object selects and configures the backend.
         n_refined: Static length of the refined output rows.
 
     Returns:
         The configured backend.
 
     """
-    if solver.envelope == "fues":
+    if isinstance(solver.envelope, FUESEnvelope):
 
         def fues_backend(
             *,
@@ -115,18 +121,18 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 policy=policy,
                 value=value,
                 n_refined=n_refined,
-                jump_thresh=solver.fues_jump_thresh,
-                n_points_to_scan=solver.fues_n_points_to_scan,
+                jump_thresh=solver.envelope.jump_thresh,
+                n_points_to_scan=solver.envelope.n_points_to_scan,
                 savings=savings,
-                scan_unroll=solver.fues_scan_unroll,
+                scan_unroll=solver.envelope.scan_unroll,
             )
 
         return fues_backend
 
-    if solver.envelope == "exact":
+    if isinstance(solver.envelope, ExactEnvelope):
         return _build_exact_backend(solver=solver, n_refined=n_refined)
 
-    if solver.envelope == "rfc":
+    if isinstance(solver.envelope, RFCEnvelope):
 
         def rfc_backend(
             *,
@@ -148,13 +154,13 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
                 value=value,
                 marginal_utility=marginal_utility,
                 n_refined=n_refined,
-                search_radius=solver.rfc_search_radius,
-                jump_thresh=solver.rfc_jump_thresh,
+                search_radius=solver.envelope.search_radius,
+                jump_thresh=solver.envelope.jump_thresh,
             )
 
         return rfc_backend
 
-    if solver.envelope == "ltm":
+    if isinstance(solver.envelope, LTMEnvelope):
 
         def ltm_backend(
             *,
@@ -179,7 +185,7 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
         return ltm_backend
 
-    if solver.envelope == "mss":
+    if isinstance(solver.envelope, MSSEnvelope):
 
         def mss_backend(
             *,
@@ -228,8 +234,8 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
     all backends.
 
     Args:
-        solver: The regime's DC-EGM solver configuration; the `fues_*` / `rfc_*`
-            fields parametrize the scan.
+        solver: The regime's DC-EGM solver configuration; its typed `envelope`
+            object selects and configures the scan.
         n_refined: Static length of the refined envelope row every finder
             materializes before locating the bracket. This is the `n_pad`
             overflow threshold the asset-row publish compares `n_kept` against.
@@ -238,7 +244,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
         The configured bracket finder.
 
     """
-    if solver.envelope == "fues":
+    if isinstance(solver.envelope, FUESEnvelope):
 
         def fues_bracket_finder(
             *,
@@ -265,15 +271,15 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 value=value,
                 x_query=x_query,
                 n_refined=n_refined,
-                jump_thresh=solver.fues_jump_thresh,
-                n_points_to_scan=solver.fues_n_points_to_scan,
+                jump_thresh=solver.envelope.jump_thresh,
+                n_points_to_scan=solver.envelope.n_points_to_scan,
                 savings=savings,
-                scan_unroll=solver.fues_scan_unroll,
+                scan_unroll=solver.envelope.scan_unroll,
             )
 
         return fues_bracket_finder
 
-    if solver.envelope == "rfc":
+    if isinstance(solver.envelope, RFCEnvelope):
 
         def rfc_bracket_finder(
             *,
@@ -300,8 +306,8 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
                 value=value,
                 marginal_utility=marginal_utility,
                 n_refined=n_refined,
-                search_radius=solver.rfc_search_radius,
-                jump_thresh=solver.rfc_jump_thresh,
+                search_radius=solver.envelope.search_radius,
+                jump_thresh=solver.envelope.jump_thresh,
             )
             return _bracket_from_refined_row(
                 refined_grid=refined_grid,
@@ -313,7 +319,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return rfc_bracket_finder
 
-    if solver.envelope == "ltm":
+    if isinstance(solver.envelope, LTMEnvelope):
 
         def ltm_bracket_finder(
             *,
@@ -352,7 +358,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return ltm_bracket_finder
 
-    if solver.envelope == "mss":
+    if isinstance(solver.envelope, MSSEnvelope):
 
         def mss_bracket_finder(
             *,
@@ -391,7 +397,7 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
         return mss_bracket_finder
 
-    if solver.envelope == "exact":
+    if isinstance(solver.envelope, ExactEnvelope):
         return _build_exact_bracket_finder(solver=solver, n_refined=n_refined)
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
@@ -421,8 +427,8 @@ def _build_exact_backend(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBacke
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=solver.envelope_max_runs,
-            cell_batch_size=solver.envelope_cell_batch_size,
+            max_runs=solver.envelope.max_runs,
+            cell_batch_size=solver.envelope.cell_batch_size,
         )
 
     return exact_backend
@@ -453,8 +459,8 @@ def _build_exact_bracket_finder(
             policy=policy,
             value=value,
             n_refined=n_refined,
-            max_runs=solver.envelope_max_runs,
-            cell_batch_size=solver.envelope_cell_batch_size,
+            max_runs=solver.envelope.max_runs,
+            cell_batch_size=solver.envelope.cell_batch_size,
         )
         return _bracket_from_refined_row(
             refined_grid=refined_grid,

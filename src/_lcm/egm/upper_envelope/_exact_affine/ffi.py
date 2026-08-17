@@ -98,6 +98,13 @@ def kernel_available() -> bool:
     return True
 
 
+def kernel_available_for_current_backend() -> bool:
+    """Return whether the selected JAX backend has a loadable exact kernel."""
+    if not kernel_available():
+        return False
+    return jax.default_backend() != "gpu" or CUDA_AVAILABLE
+
+
 def _ensure_registered() -> None:
     """Register the FFI targets with XLA, once per process.
 
