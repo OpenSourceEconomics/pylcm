@@ -358,6 +358,13 @@ class BackwardInductionResult:
     `True` on the state cells whose action mask is empty
     (distinct from a numeric `-inf` value); empty inner mappings for models
     without collective regimes, so the default (singleton) path is unchanged.
+
+    Carries arrays only where something reads them: a gate declaring the
+    `D_target` operand, which forward simulation recomputes from the flag, or a
+    caller asking backward induction to retain them. A collective model whose
+    gates read only value operands gets the same period keys with empty inner
+    mappings, and its flags are freed period by period rather than held for the
+    whole induction.
     """
 
 

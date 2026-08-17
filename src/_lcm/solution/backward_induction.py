@@ -17,6 +17,7 @@ from _lcm.regime_building.gated_edges import (
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
+    gate_reads_dissolution_flag,
     source_reads_folded_wbar,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
@@ -50,6 +51,11 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
+# Stands in for a period's flag mapping when the model retains no dissolution
+# flags, so every period key is present with nothing behind it. One shared
+# instance: it is immutable and carries no arrays.
+_NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
+
 
 def solve(  # noqa: C901, PLR0915
     *,
@@ -59,6 +65,7 @@ def solve(  # noqa: C901, PLR0915
     logger: logging.Logger,
     enable_jit: bool,
     max_compilation_workers: int | None = None,
+    retain_dissolution_flags: bool = True,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -75,6 +82,10 @@ def solve(  # noqa: C901, PLR0915
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
+        retain_dissolution_flags: Whether a caller wants the per-period
+            dissolution flags on the result for their own sake. A model whose
+            gates read `D_target` retains them regardless — the flags are a
+            simulate-side input there, not an inspection artifact.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -121,6 +132,20 @@ def solve(  # noqa: C901, PLR0915
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
+
+    # Every collective kernel publishes `D`, but only two things read the
+    # ACCUMULATED per-period mapping: forward simulation, for a gate that
+    # declares the `D_target` operand, and a caller that asked for the flags.
+    # A gate's own signature settles the first, so the answer is known before
+    # the first kernel runs; where it is `False` and nobody asked, each period's
+    # flags go out of scope with the period that produced them instead of
+    # staying live for the whole induction. The per-period flags themselves are
+    # built either way — the edge fold below reads them while they are current.
+    publish_dissolution_flags = retain_dissolution_flags or any(
+        gate_reads_dissolution_flag(edge=edge)
+        for regime in regimes.values()
+        for edge in regime.gated_edges.values()
+    )
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -298,11 +323,16 @@ def solve(  # noqa: C901, PLR0915
         )
         solution[period] = MappingProxyType(period_solution)
         # Publish each collective regime's dissolution
-        # flag D alongside V. Kept as a plain per-period mapping (not rolled
-        # like `next_regime_to_V_arr`): nothing consumes a NEXT-period D — a
-        # gated edge's gate reads the still-live per-period flags at each
-        # period's end, before the roll (above).
-        dissolution_flags[period] = MappingProxyType(period_dissolution_flags)
+        # flag D alongside V, where a reader exists. Kept as a plain per-period
+        # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
+        # NEXT-period D — a gated edge's gate reads the still-live per-period
+        # flags at each period's end, before the roll (above). The period keys
+        # match `solution`'s either way; only the arrays behind them differ.
+        dissolution_flags[period] = (
+            MappingProxyType(period_dissolution_flags)
+            if publish_dissolution_flags
+            else _NO_DISSOLUTION_FLAGS
+        )
         simulation_policies[period] = MappingProxyType(
             {
                 regime_name: jax.block_until_ready(

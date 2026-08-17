@@ -569,6 +569,7 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
+            retain_dissolution_flags=return_dissolution_flags,
         )
         if return_simulation_policy and return_dissolution_flags:
             return (
@@ -591,13 +592,16 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
+        retain_dissolution_flags: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
         Returns the named backward-induction outputs: value-function arrays,
         each regime's published per-period simulation policy, and the
-        per-period, per-COLLECTIVE-regime dissolution-flag arrays (empty for
-        models without collective regimes). With `log_path` set, a
+        per-period, per-COLLECTIVE-regime dissolution-flag arrays. Those are
+        empty for models without collective regimes, and for a collective model
+        whose gates never read `D_target` unless `retain_dissolution_flags`
+        asks for them. With `log_path` set, a
         snapshot is written at `log_level="debug"` (every solve) and at
         `"warning"` / `"progress"` whenever the returned solution contains
         NaN. `_enforce_retention` caps the snapshot count at
@@ -614,6 +618,7 @@ class Model:
                 logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
+                retain_dissolution_flags=retain_dissolution_flags,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -921,7 +926,10 @@ class Model:
             # need not re-run `solve(return_dissolution_flags=True)`
             # separately — the flags are threaded straight into `simulate`
             # below (still overridable by an explicit caller-supplied
-            # `period_to_regime_to_dissolution_flags`).
+            # `period_to_regime_to_dissolution_flags`). Nothing is requested
+            # here: a gate reading `D_target` is what makes the flags a
+            # simulate input, and backward induction reads that off the gate
+            # itself, so a model whose gates read only values carries none.
             internal_result = self._solve_compiled(
                 flat_params=flat_params,
                 params=params,
