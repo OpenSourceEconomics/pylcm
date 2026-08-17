@@ -378,6 +378,9 @@ def _normalize_phased_state(
       `functions`
     - a stochastic-process grid on either side ⇒ processes have intrinsic
       transitions and cannot be phase-variant
+    - an `AgeSpecializedGrid` on either side ⇒ the marker is resolved to each
+      period's concrete grid only for a top-level `states` value, so a nested
+      one would reach the kernels unresolved
 
     Returns the carried state's solve-phase imputation and simulate-phase
     grid (both `None` when the declaration is rejected), and the violations.
@@ -393,6 +396,26 @@ def _normalize_phased_state(
                 (
                     f"states['{name}']: stochastic-process grids have intrinsic "
                     f"transitions and cannot be phase-variant."
+                )
+            ],
+        )
+    marker_sides = [
+        phase_label
+        for phase_label, side in (("solve", solve_side), ("simulate", simulate_side))
+        if isinstance(side, AgeSpecializedGrid)
+    ]
+    if marker_sides:
+        return (
+            None,
+            None,
+            [
+                (
+                    f"states['{name}']: `AgeSpecializedGrid` is not supported "
+                    f"inside `Phased` (here: {', '.join(marker_sides)}). Declare "
+                    f"an age-specialized grid as a plain `states` entry — pylcm "
+                    f"resolves the marker to each period's concrete grid there "
+                    f"and nowhere else, so a nested one would reach the kernels "
+                    f"unresolved."
                 )
             ],
         )
