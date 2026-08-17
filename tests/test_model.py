@@ -525,10 +525,10 @@ def test_constraint_naming_a_transition_output_is_rejected():
 
 
 def test_state_only_used_in_transitions():
-    """Regression guard for GitHub issue #230.
+    """A state read only by transitions, never by utility or constraints, is accepted.
 
-    State used only in transitions (not in utility/constraints) used to raise
-    `ValueError: list.index(x): x not in list`.
+    Reaching a state through a law of motion alone counts as using it, so the
+    model builds rather than reporting the state as undeclared.
     """
 
     @categorical(ordered=False)
