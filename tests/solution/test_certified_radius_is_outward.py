@@ -23,8 +23,19 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import _candidate_terms
+from tests.conftest import X64_ENABLED
 
 _SEED = 20260801
+
+# float64 cannot run at `--precision=32`: JAX truncates the request and warns, the
+# suite promotes the warning to an error, and the float64 parameter fails for a
+# reason unrelated to the radius. Marked rather than dropped, so the fp32 leg
+# still collects the node and states why it did not run.
+_NEEDS_X64 = pytest.mark.skipif(
+    not X64_ENABLED,
+    reason="float64 is unavailable at --precision=32",
+)
+_DTYPES = [jnp.float32, pytest.param(jnp.float64, marks=_NEEDS_X64)]
 
 
 def _exact_affine(*, x0: float, x1: float, v0: float, v1: float, x: float) -> Fraction:
@@ -122,7 +133,7 @@ def _check_rows(rows, dtype):
     return checked, violations
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _DTYPES)
 def test_the_certified_radius_contains_the_exact_interpolant(dtype):
     """`|exact - (value_hi + value_lo)| <= radius` on every bracketing lane."""
     rng = np.random.default_rng(_SEED)
@@ -135,7 +146,7 @@ def test_the_certified_radius_contains_the_exact_interpolant(dtype):
     )
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _DTYPES)
 def test_the_radius_survives_a_large_common_value_level(dtype):
     """The same geometry lifted onto a common level, where reads least separate.
 

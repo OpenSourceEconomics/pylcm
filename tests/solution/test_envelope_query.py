@@ -26,7 +26,23 @@ from _lcm.egm.upper_envelope.query import (
     _right_continuous_winner,
     envelope_at_query,
 )
+from tests.conftest import X64_ENABLED
 from tests.solution._envelope_oracle import exact_envelope
+
+# float64 cases cannot run when the suite is invoked at `--precision=32`: JAX
+# truncates the request to float32 and warns, the suite promotes that warning to
+# an error, and every float64 parameter then fails for a reason that has nothing
+# to do with what the test asserts.
+#
+# Marked rather than removed from the list. A shortened parameter list would make
+# the fp32 leg collect fewer nodes and still report a clean pass, which is the
+# silent-coverage-loss shape; a skip keeps the node collected and states why.
+_NEEDS_X64 = pytest.mark.skipif(
+    not X64_ENABLED,
+    reason="float64 is unavailable at --precision=32",
+)
+_JNP_DTYPES = [jnp.float32, pytest.param(jnp.float64, marks=_NEEDS_X64)]
+_NP_DTYPES = [np.float32, pytest.param(np.float64, marks=_NEEDS_X64)]
 
 
 def _marginal(endog_grid, value, segment_id):
@@ -93,7 +109,6 @@ def test_query_envelope_matches_oracle(endog_grid, policy, value, segment_id, x_
     np.testing.assert_allclose(np.asarray(got_policy), oracle_policy, atol=1e-9)
 
 
-@pytest.mark.skipif_cpu
 @pytest.mark.parametrize("block_size", [1, 2, 3, 4])
 def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
     """`segment_block_size` is a memory knob: same value, policy, marginal.
@@ -191,7 +206,7 @@ def test_exact_node_tie_selects_the_segment_that_continues_right():
 @pytest.mark.parametrize(
     ("dtype", "base", "gap"),
     [
-        (jnp.float64, 1.0e4, 1.0e-13),
+        pytest.param(jnp.float64, 1.0e4, 1.0e-13, marks=_NEEDS_X64),
         (jnp.float32, 1.0e6, 0.01),
     ],
 )
@@ -230,7 +245,7 @@ def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
 @pytest.mark.parametrize(
     ("dtype", "base", "gap"),
     [
-        (jnp.float64, 1.0e4, 3.0e-11),
+        pytest.param(jnp.float64, 1.0e4, 3.0e-11, marks=_NEEDS_X64),
         (jnp.float32, 1.0e6, 1.0),
     ],
 )
@@ -312,8 +327,15 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
     right-continuously to the extending branch. This compact grid pins the
     class; the full battery runs 800 cases.
     """
-    configs = {np.float32: [1.0, 1.0e6], np.float64: [1.0, 1.0e12]}
+    # The dtypes are looped over inside the body rather than parametrized, so the
+    # float64 scales cannot be marked; they are dropped instead when the suite runs
+    # at `--precision=32`, where requesting float64 truncates and warns. `checked`
+    # below is what keeps that from shrinking the battery silently.
+    configs = {np.float32: [1.0, 1.0e6]}
+    if X64_ENABLED:
+        configs[np.float64] = [1.0, 1.0e12]
     multiples = [0, 1, 16, 256]
+    checked = 0
     for dtype, bases in configs.items():
         for base in bases:
             ulp = float(np.spacing(np.asarray(base, dtype=dtype)))
@@ -350,9 +372,16 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
                 context = f"{np.dtype(dtype)} base={base} multiple={multiple}"
                 assert float(got_policy[0]) == float(oracle_policy[0]), context
                 assert float(got_value[0]) == float(oracle_value[0]), context
+                checked += 1
+
+    expected = len(multiples) * sum(len(bases) for bases in configs.values())
+    assert checked == expected, (
+        f"the battery ran {checked} of {expected} cases; a grid that quietly "
+        "shrinks reports the same green as one that covers everything"
+    )
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2])
 def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_size):
@@ -390,7 +419,7 @@ def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_
     assert float(got_policy[0]) == 2.0, "the one-ULP-higher branch must win"
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _JNP_DTYPES)
 def test_certified_radius_is_zero_at_nodes_and_second_order_interior(dtype):
     """The certified rounding radius tracks the arithmetic actually performed.
 
@@ -423,7 +452,7 @@ def test_certified_radius_is_zero_at_nodes_and_second_order_interior(dtype):
     )
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
     """A value tie between two branches with near-equal slopes must resolve to the
@@ -537,7 +566,7 @@ def test_lone_candidate_does_not_displace_a_right_extending_chain():
     assert np.isclose(float(policy), 1.0)
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 @pytest.mark.parametrize("denominator", [3, 5, 7, 9, 11, 13, 17, 31, 63, 127])
@@ -633,7 +662,7 @@ _SLOPE_COLLISIONS = {
 }
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("case", [0, 1, 2])
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
@@ -681,7 +710,7 @@ def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
     assert float(got_marginal[0]) == 20.0, context
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
@@ -713,7 +742,7 @@ def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
     assert float(got_marginal[0]) == first[3], context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("case", [0, 1, 2])
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
@@ -787,7 +816,7 @@ def _rescaling_exponents(entries, dtype):
     return sorted({lowest, lowest + span // 4, 0, highest - span // 4, highest})
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 3])
 def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
@@ -853,7 +882,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
         assert float(got_marginal[0]) == 20.0, context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_both_exact_predicates_match_a_rational_oracle_at_every_scale(dtype):
     """The VALUE predicate is rescaled too, and needs its own evidence.
 
@@ -907,7 +936,7 @@ def _far_segment_exponents(dtype):
     return [int(info.minexp) + 4, -60, 0, 23, int(info.maxexp) - 2]
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 3])
 @pytest.mark.parametrize("far_first", [False, True])
@@ -1000,7 +1029,7 @@ def _slope_overflow_cases(dtype):
     return cases
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 3])
 def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block_size):
     """The rounded slope screen must never decide by falling silent.
@@ -1089,7 +1118,7 @@ def _smallest_scale_case(dtype):
     return x0, q, x1
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
@@ -1184,7 +1213,7 @@ def _rounded_between(exact, lower, upper, dtype):
     return dtype(lower)
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.625, 0.75])
@@ -1243,7 +1272,7 @@ def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
     assert float(got_marginal[0]) == 20.0, context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 2])
 def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_size):
     """Scaling every value by an exact power of two is an ordering isomorphism.
@@ -1285,7 +1314,7 @@ def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_si
     assert tiny_value / float(tiny) == unit_value, context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
     """The selection's central invariant, checked where it previously broke.
 
@@ -1365,7 +1394,7 @@ def _wide_segment_case(dtype):
     return x0, q, x1, competitor, exact
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
@@ -1427,7 +1456,7 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
     assert float(got_value[0]) == float(dtype(float(exact))), context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
     """The certified comparator must not need the screen's help to order these.
 
@@ -1507,7 +1536,7 @@ def _assemble(rows):
     return grid, value, policy, marginal, segment_id
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("ulp_offset", [0, 1, 64])
@@ -1553,7 +1582,7 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
     assert float(got_marginal[0]) == 20.0, context
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
     """No cross product may be lost, merged or rounded before the sign is read.
 
@@ -1598,7 +1627,7 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
     assert float(_exact_compare(cols_a=cols_a, cols_b=cols_b, q=q)) == 1.0
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 def test_the_winner_is_always_one_of_the_exactly_tied_candidates(dtype, order):
     """An overflowing slope key must not seed the lead outside the tie set.
@@ -1643,7 +1672,7 @@ def test_the_winner_is_always_one_of_the_exactly_tied_candidates(dtype, order):
     )
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_no_finite_input_overflows_the_exact_accumulator(dtype):
     """A randomised sweep across the WHOLE exponent range against a rational oracle.
 
@@ -1697,7 +1726,7 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
     assert checks > 200, f"only {checks} usable draws — the sweep degenerated"
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     """`H - (-H)` must be represented, not computed.
 
@@ -1727,7 +1756,7 @@ def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     assert total == 2 * Fraction(float(top)), f"terms sum to {total}, not 2H"
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
     """The screen's difference must not overflow where the exact one does not.
 
@@ -1747,7 +1776,7 @@ def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
     assert recovered == 2 * Fraction(float(top)), f"framed pair recovers {recovered}"
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("axis", ["grid-width", "endpoint-value"])
 @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.75])
 @pytest.mark.parametrize("order", [0, 1])
@@ -1836,7 +1865,7 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
     )
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("family", ["tiny-fraction", "opposite-sign"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
@@ -1903,7 +1932,7 @@ def test_every_published_channel_survives_its_own_affine(dtype, family, block_si
     )
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_the_affine_evaluator_never_materializes_the_ratio(dtype):
     """`_framed_affine` must beat what a working-dtype `left + r*d` can do.
 
