@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import jax
+import numpy as np
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -677,6 +678,8 @@ def process_regimes(
         canonical_regimes=canonical_regimes,
         user_regimes=user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        grid_schedule=grid_schedule,
         enable_jit=enable_jit,
     )
 
@@ -688,18 +691,45 @@ def _attach_gated_edge_folds(
     canonical_regimes: dict[RegimeName, Regime],
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ),
+    grid_schedule: AgeGridSchedule | None,
     enable_jit: bool,
 ) -> dict[RegimeName, Regime]:
     """Resolve and compile each source regime's gated-edge folds.
 
     For every source regime declaring `gated_edges`, resolve each user
-    `GatedEdge` to its engine form and build the `(Wbar, gate)` producer on the
-    target regime's grid (reading the target's processed functions), plus one
-    per-leg FALLBACK state projector and a gate interpolator for simulate
-    routing (see `build_fallback_state_projector`). Each compiled callable is
-    stored on the edge (or, for a projector, on the leg) it belongs to, so the
-    source's canonical regime carries one mapping of gated edges rather than
-    several that a consumer would have to re-pair.
+    `GatedEdge` to its engine form and build the `Wbar` producer on the target
+    regime's grid (reading the target's processed functions), plus one per-leg
+    FALLBACK state projector and a gate evaluator for simulate routing (see
+    `build_fallback_state_projector`). Each compiled callable is stored on the
+    edge (or, for a projector, on the leg) it belongs to, so the source's
+    canonical regime carries one mapping of gated edges rather than several
+    that a consumer would have to re-pair.
+
+    The fold and the gate evaluator are keyed by FOLD PERIOD — the period whose
+    value arrays they read — because both close over the grids they interpolate
+    on, and an `AgeSpecializedGrid` moves a grid's nodes with age while holding
+    its shape fixed. One compiled object would then read every other period's
+    value at coordinates measured against one period's nodes, flipping the gate
+    with no shape error to report it.
+
+    Which grids each closes over differs, so they group separately
+    (`_edge_grid_group_key`):
+
+    - the fold interpolates the gate references' and leg fallbacks' own grids,
+      and takes the target's value array as a runtime argument;
+    - the gate evaluator interpolates those AND the target's own grid, because
+      it re-evaluates the predicate at a realized target-state point.
+
+    Periods whose read grids resolve to identical nodes share one compiled
+    object, so an edge reading no age-specialized grid compiles exactly once,
+    as it does with no age specialization in the model at all.
+
+    The per-leg fallback state PROJECTOR stays period-invariant: it composes
+    projection functions with the target's DAG and interpolates nothing, so no
+    grid's nodes enter it.
     """
     for source_name, user_regime in user_regimes.items():
         if not user_regime.gated_edges:
@@ -717,15 +747,6 @@ def _attach_gated_edge_folds(
                 transitions=target_solution.transitions,
                 transition_laws=target_solution.transition_laws,
             )
-            fold = get_edge_fold(
-                edge=resolved_edge,
-                target_v_info=regime_to_v_interpolation_info[target_name],
-                target_functions=target_solution.functions,
-                target_deterministic_transitions=target_deterministic_transitions,
-                reference_v_info=regime_to_v_interpolation_info,
-                target_stakeholders=user_regimes[target_name].stakeholders,
-            )
-            compiled_fold = jax.jit(fold) if enable_jit else fold
             # The simulate-side
             # router needs its own gate re-evaluated at a REALIZED (candidate
             # target-state) point, rather than by interpolating the fold's
@@ -741,24 +762,83 @@ def _attach_gated_edge_folds(
             # (`Q_and_F.py`) auto-select of `get_V_interpolator`'s
             # process-aware mode so that axis is linearly interpolated
             # instead of integer-looked-up; a target without a process state
-            # takes the ordinary integer-lookup path.
+            # takes the ordinary integer-lookup path. A process state is never
+            # age-specialized, so this is a property of the edge, not of one
+            # period.
             target_has_process_axis = any(
                 isinstance(grid, _ContinuousStochasticProcess)
                 for grid in regime_to_v_interpolation_info[
                     target_name
                 ].discrete_states.values()
             )
-            # Never wrapped in `jax.jit` here: it is consumed only inside
-            # `route_gated_edges`'s own `jax.vmap` over subjects, which stages
-            # it out anyway.
-            simulate_gate_evaluator = get_edge_simulate_gate_evaluator(
-                edge=resolved_edge,
-                target_v_info=regime_to_v_interpolation_info[target_name],
-                target_functions=target_solution.functions,
-                target_deterministic_transitions=target_deterministic_transitions,
-                reference_v_info=regime_to_v_interpolation_info,
-                target_stakeholders=user_regimes[target_name].stakeholders,
-                target_has_process_axis=target_has_process_axis,
+            # The periods the edge can ever fold at: those its target holds a
+            # value in. Backward induction folds at the target's own period and
+            # forward simulation at the source's `period + 1`, which is the
+            # same period seen from the consumer's side.
+            fold_periods = canonical_regimes[target_name].active_periods
+            # The fold reads the target's value array as a RUNTIME argument and
+            # takes only its state names from the interpolation info, so the
+            # target's own nodes never enter it: it groups on the reference
+            # regimes alone. The gate evaluator interpolates that same array at
+            # a realized point, so it closes over the target's nodes too and
+            # groups on the target as well. Sharing one key would recompile the
+            # fold per target grid for nothing.
+            grouped_fold_periods = group_periods_by_key(
+                fold_periods,
+                functools.partial(
+                    _edge_grid_group_key,
+                    grid_schedule=grid_schedule,
+                    read_regimes=resolved_edge.reference_regimes,
+                ),
+            )
+            grouped_evaluator_periods = group_periods_by_key(
+                fold_periods,
+                functools.partial(
+                    _edge_grid_group_key,
+                    grid_schedule=grid_schedule,
+                    read_regimes=(target_name, *resolved_edge.reference_regimes),
+                ),
+            )
+            folds_by_group: dict[Hashable, Callable] = {}
+            for group_key, periods in grouped_fold_periods.items():
+                v_info = _v_interpolation_info_at_period(
+                    period=periods[0],
+                    period_to_regime_v_interp=period_to_regime_v_interp,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                )
+                fold = get_edge_fold(
+                    edge=resolved_edge,
+                    target_v_info=v_info[target_name],
+                    target_functions=target_solution.functions,
+                    target_deterministic_transitions=target_deterministic_transitions,
+                    reference_v_info=v_info,
+                    target_stakeholders=user_regimes[target_name].stakeholders,
+                )
+                folds_by_group[group_key] = jax.jit(fold) if enable_jit else fold
+            evaluators_by_group: dict[Hashable, Callable] = {}
+            for group_key, periods in grouped_evaluator_periods.items():
+                v_info = _v_interpolation_info_at_period(
+                    period=periods[0],
+                    period_to_regime_v_interp=period_to_regime_v_interp,
+                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                )
+                # Never wrapped in `jax.jit` here: it is consumed only inside
+                # `route_gated_edges`'s own `jax.vmap` over subjects, which
+                # stages it out anyway.
+                evaluators_by_group[group_key] = get_edge_simulate_gate_evaluator(
+                    edge=resolved_edge,
+                    target_v_info=v_info[target_name],
+                    target_functions=target_solution.functions,
+                    target_deterministic_transitions=target_deterministic_transitions,
+                    reference_v_info=v_info,
+                    target_stakeholders=user_regimes[target_name].stakeholders,
+                    target_has_process_axis=target_has_process_axis,
+                )
+            folds_by_period = expand_groups_to_periods(
+                grouped_fold_periods, folds_by_group
+            )
+            simulate_gate_evaluators_by_period = expand_groups_to_periods(
+                grouped_evaluator_periods, evaluators_by_group
             )
             legs_with_projectors = tuple(
                 dataclass_replace(
@@ -787,14 +867,83 @@ def _attach_gated_edge_folds(
             resolved[target_name] = dataclass_replace(
                 resolved_edge,
                 legs=legs_with_projectors,
-                fold=compiled_fold,
-                simulate_gate_evaluator=simulate_gate_evaluator,
+                folds_by_period=folds_by_period,
+                simulate_gate_evaluators_by_period=simulate_gate_evaluators_by_period,
             )
         canonical_regimes[source_name] = dataclass_replace(
             canonical_regimes[source_name],
             gated_edges=MappingProxyType(resolved),
         )
     return canonical_regimes
+
+
+def _v_interpolation_info_at_period(
+    *,
+    period: int,
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ),
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+    """Every regime's V-interpolation info as of `period`.
+
+    Uses a regime's grid at `period` where it is age-specialized (from the
+    schedule-built per-period map), and its representative grid otherwise. With
+    no age-specialized state anywhere the representative mapping is returned
+    unchanged — the very object the age-invariant build passes — so nothing
+    downstream can distinguish the two.
+
+    The sibling `continuation_info_lookup` answers the same question one period
+    ahead, because a continuation reads `V_{t+1}`; a gated edge folds the value
+    of the period it is standing in, so this one does not shift.
+    """
+    if period_to_regime_v_interp is None:
+        return regime_to_v_interpolation_info
+    per_period = period_to_regime_v_interp.get(
+        period, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
+    )
+    return MappingProxyType(
+        {
+            regime_name: per_period.get(regime_name, info)
+            for regime_name, info in regime_to_v_interpolation_info.items()
+        }
+    )
+
+
+def _edge_grid_group_key(
+    period: int,
+    *,
+    grid_schedule: AgeGridSchedule | None,
+    read_regimes: tuple[RegimeName, ...],
+) -> Hashable:
+    """Fingerprint the grids of `read_regimes` at `period`.
+
+    Two fold periods may share one compiled object exactly when every grid it
+    closes over resolves to the same NODES, so the caller passes the regimes
+    that object actually interpolates — which differs between the fold and the
+    gate evaluator (see `_attach_gated_edge_folds`). The key is built from the
+    resolved nodes rather than from the user's `AgeSpecializedGrid.signature(age)`,
+    so an under-specified signature splits the periods instead of merging two
+    genuinely different grids onto one compiled object; the signature rides
+    along so an over-specified one still splits, matching how `Q_and_F` periods
+    group.
+
+    Returns a constant when the model declares no age-specialized grid, so the
+    edge compiles once.
+    """
+    if grid_schedule is None:
+        return ()
+    at_period = grid_schedule.by_period.get(period, {})
+    return tuple(
+        (
+            regime_name,
+            state_name,
+            resolved.signature,
+            np.asarray(resolved.nodes).tobytes(),
+        )
+        for regime_name in sorted(set(read_regimes))
+        for state_name, resolved in sorted(at_period.get(regime_name, {}).items())
+    )
 
 
 def _merge_deterministic_transitions(

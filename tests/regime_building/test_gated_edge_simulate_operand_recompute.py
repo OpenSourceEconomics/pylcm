@@ -316,6 +316,9 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     subjects_in_regime = jnp.array([True])
 
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=same_period_mappings,
         next_states=next_states,
@@ -463,7 +466,7 @@ def _measure_gate_value_read(*, x: float) -> float:
         period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
 
     # The gate's own param is SOURCE-owned, and the evaluator exposes it under a
     # namespace-qualified leaf — ask the published provenance for the name
@@ -601,6 +604,9 @@ def test_offgrid_residual_flips_routing_of_the_real_router():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=same_period_mappings,
         next_states=next_states,

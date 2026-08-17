@@ -154,6 +154,9 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     subjects_in_regime = jnp.array([True, True])
 
     routed_states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=single_f,
         same_period_mappings=same_period_mappings,
         next_states=states,
@@ -210,6 +213,9 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     subjects_in_regime = jnp.array([True, True])
 
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=single_f,
         same_period_mappings=same_period_mappings,
         next_states=next_states,
@@ -391,6 +397,9 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     subjects_in_regime = jnp.array([True, True])
 
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=same_period_mappings,
         next_states=next_states,

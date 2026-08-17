@@ -216,7 +216,12 @@ def substitute_gated_edge_continuations(
             period_dissolution_flags=next_period_D,
         )
         wbar = _evaluate_edge_fold(
-            fold=edge.fold,
+            # The fold compiled for `period + 1` — the period whose arrays it
+            # folds, one ahead of the source standing at `period`. The gate
+            # references and leg fallbacks are interpolated on their own
+            # regimes' grids as of that period, which an `AgeSpecializedGrid`
+            # moves without changing their shape.
+            fold=edge.fold_at(period=period + 1),
             target_states=cast(
                 "Mapping[str, ContinuousState | DiscreteState]",
                 _states_for_period(
@@ -242,6 +247,7 @@ def substitute_gated_edge_continuations(
 def route_gated_edges(
     *,
     regime: Regime,
+    fold_period: int,
     same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     next_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
@@ -290,6 +296,15 @@ def route_gated_edges(
     result of an earlier-processed edge.
 
     Args:
+        fold_period: The period whose value arrays `same_period_mappings`
+            holds, i.e. the source's `period + 1` — one AHEAD of the period
+            the source is being simulated in, because the gate is decided on
+            the value the subject would enter next period. It selects the
+            edge's gate evaluator, which interpolates the target's and the
+            gate references' value arrays on THEIR grids as of that period;
+            under an `AgeSpecializedGrid` those nodes move with age while
+            their shape does not, so passing the source's own period reads
+            every operand one period's nodes off with no shape error.
         own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
             synthetic mode), e.g. "f"/"m" for an all-women/all-men
             population tracking synthetic partners. Required whenever the
@@ -351,7 +366,7 @@ def route_gated_edges(
         # namespace's params under distinct, qualified leaves, and the reference
         # regimes' own grid params never reach this signature at all — they ride
         # in `SAME_PERIOD_PARAMS_ARG`.
-        simulate_gate_evaluator = edge.simulate_gate_evaluator
+        simulate_gate_evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
         gate_bool = jnp.asarray(
             _call_vmapped_with_accepted_kwargs(
                 simulate_gate_evaluator,

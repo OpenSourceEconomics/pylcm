@@ -288,7 +288,9 @@ def test_gate_evaluator_provenance_partitions_its_signature():
     - COMPLETE: no argument is left for the router to guess a namespace for.
     """
     regimes, _ids, _flat_params, _solution = _solve_f2_fixture()
-    evaluator = regimes["src"].gated_edges["target"].simulate_gate_evaluator
+    evaluator = (
+        regimes["src"].gated_edges["target"].simulate_gate_evaluator_at(period=1)
+    )
     provenance = evaluator.arg_provenance
 
     # The target's grid points and the gate's own threshold are each attributed
@@ -351,7 +353,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
 
     # What the SOURCE's points would make of the same realized value: 0.6 on
     # the points (0, 10) is grid coordinate 0.06, i.e. V ~ 1.12 -- CLOSED.
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
     candidate_target_states = {"x": jnp.array([_REALIZED_X])}
 
     # The collision this fixture is built on is real: BOTH regimes' flat params
@@ -450,6 +452,9 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=same_period_mappings,
         next_states=next_states,
@@ -582,6 +587,9 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=same_period_mappings,
         next_states=next_states,
@@ -619,7 +627,7 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
         period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
-    evaluator = src.gated_edges["stateless_target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["stateless_target"].simulate_gate_evaluator_at(period=1)
     static = {SAME_PERIOD_V_ARG: same_period_mappings["stateless_target"]}
 
     def _call_one_subject(one_subject_kwargs):

@@ -55,6 +55,10 @@ _ANNUITY_BASE = 100.0
 # `saver`'s value at the age at which it opens the account. See `_build_model`.
 _EXPECTED_SAVER_V_AT_AGE_1 = 52.0
 
+# The account is active at two ages and the cap differs between them, so its
+# balance grid resolves to two distinct sets of nodes.
+_N_DISTINCT_ACCOUNT_GRIDS = 2
+
 
 @categorical(ordered=False)
 class _RegimeId:
@@ -108,6 +112,32 @@ def test_simulated_gated_continuation_reads_the_target_at_its_own_period_axes() 
         simulated["value"].to_numpy(),
         np.full(2, _EXPECTED_SAVER_V_AT_AGE_1),
         decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_fold_compiles_once_when_only_the_target_grid_is_age_specialized() -> None:
+    """A moving TARGET grid does not recompile the fold.
+
+    The fold takes the target's value array as a runtime argument and needs its
+    state NAMES alone, which an `AgeSpecializedGrid` holds fixed. So it closes
+    over nothing that moves with age here and compiles once however many ages
+    the target is active at.
+    """
+    edge = _build_model()._regimes["saver"].gated_edges["account"]
+    assert len({id(fold) for fold in edge.folds_by_period.values()}) == 1
+
+
+def test_simulate_gate_evaluator_recompiles_per_distinct_target_grid() -> None:
+    """A moving TARGET grid does recompile the simulate gate evaluator.
+
+    Unlike the fold, the evaluator interpolates the target's value array at a
+    realized point, so it closes over that grid's nodes and owes one compiled
+    object per distinct set of them.
+    """
+    edge = _build_model()._regimes["saver"].gated_edges["account"]
+    assert (
+        len({id(ev) for ev in edge.simulate_gate_evaluators_by_period.values()})
+        == _N_DISTINCT_ACCOUNT_GRIDS
     )
 
 

@@ -895,6 +895,10 @@ def _simulate_regime_in_period(
         # regime. No-op for a regime without `gated_edges`.
         next_states, new_subject_regime_ids = route_gated_edges(
             regime=regime,
+            # `same_period_mappings` holds the `period + 1` arrays
+            # `substitute_gated_edge_continuations` folded above, so the gate
+            # is recomputed against that period's grids.
+            fold_period=period + 1,
             same_period_mappings=same_period_mappings,
             next_states=next_states,
             regime_names_to_ids=regime_names_to_ids,

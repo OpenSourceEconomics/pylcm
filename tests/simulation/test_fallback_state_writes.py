@@ -197,6 +197,9 @@ def _route_three_households() -> MappingProxyType:
         }
     )
     routed_states, _routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=married,
         same_period_mappings=same_period_mappings,
         next_states=next_states,

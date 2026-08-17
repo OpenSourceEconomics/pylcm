@@ -279,6 +279,9 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
         }
     )
     states, _routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=regimes["src"],
         same_period_mappings=mappings,
         next_states=next_states,
@@ -318,6 +321,9 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=regimes["src"],
         same_period_mappings=mappings,
         next_states=next_states,

@@ -319,16 +319,16 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
     """Stand in for a gated-edge callable model processing has not built yet.
 
     A gated edge is resolved in two stages: the resolution the build-time
-    fences read is available before any regime's grid is known, and the fold,
-    the simulate gate evaluator, and each leg's fallback projector can only be
+    fences read is available before any regime's grid is known, and the folds,
+    the simulate gate evaluators, and each leg's fallback projector can only be
     compiled once they are. Only an edge reached through `Regime.gated_edges`
     carries the compiled callables, so calling one on any other edge is a
     staging mistake rather than a bad model, and says so.
     """
     msg = (
         "This gated-edge callable was never compiled. Only edges reached "
-        "through `Regime.gated_edges` carry their fold, their simulate gate "
-        "evaluator, and their legs' fallback state projectors."
+        "through `Regime.gated_edges` carry their folds, their simulate gate "
+        "evaluators, and their legs' fallback state projectors."
     )
     raise RuntimeError(msg)
 
@@ -384,21 +384,34 @@ class ResolvedGatedEdge:
     """Deduplicated real regimes whose same-period V the fold reads (fallbacks +
     gate refs), excluding the target itself."""
 
-    fold: Callable = _uncompiled_edge_callable
-    """Compiled `(Wbar, gate)` producer.
+    folds_by_period: MappingProxyType[int, Callable] = MappingProxyType({})
+    """Compiled `Wbar` producers, keyed by the FOLD PERIOD — the period whose
+    value arrays the fold reads. Read through `fold_at`.
 
-    Built once at model processing, in a second pass over the regimes once
-    every regime's grid and functions are known. Backward induction evaluates
-    it at the end of the period the target was solved in, storing `Wbar` in
-    the rolled edge-continuation mapping the source's kernel reads; forward
-    simulation evaluates the same fold once per period from the solved solution
-    and substitutes `Wbar` into the source's own continuation. Simulated
-    regime ROUTING reads nothing off this fold — that is
-    `simulate_gate_evaluator`'s job.
+    Built at model processing, in a second pass over the regimes once every
+    regime's grid and functions are known. Backward induction evaluates the
+    entry for the period the target was solved in, storing `Wbar` in the rolled
+    edge-continuation mapping the source's kernel reads at `t - 1`; forward
+    simulation, standing at the source's period `t`, evaluates the `t + 1`
+    entry from the solved solution and substitutes `Wbar` into the source's own
+    continuation. Simulated regime ROUTING reads nothing off these — that is
+    `simulate_gate_evaluators_by_period`'s job.
+
+    The key is a period rather than a single callable because a gate reference
+    or leg fallback carrying an `AgeSpecializedGrid` is read on that regime's
+    own grid, whose nodes move with age while its shape does not: the reference
+    reader's coordinate finder closes over those nodes, so one compiled fold
+    can only be right at one period, and would silently place the reference
+    read on another period's nodes everywhere else. Periods whose read grids
+    resolve to identical nodes share one compiled object, so a model with no
+    age-specialized read grid carries exactly one.
     """
 
-    simulate_gate_evaluator: Callable = _uncompiled_edge_callable
-    """SIMULATE-side gate evaluator.
+    simulate_gate_evaluators_by_period: MappingProxyType[int, Callable] = (
+        MappingProxyType({})
+    )
+    """SIMULATE-side gate evaluators, keyed by fold period. Read through
+    `simulate_gate_evaluator_at`.
 
     Built by `get_edge_simulate_gate_evaluator`: recomputes the gate PREDICATE
     at a realized (off-grid or on-grid) candidate target-state point by
@@ -407,11 +420,68 @@ class ResolvedGatedEdge:
     fold uses. Interpolating the fold's baked boolean `gate` array and
     thresholding the result does not commute with a nonlinear predicate and can
     flip routing decisions near a grid-cell boundary the fold never evaluated.
-    `_lcm.simulation.gated_routing.route_gated_edges` calls this directly to
-    decide routing; a `D_target`-reading gate still linearly interpolates the
-    dissolution flag and thresholds it (a documented residual — see
-    `get_edge_simulate_gate_evaluator`'s docstring).
+    `_lcm.simulation.gated_routing.route_gated_edges` calls the entry for the
+    period whose arrays it routes against — the source's `period + 1`, the same
+    period `substitute_gated_edge_continuations` folded; a `D_target`-reading
+    gate still linearly interpolates the dissolution flag and thresholds it (a
+    documented residual — see `get_edge_simulate_gate_evaluator`'s docstring).
+
+    Keyed by period for the same reason the folds are, plus one this side owns
+    alone: it interpolates the TARGET's own value array too, so an
+    age-specialized grid on the target moves its nodes as well.
     """
+
+    def fold_at(self, *, period: int) -> Callable:
+        """Return the `Wbar` producer for the period whose arrays it folds."""
+        return _select_period_callable(
+            by_period=self.folds_by_period,
+            period=period,
+            what="fold",
+            target=self.target,
+        )
+
+    def simulate_gate_evaluator_at(self, *, period: int) -> Callable:
+        """Return the simulate gate evaluator for the period it routes against."""
+        return _select_period_callable(
+            by_period=self.simulate_gate_evaluators_by_period,
+            period=period,
+            what="simulate gate evaluator",
+            target=self.target,
+        )
+
+
+def _select_period_callable(
+    *,
+    by_period: Mapping[int, Callable],
+    period: int,
+    what: str,
+    target: RegimeName,
+) -> Callable:
+    """Pick one period's compiled edge callable, or say why there is none.
+
+    Two distinct absences, and conflating them hides a staging mistake behind
+    what looks like a model error:
+
+    - the mapping is empty ⇒ nothing was ever compiled for this edge, i.e. it
+      was not reached through `Regime.gated_edges`;
+    - the mapping is non-empty but lacks `period` ⇒ the target regime is not
+      active there, so no value of it exists to fold.
+    """
+    if not by_period:
+        msg = (
+            f"This gated edge's {what} was never compiled. Only edges reached "
+            "through `Regime.gated_edges` carry their folds, their simulate "
+            "gate evaluators, and their legs' fallback state projectors."
+        )
+        raise RuntimeError(msg)
+    if period not in by_period:
+        msg = (
+            f"The gated edge to regime '{target}' has no {what} for period "
+            f"{period}: '{target}' is not active there, so it holds no value "
+            f"to fold. Compiled periods are {sorted(by_period)}."
+        )
+        raise KeyError(msg)
+    return by_period[period]
 
 
 def _pad_reader_to_state_names(

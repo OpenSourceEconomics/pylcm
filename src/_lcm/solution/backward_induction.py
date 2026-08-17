@@ -663,7 +663,11 @@ def _roll_gated_edges(
                 ),
             ):
                 continue
-            fold = edge.fold
+            # The fold compiled for THIS period: the gate references and leg
+            # fallbacks are interpolated on their own regimes' grids as of the
+            # period being folded, which an `AgeSpecializedGrid` moves without
+            # changing their shape.
+            fold = edge.fold_at(period=period)
             same_period_mapping = build_same_period_mapping_for_fold(
                 edge=edge,
                 period_solution=period_solution,
@@ -728,7 +732,19 @@ def _reject_edge_fold_state_param_collisions(
             continue
         source_param_names = set(flat_params[source_name])
         for target_name, edge in source.gated_edges.items():
-            sig_params = set(inspect.signature(edge.fold).parameters)
+            compiled_folds = tuple(edge.folds_by_period.values())
+            if not compiled_folds:
+                # The target regime is active in no period, so it holds no
+                # value to fold and no fold was compiled — there is no
+                # signature to check, and no `Wbar` this edge could ever feed.
+                continue
+            # Any compiled period answers: a fold's signature is built from
+            # names — the target's states, the gate's and the projections'
+            # parameters — and an `AgeSpecializedGrid` may vary only its nodes,
+            # never a grid's class, shape, or points mode. So every period's
+            # fold exposes the same leaves, and the collisions this rejects are
+            # a property of the edge rather than of one period.
+            sig_params = set(inspect.signature(compiled_folds[0]).parameters)
             target_state_names = set(base_state_action_spaces[target_name].states)
             collisions = sorted(sig_params & target_state_names & source_param_names)
             if collisions:

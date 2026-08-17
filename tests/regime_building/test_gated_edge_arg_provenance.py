@@ -291,7 +291,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         _make_shift_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     # The provenance attributes `shift` to the SOURCE, and to nothing else.
@@ -346,6 +346,9 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=mappings,
         next_states=next_states,
@@ -379,7 +382,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         _make_shift_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     assert _SHIFT_QNAME not in flat_params["target"]
@@ -436,6 +439,9 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=mappings,
         next_states=next_states,
@@ -652,6 +658,9 @@ def test_router_writes_the_fold_consistent_fallback_state():
         }
     )
     states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=mappings,
         next_states=next_states,
@@ -717,7 +726,7 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     assert "x__points" in flat_params["refregime"]
 
     # And the production reader does not expose the unsatisfiable name.
-    fold = regimes["src"].gated_edges["target"].fold
+    fold = regimes["src"].gated_edges["target"].fold_at(period=1)
     assert prefixed not in get_union_of_args([fold])
     assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold])
 
@@ -820,7 +829,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
         _make_ref_grid_regimes(), flat_params
     )
     src = regimes["src"]
-    evaluator = src.gated_edges["target"].simulate_gate_evaluator
+    evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
     mappings = _same_period_mappings(regimes, flat_params, solution)
 
     # The two namespaces genuinely disagree about `x__points`.
@@ -868,6 +877,9 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
         }
     )
     _states, routed_ids = route_gated_edges(
+        # The source is simulated at period 0, so the gate is decided on
+        # the value it would enter at period 1.
+        fold_period=1,
         regime=src,
         same_period_mappings=mappings,
         next_states=next_states,
@@ -961,7 +973,7 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
     regimes, _ids, solution = _solve_fixture(_make_fallback_grid_regimes(), flat_params)
 
     prefixed = f"{_REF_STATE_PREFIX}z__points"
-    fold = regimes["src"].gated_edges["target"].fold
+    fold = regimes["src"].gated_edges["target"].fold_at(period=1)
     assert prefixed not in get_union_of_args([fold])
 
     wbar = np.asarray(_same_period_wbar(regimes, flat_params, solution))
