@@ -279,7 +279,6 @@ def test_effect_of_discount_factor_on_last_period():
     )
 
     # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(
@@ -346,7 +345,6 @@ def test_effect_of_disutility_of_work():
     )
 
     # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(

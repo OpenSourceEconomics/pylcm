@@ -174,9 +174,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     """Test that the deterministic and stochastic models produce the same results."""
     model_deterministic, model_stochastic, params = models_and_params
 
-    # ==================================================================================
     # Compare value function arrays
-    # ==================================================================================
     solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
         model_deterministic.solve(log_level="debug", params=params)
     )
@@ -191,9 +189,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
             decimal=14,
         )
 
-    # ==================================================================================
     # Compare simulation results
-    # ==================================================================================
     initial_conditions = {
         "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
         "partner": jnp.array([0, 0, 0, 0], dtype=jnp.int32),

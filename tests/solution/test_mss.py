@@ -32,6 +32,7 @@ from _lcm.egm.upper_envelope import get_upper_envelope, mss
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
+from tests.envelope_configs import envelope_config
 from tests.solution._envelope_rows import drop_nan as _drop_nan
 from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
@@ -43,7 +44,7 @@ def _mss_solver():
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-        envelope="mss",
+        envelope=envelope_config("mss"),
     )
 
 
@@ -231,7 +232,7 @@ def test_overflow_is_reported_via_n_kept():
 
 
 def test_mss_backend_is_selected_by_solver_config():
-    """`envelope="mss"` dispatches to the MSS backend.
+    """`envelope=envelope_config("mss")` dispatches to the MSS backend.
 
     The backend selected for an `mss` solver must reproduce the standalone MSS
     kernel on a non-concave candidate set.

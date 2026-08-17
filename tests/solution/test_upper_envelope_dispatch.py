@@ -1,49 +1,57 @@
-"""Every selectable upper-envelope backend is dispatched and documented.
-
-`DCEGM.envelope` is the single source of truth for which backends exist. A name
-that reaches the dispatch table without reaching the package docstring is a
-backend users can select and cannot read about — the default is the one that
-matters most, since it is what a model gets without saying anything.
-"""
-
-import typing
+"""Every typed upper-envelope backend is dispatched and documented."""
 
 import pytest
 
 from _lcm.egm import upper_envelope
 from _lcm.egm.upper_envelope import UpperEnvelopeBackend, get_upper_envelope
 from lcm import LinSpacedGrid
-from lcm.solvers import DCEGM
+from lcm.solvers import (
+    DCEGM,
+    EnvelopeConfig,
+    ExactEnvelope,
+    FUESEnvelope,
+    LTMEnvelope,
+    MSSEnvelope,
+    RFCEnvelope,
+)
+
+_BACKEND_TYPES = (
+    ExactEnvelope,
+    FUESEnvelope,
+    RFCEnvelope,
+    LTMEnvelope,
+    MSSEnvelope,
+)
 
 
-def _selectable_backends() -> tuple[str, ...]:
-    """Tuple of backend names a user may write in `DCEGM(envelope=...)`."""
-    return typing.get_args(typing.get_type_hints(DCEGM)["envelope"])
-
-
-def _solver(*, envelope: str) -> DCEGM:
-    """A minimal consumption-savings DC-EGM solver using `envelope`."""
+def _solver(*, envelope: EnvelopeConfig) -> DCEGM:
+    """Return a minimal DC-EGM solver using one typed backend configuration."""
     return DCEGM(
         continuous_state="wealth",
         continuous_action="consumption",
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=4),
-        envelope=envelope,  # ty: ignore[invalid-argument-type]
+        envelope=envelope,
     )
 
 
-@pytest.mark.parametrize("envelope", _selectable_backends())
-def test_every_selectable_backend_is_dispatched(envelope: str) -> None:
-    """Each name `DCEGM.envelope` accepts builds a backend."""
-    backend = get_upper_envelope(solver=_solver(envelope=envelope), n_refined=8)
+@pytest.mark.parametrize("backend_type", _BACKEND_TYPES)
+def test_every_selectable_backend_is_dispatched(backend_type) -> None:
+    """Every public backend configuration builds an upper-envelope callable."""
+    backend = get_upper_envelope(
+        solver=_solver(envelope=backend_type()),
+        n_refined=8,
+    )
     assert isinstance(backend, UpperEnvelopeBackend)
 
 
 def test_the_package_docstring_names_every_selectable_backend() -> None:
-    """Each name `DCEGM.envelope` accepts appears in the package docstring."""
+    """Every public configuration class appears in the package documentation."""
     docstring = upper_envelope.__doc__ or ""
     undocumented = [
-        name for name in _selectable_backends() if f'`"{name}"`' not in docstring
+        backend_type.__name__
+        for backend_type in _BACKEND_TYPES
+        if backend_type.__name__ not in docstring
     ]
     assert undocumented == []

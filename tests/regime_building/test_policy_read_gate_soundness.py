@@ -18,6 +18,7 @@ from _lcm.egm.upper_envelope.mss import refine_envelope
 from _lcm.regime_building.processing import _envelope_publishes_crossings
 from lcm import LinSpacedGrid
 from lcm.solvers import DCEGM
+from tests.envelope_configs import envelope_config
 
 
 def _solver(
@@ -30,7 +31,7 @@ def _solver(
         resources="resources",
         post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=8),
-        envelope=envelope,
+        envelope=envelope_config(envelope),
     )
 
 

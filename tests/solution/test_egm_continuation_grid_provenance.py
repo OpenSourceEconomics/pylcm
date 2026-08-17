@@ -178,7 +178,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         },
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
-        constraints={"feasible": feasible},
+        constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         transition={
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),

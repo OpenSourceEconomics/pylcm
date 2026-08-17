@@ -27,9 +27,16 @@ backward induction:
 
 A second continuous state is reached by nesting: `NEGM` and `NNBEGM` solve an
 inner 1-D problem conditional on the outer margin, rather than inverting two
-coupled first-order conditions jointly. Solvers specialized to one model's
-accounting are replicated and published alongside the paper that reports them,
-not carried here.
+coupled first-order conditions jointly. `ConsumptionSavingsRegime` can own the
+liquid state, consumption action, resources, and post-decision role names shared
+by the endogenous-grid solvers; ordinary `Regime` remains available when explicit
+solver configuration is preferable.
+
+`DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
+requires pylcm's native exact-affine library. Selecting it on an installation
+without a loadable library fails during `Model(...)`; choose another typed envelope
+configuration only under its documented approximation contract. Solvers specialized
+to one paper's accounting remain published alongside that paper rather than here.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
@@ -39,7 +46,15 @@ solver instance (`solver.build_period_kernels(context)`), not on its type.
 """
 
 from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
-from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.dcegm import (
+    DCEGM,
+    EnvelopeConfig,
+    ExactEnvelope,
+    FUESEnvelope,
+    LTMEnvelope,
+    MSSEnvelope,
+    RFCEnvelope,
+)
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.nbegm import NBEGM
@@ -52,7 +67,13 @@ __all__ = [
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "EnvelopeConfig",
+    "ExactEnvelope",
+    "FUESEnvelope",
     "GridSearch",
+    "LTMEnvelope",
+    "MSSEnvelope",
+    "RFCEnvelope",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
