@@ -10,10 +10,11 @@ from fractions import Fraction
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
 from _lcm.egm.upper_envelope.double_double import dd_quotient_bounded, two_prod
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 
 def _dtype():
@@ -143,6 +144,7 @@ def test_a_product_is_exact_down_to_the_bottom_of_the_range() -> None:
     assert Fraction(float(high)) + Fraction(float(low)) == exact
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_cell_hull_resolves_a_handover_at_the_bottom_of_the_range() -> None:
     """The production owner walk does not inherit Dekker's subnormal split limit.
 

@@ -23,6 +23,11 @@ from _lcm.egm.upper_envelope.certified_sign import (
     certified_margin_sign,
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 _POLICY_ABOVE = 0.5
 _POLICY_BELOW = 0.25

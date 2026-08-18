@@ -5,6 +5,7 @@ from fractions import Fraction
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import (
     exact_affine_read,
@@ -12,7 +13,11 @@ from _lcm.egm.upper_envelope._exact_affine import (
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.typing import FloatND
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 def _dtype() -> np.dtype:

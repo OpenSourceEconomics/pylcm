@@ -17,6 +17,11 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 _GRID = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 _VALUE = [0.0, 1.0, 1.8, 2.4, 2.8, 3.0]

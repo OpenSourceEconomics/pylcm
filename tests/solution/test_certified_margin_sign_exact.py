@@ -17,6 +17,11 @@ from _lcm.egm.upper_envelope.certified_sign import (
     certified_margin_sign,
 )
 from tests import conftest
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 @pytest.fixture(name="dtype")

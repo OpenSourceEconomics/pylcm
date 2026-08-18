@@ -29,7 +29,11 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
-from tests.conftest import assert_agrees_to_ulp
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 _X0 = 100.0
 _X1 = 1100.0

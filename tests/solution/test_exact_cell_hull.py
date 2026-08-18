@@ -3,10 +3,15 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import exact_cell_hull
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 def _dtype():

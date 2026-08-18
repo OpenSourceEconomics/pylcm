@@ -17,7 +17,11 @@ import pytest
 
 from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 def _row_read(grid: np.ndarray, payload: np.ndarray, query: float) -> float:

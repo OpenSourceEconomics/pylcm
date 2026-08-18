@@ -17,6 +17,11 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 def _active_dtype() -> type:
