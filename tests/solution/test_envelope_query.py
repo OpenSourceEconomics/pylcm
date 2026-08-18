@@ -26,8 +26,10 @@ from _lcm.egm.upper_envelope.query import (
     _right_continuous_winner,
     envelope_at_query,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution._envelope_oracle import exact_envelope
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # float64 cases cannot run when the suite is invoked at `--precision=32`: JAX
 # truncates the request to float32 and warns, the suite promotes that warning to
