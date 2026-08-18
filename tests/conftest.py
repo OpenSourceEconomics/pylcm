@@ -44,17 +44,15 @@ DECIMAL_PRECISION: int = 12
 # precision; eight is that with headroom.
 INVARIANCE_EPS_MULTIPLE: float = 8.0
 
+# Marker naming a test whose subject needs the native exact-affine kernel.
 EXACT_KERNEL_MARKER = "requires_exact_affine_kernel"
-"""Marker naming a test whose subject needs the native exact-affine kernel."""
 
+# Canonical reason used by exact-kernel tests and their skip inventory.
 EXACT_KERNEL_SKIP_REASON = (
     "requires pylcm's native exact-affine kernel for the selected JAX backend"
 )
-"""Canonical reason used by exact-kernel tests and their skip inventory."""
 
-_EXACT_KERNEL_SKIPS_STASH_KEY: pytest.StashKey[list[dict[str, str]]] = (
-    pytest.StashKey()
-)
+_EXACT_KERNEL_SKIPS_STASH_KEY: pytest.StashKey[list[dict[str, str]]] = pytest.StashKey()
 _CONTROLLER_EXACT_KERNEL_SKIPS: list[dict[str, str]] = []
 
 
@@ -274,8 +272,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if worker_output is not None:
         # Update eagerly: xdist may serialize workeroutput in its own
         # session-finish hook before a try-last local hook would run.
-        worker_output["lcm_exact_kernel_skips"] = (
-            _normalise_exact_kernel_skip_records(records)
+        worker_output["lcm_exact_kernel_skips"] = _normalise_exact_kernel_skip_records(
+            records
         )
     pytest.skip(reason)
 
@@ -288,9 +286,7 @@ def pytest_testnodedown(node: object, error: object) -> None:  # noqa: ARG001
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_sessionfinish(
-    session: pytest.Session, exitstatus: int | pytest.ExitCode
-) -> None:  # noqa: ARG001
+def pytest_sessionfinish(session: pytest.Session) -> None:
     """Write and enforce the exact-skip inventory and the backup total ceiling."""
     config = session.config
     local_records = _normalise_exact_kernel_skip_records(
@@ -351,10 +347,7 @@ def _normalise_exact_kernel_skip_records(
 ) -> list[dict[str, str]]:
     """Return sorted, duplicate-free node-id/reason records."""
     unique = {(record["nodeid"], record["reason"]) for record in records}
-    return [
-        {"nodeid": nodeid, "reason": reason}
-        for nodeid, reason in sorted(unique)
-    ]
+    return [{"nodeid": nodeid, "reason": reason} for nodeid, reason in sorted(unique)]
 
 
 def _write_exact_kernel_skip_inventory(
@@ -383,7 +376,7 @@ def _read_exact_kernel_skip_inventory(*, path: pathlib.Path) -> list[dict[str, s
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
         msg = f"Malformed exact-kernel skip inventory: {path}"
-        raise ValueError(msg)
+        raise TypeError(msg)
     skipped = payload.get("skipped")
     if payload.get("schema_version") != 1 or not isinstance(skipped, list):
         msg = f"Malformed exact-kernel skip inventory: {path}"
@@ -404,7 +397,9 @@ def _fail_session(*, session: pytest.Session, message: str) -> None:
     """Fail the session while preserving any earlier, stronger exit status."""
     terminal_reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     if terminal_reporter is None:
-        print(message)
+        # Last-resort channel: without a terminal reporter there is nowhere else
+        # to surface why the session failed, and a warning can be filtered away.
+        print(message)  # noqa: T201
     else:
         terminal_reporter.write_line(message, red=True, bold=True)
     if session.exitstatus == pytest.ExitCode.OK:

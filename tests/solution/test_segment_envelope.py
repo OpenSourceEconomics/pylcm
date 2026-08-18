@@ -18,9 +18,7 @@ from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._mss_segment_oracle import Branch, exact_envelope
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(
-    reason=EXACT_KERNEL_SKIP_REASON
-)
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 F = Fraction
 

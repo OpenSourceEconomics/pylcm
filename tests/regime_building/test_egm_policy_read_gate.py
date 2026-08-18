@@ -33,9 +33,7 @@ _PORTABLE_DCEGM_SOLVER = dataclasses.replace(
     DCEGM_SOLVER,
     envelope=FUESEnvelope(),
 )
-_PORTABLE_DCEGM_RETIREMENT = dcegm_retirement.replace(
-    solver=_PORTABLE_DCEGM_SOLVER
-)
+_PORTABLE_DCEGM_RETIREMENT = dcegm_retirement.replace(solver=_PORTABLE_DCEGM_SOLVER)
 
 
 def test_negm_regime_does_not_qualify_for_the_policy_read():

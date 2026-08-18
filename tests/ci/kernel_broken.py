@@ -20,7 +20,9 @@ def _raise_missing_target(*, library: Path, platform: str) -> None:  # noqa: ARG
     raise AttributeError(msg)
 
 
-ffi._register_platform = _raise_missing_target
+# A deliberate stand-in for the real registration; ty compares against the
+# original function type rather than its signature, so the swap needs naming.
+ffi._register_platform = _raise_missing_target  # ty: ignore[invalid-assignment]
 
 assert ffi.kernel_built() is True
 assert ffi.kernel_built_for_current_backend() is True

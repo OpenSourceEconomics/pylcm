@@ -24,9 +24,7 @@ import pytest
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(
-    reason=EXACT_KERNEL_SKIP_REASON
-)
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # A crossing of two branches, well scaled: the endpoint values are the same order
 # of magnitude as the differences that decide ownership, so no cancellation

@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from xml.etree import ElementTree
+from xml.etree import ElementTree as ET
 
 _SMOKE_NODE = (
     "tests/test_exact_kernel_capability_contract.py::"
@@ -170,7 +170,7 @@ def _run_pytest(
 
 def _junit_counts(path: Path) -> dict[str, int]:
     """Return test, skip, and hard-failure counts from one JUnit report."""
-    root = ElementTree.parse(path).getroot()  # noqa: S314
+    root = ET.parse(path).getroot()  # noqa: S314
     cases = root.findall(".//testcase")
     skipped = sum(case.find("skipped") is not None for case in cases)
     failed = sum(
@@ -186,7 +186,7 @@ def _inventory_records(path: Path) -> list[dict[str, str]]:
     records = payload.get("skipped") if isinstance(payload, dict) else None
     if not isinstance(records, list):
         msg = f"Malformed exact-kernel inventory: {path}"
-        raise RuntimeError(msg)
+        raise TypeError(msg)
     return records
 
 

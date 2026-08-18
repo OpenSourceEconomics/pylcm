@@ -27,9 +27,7 @@ from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
-pytestmark = pytest.mark.requires_exact_affine_kernel(
-    reason=EXACT_KERNEL_SKIP_REASON
-)
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Two policy-consistent log-utility links: a run with consumption `c` has value
 # slope `1 / c`. The outgoing run consumes 8, the incoming one 2.
