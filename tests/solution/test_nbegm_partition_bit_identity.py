@@ -7,12 +7,11 @@ claim that the two are also the same *floating* number — which holds only once
 the partition stops being part of the compilation key, so that every partition
 runs the same executable rather than a differently vectorized one.
 
-`test_nbegm_branch_batch_size.py` states the weaker claim that currently holds,
-bounded in ULP. This module states the target.
+`test_nbegm_branch_batch_size.py` states the same invariance bounded in ULP,
+which a body outside the fixed-width construction still needs.
 """
 
 import numpy as np
-import pytest
 
 from tests.solution.test_nbegm_branch_batch_size import _solve
 
@@ -37,13 +36,6 @@ def _published_pairs() -> tuple[np.ndarray, np.ndarray]:
     return np.concatenate(left), np.concatenate(right)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The branch partition is still part of the compilation key, so XLA "
-    "emits a differently vectorized kernel per block width. Remove this marker "
-    "with the fixed-graph construction, which makes the partition a runtime "
-    "operand of one executable.",
-)
 def test_branch_partition_publishes_bit_identical_values() -> None:
     """Partitioning the branch axis leaves every published value bit for bit equal."""
     streamed, whole = _published_pairs()

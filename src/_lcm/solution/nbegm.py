@@ -41,6 +41,7 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.declared_law import build_declared_liquid_law
+from _lcm.egm.fixed_width_map import map_partitioned
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
@@ -4327,10 +4328,10 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                 codes = _stacked_branch_codes(
                     branch_bindings=branch_bindings, action_names=action_names
                 )
-                return jax.lax.map(
-                    rows_for_codes,
-                    codes,
-                    batch_size=statics.branch_batch_size or codes.shape[0],
+                return map_partitioned(
+                    func=rows_for_codes,
+                    xs=codes,
+                    requested_block_size=statics.branch_batch_size,
                 )
 
             def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
@@ -4828,11 +4829,10 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     )
                     return step[0], step[1]
 
-                n_branches = len(schedule_spec.branch_bindings)
-                value_stack, marginal_stack = jax.lax.map(
-                    solve_one_branch,
-                    branch_inputs,
-                    batch_size=statics.branch_batch_size or n_branches,
+                value_stack, marginal_stack = map_partitioned(
+                    func=solve_one_branch,
+                    xs=branch_inputs,
+                    requested_block_size=statics.branch_batch_size,
                 )
                 value_row, marginal_row = _discrete_envelope_over_branches(
                     value_stack=value_stack,

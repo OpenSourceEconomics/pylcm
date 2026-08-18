@@ -12,7 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.fixed_width_map import map_fixed_width, validate_block_size
+from _lcm.egm.fixed_width_map import (
+    admitted_block_size,
+    map_fixed_width,
+    validate_block_size,
+)
 
 pytestmark = pytest.mark.usefixtures("x64_enabled")
 
@@ -98,3 +102,21 @@ def test_static_block_size_map_is_partition_dependent() -> None:
         not np.array_equal(dense(batch_size=size), baseline) for size in _ADMITTED[1:]
     )
     assert differing > 0
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(0, 24), (-1, 24), (1, 4), (4, 4), (5, 8), (23, 24), (24, 24), (99, 24)],
+)
+def test_requested_block_sizes_round_up_to_an_admitted_partition(
+    requested: int, expected: int
+) -> None:
+    """A request is coarsened to the next microtile multiple, capped at the maximum."""
+    assert (
+        admitted_block_size(
+            requested=requested,
+            max_block_size=_MAX_BLOCK,
+            microtile_width=_MICROTILE,
+        )
+        == expected
+    )

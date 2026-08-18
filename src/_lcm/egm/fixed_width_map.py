@@ -180,3 +180,62 @@ def _pad_rows(leaf: Array, *, n_padded: int) -> Array:
     if pad <= 0:
         return leaf
     return jnp.concatenate([leaf, jnp.repeat(leaf[:1], pad, axis=0)], axis=0)
+
+
+# The vector width one economic callback is evaluated at. A profile constant,
+# not a user knob: it is chosen once per hardware profile by measurement, and
+# changing it recompiles. Partitions are rounded up to a multiple of it.
+MICROTILE_WIDTH: int = 4
+
+
+def enclosing_max_block_size(*, n_rows: int, microtile_width: int) -> int:
+    """Return the smallest admitted static window covering `n_rows`."""
+    if n_rows <= 0:
+        msg = f"n_rows must be positive, got {n_rows}."
+        raise ValueError(msg)
+    return math.ceil(n_rows / microtile_width) * microtile_width
+
+
+def admitted_block_size(
+    *, requested: int, max_block_size: int, microtile_width: int
+) -> int:
+    """Round a requested partition up to the nearest admitted one.
+
+    A partition that is not a microtile multiple would move rows to different
+    lanes for different requests, so requests are coarsened rather than
+    refused: the caller's value is a memory ceiling, and the nearest admitted
+    partition at or above it honours that reading while keeping every request
+    on one executable. A non-positive request means the whole axis.
+    """
+    if requested <= 0:
+        return max_block_size
+    rounded = math.ceil(requested / microtile_width) * microtile_width
+    return min(rounded, max_block_size)
+
+
+def map_partitioned(
+    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
+) -> PyTree:
+    """Map `func` over `xs`, honouring a requested partition at the profile width.
+
+    The caller-facing form of `map_fixed_width`: it derives the static window
+    from the row count and coarsens the request to an admitted partition, so a
+    call site states only which axis it is streaming and how finely.
+    """
+    n_rows = _leading_size(xs)
+    max_block_size = enclosing_max_block_size(
+        n_rows=n_rows, microtile_width=MICROTILE_WIDTH
+    )
+    return map_fixed_width(
+        func=func,
+        xs=xs,
+        max_block_size=max_block_size,
+        microtile_width=MICROTILE_WIDTH,
+        block_size=jnp.int32(
+            admitted_block_size(
+                requested=requested_block_size,
+                max_block_size=max_block_size,
+                microtile_width=MICROTILE_WIDTH,
+            )
+        ),
+    )
