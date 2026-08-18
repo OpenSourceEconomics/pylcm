@@ -43,6 +43,18 @@ dependencies = [
   "portion>=2.6",
   "pyarrow",
 ]
+[project.readme]
+content-type = "text/markdown"
+file = "README.md"
+[project.license]
+file = "LICENSE"
+[[project.maintainers]]
+name = "Tim Mensinger"
+email = "mensingertim@gmail.com"
+
+[[project.maintainers]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
@@ -56,18 +68,6 @@ name = "Janos Gabler"
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
-[project.license]
-file = "LICENSE"
-[[project.maintainers]]
-name = "Tim Mensinger"
-email = "mensingertim@gmail.com"
-
-[[project.maintainers]]
-name = "Hans-Martin von Gaudecker"
-email = "hmgaudecker@uni-bonn.de"
-[project.readme]
-content-type = "text/markdown"
-file = "README.md"
 [project.urls]
 Github = "https://github.com/opensourceeconomics/pylcm"
 Repository = "https://github.com/opensourceeconomics/pylcm"
@@ -86,6 +86,17 @@ build.targets.wheel.sources = [ "src" ]
 build.targets.sdist.exclude = [ "tests" ]
 build.targets.sdist.only-packages = true
 
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [
+  "linux-64",
+  "linux-aarch64",
+  "osx-arm64",
+  "win-64",
+  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
+]
 [tool.pixi.dependencies]
 asv = "*"
 python = "~=3.14.0"
@@ -100,16 +111,23 @@ pyarrow = "*"
 pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
-[tool.pixi.environments]
-benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-docs = { features = [ "docs" ], solve-group = "default" }
-tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.pypi-dependencies]
+jax = ">=0.11"
+pdbp = "*"
+pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-pr-comment = "python benchmarks/pr_comment.py"
+asv-publish = "python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
+asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
+# Recompile the certified path's exact-affine kernel in place. An editable install
+# builds it once; rerun this after editing the C++ or CUDA sources. Set NVCCFLAGS
+# (e.g. '-arch=sm_80') to pick the CUDA target architecture.
+build-exact-affine = "python hatch_build.py"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to the aca-model version this solver-seam work is developed against
 # (feat/dcegm-solver: main's audit fixes + the DC-EGM solver + smooth-share
@@ -195,34 +213,16 @@ tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junit
 matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
-[tool.pixi.pypi-dependencies]
-jax = ">=0.11"
-pdbp = "*"
-pylcm = { path = ".", editable = true }
-[tool.pixi.tasks]
-asv-compare = "asv compare"
-asv-preview = "asv preview"
-asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
-asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
-# Recompile the certified path's exact-affine kernel in place. An editable install
-# builds it once; rerun this after editing the C++ or CUDA sources. Set NVCCFLAGS
-# (e.g. '-arch=sm_80') to pick the CUDA target architecture.
-build-exact-affine = "python hatch_build.py"
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [
-  "linux-64",
-  "linux-aarch64",
-  "osx-arm64",
-  "win-64",
-  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
-  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
-  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
-]
+[tool.pixi.environments]
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+docs = { features = [ "docs" ], solve-group = "default" }
+tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 
 [tool.ruff]
 target-version = "py314"
