@@ -224,7 +224,7 @@ def _collect_piecewise_affine_schedules(
         if not meta.breakpoints:
             msg = (
                 f"Piecewise-affine schedule {name!r} declares no breakpoint. Add "
-                "at least one `lcm.affine_breakpoint(threshold, kind=...)`, or "
+                "at least one `lcm.affine_breakpoint(threshold=..., kind=...)`, or "
                 "drop the decorator — an empty schedule still routes the regime "
                 "through the breakpoint-aware kernels."
             )

@@ -337,7 +337,8 @@ def test_model_constructs_when_state_reachable_only_via_w_dag():
     `pref_type` is used by `discount_factor_from_type`, whose output
     feeds the default `W`. `utility` / `feasibility` / transitions do
     not reference `pref_type`. The state-usage walk treats aggregator-DAG
-    targets as reachable, so the state counts as used.
+    targets as reachable, so this must not raise "states defined but never
+    used".
     """
     _make_model(with_pref_type=True)
 

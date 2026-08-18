@@ -2,10 +2,10 @@
 
 A represented zero is the only unconditional null event. A nonzero subnormal may
 be omitted only when doing so leaves the rounded result of the consuming
-aggregate unchanged. The largest-subnormal fixtures below are exact omission
-controls for their particular finite values; the mantissa-varying cases exercise
-mantissas and continuations for which replacing the weight by zero or by
-``finfo.tiny`` changes the answer.
+aggregate unchanged. The original largest-subnormal fixtures below are exact
+omission controls for their particular finite values; the class-boundary cases
+exercise mantissas and continuations for which replacing the weight by zero or
+by ``finfo.tiny`` changes the answer.
 """
 
 from collections.abc import Callable
@@ -246,9 +246,9 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
     )
 
 
-# A subnormal's mantissa is part of the model. A largest-subnormal fixture alone
-# cannot distinguish preserving the weight from replacing every subnormal by the
-# smallest normal magnitude, so the cases below vary the mantissa itself.
+# Class boundaries: a subnormal's mantissa is part of the model.
+# The largest-subnormal fixture alone cannot distinguish preserving the
+# weight from replacing every subnormal by the smallest normal magnitude.
 
 
 def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> None:

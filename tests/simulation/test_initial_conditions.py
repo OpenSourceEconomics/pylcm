@@ -296,7 +296,7 @@ def _make_constraint_model(wealth_grid) -> Model:
 
 
 def test_infeasible_initial_states_detected():
-    """Wealth below the constraint threshold makes every action infeasible.
+    """Wealth below the constraint threshold makes all actions infeasible.
 
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
     """
