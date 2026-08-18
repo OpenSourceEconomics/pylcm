@@ -77,10 +77,6 @@ def test_published_row_is_identical_across_cell_batch_sizes(cell_batch_size):
 def _solver(*, cell_batch_size: int | None = None):
     """A minimal valid DC-EGM configuration with one exact-backend control."""
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=8),
         envelope=ExactEnvelope(cell_batch_size=cell_batch_size),
     )

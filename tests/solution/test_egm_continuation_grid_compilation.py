@@ -83,7 +83,7 @@ def test_an_age_specialized_model_compiles_no_more_cores_than_a_static_one():
     lifecycle has.
     """
     solvers: dict[str, Solver] = {
-        "retired": EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings"),
+        "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     static = get_model(n_periods=_N_PERIODS, solvers=solvers)
     moving = get_model(
@@ -108,7 +108,7 @@ def test_the_static_model_solves_reproducibly():
     inputs, so any difference at all would be a defect.
     """
     solvers: dict[str, Solver] = {
-        "retired": EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings"),
+        "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     model = get_model(n_periods=_N_PERIODS, solvers=solvers)
     first = model.solve(params=get_params(), log_level="debug")

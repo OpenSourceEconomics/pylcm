@@ -13,6 +13,8 @@ constraint set, where it enters the feasibility array `F` exactly like a
 user-declared constraint.
 """
 
+from typing import TYPE_CHECKING, cast
+
 from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
@@ -23,6 +25,13 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.solvers import DCEGM, NEGM
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.negm import _BoundNEGM
+else:
+    _BoundDCEGM = DCEGM
+    _BoundNEGM = NEGM
 from lcm.typing import BoolND, FloatND
 
 DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"
@@ -58,7 +67,11 @@ def get_intrinsic_budget_constraint(
         function.
 
     """
-    inner = solver.inner if isinstance(solver, NEGM) else solver
+    inner = (
+        cast("_BoundNEGM", solver).inner
+        if isinstance(solver, NEGM)
+        else cast("_BoundDCEGM", solver)
+    )
     borrowing_limit = float(inner.savings_grid.to_jax()[0])
     action_name = inner.continuous_action
     resources_name = inner.resources

@@ -15,8 +15,9 @@ pulls in no numerical engine modules.
 import functools
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -32,10 +33,11 @@ from _lcm.solution.continuation_target import _union_fixed_params, _union_free_p
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
+    OneMarginSolver,
     SolutionKernels,
-    Solver,
     SolverBuildContext,
     SolverModelContext,
+    _BoundLiquidMargin,
 )
 from _lcm.typing import (
     EGMStepFunction,
@@ -45,7 +47,6 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
-    ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.typing import (
@@ -138,7 +139,7 @@ _MIN_ENVELOPE_MAX_RUNS: int = 2
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class DCEGM(Solver):
+class DCEGM(OneMarginSolver):
     """Configuration of the DC-EGM solver for one regime.
 
     DC-EGM inverts the Euler equation on an exogenous end-of-period
@@ -167,41 +168,6 @@ class DCEGM(Solver):
     (`continuous_action <= resources - savings_grid lower bound`) is applied
     as a feasibility mask during simulation.
 
-    """
-
-    continuous_state: StateName = ""
-    """Name of the Euler continuous state (e.g. `"wealth"`).
-
-    Its transition must consume the post-decision function and reach the
-    state and the continuous action only through it. May be omitted only when
-    the solver is attached to a `ConsumptionSavingsRegime`, which owns the role.
-    """
-
-    continuous_action: ActionName = ""
-    """Name of the continuous action (e.g. `"consumption"`).
-
-    May be omitted only when the solver is attached to a
-    `ConsumptionSavingsRegime`.
-    """
-
-    resources: FunctionName = ""
-    """Name of the resources function `R` in `Regime.functions`.
-
-    Resources are what consumption is paid out of; the endogenous grid lives
-    in R-space. Required even in the classic case, where it is the identity
-    (e.g. `"resources": lambda wealth: wealth`). Must not depend on the
-    continuous action and must be non-decreasing in the continuous state.
-    In an `NEGM` regime with a declared `outer_cost`, the function of this
-    name is composed by pylcm at model build
-    (`<resources>_before_outer_cost - <outer_cost>`) and must not be defined
-    by the regime.
-    """
-
-    post_decision_function: FunctionName = ""
-    """Name of the post-decision function in `Regime.functions`.
-
-    The end-of-period state (e.g. savings), satisfying
-    `post_decision = resources - continuous_action`.
     """
 
     savings_grid: ContinuousGrid
@@ -278,6 +244,17 @@ class DCEGM(Solver):
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
         _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
+    def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundDCEGM:
+        """Bind regime-owned DAG names without exposing them on public `DCEGM`."""
+        kwargs = {field.name: getattr(self, field.name) for field in fields(DCEGM)}
+        return _BoundDCEGM(
+            **kwargs,
+            continuous_state=margin.state,
+            continuous_action=margin.action,
+            resources=margin.resources,
+            post_decision_function=margin.post_decision_state,
+        )
+
     @property
     def requires_continuation(self) -> bool:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
@@ -285,25 +262,6 @@ class DCEGM(Solver):
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level DC-EGM contract for this regime."""
-        missing_roles = tuple(
-            name
-            for name, value in (
-                ("continuous_state", self.continuous_state),
-                ("continuous_action", self.continuous_action),
-                ("resources", self.resources),
-                ("post_decision_function", self.post_decision_function),
-            )
-            if not value
-        )
-        if missing_roles:
-            msg = (
-                f"DCEGM regime {context.regime_name!r} has no value for "
-                f"{', '.join(missing_roles)}. Supply those fields on DCEGM, or "
-                "attach the solver to ConsumptionSavingsRegime so the regime's "
-                "canonical consumption-savings roles are bound automatically."
-            )
-            raise ModelInitializationError(msg)
-
         from _lcm.egm.validation import validate_dcegm_regime  # noqa: PLC0415
 
         validate_dcegm_regime(
@@ -353,7 +311,7 @@ class DCEGM(Solver):
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
         egm_step, egm_carry_template, egm_stateful_targets = build_egm_step_functions(
-            solver=self,
+            solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
             functions=context.functions,
@@ -397,6 +355,16 @@ class DCEGM(Solver):
                 layout=self.egm_continuation_layout,
             ),
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BoundDCEGM(DCEGM):
+    """Internal DC-EGM configuration with regime-resolved DAG role names."""
+
+    continuous_state: StateName
+    continuous_action: ActionName
+    resources: FunctionName
+    post_decision_function: FunctionName
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -30,6 +30,7 @@ from lcm import (
     Phased,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -150,10 +151,6 @@ def _params() -> dict:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -211,7 +208,8 @@ def budget_constraint_rate(
 def _resources_param_model(solver: str) -> Model:
     """Self-targeting regime whose resources reads `rate_of_return`."""
     is_dcegm = solver == "dcegm"
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
@@ -234,6 +232,18 @@ def _resources_param_model(solver: str) -> Model:
             else {"utility": utility, "resources": resources_with_rate}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -317,7 +327,8 @@ def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model
         "countable_income": countable_income,
         "share_of_income": share_of_income,
     }
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition={
             "working_life": MarkovTransition(stay_prob_share),
             "dead": MarkovTransition(death_prob_share),
@@ -341,6 +352,18 @@ def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model
             else {"utility": utility, "resources": resources, **intermediates}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
@@ -429,7 +452,8 @@ def budget_constraint_pension(
 def _imputed_pension_model(solver: str) -> Model:
     """Resources reads a solve-phase imputed pension wealth (from AIME)."""
     is_dcegm = solver == "dcegm"
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
@@ -470,6 +494,18 @@ def _imputed_pension_model(solver: str) -> Model:
             else {"utility": utility, "resources": resources_with_pension_brute}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -517,7 +553,7 @@ def resources_decreasing(wealth: ContinuousState, offset: float) -> FloatND:
 @functools.cache
 def _decreasing_resources_model() -> Model:
     """Asset-row DC-EGM regime whose resources decreases in wealth."""
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
@@ -534,6 +570,12 @@ def _decreasing_resources_model() -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

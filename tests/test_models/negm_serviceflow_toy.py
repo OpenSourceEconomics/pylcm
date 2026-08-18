@@ -29,7 +29,11 @@ from lcm import (
     NEGM,
     AgeGrid,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
     categorical,
 )
@@ -225,18 +229,9 @@ SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=80)
 
 NEGM_SOLVER = NEGM(
     inner=DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="liquid_savings",
         savings_grid=SAVINGS_GRID,
     ),
-    outer_action="illiquid_investment",
-    outer_state="illiquid",
-    outer_post_decision="new_durable",
     outer_grid=OUTER_GRID,
-    outer_no_adjustment_candidate="keep_illiquid",
-    outer_cost="credited",
 )
 
 
@@ -254,7 +249,7 @@ def _build_dead_regime() -> Regime:
 
 def build_negm_model() -> Model:
     """Build the service-flow toy solved by the nested EGM."""
-    alive = Regime(
+    alive = NestedConsumptionSavingsRegime(
         active=lambda age, n=FINAL_AGE_ALIVE: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
@@ -274,6 +269,22 @@ def build_negm_model() -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=NEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment="keep_illiquid",
+        ),
     )
     return Model(
         regimes={"alive": alive, "dead": _build_dead_regime()},

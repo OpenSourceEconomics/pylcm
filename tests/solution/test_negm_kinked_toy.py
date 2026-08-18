@@ -29,7 +29,11 @@ from lcm import (
     NEGM,
     AgeGrid,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
 )
 from lcm.typing import (
@@ -80,20 +84,11 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
     """Build the matched 3-period NEGM model on the repaired wealth domain."""
     solver = NEGM(
         inner=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="liquid_savings",
             savings_grid=_grid(-5.0, 35.0, savings_n),
         ),
-        outer_action="illiquid_investment",
-        outer_state="illiquid",
-        outer_post_decision="new_durable",
         outer_grid=_grid(0.0, _ILLIQUID_MAX, outer_n),
-        outer_no_adjustment_candidate="keep_illiquid",
-        outer_cost="credited",
     )
-    alive = Regime(
+    alive = NestedConsumptionSavingsRegime(
         active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={
             "wealth": _grid(_WEALTH_MIN, _WEALTH_MAX, _N_WEALTH),
@@ -118,6 +113,22 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
             "inverse_marginal_utility": negm_kinked_toy.inverse_marginal_utility,
         },
         solver=solver,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment="keep_illiquid",
+        ),
     )
     dead = Regime(
         transition=None,

@@ -32,6 +32,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -162,10 +163,6 @@ def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) ->
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -192,12 +189,13 @@ def _shared_functions() -> dict:
 def _model(solver: str) -> Model:
     """Euler `wealth` + passive `aime` + process `income`, asset-row mode."""
     is_dcegm = solver == "dcegm"
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     states = {
         "wealth": WEALTH_GRID,
         "aime": AIME_GRID,
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
-    working = UserRegime(
+    working = regime_type(
         transition={
             "working_life": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -224,6 +222,18 @@ def _model(solver: str) -> Model:
             else {**_shared_functions(), "resources": resources}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -374,12 +384,13 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
     rather than as a free solve param.
     """
     is_dcegm = solver == "dcegm"
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     states = {
         "wealth": WEALTH_GRID,
         "aime": AIME_GRID,
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
-    working = UserRegime(
+    working = regime_type(
         transition={
             "working_life": MarkovTransition(stay_prob_share),
             "dead": MarkovTransition(death_prob_share),
@@ -411,6 +422,18 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
             }
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     fixed_params = (
         {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
@@ -479,7 +502,7 @@ def test_means_tested_prob_through_param_intermediate_matches_brute_force(
 @functools.cache
 def _model_with_aime_batch(aime_batch_size: int) -> Model:
     """The asset-row passive-AIME DC-EGM model with `aime` splayed by batch_size."""
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working_life": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -505,6 +528,12 @@ def _model_with_aime_batch(aime_batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

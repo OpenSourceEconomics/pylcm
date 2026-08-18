@@ -64,9 +64,7 @@ def _rename_params(params):
 
 def _solvers():
     """One declaration, used for both spellings — it names no parameter."""
-    return {
-        "retired": EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    }
+    return {"retired": EGM(savings_grid=_SAVINGS_GRID)}
 
 
 def _solve_default():

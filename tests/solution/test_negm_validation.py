@@ -27,11 +27,13 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.solution.negm import _BoundNEGM
 from lcm import (
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinearAggregator,
     LinearExpectation,
+    NetOfAdjustmentCost,
     Phased,
     categorical,
 )
@@ -77,10 +79,10 @@ def test_outer_action_absent_is_rejected_with_dcegm_pointer():
 
 def test_outer_post_decision_not_declared_is_rejected():
     """An outer post-decision that is neither a function nor a transition fails."""
-    solver = dataclasses.replace(
-        negm_kinked_toy.NEGM_SOLVER, outer_post_decision="not_a_function"
+    outer = dataclasses.replace(
+        _VALID.outer_continuous, post_decision_state="not_a_function"
     )
-    regime = _VALID.replace(solver=solver)
+    regime = _VALID.replace(outer_continuous=outer)
     with pytest.raises(ModelInitializationError, match="neither a declared function"):
         _validate(regime)
 
@@ -93,7 +95,7 @@ def test_margin_distinctness_recheck_rejects_outer_action_equal_to_inner_action(
     fail-loud model-build point, exercised here against an inner config whose
     continuous action matches the solver's outer action.
     """
-    solver = negm_kinked_toy.NEGM_SOLVER
+    solver = cast("_BoundNEGM", _VALID.solver)
     inner_action_clashes = dataclasses.replace(
         solver.inner, continuous_action="illiquid_investment"
     )
@@ -105,7 +107,7 @@ def test_margin_distinctness_recheck_rejects_outer_action_equal_to_inner_action(
 
 def test_margin_distinctness_recheck_rejects_outer_equal_to_inner_post_decision():
     """The model-build re-check rejects a coincident post-decision function."""
-    solver = negm_kinked_toy.NEGM_SOLVER
+    solver = cast("_BoundNEGM", _VALID.solver)
     inner_post_clashes = dataclasses.replace(
         solver.inner, post_decision_function="new_durable"
     )
@@ -370,7 +372,7 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
             "resources": _resources_defined_by_the_user,
         },
     )
-    with pytest.raises(ModelInitializationError, match="composed by pylcm"):
+    with pytest.raises(ModelInitializationError, match="pylcm composes"):
         finalize_regimes(
             user_regimes={"alive": regime},
             derived_categoricals={},
@@ -470,9 +472,9 @@ def test_missing_outer_cost_with_costful_resources_is_rejected():
     post-decision (here through the `credited` function it reads) is rejected
     with a pointer to `NEGM.outer_cost`.
     """
-    solver = dataclasses.replace(negm_kinked_toy.NEGM_SOLVER, outer_cost=None)
+    liquid = dataclasses.replace(_VALID.liquid, resources="resources")
     regime = _VALID.replace(
-        solver=solver,
+        liquid=liquid,
         functions={
             **dict(_VALID.functions),
             "resources": _resources_defined_by_the_user,
@@ -484,10 +486,11 @@ def test_missing_outer_cost_with_costful_resources_is_rejected():
 
 def test_undeclared_outer_cost_function_is_rejected():
     """An `outer_cost` name that is not a regime function fails at model build."""
-    solver = dataclasses.replace(
-        negm_kinked_toy.NEGM_SOLVER, outer_cost="not_a_function"
-    )
-    regime = _VALID.replace(solver=solver)
+    resources_spec = _VALID.liquid.resources
+    assert isinstance(resources_spec, NetOfAdjustmentCost)
+    resources = dataclasses.replace(resources_spec, cost="not_a_function")
+    liquid = dataclasses.replace(_VALID.liquid, resources=resources)
+    regime = _VALID.replace(liquid=liquid)
     with pytest.raises(ModelInitializationError, match="not a declared function"):
         _validate(regime)
 

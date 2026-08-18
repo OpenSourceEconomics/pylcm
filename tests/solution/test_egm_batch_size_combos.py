@@ -26,6 +26,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -124,7 +125,7 @@ def _model(health_batch_size: int) -> Model:
     """Asset-row DC-EGM with a Markov health combo axis splayed by `batch_size`."""
     ages = _ages()
     last_age = ages.exact_values[-1]
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -146,12 +147,14 @@ def _model(health_batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     dead = UserRegime(
@@ -233,7 +236,7 @@ def _two_combo_model(batch_size: int) -> Model:
     """Asset-row DC-EGM with TWO discrete combo axes (health + married)."""
     ages = _ages()
     last_age = ages.exact_values[-1]
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -257,12 +260,14 @@ def _two_combo_model(batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     dead = UserRegime(

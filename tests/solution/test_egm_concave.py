@@ -20,6 +20,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidValueFunctionError
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -222,7 +223,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
 
     ages = AgeGrid(start=40, stop=40 + n_periods - 1, step="Y")
     last_age = ages.exact_values[-1]
-    retirement = UserRegime(
+    retirement = ConsumptionSavingsRegime(
         transition=next_regime,
         actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},
         states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=1000)},
@@ -234,16 +235,18 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             # Cubic node clustering toward the borrowing limit, as the value
             # function curves hardest there.
             savings_grid=IrregSpacedGrid(
                 points=tuple(400.0 * (i / 199) ** 3 for i in range(200))
             ),
             n_constrained_points=64,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
         active=lambda age: age < last_age,
     )

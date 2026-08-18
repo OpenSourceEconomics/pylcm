@@ -48,6 +48,24 @@ PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
 # Names the Python wrapper loads, per platform. The CUDA one may be absent.
 CPU_LIBRARY = "libcertified_affine_ffi_cpu.so"
 CUDA_LIBRARY = "libcertified_affine_ffi_cuda.so"
+WINDOWS_CPU_LIBRARY = "certified_affine_ffi_cpu.dll"
+
+# XLA_FFI_DEFINE_HANDLER_SYMBOL expands to a plain extern-C definition. MSVC
+# exports no such function unless it is marked __declspec(dllexport) or named in
+# a module-definition file. Keep the export surface in one authoritative tuple;
+# the Windows build writes it to a .def file consumed by link.exe.
+EXACT_AFFINE_HANDLER_SYMBOLS = (
+    "CertifiedAffineCompareF32",
+    "CertifiedAffineCompareF64",
+    "ExactAffineReadF32",
+    "ExactAffineReadF64",
+    "ExactQueryWinnerF32",
+    "ExactQueryWinnerF64",
+    "ExactAffineHandoverF32",
+    "ExactAffineHandoverF64",
+    "ExactCellHullF32",
+    "ExactCellHullF64",
+)
 
 # Architectures the CUDA build emits ready code for. The oldest entry is the
 # oldest card the project supports; a toolchain that has retired it drops it
@@ -140,6 +158,13 @@ def cuda_arch_flags(
     return flags
 
 
+def windows_module_definition() -> str:
+    """Return the MSVC module-definition file exporting every FFI handler."""
+    lines = ["LIBRARY certified_affine_ffi_cpu", "EXPORTS"]
+    lines.extend(f"    {name}" for name in EXACT_AFFINE_HANDLER_SYMBOLS)
+    return "\n".join(lines) + "\n"
+
+
 def toolchain_report(*, compiler: str, nvcc: str | None) -> str:
     """Return the line a build prints to state which toolchain it found.
 
@@ -196,19 +221,43 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         )
         return []
 
-    if sys.platform == "win32":
-        # The compile flags and library names here are the Unix ones, and a
-        # MinGW artifact under a `.so` name loads only where its toolchain's
-        # runtime is present. Building nothing leaves the certified path to
-        # report its own absence, which names what is missing.
-        sys.stdout.write(
-            "exact-affine: no kernel is built on this platform, so the certified "
-            "upper envelope is unavailable here.\n"
-        )
-        return []
-
     source_dir = root / PACKAGE_DIR
     include_dir = jax_include_dir or _find_jax_include_dir()
+
+    if sys.platform == "win32":
+        compiler = os.environ.get("CXX") or shutil.which("cl")
+        if compiler is None:
+            msg = (
+                "No MSVC C++ compiler found. pylcm's certified upper envelope "
+                "needs cl.exe to build the Windows exact-affine kernel; activate "
+                "an MSVC developer environment or set CXX."
+            )
+            raise RuntimeError(msg)
+        target = source_dir / WINDOWS_CPU_LIBRARY
+        definition = source_dir / "certified_affine_ffi_cpu.def"
+        definition.write_text(windows_module_definition())
+        sys.stdout.write(
+            f"exact-affine: building Windows CPU library with MSVC at {compiler}.\n"
+        )
+        return [
+            _compile(
+                command=[
+                    compiler,
+                    "/nologo",
+                    "/std:c++20",
+                    "/O2",
+                    "/DNDEBUG",
+                    "/EHsc",
+                    "/LD",
+                    f"/I{include_dir}",
+                    str(source_dir / "certified_affine_ffi_cpu.cc"),
+                    f"/Fe:{target}",
+                    "/link",
+                    f"/DEF:{definition}",
+                ],
+                target=target,
+            )
+        ]
 
     compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++")
     if compiler is None:

@@ -82,6 +82,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -551,7 +552,7 @@ def build_model(
             regime_id_class=DiscreteHousingRegimeId,
         )
 
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition=next_regime,
         active=lambda age, fa=final_age_alive: age < fa,
         states={
@@ -577,13 +578,15 @@ def build_model(
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="assets",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=savings_grid,
             envelope=envelope_config(envelope),
             n_constrained_points=32,
+        ),
+        liquid=LiquidMargin(
+            state="assets",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     return Model(
