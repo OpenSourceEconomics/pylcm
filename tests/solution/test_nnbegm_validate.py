@@ -8,7 +8,7 @@ NBEGM. Building the model must reject it either way.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, FiniteOuterGrid, LinSpacedGrid, Model, categorical
 from lcm.case_piece import boundary, case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
@@ -145,7 +145,7 @@ def test_nnbegm_rejects_a_piece_that_hides_a_branch():
         outer_action="illiquid_investment",
         outer_state="illiquid",
         outer_post_decision="new_illiquid",
-        outer_grid=ILLIQUID_GRID,
+        outer_search=FiniteOuterGrid(grid=ILLIQUID_GRID),
         outer_no_adjustment_candidate="keep_illiquid",
     )
     with pytest.raises(NBEGMCaseError, match="smoothness gate"):

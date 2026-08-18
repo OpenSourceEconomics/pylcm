@@ -35,8 +35,9 @@ in scope.
 The re-solve absorbs the inner-reads-outer direction only. The reverse — the
 outer state's law reading a value the inner solve *produces* — is not absorbed
 by anything, which is why it is checked above. The other approximation NNBEGM
-makes is the finite outer candidate set (the grid plus the keeper), a property
-of the declared `outer_grid` rather than of the model's function structure. For
+makes is in the outer candidate set, a property of the declared `outer_search`
+rather than of the model's function structure: `FiniteOuterGrid` fixes it to the
+grid plus the keeper, while `AdaptiveOuterMesh` refines it per node. For
 the same reason NEGM's outer-cost contract and its durable-last carry layout do
 not carry over: there is no credited-cost lift, and the outer envelope is a
 pointwise fold of carry rows that already share the liquid grid.

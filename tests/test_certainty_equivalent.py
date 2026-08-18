@@ -40,6 +40,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     ScaledLotteryDifferentiationError,
 )
+from lcm.outer_search import FiniteOuterGrid
 from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -1055,7 +1056,9 @@ def _minimal_nnbegm() -> Any:
         outer_action="investment",
         outer_state="stock",
         outer_post_decision="new_stock",
-        outer_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+        outer_search=FiniteOuterGrid(
+            grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
+        ),
         outer_no_adjustment_candidate="keep_stock",
     )
 

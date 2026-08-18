@@ -10,7 +10,7 @@ to outer batching — before any breakpoint machinery enters.
 import numpy as np
 import pytest
 
-from lcm import NNBEGM, NormalIIDProcess
+from lcm import NNBEGM, FiniteOuterGrid, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import NBEGM
 from tests.test_models import n_nbegm_toy as toy
@@ -37,7 +37,7 @@ def test_rejects_outer_post_decision_equal_to_inner_post_decision() -> None:
             outer_action="illiquid_investment",
             outer_state="illiquid",
             outer_post_decision="liquid_savings",
-            outer_grid=toy.OUTER_GRID,
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
         )
 
 
@@ -49,22 +49,9 @@ def test_rejects_stochastic_outer_grid() -> None:
             outer_action="illiquid_investment",
             outer_state="illiquid",
             outer_post_decision="new_illiquid",
-            outer_grid=NormalIIDProcess(
-                n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0
+            outer_search=FiniteOuterGrid(
+                grid=NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
             ),
-        )
-
-
-def test_rejects_negative_outer_batch_size() -> None:
-    """`outer_batch_size` is `0` (all nodes at once) or a positive chunk size."""
-    with pytest.raises(RegimeInitializationError, match="outer_batch_size"):
-        NNBEGM(
-            inner=_nbegm_inner(),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
-            outer_grid=toy.OUTER_GRID,
-            outer_batch_size=-1,
         )
 
 
@@ -76,7 +63,7 @@ def test_rejects_inner_without_explicit_continuous_state() -> None:
             outer_action="illiquid_investment",
             outer_state="illiquid",
             outer_post_decision="new_illiquid",
-            outer_grid=toy.OUTER_GRID,
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
         )
 
 
