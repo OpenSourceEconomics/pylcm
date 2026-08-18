@@ -1,8 +1,10 @@
-"""Native exact-kernel availability is checked at the earliest owning boundary.
+"""Exact-kernel capability is checked after portable model semantics.
 
-Importing pylcm remains possible without a compiled kernel. Selecting
-`ExactEnvelope` for a model fails during `Model(...)`; low-level verdict entry
-points retain their own fail-loud guard.
+Importing pylcm remains possible without a compiled kernel. A semantically valid
+model selecting ``ExactEnvelope`` fails during ``Model(...)`` when that backend is
+absent, while low-level verdict entry points retain their own fail-loud guard.
+File presence, rather than loadability, distinguishes a supported absence from a
+present-but-broken build.
 """
 
 import re
@@ -13,29 +15,22 @@ import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
-from tests import conftest
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
 def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
-    """A model cannot defer an unavailable selected backend until `solve()`."""
+    """A valid model cannot defer an unavailable selected backend until ``solve``."""
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
         build_dcegm_model()
 
 
-def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(monkeypatch):
-    """Selecting an unavailable exact backend raises the kernel-absence error.
-
-    A platform that builds no kernel cannot construct a model that selects
-    `ExactEnvelope`, and that failure is the kernel's absence rather than a
-    defect in the model. Reporting it as `ModelInitializationError` would name
-    the wrong condition and leave every such test failing on that platform,
-    since only the kernel-absence error identifies a failure a kernelless host
-    is entitled to skip.
-    """
+def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
+    monkeypatch,
+):
+    """An unavailable exact backend raises the dedicated capability error."""
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
     with pytest.raises(ExactAffineKernelUnavailableError) as excinfo:
@@ -45,8 +40,35 @@ def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(monke
     assert not excinfo.errisinstance(ModelInitializationError)
 
 
-def test_a_gpu_backend_requires_the_cuda_exact_kernel(monkeypatch):
-    """A CPU library alone cannot satisfy a selected GPU exact backend."""
+def test_current_cpu_backend_requires_the_cpu_library_file(monkeypatch, tmp_path):
+    """The skip predicate is false until the selected CPU kernel file exists."""
+    library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
+    monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
+
+    assert ffi.kernel_built_for_current_backend() is False
+    library.touch()
+    assert ffi.kernel_built_for_current_backend() is True
+
+
+def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
+    monkeypatch, tmp_path
+):
+    """A CPU library alone cannot satisfy an exact verdict on a GPU backend."""
+    cpu_library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    cuda_library = tmp_path / "libcertified_affine_ffi_cuda.so"
+    cpu_library.touch()
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", cpu_library)
+    monkeypatch.setattr(ffi, "_CUDA_LIBRARY", cuda_library)
+    monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
+
+    assert ffi.kernel_built_for_current_backend() is False
+    cuda_library.touch()
+    assert ffi.kernel_built_for_current_backend() is True
+
+
+def test_a_gpu_backend_requires_a_loadable_cuda_exact_kernel(monkeypatch):
+    """A loadable CPU library alone does not satisfy an exact GPU request."""
     monkeypatch.setattr(ffi, "kernel_available", lambda: True)
     monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
@@ -64,7 +86,7 @@ def test_a_missing_kernel_is_reported_when_a_verdict_is_requested(monkeypatch):
 
 
 def test_a_missing_kernel_names_the_path_it_looked_for(monkeypatch):
-    """The message states which file was absent, not merely that one was."""
+    """The absence message states which file was missing."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
@@ -74,78 +96,81 @@ def test_a_missing_kernel_names_the_path_it_looked_for(monkeypatch):
         ffi._ensure_registered()
 
 
-def test_availability_is_false_where_the_kernel_cannot_be_loaded(monkeypatch):
-    """`kernel_available` answers without raising, so callers can branch on it."""
+def test_availability_is_false_where_the_kernel_file_is_absent(monkeypatch):
+    """``kernel_available`` answers rather than raising on supported absence."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
     assert ffi.kernel_available() is False
 
 
-def test_a_kernel_missing_a_target_is_reported_like_a_missing_kernel(monkeypatch):
-    """A library built before a target existed names the rebuild, not a raw symbol.
-
-    A shared object left over from an earlier build loads successfully and only
-    fails when a target added since is looked up in it. That is a stale build,
-    and it is reported as one.
-    """
+def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
+    monkeypatch, tmp_path
+):
+    """A stale shared object is present, not skippable, and names the rebuild."""
+    library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    library.touch()
 
     def raise_missing_symbol(**kwargs):  # noqa: ARG001
         msg = "undefined symbol: ExactCellHullF64"
         raise AttributeError(msg)
 
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
     monkeypatch.setattr(ffi, "_register_platform", raise_missing_symbol)
+    monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
+    assert ffi.kernel_built_for_current_backend() is True
     with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
         ffi._ensure_registered()
 
 
-def test_availability_is_true_where_the_kernel_loads():
-    """A built kernel reports available, so the suite is not skipped wholesale."""
-    assert ffi.kernel_available() is True
-
-
-@pytest.mark.parametrize(
-    ("failed", "asked_for_kernel", "built", "expected"),
-    [
-        (True, True, False, True),
-        (True, True, True, False),
-        (True, False, False, False),
-        (False, True, False, False),
-    ],
-)
-def test_only_a_kernel_request_on_a_kernelless_host_is_skipped(
-    failed, asked_for_kernel, built, expected
+def test_a_present_unloadable_kernel_is_unavailable_but_not_absent(
+    monkeypatch, tmp_path
 ):
-    """A failure is reported as skipped only when the kernel is truly absent."""
-    got = conftest.is_missing_kernel_failure(
-        failed=failed, asked_for_kernel=asked_for_kernel, kernel_built=built
-    )
+    """Load failure remains a hard build failure rather than a skip condition."""
+    library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    library.touch()
 
-    assert got is expected
+    def raise_load_error(**kwargs):  # noqa: ARG001
+        msg = "missing compiler runtime"
+        raise OSError(msg)
+
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
+    monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "_register_platform", raise_load_error)
+    monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
+
+    assert ffi.kernel_built_for_current_backend() is True
+    assert ffi.kernel_available() is False
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_availability_is_true_where_the_kernel_loads():
+    """A built kernel reports available in the selected backend."""
+    assert ffi.kernel_available_for_current_backend() is True
 
 
 def test_a_platform_with_no_kernel_file_reports_it_is_not_built(monkeypatch):
-    """Absence is decided by the file, so a platform that never built one skips."""
+    """A platform that never built a CPU library reports capability absence."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
 
     assert ffi.kernel_built() is False
 
 
-def test_a_kernel_that_cannot_answer_still_counts_as_built():
-    """A present-but-unusable library is a broken build, not an absent one.
+def test_a_present_kernel_counts_as_built_before_it_is_loaded(monkeypatch, tmp_path):
+    """Presence alone distinguishes a potentially broken build from absence."""
+    library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    library.touch()
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
 
-    Skipping exists for a platform that has no kernel at all. A build that is
-    there and cannot answer has to fail: were it skipped instead, a shared
-    object left over from an earlier build would turn the entire certified
-    suite green by removing every test that could have caught it.
-    """
     assert ffi.kernel_built() is True
 
 
 def _f(value):
-    """Return `value` as an array of the precision the suite is running at."""
+    """Return ``value`` in the floating precision selected for this suite."""
     return jnp.asarray(value, dtype=jnp.float64 if X64_ENABLED else jnp.float32)
 
 
@@ -192,7 +217,7 @@ def _f(value):
     ids=["compare", "read", "handover", "cell_hull"],
 )
 def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdict):
-    """No entry point reaches XLA without a kernel behind it."""
+    """No exact entry point reaches XLA without a kernel behind it."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
@@ -200,9 +225,13 @@ def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdi
         request_a_verdict()
 
 
-def test_registration_is_reported_as_done_only_once(monkeypatch):
-    """A second request does not re-register targets already registered."""
+def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
+    """A second verdict request does not re-register existing targets."""
+    library = tmp_path / "libcertified_affine_ffi_cpu.so"
+    library.touch()
     calls = []
+    monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
+    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
     monkeypatch.setattr(
         ffi, "_register_platform", lambda **kwargs: calls.append(kwargs["platform"])

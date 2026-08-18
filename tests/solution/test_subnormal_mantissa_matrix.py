@@ -5,7 +5,7 @@ be omitted only when doing so leaves the rounded result of the consuming
 aggregate unchanged. The original largest-subnormal fixtures below are exact
 omission controls for their particular finite values; the class-boundary cases
 exercise mantissas and continuations for which replacing the weight by zero or
-by ``finfo.tiny`` changes the answer.
+by `finfo.tiny` changes the answer.
 """
 
 from collections.abc import Callable
