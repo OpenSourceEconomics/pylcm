@@ -613,9 +613,7 @@ def exact_cell_hull(
 
 def _broadcast(*operands: FloatND) -> tuple[FloatND, ...]:
     """Broadcast every operand to one common shape."""
-    # `jnp.broadcast_arrays` already returns a tuple; its published type still
-    # says `list`, so state the built form rather than suppress the mismatch.
-    return tuple(jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands]))
+    return jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands])
 
 
 def _target_for(*, operands: tuple[FloatND, ...], f32: str, f64: str) -> str:
