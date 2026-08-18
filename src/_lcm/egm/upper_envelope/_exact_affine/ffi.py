@@ -35,6 +35,10 @@ from lcm.typing import BoolND, FloatND, IntND
 # known.
 UNRESOLVED_STATUS: int = 2
 
+# Batched segment operands carry at least one batch axis ahead of the axis
+# holding the segments themselves.
+_MIN_BATCHED_RANK: int = 2
+
 _TARGETS = (
     "CertifiedAffineCompareF32",
     "CertifiedAffineCompareF64",
@@ -42,6 +46,8 @@ _TARGETS = (
     "ExactAffineReadF64",
     "ExactQueryWinnerF32",
     "ExactQueryWinnerF64",
+    "ExactQueryWinnerBatchedF32",
+    "ExactQueryWinnerBatchedF64",
     "ExactAffineHandoverF32",
     "ExactAffineHandoverF64",
     "ExactCellHullF32",
@@ -296,27 +302,27 @@ def exact_query_winner(
     winner is chosen.
 
     Segment operands are one-dimensional and shared by all elements of
-    ``x_query``. An outer :func:`jax.vmap` is supported with
-    ``vmap_method="sequential"``: the transformed program contains one loop
+    `x_query`. An outer `jax.vmap` is supported with
+    `vmap_method="sequential"`: the transformed program contains one loop
     around this opaque call rather than exposing the integer representation to
     XLA, while an unbatched array of queries is resolved by one call.
 
     Args:
         left_grid: Stored left abscissa of every segment.
         right_grid: Stored right abscissa of every segment.
-        left_value: Stored value at ``left_grid``.
-        right_value: Stored value at ``right_grid``.
+        left_value: Stored value at `left_grid`.
+        right_value: Stored value at `right_grid`.
         live: Whether each segment participates.
         x_query: Query abscissae, of any shape.
 
     Returns:
         Winner indices and one coupled status per query. Status is zero only
         where at least one valid segment brackets the query and the complete
-        total order was resolved; otherwise it is ``UNRESOLVED_STATUS``.
+        total order was resolved; otherwise it is `UNRESOLVED_STATUS`.
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        TypeError: If floating operands do not share `float32` or `float64`.
         ValueError: If segment operands are not nonempty matching vectors.
 
     """
@@ -360,6 +366,93 @@ def exact_query_winner(
     return winner, status
 
 
+def exact_query_winner_batched(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Select the exact owner of every query against that query's own segments.
+
+    Each batch element carries an independent segment set, so a microtile of
+    pairs resolves in one custom call whose operand shapes, and therefore whose
+    compilation key, do not depend on the batch size. Ownership follows the same
+    total order as the shared-segment call: exact affine value, whether the
+    segment extends strictly to the right, exact value slope, then the stable
+    segment index.
+
+    Args:
+        left_grid: Stored left abscissa of every segment, with a trailing
+            segment axis behind one or more batch axes.
+        right_grid: Stored right abscissae, with the same shape.
+        left_value: Values at `left_grid`, with the same shape.
+        right_value: Values at `right_grid`, with the same shape.
+        live: Whether each segment participates, with the same shape.
+        x_query: Query abscissae, carrying the segment operands' batch shape
+            ahead of its own trailing query axis.
+
+    Returns:
+        Winner indices and one coupled status per query, both shaped like
+        `x_query`. An index counts from the start of its own batch element's
+        segments. Status is zero only where at least one live segment of that
+        element brackets the query and the complete total order was resolved;
+        otherwise it is `UNRESOLVED_STATUS`.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
+        TypeError: If floating operands do not share `float32` or `float64`.
+        ValueError: If the segment or query shapes are inconsistent.
+
+    """
+    _ensure_registered()
+    floating = [
+        jnp.asarray(left_grid),
+        jnp.asarray(right_grid),
+        jnp.asarray(left_value),
+        jnp.asarray(right_value),
+    ]
+    if any(array.ndim < _MIN_BATCHED_RANK for array in floating):
+        msg = (
+            "batched exact-query segment operands need a batch axis before the "
+            f"segment axis, got {[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    shape = floating[0].shape
+    if shape[-1] == 0 or any(array.shape != shape for array in floating[1:]):
+        msg = (
+            "batched exact-query segment operands must be nonempty and share a "
+            f"shape, got {[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    query = jnp.asarray(x_query)
+    if query.ndim != len(shape) or query.shape[:-1] != shape[:-1]:
+        msg = (
+            f"x_query must carry the batch shape {shape[:-1]} of the segment "
+            f"operands ahead of its query axis, got {query.shape}."
+        )
+        raise ValueError(msg)
+    target = _target_for(
+        operands=[*floating, query],
+        f32="ExactQueryWinnerBatchedF32",
+        f64="ExactQueryWinnerBatchedF64",
+    )
+    live_array = jnp.asarray(live, dtype=jnp.int32)
+    if live_array.shape != shape:
+        msg = f"live must have segment shape {shape}, got {live_array.shape}."
+        raise ValueError(msg)
+    result_shapes = (
+        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+    )
+    winner, status = jax.ffi.ffi_call(
+        target, result_shapes, vmap_method="broadcast_all"
+    )(*floating, live_array, query)
+    return winner, status
+
+
 def exact_affine_handover(
     *,
     a_x0: FloatND,
@@ -383,12 +476,12 @@ def exact_affine_handover(
     Args:
         a_x0: Lower endpoint abscissa of the outgoing line.
         a_x1: Upper endpoint abscissa of the outgoing line.
-        a_v0: Outgoing-line value at ``a_x0``.
-        a_v1: Outgoing-line value at ``a_x1``.
+        a_v0: Outgoing-line value at `a_x0`.
+        a_v1: Outgoing-line value at `a_x1`.
         b_x0: Lower endpoint abscissa of the incoming line.
         b_x1: Upper endpoint abscissa of the incoming line.
-        b_v0: Incoming-line value at ``b_x0``.
-        b_v1: Incoming-line value at ``b_x1``.
+        b_v0: Incoming-line value at `b_x0`.
+        b_v1: Incoming-line value at `b_x1`.
         left: Left edge of the interval the outgoing line owns from.
         right: Right edge of the interval in which the handover must lie.
 
@@ -450,11 +543,11 @@ def exact_cell_hull(
     Args:
         left: Left edge of every cell in the batch.
         right: Right edge of every cell in the batch.
-        live: Run mask with shape ``left.shape + (max_runs,)``.
+        live: Run mask with shape `left.shape + (max_runs,)`.
         low: Lower candidate index of each run's covering link.
         high: Upper candidate index of each run's covering link.
         endog_grid: Candidate abscissae, with one trailing candidate axis.
-        value: Candidate values, with the same shape as ``endog_grid``.
+        value: Candidate values, with the same shape as `endog_grid`.
         max_runs: Static owner capacity of every cell.
 
     Returns:
@@ -463,7 +556,7 @@ def exact_cell_hull(
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        TypeError: If floating operands do not share `float32` or `float64`.
         ValueError: If the batch, run, or candidate shapes are inconsistent.
 
     """
