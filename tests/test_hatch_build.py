@@ -14,6 +14,7 @@ Two properties the build owes its caller:
   says so at the time.
 """
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,28 @@ def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsy
     hatch_build.build_exact_affine(root=Path("/nowhere"))
 
     assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
+
+
+def test_a_compile_failure_reports_diagnostics_written_to_stdout(tmp_path, monkeypatch):
+    """A failing compile names what the compiler said, whichever stream it used.
+
+    MSVC writes its diagnostics to stdout rather than stderr, so a report built
+    only from stderr states an exit code and nothing else — the one moment the
+    message is needed.
+    """
+    monkeypatch.setattr(
+        hatch_build.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["cl"],
+            returncode=2,
+            stdout="kernel.cc(9): error C2065: undeclared\n",
+            stderr="",
+        ),
+    )
+    target = tmp_path / "certified_affine_ffi_cpu.dll"
+
+    with pytest.raises(RuntimeError, match="error C2065: undeclared"):
+        hatch_build._compile(command=["cl", "/nologo"], target=target)
+
+    assert "error C2065: undeclared" in target.with_suffix(".dll.build.log").read_text()
