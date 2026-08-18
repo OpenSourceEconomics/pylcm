@@ -316,10 +316,11 @@ def exact_query_winner(
     winner is chosen.
 
     Segment operands are one-dimensional and shared by all elements of
-    `x_query`. An outer `jax.vmap` is supported with
-    `vmap_method="sequential"`: the transformed program contains one loop
-    around this opaque call rather than exposing the integer representation to
-    XLA, while an unbatched array of queries is resolved by one call.
+    `x_query`, and one call resolves them. Under an outer `jax.vmap` each batch
+    element carries its own segment set, which is what
+    `exact_query_winner_batched` consumes: the transformed program holds one
+    batched call for the whole batch, so a caller that vectorized its rows keeps
+    that parallelism instead of trading it for a loop.
 
     Args:
         left_grid: Stored left abscissa of every segment.
@@ -361,23 +362,11 @@ def exact_query_winner(
         )
         raise ValueError(msg)
     query = jnp.asarray(x_query)
-    target = _target_for(
-        operands=(*floating, query),
-        f32="ExactQueryWinnerF32",
-        f64="ExactQueryWinnerF64",
-    )
     live_array = jnp.asarray(live, dtype=jnp.int32)
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
-    result_shapes = (
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
-    )
-    winner, status = jax.ffi.ffi_call(target, result_shapes, vmap_method="sequential")(
-        *floating, live_array, query
-    )
-    return winner, status
+    return _shared_segment_winner(*floating, live_array, query)
 
 
 def exact_query_winner_batched(
@@ -448,23 +437,127 @@ def exact_query_winner_batched(
             f"operands ahead of its query axis, got {query.shape}."
         )
         raise ValueError(msg)
-    target = _target_for(
-        operands=(*floating, query),
-        f32="ExactQueryWinnerBatchedF32",
-        f64="ExactQueryWinnerBatchedF64",
-    )
     live_array = jnp.asarray(live, dtype=jnp.int32)
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
+    return _batched_segment_winner_impl(*floating, live_array, query)
+
+
+def _batched_segment_winner_impl(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Resolve every query against its own batch element's segment set."""
+    target = _target_for(
+        operands=(left_grid, right_grid, left_value, right_value, x_query),
+        f32="ExactQueryWinnerBatchedF32",
+        f64="ExactQueryWinnerBatchedF64",
+    )
     result_shapes = (
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
     )
     winner, status = jax.ffi.ffi_call(
         target, result_shapes, vmap_method="broadcast_all"
-    )(*floating, live_array, query)
+    )(left_grid, right_grid, left_value, right_value, live, x_query)
     return winner, status
+
+
+def _shared_segment_winner_impl(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Resolve every query against the one segment set they all share."""
+    target = _target_for(
+        operands=(left_grid, right_grid, left_value, right_value, x_query),
+        f32="ExactQueryWinnerF32",
+        f64="ExactQueryWinnerF64",
+    )
+    result_shapes = (
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+    )
+    winner, status = jax.ffi.ffi_call(target, result_shapes, vmap_method="sequential")(
+        left_grid, right_grid, left_value, right_value, live, x_query
+    )
+    return winner, status
+
+
+def _with_batch_axis(
+    *, operand: FloatND | IntND, batched: bool, axis_size: int
+) -> FloatND | IntND:
+    """Give an operand shared by the whole batch the batch axis it lacks."""
+    if batched:
+        return operand
+    return jnp.broadcast_to(operand, (axis_size, *operand.shape))
+
+
+def _shared_segment_winner_vmap(
+    axis_size: int,
+    in_batched: list[bool],
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[tuple[IntND, IntND], tuple[bool, bool]]:
+    """Resolve a whole batch in one call rather than a loop around a scalar one.
+
+    Two shapes reach this rule, and each has a target that consumes it whole:
+
+    - segments shared by every element, only the queries batched ⇒ the
+      shared-segment target already accepts queries of any shape, so the batch
+      axis folds into the query axis and no operand is replicated;
+    - segments varying with the element ⇒ the batch-native target, which reads
+      every element against its own segments. An operand the caller left
+      unbatched is shared by every element and is stacked to say so.
+    """
+    *segments_batched, query_batched = in_batched
+    query = _with_batch_axis(
+        operand=x_query, batched=query_batched, axis_size=axis_size
+    )
+    if any(segments_batched):
+        winner, status = _batched_segment_winner_impl(
+            _with_batch_axis(
+                operand=left_grid, batched=segments_batched[0], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=right_grid, batched=segments_batched[1], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=left_value, batched=segments_batched[2], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=right_value, batched=segments_batched[3], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=live, batched=segments_batched[4], axis_size=axis_size
+            ),
+            query.reshape(axis_size, -1),
+        )
+    else:
+        winner, status = _shared_segment_winner_impl(
+            left_grid, right_grid, left_value, right_value, live, query.reshape(-1)
+        )
+    published = (winner.reshape(query.shape), status.reshape(query.shape))
+    return published, (True, True)
+
+
+# Bound by assignment rather than by decorating the `def`: `custom_vmap` returns
+# a callable instance, and a package-wide beartype claw rebinds such an instance
+# to its own `__call__`, which would leave `def_vmap` unreachable at import.
+_shared_segment_winner = jax.custom_batching.custom_vmap(_shared_segment_winner_impl)
+_shared_segment_winner.def_vmap(_shared_segment_winner_vmap)
 
 
 def exact_affine_handover(
