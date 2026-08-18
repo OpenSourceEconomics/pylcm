@@ -70,3 +70,6 @@ docs/superpowers/
 
 # JUnit XML reports written by test runners (unique path per invocation).
 reports/
+
+# Local review-tool config, per checkout rather than repository content.
+.roborev.toml
