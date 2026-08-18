@@ -21,6 +21,7 @@ from lcm import (
     OuterSearch,
 )
 from lcm.exceptions import RegimeInitializationError
+from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import OUTER_GRID, SAVINGS_GRID
 
@@ -123,12 +124,17 @@ def test_nnbegm_without_outer_search_raises_at_construction() -> None:
 # runs float32 and disagrees in the 8th digit, so a baseline harvested outside
 # pytest would pin the wrong numbers.
 #
-# Compared to a tolerance, not to the bit. The pair agreed bit-for-bit when the
-# baseline was taken, but rebuilding the exact-affine CPU kernel moved two of
-# these entries by one ULP, so bit equality pins the `.so` build rather than the
-# equivalence under test. `_FINITE_GRID_RTOL` sits two orders above that noise
-# and twelve below anything a genuine change in candidate generation would do.
-_FINITE_GRID_RTOL = 1e-14
+# Compared in ULP of the working format, not to the bit and not to a fixed
+# relative tolerance. Two reasons, and they point the same way. The pair agreed
+# bit-for-bit when the baseline was taken, but rebuilding the exact-affine CPU
+# kernel moved two of these entries by one ULP, so bit equality pins the `.so`
+# build rather than the equivalence under test; and the numbers below are x64,
+# while the suite also runs at `--precision=32`, where the same solve lands
+# ~1e-7 away -- a fixed rtol either fails the fp32 leg or is too loose to say
+# anything at x64. Measured gaps: head 1 ULP at x64, 2 at fp32; the sum is exact
+# at both. `_FINITE_GRID_N_ULP` doubles that, and a genuine change in candidate
+# generation moves these values by orders of magnitude more.
+_FINITE_GRID_N_ULP = 4
 _FINITE_GRID_BASELINE_HEAD = (
     -25.336494502711897,
     -19.638656410864485,
@@ -159,9 +165,15 @@ def test_finite_outer_grid_reproduces_the_retired_legacy_pair_values() -> None:
     )
     assert values.size == _FINITE_GRID_BASELINE_SIZE
     assert np.isfinite(values).all()
-    np.testing.assert_allclose(
-        values[:6], _FINITE_GRID_BASELINE_HEAD, rtol=_FINITE_GRID_RTOL
+    assert_agrees_to_ulp(
+        values[:6],
+        np.asarray(_FINITE_GRID_BASELINE_HEAD, dtype=values.dtype),
+        n_ulp=_FINITE_GRID_N_ULP,
+        err_msg="first six solution values",
     )
-    np.testing.assert_allclose(
-        values.sum(), _FINITE_GRID_BASELINE_SUM, rtol=_FINITE_GRID_RTOL
+    assert_agrees_to_ulp(
+        values.sum(),
+        np.asarray(_FINITE_GRID_BASELINE_SUM, dtype=values.dtype),
+        n_ulp=_FINITE_GRID_N_ULP,
+        err_msg="sum over all solution values",
     )
