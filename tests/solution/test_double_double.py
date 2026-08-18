@@ -18,7 +18,7 @@ from _lcm.egm.upper_envelope.double_double import (
     normalizing_exponent,
     two_prod,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 
 def _dtype():
