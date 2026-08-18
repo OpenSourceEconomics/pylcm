@@ -29,6 +29,14 @@ from tests.test_models.deterministic.dcegm_variants import (
 )
 from tests.test_models.ds2024_housing import build_model
 
+_PORTABLE_DCEGM_SOLVER = dataclasses.replace(
+    DCEGM_SOLVER,
+    envelope=FUESEnvelope(),
+)
+_PORTABLE_DCEGM_RETIREMENT = dcegm_retirement.replace(
+    solver=_PORTABLE_DCEGM_SOLVER
+)
+
 
 def test_negm_regime_does_not_qualify_for_the_policy_read():
     """A NEGM regime keeps the grid path: its published policy is keeper-only.
@@ -108,7 +116,7 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
     the tracked follow-up.
     """
     model = _model_from_alive(
-        dcegm_retirement.replace(
+        _PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
             states={
                 "wealth": WEALTH_GRID,
@@ -135,7 +143,7 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     between adjacent nodes.
     """
     model = _model_from_alive(
-        dcegm_retirement.replace(
+        _PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
             transition=_next_regime_reads_wealth,
         )
@@ -153,7 +161,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
     re-decision across the passive axis is available.
     """
     skill_grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=5)
-    alive = dcegm_retirement.replace(
+    alive = _PORTABLE_DCEGM_RETIREMENT.replace(
         active=lambda age: age < 50,
         states={"wealth": WEALTH_GRID, "skill": skill_grid},
         state_transitions={

@@ -14,6 +14,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    FUESEnvelope,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -205,7 +206,26 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(build, match):
 
 
 # A regime satisfying the full DC-EGM contract; every case below breaks one rule.
-VALID = dcegm_variants.dcegm_retirement
+# These are semantic-contract tests, so they select a portable envelope explicitly
+# rather than making their outcome depend on a machine-local native library.
+VALID = dcegm_variants.dcegm_retirement.replace(
+    solver=dataclasses.replace(
+        dcegm_variants.DCEGM_SOLVER,
+        envelope=FUESEnvelope(),
+    )
+)
+PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
+    solver=dataclasses.replace(
+        dcegm_variants.DCEGM_SOLVER,
+        envelope=FUESEnvelope(),
+    )
+)
+PORTABLE_DCEGM_WORKING_LIFE = dcegm_variants.dcegm_working_life.replace(
+    solver=dataclasses.replace(
+        dcegm_variants.DCEGM_SOLVER,
+        envelope=FUESEnvelope(),
+    )
+)
 
 
 CASES = {
@@ -339,6 +359,28 @@ def test_dcegm_regime_rejects_nonlinear_certainty_equivalent():
     """
     with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
         _build_model(VALID.replace(certainty_equivalent=PowerMean()))
+
+
+def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
+    """A malformed exact-backend model reports its semantic defect first."""
+    from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
+
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+    malformed = _without_function(dcegm_variants.dcegm_retirement, "resources")
+
+    with pytest.raises(ModelInitializationError, match="resources"):
+        _build_model(malformed)
+
+
+def test_portable_contract_model_constructs_without_an_exact_kernel(monkeypatch):
+    """A valid portable-envelope model is independent of exact-kernel presence."""
+    from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
+
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    model = _build_model(VALID)
+
+    assert model.n_periods == N_PERIODS
 
 
 @pytest.mark.parametrize(("build", "match"), CASES.values(), ids=CASES.keys())
@@ -503,7 +545,7 @@ def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
             "working_life": base.working_life.replace(
                 active=lambda age, la=last_age: age < la
             ),
-            "retirement": dcegm_variants.dcegm_retirement_full.replace(
+            "retirement": PORTABLE_DCEGM_RETIREMENT_FULL.replace(
                 transition=retirement_transition,
                 active=lambda age, la=last_age: age < la,
             ),
@@ -570,7 +612,7 @@ def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
     )
-    dcegm_source = dcegm_variants.dcegm_working_life.replace(
+    dcegm_source = PORTABLE_DCEGM_WORKING_LIFE.replace(
         active=lambda age: 50 <= age < 60,
     )
     model = Model(
@@ -599,7 +641,7 @@ def test_non_dcegm_non_terminal_target_raises():
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
     )
-    dcegm_source = dcegm_variants.dcegm_working_life.replace(
+    dcegm_source = PORTABLE_DCEGM_WORKING_LIFE.replace(
         active=lambda age: age < 60,
     )
     ages = AgeGrid(start=40, stop=60, step="10Y")
