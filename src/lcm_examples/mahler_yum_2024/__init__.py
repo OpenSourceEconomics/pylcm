@@ -476,30 +476,15 @@ def next_lagged_effort(effort: DiscreteAction) -> DiscreteState:
     return effort
 
 
-def _survival_probability(
-    *,
-    period: Period,
-    education: DiscreteState,
-    health: DiscreteState,
-    transition_probs: FloatND,
-) -> ScalarFloat:
-    return transition_probs[period, education, health]
-
-
 def working_to_working_probability(
     *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
+    survival_probs: FloatND,
 ) -> ScalarFloat:
-    survival = _survival_probability(
-        period=period,
-        education=education,
-        health=health,
-        transition_probs=transition_probs,
-    )
-    return jnp.where(period < retirement_period - 1, survival, 0.0)
+    survival_prob = survival_probs[period, education, health]
+    return jnp.where(period < retirement_period - 1, survival_prob, 0.0)
 
 
 def working_to_retirement_probability(
@@ -507,15 +492,10 @@ def working_to_retirement_probability(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
+    survival_probs: FloatND,
 ) -> ScalarFloat:
-    survival = _survival_probability(
-        period=period,
-        education=education,
-        health=health,
-        transition_probs=transition_probs,
-    )
-    return jnp.where(period >= retirement_period - 1, survival, 0.0)
+    survival_prob = survival_probs[period, education, health]
+    return jnp.where(period >= retirement_period - 1, survival_prob, 0.0)
 
 
 def working_to_dead_probability(
@@ -523,14 +503,9 @@ def working_to_dead_probability(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
+    survival_probs: FloatND,
 ) -> ScalarFloat:
-    return 1.0 - _survival_probability(
-        period=period,
-        education=education,
-        health=health,
-        transition_probs=transition_probs,
-    )
+    return 1.0 - survival_probs[period, education, health]
 
 
 def retirement_to_retirement_probability(
@@ -538,14 +513,9 @@ def retirement_to_retirement_probability(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
+    survival_probs: FloatND,
 ) -> ScalarFloat:
-    return _survival_probability(
-        period=period,
-        education=education,
-        health=health,
-        transition_probs=transition_probs,
-    )
+    return survival_probs[period, education, health]
 
 
 def retirement_to_dead_probability(
@@ -553,14 +523,9 @@ def retirement_to_dead_probability(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
+    survival_probs: FloatND,
 ) -> ScalarFloat:
-    return 1.0 - _survival_probability(
-        period=period,
-        education=education,
-        health=health,
-        transition_probs=transition_probs,
-    )
+    return 1.0 - survival_probs[period, education, health]
 
 
 def savings_constraint(
@@ -717,16 +682,7 @@ DEAD_REGIME = Regime(
     functions={"utility": dead_utility},
 )
 
-_TRANSITION_PROBS = _load_survival_probs()
-_NEXT_HEALTH_FIXED_PARAMS = {
-    "health_intercept": health_intercept,
-    "health_age_effects": health_age_effects,
-    "good_health_coefficient": good_health_coefficient,
-    "health_type_coefficient": health_type_coefficient,
-    "college_coefficient": college_coefficient,
-    "health_effort_coefficient": health_effort_coefficient,
-    "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
-}
+_SURVIVAL_PROBS = _load_survival_probs()
 
 MAHLER_YUM_MODEL = Model(
     regimes={
@@ -737,22 +693,17 @@ MAHLER_YUM_MODEL = Model(
     ages=ages,
     regime_id_class=RegimeId,
     fixed_params={
-        "working": {
-            "effort_grid": effort_grid,
-            "productivity_type_multiplier": productivity_type_multiplier,
-            "consumption_utility": {"sigma": risk_aversion},
-            "next_health": _NEXT_HEALTH_FIXED_PARAMS,
-            "working": {"next_regime": {"transition_probs": _TRANSITION_PROBS}},
-            "retirement": {"next_regime": {"transition_probs": _TRANSITION_PROBS}},
-            "dead": {"next_regime": {"transition_probs": _TRANSITION_PROBS}},
-        },
-        "retirement": {
-            "effort_grid": effort_grid,
-            "consumption_utility": {"sigma": risk_aversion},
-            "next_health": _NEXT_HEALTH_FIXED_PARAMS,
-            "retirement": {"next_regime": {"transition_probs": _TRANSITION_PROBS}},
-            "dead": {"next_regime": {"transition_probs": _TRANSITION_PROBS}},
-        },
+        "effort_grid": effort_grid,
+        "productivity_type_multiplier": productivity_type_multiplier,
+        "sigma": risk_aversion,
+        "health_intercept": health_intercept,
+        "health_age_effects": health_age_effects,
+        "good_health_coefficient": good_health_coefficient,
+        "health_type_coefficient": health_type_coefficient,
+        "college_coefficient": college_coefficient,
+        "health_effort_coefficient": health_effort_coefficient,
+        "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
+        "survival_probs": _SURVIVAL_PROBS,
     },
 )
 
@@ -1004,8 +955,9 @@ def create_inputs(
     """Build model params and initial conditions.
 
     The two-valued discount-factor grid (`mean ± std`) is exposed via
-    `model_params["working"]["discount_factor"]`; the `discount_type` state
-    picks the per-subject value at simulate time.
+    `model_params["discount_factor_by_type"]`; the `discount_type` state picks
+    the per-subject value at simulate time. Model-level parameters broadcast to
+    each living regime that uses them.
 
     Returns:
         Tuple of (model_params, initial_conditions_df).
@@ -1034,7 +986,7 @@ def create_inputs(
     income_process = params["income_process"]
     income_norm = _compute_income_normalization(sigx=income_process["sigx"])
 
-    common_params = {
+    model_params = {
         "gross_interest_rate": gross_interest_rate,
         "min_consumption": min_consumption,
         "tax_scale": tax_scale,
@@ -1042,55 +994,35 @@ def create_inputs(
         "avg_earnings": avg_earnings,
         "benefit_rate": benefit_rate,
         "retirement_period": retirement_period,
-        "work_disutility": {
-            "work_disutility_grid": create_work_disutility_grid(
-                work_disutility=params["work_disutility"],
-                education_disutility_adjustment=params[
-                    "education_disutility_adjustment"
-                ],
-            ),
-        },
-        "effort_cost": {
-            "effort_elasticity": params["effort_elasticity"],
-            "effort_cost_grid": create_effort_cost_grid(
-                effort_cost=params["effort_cost"]
-            ),
-        },
-        "consumption_utility": {
-            "utility_constant": params["utility_constant"],
-            "health_consumption_penalty": params["health_consumption_penalty"],
-        },
-        "base_income": {
-            "y1": jnp.array(
-                [income_process["y1"]["low"], income_process["y1"]["high"]]
-            ),
-            "yt_s": jnp.array(
-                [income_process["yt_s"]["low"], income_process["yt_s"]["high"]]
-            ),
-            "yt_sq": jnp.array(
-                [income_process["yt_sq"]["low"], income_process["yt_sq"]["high"]]
-            ),
-            "wagep": jnp.array(
-                [income_process["wagep"]["low"], income_process["wagep"]["high"]]
-            ),
-            "income_normalization": income_norm,
-        },
-        "pension": {
-            "pension_base": _compute_pension_base(
-                income_process=income_process,
-                income_normalization=income_norm,
-            ),
-            "pension_replacement_rate": params["pension_replacement_rate"],
-        },
-        "adjustment_cost_penalty": {
-            "adjustment_cost_envelope": create_adjustment_cost_envelope(
-                adjustment_cost=params["adjustment_cost"],
-            ),
-        },
-        "scaled_productivity_shock": {
-            "productivity_shock_scale": jnp.sqrt(income_process["sigx"]),
-        },
-        "discount_factor": {"discount_factor_by_type": discount_factor_by_type},
+        "work_disutility_grid": create_work_disutility_grid(
+            work_disutility=params["work_disutility"],
+            education_disutility_adjustment=params["education_disutility_adjustment"],
+        ),
+        "effort_elasticity": params["effort_elasticity"],
+        "effort_cost_grid": create_effort_cost_grid(effort_cost=params["effort_cost"]),
+        "utility_constant": params["utility_constant"],
+        "health_consumption_penalty": params["health_consumption_penalty"],
+        "y1": jnp.array([income_process["y1"]["low"], income_process["y1"]["high"]]),
+        "yt_s": jnp.array(
+            [income_process["yt_s"]["low"], income_process["yt_s"]["high"]]
+        ),
+        "yt_sq": jnp.array(
+            [income_process["yt_sq"]["low"], income_process["yt_sq"]["high"]]
+        ),
+        "wagep": jnp.array(
+            [income_process["wagep"]["low"], income_process["wagep"]["high"]]
+        ),
+        "income_normalization": income_norm,
+        "pension_base": _compute_pension_base(
+            income_process=income_process,
+            income_normalization=income_norm,
+        ),
+        "pension_replacement_rate": params["pension_replacement_rate"],
+        "adjustment_cost_envelope": create_adjustment_cost_envelope(
+            adjustment_cost=params["adjustment_cost"],
+        ),
+        "productivity_shock_scale": jnp.sqrt(income_process["sigx"]),
+        "discount_factor_by_type": discount_factor_by_type,
     }
 
     td = _build_type_distribution()
@@ -1159,24 +1091,6 @@ def create_inputs(
         }
     )
 
-    retirement_param_names = {
-        "gross_interest_rate",
-        "min_consumption",
-        "retirement_period",
-        "effort_cost",
-        "consumption_utility",
-        "pension",
-        "adjustment_cost_penalty",
-        "discount_factor",
-    }
-    model_params = {
-        "working": common_params,
-        "retirement": {
-            name: value
-            for name, value in common_params.items()
-            if name in retirement_param_names
-        },
-    }
     return model_params, initial_conditions_df
 
 

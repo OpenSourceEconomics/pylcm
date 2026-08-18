@@ -7,10 +7,12 @@ title: Mahler & Yum (2024)
 Example implementation of the lifecycle model from @mahler2024.
 
 Three regimes represent working life, mandatory retirement from age 65, and death. The
-working regime has nine states and three actions. Retirement removes labor supply,
-productivity, and the productivity shock because they no longer affect the model. The
-model features stochastic health and regime transitions, AR(1) productivity shocks, and
-discount-factor heterogeneity. It ships with calibrated data files for survival
+working regime has nine states: wealth, health, productivity shock, lagged effort,
+adjustment cost, education, productivity type, health type, and discount type. Its three
+actions are labor supply, saving, and health effort. Retirement removes labor supply,
+productivity type, and the productivity shock because they no longer affect the model.
+The model features stochastic health and regime transitions, AR(1) productivity shocks,
+and discount-factor heterogeneity. It ships with calibrated data files for survival
 probabilities and initial distributions.
 
 ::::\{important} This model is computationally intensive. A GPU is recommended; run it
