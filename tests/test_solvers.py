@@ -111,7 +111,7 @@ def test_model_with_dcegm_solver_builds():
     post-decision, and inverse-marginal-utility functions); a stock
     grid-search regime would be rejected for missing them.
     """
-    model = build_dcegm_model()
+    model = build_dcegm_model(envelope=FUESEnvelope())
     assert isinstance(model.user_regimes["working_life"].solver, DCEGM)
 
 
