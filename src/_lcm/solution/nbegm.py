@@ -221,10 +221,10 @@ class NBEGM(Solver):
     When a carry target's next-state law reads the current liquid state, the
     continuation core evaluates the continuation DAG once per declared liquid
     interval. The body runs at a fixed vector width, so peak intermediates
-    follow that width and not this value: `0` commits the whole axis in one
-    iteration and is both the fastest and the smallest-workspace setting. A
-    positive value commits that many intervals per iteration, rounded up to a
-    multiple of the vector width. Every admitted value runs one executable and
+    follow that width and not this value. `0` commits the whole axis in one
+    iteration, which is the fewest iterations and so the least work; a positive
+    value commits that many intervals per iteration, rounded up to a multiple of
+    the vector width. Every admitted value runs one executable and
     publishes bit-identical values, because the partition is a loop stride
     rather than part of the compilation key.
     """
@@ -234,9 +234,9 @@ class NBEGM(Solver):
     Both ride-along cores fan out per cell — the continuation core's transition/
     child-interpolation read and the envelope core's candidate solve. Each
     evaluates cells at a fixed vector width, so no cell's buffers wait on the
-    whole mesh and peak intermediates follow that width rather than this value:
-    `0` commits the whole mesh in one iteration and is both the fastest and the
-    smallest-workspace setting. A positive value commits that many cells per
+    whole mesh and peak intermediates follow that width rather than this value.
+    `0` commits the whole mesh in one iteration, which is the fewest iterations
+    and so the least work; a positive value commits that many cells per
     iteration, rounded up to a multiple of the vector width. Every admitted
     value runs one executable and publishes bit-identical values, because the
     partition is a loop stride rather than part of the compilation key.
@@ -247,9 +247,9 @@ class NBEGM(Solver):
     Both ride-along cores evaluate one instance per discrete-action branch — the
     continuation core one continuation row per branch, the envelope core one
     continuous subproblem per branch. Each evaluates branches at a fixed vector
-    width, so per-branch intermediates follow that width rather than this value:
-    `0` commits the whole axis in one iteration and is both the fastest and the
-    smallest-workspace setting. A positive value commits that many branches per
+    width, so per-branch intermediates follow that width rather than this value.
+    `0` commits the whole axis in one iteration, which is the fewest iterations
+    and so the least work; a positive value commits that many branches per
     iteration, rounded up to a multiple of the vector width. Every admitted
     value runs one executable and publishes bit-identical values, because the
     partition is a loop stride rather than part of the compilation key.
