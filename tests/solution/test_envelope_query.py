@@ -827,7 +827,8 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     Multiplying every grid and value coordinate by one positive power of two is
     a change of units: exact in binary floating point, and it leaves the value
     ordering and every slope ordering algebraically untouched, so the published
-    policy and marginal must be identical. Round 8 failed this three ways at
+    policy and marginal must be identical. The earlier selector failed this
+    three ways at
     once -- the cross products, the interpolant's products, and Dekker's own
     splitting each break at their own scale -- and each turned a strict exact
     ordering into a branch-order coin flip.
@@ -945,7 +946,8 @@ def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
 ):
     """A candidate that cannot bracket the query is mathematically irrelevant.
 
-    Round 9 normalized the whole problem by ONE grid exponent and ONE value
+    An earlier repair normalized the whole problem by ONE grid exponent and ONE
+    value
     exponent chosen from the largest candidate anywhere in the input. That map
     is not injective: a remote segment which does not bracket the query still
     selected the scale, and two adjacent local floats collapsed into the same
@@ -1223,7 +1225,7 @@ def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
 
     The grid lift exists because differencing can lose a difference; the value
     lift exists because the increment `r*d` can be smaller than anything the
-    format represents at that scale. Rounds 8 to 11 all reasoned that the value
+    format represents at that scale. Earlier repairs all reasoned that the value
     axis needed no scale because its intermediates stay BOUNDED, which is true
     and beside the point (234 of 234 generated cells).
 
@@ -1322,7 +1324,8 @@ def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
     strictly orders, the exact comparator has been bypassed on precisely the
     input it exists for, and the answer is whatever the approximate layer said.
 
-    Round 11 read `radius == 0` as that certificate. A radius is a float: at the
+    An earlier revision read `radius == 0` as that certificate. A radius is a
+    float: at the
     bottom of the range `eps**2 * |v|` underflows, and two candidates that were
     not tied at all presented as certifiably tied while `_exact_compare` returned
     the correct strict sign `+1`. The certificate is now
@@ -1401,8 +1404,9 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 ):
     """`q - x0` must survive a segment whose own endpoints span many binades.
 
-    Rounds 9 and 10 both scaled the OPERANDS before differencing them -- round 9
-    with one exponent for the whole array, round 10 with one per candidate. Both
+    Two earlier repairs both scaled the OPERANDS before differencing them -- one
+    with a single exponent for the whole array, the next with one per candidate.
+    Both
     lose the same way: scaling `q` and `x0` before subtracting can map two
     distinct represented grid points onto the same float, after which `q - x0` is
     zero and no downstream exactness can rebuild it. Here the candidate exponent
@@ -1482,7 +1486,7 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
 
 # The exponent-preserving exact ordering kernel.
 #
-# Rounds 6 to 12 each repaired the SITE a witness pointed at — a value
+# Earlier repairs each fixed the SITE a witness pointed at — a value
 # comparison, a slope tie-break, an exponent, a normalization's scope, then its
 # shape, then the last normalization inside the "exact" fallback — and every
 # time the same reasoning error reappeared one layer down. The premise all nine
@@ -1547,7 +1551,7 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
     Branch A's numerator cancels to exactly zero, so its own terms carry no
     information about the answer and the entire comparison rests on branch B's,
     which live `~2 * precision + emax` binades further down. Every normalization
-    tried through round 12 pushed those terms out of the format — the products
+    tried before this one pushed those terms out of the format — the products
     came back as `(-0.0, 0.0)` and `_exact_compare` reported a TIE where the
     exact ordering is strict, so the right-continuity rule handed value, policy
     and marginal to the lower branch.
@@ -1587,7 +1591,7 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     Reads the dyadic term list straight out of `_dyadic_product` and sums it in
     `Fraction`. The result must equal the cross difference computed independently
-    from the two ratios — and dropping the half that round 12 flushed must
+    from the two ratios — and dropping the half the earlier kernel flushed must
     collapse that difference to zero, so the test cannot pass vacuously.
     """
     info = np.finfo(dtype)
@@ -1619,9 +1623,9 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     assert expected > 0, "the witness must be a strict gap"
     assert forward - reverse == expected
-    # Round 12's behaviour: with `reverse` flushed the difference is exactly zero
-    # and the comparator reports a tie. If that does not happen the assertion
-    # above is not testing what it claims to.
+    # The earlier kernel's behaviour: with `reverse` flushed the difference is
+    # exactly zero and the comparator reports a tie. If that does not happen
+    # the assertion above is not testing what it claims to.
     assert forward == 0
     assert float(_exact_compare(cols_a=cols_a, cols_b=cols_b, q=q)) == 1.0
 
@@ -1729,7 +1733,7 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
 def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     """`H - (-H)` must be represented, not computed.
 
-    Round 13 built differences with `_two_diff` on operands lifted into
+    An earlier repair built differences with `_two_diff` on operands lifted into
     mid-range, and justified it with the claim that subtraction of two finite
     floats cannot overflow. Opposite-signed top-binade operands refute that:
     for `H = 2**127` in float32 both operands are finite normals while their
@@ -1870,7 +1874,8 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
 def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
     """Policy and marginal must be as certified as the value they accompany.
 
-    Round 14 certified the VALUE channel and left `policy` and `marginal` on
+    An earlier repair certified the VALUE channel and left `policy` and
+    `marginal` on
     `left + fraction * (right - left)` in the working dtype, so the winner was
     selected exactly and then described by two lossy numbers. Both halves of
     that expression lose finite results:

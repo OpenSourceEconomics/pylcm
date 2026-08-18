@@ -386,7 +386,10 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
 def test_stochastic_regime_transition_active_at_last_period_raises():
     """Non-terminal regimes active at the last period must raise an error.
 
-    See https://github.com/OpenSourceEconomics/pylcm/issues/276.
+    A non-terminal regime has to place probability one on some target regime, but
+    at the last period there is no period left to transition into, so no set of
+    transition probabilities can be valid. `solve` reports that instead of
+    solving a model whose last period is silently inconsistent.
     """
     from lcm_examples import mortality  # noqa: PLC0415
 

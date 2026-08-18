@@ -366,9 +366,10 @@ def _advance_states_for_subjects(
             current_arr = states_per_regime[target_regime_name][state_name]
             target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
-            # same numeric kind. Across kinds (e.g. int storage + float
-            # transition output) leave JAX's promotion in place; the
-            # cross-kind boundary cast belongs to Package B.
+            # same numeric kind. Casting across kinds here — an int-stored
+            # state fed a float transition output — would silently truncate a
+            # value the model computed, so leave JAX's promotion in place and
+            # let the widened array reach whoever decides what the state means.
             new_values = (
                 next_state_values.astype(target_dtype)
                 if next_state_values.dtype.kind == target_dtype.kind
