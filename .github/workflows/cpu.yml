@@ -46,7 +46,12 @@ jobs:
           - os: macos-latest
             pytest_extra: -m "not slow"
           - os: windows-latest
-            pytest_extra: -m "not slow"
+            pytest_extra: >-
+              -m "not slow"
+              --exact-kernel-skip-inventory=reports/exact-kernel-skips-Windows.json
+              --expected-exact-kernel-skip-inventory
+              tests/ci/expected-exact-kernel-skips-windows.json
+              --max-total-skips=25
     steps:
       - uses: actions/checkout@v7
       - uses: prefix-dev/setup-pixi@v0.10.1
@@ -62,10 +67,17 @@ jobs:
         # so a checkout never brings it and an environment cache cannot carry
         # it. `pixi install` builds it only when it decides the editable
         # package needs reinstalling, which makes its presence a function of
-        # whether the project cache hit. Tests that ask for an exact verdict
-        # without a kernel are reported as skipped, so a cache hit would turn
-        # the certified suite green by removing it. Build it explicitly.
+        # whether the project cache hit. Tests that explicitly require an exact
+        # verdict skip only when the corresponding library file is absent; the
+        # Windows inventory below makes that capability loss visible. Build the
+        # library explicitly wherever this platform supports it.
         run: pixi run -e tests-cpu build-exact-affine
+      - name: Run the fp64 exact-kernel capability matrix
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=64 --output-dir=reports
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
@@ -193,7 +205,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
-          path: reports/junit-*.xml
+          path: |
+            reports/junit-*.xml
+            reports/exact-kernel-skips-*.json
+            reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -256,6 +271,11 @@ jobs:
         # source-tree artifact that neither the checkout nor the environment
         # cache carries, and a missing one turns certified tests into skips.
         run: pixi run -e tests-cpu build-exact-affine
+      - name: Run the fp32 exact-kernel capability matrix
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=32 --output-dir=reports
       - name: Cache JAX compiled programs
         # Same rationale as the `tests` job's cache step above, keyed apart
         # (`jax-fp32-...`) so this leg never shares -- or fights over -- the
@@ -303,7 +323,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp32
-          path: reports/junit-*.xml
+          path: |
+            reports/junit-*.xml
+            reports/exact-kernel-skips-*.json
+            reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
       - name: Prune superseded JAX caches for this ref
         if: always()

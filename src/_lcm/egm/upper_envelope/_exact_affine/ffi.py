@@ -99,6 +99,20 @@ def kernel_built() -> bool:
     return _CPU_LIBRARY.is_file()
 
 
+def kernel_built_for_current_backend() -> bool:
+    """Return whether a kernel file exists for the selected JAX backend.
+
+    This is deliberately a file-presence predicate, not a loadability probe.
+    A missing file is a supported capability absence and can justify skipping a
+    test that explicitly declares an exact-kernel requirement. A file that is
+    present but stale, unloadable, or missing a symbol is a broken build and must
+    reach :func:`_ensure_registered`, where it fails loudly.
+    """
+    if not kernel_built():
+        return False
+    return jax.default_backend() != "gpu" or _CUDA_LIBRARY.is_file()
+
+
 def kernel_available() -> bool:
     """Return whether a verdict can be requested in this process.
 

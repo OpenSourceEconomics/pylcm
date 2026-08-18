@@ -161,6 +161,7 @@ def test_a_product_is_exact_down_to_the_bottom_of_the_range() -> None:
     assert Fraction(float(high)) + Fraction(float(low)) == exact
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_cell_hull_resolves_a_handover_at_the_bottom_of_the_range() -> None:
     """The production owner walk does not inherit Dekker's subnormal split limit.
 

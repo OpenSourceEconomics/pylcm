@@ -24,7 +24,9 @@ from _lcm.egm.upper_envelope.certified_sign import (
     UNRESOLVED_SIGN,
     certified_margin_sign,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 ABSTENTIONS = (UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
 
