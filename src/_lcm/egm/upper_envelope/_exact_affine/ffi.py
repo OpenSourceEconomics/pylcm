@@ -327,12 +327,12 @@ def exact_query_winner(
 
     """
     _ensure_registered()
-    floating = [
+    floating = (
         jnp.asarray(left_grid),
         jnp.asarray(right_grid),
         jnp.asarray(left_value),
         jnp.asarray(right_value),
-    ]
+    )
     if any(array.ndim != 1 for array in floating):
         msg = (
             "exact-query segment operands must be one-dimensional, got "
@@ -348,7 +348,7 @@ def exact_query_winner(
         raise ValueError(msg)
     query = jnp.asarray(x_query)
     target = _target_for(
-        operands=[*floating, query],
+        operands=(*floating, query),
         f32="ExactQueryWinnerF32",
         f64="ExactQueryWinnerF64",
     )
@@ -408,12 +408,12 @@ def exact_query_winner_batched(
 
     """
     _ensure_registered()
-    floating = [
+    floating = (
         jnp.asarray(left_grid),
         jnp.asarray(right_grid),
         jnp.asarray(left_value),
         jnp.asarray(right_value),
-    ]
+    )
     if any(array.ndim < _MIN_BATCHED_RANK for array in floating):
         msg = (
             "batched exact-query segment operands need a batch axis before the "
@@ -435,7 +435,7 @@ def exact_query_winner_batched(
         )
         raise ValueError(msg)
     target = _target_for(
-        operands=[*floating, query],
+        operands=(*floating, query),
         f32="ExactQueryWinnerBatchedF32",
         f64="ExactQueryWinnerBatchedF64",
     )
@@ -565,7 +565,7 @@ def exact_cell_hull(
     right = jnp.asarray(right)
     endog_grid = jnp.asarray(endog_grid)
     value = jnp.asarray(value)
-    floating = [left, right, endog_grid, value]
+    floating = (left, right, endog_grid, value)
     target = _target_for(
         operands=floating,
         f32="ExactCellHullF32",
@@ -611,12 +611,14 @@ def exact_cell_hull(
     return bounds, owners, status
 
 
-def _broadcast(*operands: FloatND) -> list[FloatND]:
+def _broadcast(*operands: FloatND) -> tuple[FloatND, ...]:
     """Broadcast every operand to one common shape."""
-    return jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands])
+    # `jnp.broadcast_arrays` already returns a tuple; its published type still
+    # says `list`, so state the built form rather than suppress the mismatch.
+    return tuple(jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands]))
 
 
-def _target_for(*, operands: list[FloatND], f32: str, f64: str) -> str:
+def _target_for(*, operands: tuple[FloatND, ...], f32: str, f64: str) -> str:
     """Return the FFI target name matching the operands' shared dtype."""
     dtype = operands[0].dtype
     if any(operand.dtype != dtype for operand in operands):
