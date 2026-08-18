@@ -1555,7 +1555,7 @@ def _envelope_blocked(
 # `feat/nb-egm` and `feat/continuous-outer` independently rewrote
 # `envelope_at_query`: upstream toward `_envelope_dense` / `_envelope_blocked`
 # (double-double escalation, `1ce705ba`), this branch toward an exactly-certified
-# winner (`_candidate_terms` / `_exactly_maximal`, contouter rounds 5-13). The two
+# winner (`_candidate_terms` / `_exactly_maximal`). The two
 # share no helper, so a merge can run one or the other, never both.
 #
 # HMvG's call (2026-08-06): run upstream's path, park this branch's, revisit once
@@ -1700,7 +1700,7 @@ class _Dyadic(NamedTuple):
     mantissa stays inside one binade — the binade where every error-free
     transform below is exact.
 
-    Nine consecutive repairs to this kernel (rounds 6 to 12) each moved the same
+    Nine consecutive repairs to this kernel each moved the same
     defect one layer down: a value comparison, a slope tie-break, an exponent, a
     normalization's scope, then its shape, then the last normalization inside
     the "exact" fallback. All nine shared one premise — that a rescaling can
@@ -1784,7 +1784,8 @@ def _dyadic_negate(terms: _Dyadic, flip: BoolND) -> _Dyadic:
 def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
     """`a - b` as an UNEVALUATED two-term dyadic sum. No subtraction is performed.
 
-    Round 13 formed the difference with `_two_diff` on operands LIFTED into
+    An earlier repair formed the difference with `_two_diff` on operands LIFTED
+    into
     mid-range, and justified it with the hinge claim that "subtraction of two
     finite floats cannot overflow". That claim is false, and opposite-signed
     top-binade operands are the counterexample: for `H = 2**127` in float32 or
@@ -1792,9 +1793,9 @@ def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
     operands already exceed the target, and `_two_diff(H, -H)` returns
     `(inf, nan)`. A finite exact envelope is then published as three NaNs.
 
-    Guarding the same operation against UNDERFLOW alone is not enough:
-    against nothing else; each repair fixed the direction its witness pointed at
-    and left the mirror image open. The fix is to stop performing the operation.
+    Guarding this operation against UNDERFLOW alone is not enough: each repair
+    fixes the direction its witness points at and leaves the mirror image open.
+    The fix is to stop performing the operation.
 
     `a = m_a * 2**e_a` and `b = m_b * 2**e_b` exactly, from `frexp`, so
     `a - b` is exactly the two-term sum `[(m_a, e_a), (-m_b, e_b)]`. Each
@@ -1874,7 +1875,7 @@ def _framed_affine(
 ) -> _FramedAffine:
     """Interpolate ONE affine channel exponent-preservingly, rounding once.
 
-    Round 14 gave the VALUE channel this treatment and left `policy` and
+    An earlier repair gave the VALUE channel this treatment and left `policy` and
     `marginal` on `left + fraction*(right - left)` in the working dtype, where
     `fraction = ldexp(rh, t_exp - w_exp)`. Both halves of that expression lose
     finite results:
@@ -1894,7 +1895,7 @@ def _framed_affine(
 
     The winner's value, policy and marginal all go through this one function, so
     a channel cannot be repaired while its siblings are forgotten. That is how
-    this defect survived round 14: the value was certified, and the outputs
+    this defect survived that repair: the value was certified, and the outputs
     gathered from the very same certified winner were not.
     """
     difference_hi, difference_lo, difference_frame = _framed_difference(right, left)
@@ -2476,13 +2477,14 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     #
     # Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`, so it
     # needs `|a| < 2**(emax - s)` — `2**115` in float32, `2**996` in float64 —
-    # and past that the interior pair goes non-finite. Rounds
-    # 9 and 10 bought that headroom by scaling the OPERANDS first: round 9 with
-    # one exponent for the whole array, round 10 with one per candidate. Both are
+    # and past that the interior pair goes non-finite. Two earlier
+    # repairs bought that headroom by scaling the OPERANDS first: one with a
+    # single exponent for the whole array, the next with one per candidate.
+    # Both are
     # lossy for the same reason — scaling `q` and `x0` before subtracting them
     # can map two distinct represented grid points onto the SAME float, and then
-    # `t = q - x0` is zero and no downstream exactness can recover it. Round 10's
-    # own witness: `x0 = 1`, `q = nextafter(1)`, `x1 = 2**126`, where the
+    # `t = q - x0` is zero and no downstream exactness can recover it. That
+    # approach's own witness: `x0 = 1`, `q = nextafter(1)`, `x1 = 2**126`, where the
     # candidate exponent 127 makes both `x0` and `q` the same subnormal and a
     # strictly lower constant competitor takes the value, policy and marginal.
     #
@@ -2576,7 +2578,8 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # is handed over as a significand pair plus a separate integer exponent and
     # is never materialized as a float.
     #
-    # Round 14 gave this treatment to the value alone and left `policy` and
+    # An earlier repair gave this treatment to the value alone and left `policy`
+    # and
     # `marginal` on `left + fraction*(right - left)` in the working dtype, so a
     # certified winner published uncertified outputs: a `fraction` that flushed
     # to zero before multiplication, and a `right - left` that overflowed on
@@ -2998,7 +3001,8 @@ def _envelope_at_query_407(
         and all gathered from the same winning segment. A query no live segment
         brackets yields NaN in all three.
     """
-    # NO global rescaling happens here, deliberately. Round 9 normalized the
+    # NO global rescaling happens here, deliberately. An earlier revision
+    # normalized the
     # whole problem at this point to keep Dekker's splitting in range, and that
     # map is NOT INJECTIVE over a mixed-scale array: one exponent was chosen
     # from the largest candidate anywhere in the input, including candidates
