@@ -351,15 +351,21 @@ def _compile(*, command: list[str], target: Path) -> Path:
     states its register, stack-frame, spill and local-memory usage — `ptxas`
     writes it to stderr, where a successful build would otherwise discard it —
     and those numbers decide whether the fixed-width accumulators fit a device.
+
+    Both streams are kept, because which one carries the diagnostics is a property
+    of the toolchain: `gcc` and `clang` write errors to stderr, while MSVC writes
+    them to stdout. Reporting one stream leaves the other toolchain announcing an
+    exit code and nothing else, at the one moment the message is needed.
     """
     result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+    report = "\n".join(part for part in (result.stdout, result.stderr) if part.strip())
     target.with_suffix(target.suffix + ".build.log").write_text(
-        f"$ {' '.join(command)}\nexit {result.returncode}\n{result.stderr}"
+        f"$ {' '.join(command)}\nexit {result.returncode}\n{report}"
     )
     if result.returncode != 0:
         msg = (
             f"Failed to build {target.name} (exit {result.returncode}):\n"
-            f"{' '.join(command)}\n{result.stderr}"
+            f"{' '.join(command)}\n{report}"
         )
         raise RuntimeError(msg)
     if not target.is_file():
