@@ -17,6 +17,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   through the common solver contract. Plain `EGM` rejects constraints,
   discrete/process axes, incompatible terminal targets, and a post-decision
   function that is not resources minus the continuous action before solving.
+- DC-EGM semantic validation is independent of native exact-kernel presence.
+  Exact-backend capability is checked only after the regime satisfies the model
+  contract; exact-only tests declare that requirement explicitly, and CI records
+  their node IDs and skip reasons on kernel-less platforms.
 - Cross-regime endogenous-grid continuation calls preserve target-regime
   parameter identity for both runtime and fixed parameters.
 - Upper-envelope selection uses typed backend configurations

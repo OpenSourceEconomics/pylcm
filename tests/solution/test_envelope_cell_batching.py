@@ -19,6 +19,7 @@ from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
 from _lcm.solution.dcegm import DCEGM, ExactEnvelope
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
 _N_CANDIDATES = 24
 
@@ -39,6 +40,7 @@ def _wiggly_chain(dtype):
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("cell_batch_size", [1, 2, 5, 64])
 def test_published_row_is_identical_across_cell_batch_sizes(cell_batch_size):
     """Every batch size publishes the same row as resolving all cells at once."""
