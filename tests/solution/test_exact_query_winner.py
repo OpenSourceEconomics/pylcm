@@ -324,7 +324,7 @@ def test_lowering_has_one_winner_and_three_selected_reads() -> None:
     assert vmapped_text.count("stablehlo.custom_call") == 4
     assert vmapped_text.count(f"ExactQueryWinner{suffix}") == 1
     assert vmapped_text.count(f"ExactAffineRead{suffix}") == 3
-    assert vmapped_text.count("stablehlo.while") == 1
+    assert vmapped_text.count("stablehlo.while") == 0
 
 
 def _batched_operands(*, n_batch: int, n_segment: int, n_query: int):
