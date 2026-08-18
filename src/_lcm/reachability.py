@@ -53,8 +53,8 @@ class EdgeStatus(IntEnum):
 class PhaseReachability:
     """One phase's immutable period-indexed regime graph.
 
-    ``CONDITIONAL`` is retained in ``targets_by_period``. It is provenance, not a
-    deferred Boolean; there is deliberately no runtime ``resolve`` method.
+    `CONDITIONAL` is retained in `targets_by_period`. It is provenance, not a
+    deferred Boolean; there is deliberately no runtime `resolve` method.
     """
 
     n_periods: int
@@ -84,7 +84,7 @@ class PhaseReachability:
         )
 
     def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
-        """Return retained targets for the edge from ``period`` to ``period + 1``."""
+        """Return retained targets for the edge from `period` to `period + 1`."""
         if not 0 <= period < self.n_periods - 1:
             raise IndexError(period)
         return self.targets_by_period[period].get(source, ())
@@ -162,7 +162,7 @@ def candidate_targets_from_transition(
 ) -> tuple[RegimeName, ...]:
     """Return the static candidate universe declared by one transition.
 
-    * ``None``: terminal, no targets.
+    * `None`: terminal, no targets.
     * per-target mapping: its keys are the declared candidate universe.
     * coarse callable / Markov transition: all regimes are candidates.
 

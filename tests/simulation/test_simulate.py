@@ -184,7 +184,12 @@ def test_simulate_using_model_methods(
         additional_targets=["utility", "borrowing_constraint"]
     ).query('regime_name == "working_life"')
 
-    # Check expected columns
+    # Check expected columns. `nested_policy_fallback` is deliberately absent:
+    # this is a plain discrete-continuous model with no nested (continuous-outer)
+    # policy read, so there is no fallback that could ever fire. The column is
+    # published only by regimes that can actually take that path -- see
+    # `test_nested_policy_fallback_column_is_published` in
+    # `test_simulate_n_nbegm_continuous.py` for the other half of the contract.
     expected_cols = {
         "period",
         "age",
@@ -278,7 +283,6 @@ def test_effect_of_discount_factor_on_last_period():
         disutility_of_work=1.0,
     )
 
-    # Simulate
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(
@@ -344,7 +348,6 @@ def test_effect_of_disutility_of_work():
         disutility_of_work=1.5,
     )
 
-    # Simulate
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(
@@ -462,8 +465,8 @@ def test_additional_targets_all(regression_simulation_result):
 def test_additional_targets_all_with_stochastic_transitions():
     """Test that additional_targets='all' works with stochastic transition models.
 
-    Stochastic weight functions (e.g. `weight_next_health`) are not offered as
-    available targets, so asking for every target does not reach one.
+    Stochastic weight functions (e.g. `weight_next_health`) must not appear in
+    `available_targets`, or `additional_targets='all'` fails.
     """
     from lcm_examples.mortality import RegimeId as StochasticRegimeId  # noqa: PLC0415
     from tests.test_models.stochastic import (  # noqa: PLC0415

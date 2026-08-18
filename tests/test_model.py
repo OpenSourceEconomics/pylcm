@@ -525,10 +525,9 @@ def test_constraint_naming_a_transition_output_is_rejected():
 
 
 def test_state_only_used_in_transitions():
-    """A state read only by transitions, never by utility or constraints, is accepted.
+    """A state used only in transitions, not in utility or constraints, builds.
 
-    Reaching a state through a law of motion alone counts as using it, so the
-    model builds rather than reporting the state as undeclared.
+    Such a state must not trip the state-usage walk.
     """
 
     @categorical(ordered=False)
