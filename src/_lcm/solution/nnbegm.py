@@ -59,7 +59,6 @@ from _lcm.solution.contract import (
 from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import (
-    _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
@@ -204,30 +203,17 @@ class NNBEGM(Solver):
     bound constant.
     """
 
-    outer_search: OuterSearch | None = None
+    outer_search: OuterSearch
     """How the outer margin's candidates are generated and refined.
 
     `FiniteOuterGrid` reproduces the historical finite-candidate behavior;
-    `AdaptiveOuterMesh` is the canonical continuous-outer approximation.
-    Exactly one of `outer_search` and the legacy `outer_grid` must be set."""
-
-    outer_grid: ContinuousGrid | None = None
-    """Legacy exogenous candidate grid for the outer post-decision margin.
-
-    Shorthand for `outer_search=FiniteOuterGrid(grid=...,
-    batch_size=outer_batch_size)`; scheduled for deprecation once downstream
-    models migrate to `outer_search`."""
+    `AdaptiveOuterMesh` is the canonical continuous-outer approximation. The
+    strategy carries its own numerics, including any batch size."""
 
     outer_no_adjustment_candidate: FunctionName | None = None
     r"""No-adjustment map $s_t^\textit{post-dec} = keep(s_t)$ the keeper holds.
 
     `None` keeps the durable stock unchanged (identity)."""
-
-    outer_batch_size: int = 0
-    """Legacy companion to `outer_grid`: nodes solved per chunk before
-    folding into the running maximum; `0` solves every node at once. A memory
-    knob only — value-invariant. With `outer_search`, set the strategy's own
-    `batch_size` instead."""
 
     branch_aggregator: OuterBranchAggregator = field(
         default_factory=DeterministicOuterMaximum
@@ -242,8 +228,7 @@ class NNBEGM(Solver):
 
     def __post_init__(self) -> None:
         spec = get_nnbegm_inner_spec(inner=self.inner)
-        _fail_if_outer_batch_size_negative(self.outer_batch_size, solver_name="NNBEGM")
-        search = self.resolved_outer_search
+        search = self.outer_search
         match search:
             case FiniteOuterGrid():
                 _fail_if_outer_grid_is_stochastic(search.grid)
@@ -264,38 +249,6 @@ class NNBEGM(Solver):
                 "`outer_search=AdaptiveOuterMesh(...)`."
             )
             raise RegimeInitializationError(msg)
-
-    @property
-    def resolved_outer_search(self) -> OuterSearch:
-        """The normalized outer-search strategy, legacy fields folded in.
-
-        Raises:
-            RegimeInitializationError: If neither or both of `outer_search`
-                and `outer_grid` are set, or a nonzero `outer_batch_size`
-                accompanies `outer_search`.
-
-        """
-        if self.outer_search is None:
-            if self.outer_grid is None:
-                msg = (
-                    "NNBEGM requires an outer search: pass `outer_search=` "
-                    "(canonical) or the legacy `outer_grid=`."
-                )
-                raise RegimeInitializationError(msg)
-            return FiniteOuterGrid(
-                grid=self.outer_grid, batch_size=self.outer_batch_size
-            )
-        if self.outer_grid is not None:
-            msg = "Pass either `outer_search` or the legacy `outer_grid`, not both."
-            raise RegimeInitializationError(msg)
-        if self.outer_batch_size != 0:
-            msg = (
-                "`outer_batch_size` belongs to the legacy `outer_grid` "
-                "interface; set the strategy's own `batch_size` on "
-                "`outer_search` instead."
-            )
-            raise RegimeInitializationError(msg)
-        return self.outer_search
 
     @property
     def requires_continuation(self) -> bool:
@@ -424,7 +377,7 @@ class NNBEGM(Solver):
         )
         _fail_if_inner_carry_rows_not_grid_aligned(inner=self.inner)
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
-        search = self.resolved_outer_search
+        search = self.outer_search
         match search:
             case FiniteOuterGrid():
                 outer_grid_values = search.grid.to_jax()

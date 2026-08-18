@@ -33,6 +33,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.outer_search import FiniteOuterGrid
 from lcm.solvers import Solver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -141,7 +142,7 @@ def _build_solver(*, variant: str) -> Solver:
         outer_action="illiquid_investment",
         outer_state="illiquid",
         outer_post_decision="new_illiquid",
-        outer_grid=_OUTER_GRID,
+        outer_search=FiniteOuterGrid(grid=_OUTER_GRID),
         outer_no_adjustment_candidate="keep_illiquid",
     )
 

@@ -11,7 +11,8 @@ import pytest
 
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import LinSpacedGrid
-from lcm.solvers import NBEGM, NNBEGM
+from lcm.outer_search import FiniteOuterGrid
+from lcm.solvers import NBEGM
 
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
 
@@ -38,18 +39,12 @@ def test_zero_is_the_accepted_whole_axis_setting() -> None:
     assert NBEGM(savings_grid=SAVINGS_GRID, branch_batch_size=0).branch_batch_size == 0
 
 
-def test_a_negative_nnbegm_outer_batch_size_names_nnbegm() -> None:
-    """The nested solver's own knob is reported under its own name."""
-    with pytest.raises(RegimeInitializationError, match=r"NNBEGM\.outer_batch_size"):
-        NNBEGM(
-            inner=NBEGM(
-                savings_grid=SAVINGS_GRID,
-                continuous_state="liquid",
-                post_decision_function="savings",
-            ),
-            outer_action="investment",
-            outer_state="durable",
-            outer_post_decision="new_durable",
-            outer_grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
-            outer_batch_size=-1,
+def test_a_negative_outer_batch_size_is_rejected_by_the_search_strategy() -> None:
+    """The outer chunk size is the search strategy's knob, so it validates there.
+
+    `NNBEGM` no longer carries an `outer_batch_size` of its own to name.
+    """
+    with pytest.raises(RegimeInitializationError, match="batch_size"):
+        FiniteOuterGrid(
+            grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=4), batch_size=-1
         )

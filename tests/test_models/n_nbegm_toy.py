@@ -34,7 +34,7 @@ from lcm import (
     categorical,
 )
 from lcm.branch_aggregation import OuterBranchAggregator
-from lcm.outer_search import OuterSearch
+from lcm.outer_search import FiniteOuterGrid, OuterSearch
 from lcm.solvers import NBEGM, Solver
 from lcm.typing import (
     ContinuousAction,
@@ -219,10 +219,12 @@ def build_solver(
             outer_action="illiquid_investment",
             outer_state="illiquid",
             outer_post_decision="new_illiquid",
-            outer_search=outer_search,
-            outer_grid=None if outer_search is not None else OUTER_GRID,
+            outer_search=(
+                outer_search
+                if outer_search is not None
+                else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
+            ),
             outer_no_adjustment_candidate="keep_illiquid",
-            outer_batch_size=0 if outer_search is not None else outer_batch_size,
             **aggregator_kwargs,
         )
     msg = f"unknown variant: {variant}"

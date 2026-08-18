@@ -1,16 +1,16 @@
-"""Outer-search strategy configs and their NNBEGM normalization.
+"""Outer-search strategy configs and how `NNBEGM` carries them.
 
 Covers the config-level validation of `FiniteOuterGrid` / `AdaptiveOuterMesh`
-/ `LegacyGoldenSection` and the legacy-field folding on `NNBEGM`: exactly one
-of `outer_search` and `outer_grid` must be set, and the legacy pair resolves
-to an equivalent `FiniteOuterGrid`.
+/ `LegacyGoldenSection`, and that `NNBEGM.outer_search` is mandatory: the
+strategy object is the only way to describe the outer margin's candidates, so
+there is no field pair to keep consistent.
 """
 
 from collections.abc import Callable
 
+import numpy as np
 import pytest
 
-from _lcm.grids import ContinuousGrid
 from lcm import (
     NBEGM,
     NNBEGM,
@@ -21,17 +21,14 @@ from lcm import (
     OuterSearch,
 )
 from lcm.exceptions import RegimeInitializationError
+from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import OUTER_GRID, SAVINGS_GRID
 
 _MESH_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=17)
+_TOY_PARAMS = {"discount_factor": 0.95}
 
 
-def _make_nnbegm(
-    *,
-    outer_search: OuterSearch | None = None,
-    outer_grid: ContinuousGrid | None = None,
-    outer_batch_size: int = 0,
-) -> NNBEGM:
+def _make_nnbegm(*, outer_search: OuterSearch) -> NNBEGM:
     return NNBEGM(
         inner=NBEGM(
             continuous_state="wealth",
@@ -44,8 +41,6 @@ def _make_nnbegm(
         outer_post_decision="new_illiquid",
         outer_no_adjustment_candidate="keep_illiquid",
         outer_search=outer_search,
-        outer_grid=outer_grid,
-        outer_batch_size=outer_batch_size,
     )
 
 
@@ -84,40 +79,89 @@ def test_legacy_golden_section_rejects_inverted_domain() -> None:
         )
 
 
-def test_legacy_fields_resolve_to_equivalent_finite_grid() -> None:
-    solver = _make_nnbegm(outer_grid=OUTER_GRID, outer_batch_size=4)
-    resolved = solver.resolved_outer_search
-    assert resolved == FiniteOuterGrid(grid=OUTER_GRID, batch_size=4)
-
-
-def test_explicit_outer_search_is_passed_through() -> None:
+def test_outer_search_is_stored_as_given() -> None:
+    """The field is the strategy — nothing normalizes or replaces it."""
     search = FiniteOuterGrid(grid=OUTER_GRID, batch_size=2)
     solver = _make_nnbegm(outer_search=search)
-    assert solver.resolved_outer_search is search
+    assert solver.outer_search is search
 
 
 def test_adaptive_outer_mesh_config_is_accepted_at_construction() -> None:
     """The strategy validates at config time; kernel wiring lands later."""
     solver = _make_nnbegm(outer_search=AdaptiveOuterMesh(initial_grid=_MESH_GRID))
-    assert isinstance(solver.resolved_outer_search, AdaptiveOuterMesh)
+    assert isinstance(solver.outer_search, AdaptiveOuterMesh)
 
 
-def test_missing_outer_search_and_grid_raise() -> None:
-    with pytest.raises(RegimeInitializationError, match="outer_search"):
-        _make_nnbegm()
+def test_nnbegm_without_outer_search_raises_at_construction() -> None:
+    """`outer_search` is mandatory: no default, no legacy fallback.
 
-
-def test_both_outer_search_and_grid_raise() -> None:
-    with pytest.raises(RegimeInitializationError, match="not both"):
-        _make_nnbegm(
-            outer_search=FiniteOuterGrid(grid=OUTER_GRID),
-            outer_grid=OUTER_GRID,
+    A missing search strategy is a signature error, not a validation error
+    raised from `__post_init__` — there is no longer a second field that could
+    have supplied it.
+    """
+    with pytest.raises(TypeError, match="outer_search"):
+        NNBEGM(  # ty: ignore[missing-argument]
+            inner=NBEGM(
+                continuous_state="wealth",
+                post_decision_function="liquid_savings",
+                budget_target="resources",
+                savings_grid=SAVINGS_GRID,
+            ),
+            outer_action="illiquid_investment",
+            outer_state="illiquid",
+            outer_post_decision="new_illiquid",
+            outer_no_adjustment_candidate="keep_illiquid",
         )
 
 
-def test_outer_batch_size_alongside_outer_search_raises() -> None:
-    with pytest.raises(RegimeInitializationError, match="outer_batch_size"):
-        _make_nnbegm(
-            outer_search=FiniteOuterGrid(grid=OUTER_GRID),
-            outer_batch_size=3,
-        )
+# Frozen from a solve of the two-period `n_nbegm` toy through the retired
+# `outer_grid=OUTER_GRID, outer_batch_size=4` pair. Pins that
+# `FiniteOuterGrid(grid=..., batch_size=...)` is the same computation and not
+# merely an accepted one.
+#
+# Captured UNDER THE SUITE, which runs x64; the same solve from a plain script
+# runs float32 and disagrees in the 8th digit, so a baseline harvested outside
+# pytest would pin the wrong numbers.
+#
+# Compared to a tolerance, not to the bit. The pair agreed bit-for-bit when the
+# baseline was taken, but rebuilding the exact-affine CPU kernel moved two of
+# these entries by one ULP, so bit equality pins the `.so` build rather than the
+# equivalence under test. `_FINITE_GRID_RTOL` sits two orders above that noise
+# and twelve below anything a genuine change in candidate generation would do.
+_FINITE_GRID_RTOL = 1e-14
+_FINITE_GRID_BASELINE_HEAD = (
+    -25.336494502711897,
+    -19.638656410864485,
+    -15.20980502450777,
+    -12.968285372927772,
+    -11.12194670592802,
+    -9.684120807993004,
+)
+_FINITE_GRID_BASELINE_SUM = -2538.617102280524
+_FINITE_GRID_BASELINE_SIZE = 240
+
+
+def test_finite_outer_grid_reproduces_the_retired_legacy_pair_values() -> None:
+    """`FiniteOuterGrid(grid=g, batch_size=b)` computes what `outer_grid=g,
+    outer_batch_size=b` computed."""
+    solution = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=4),
+    ).solve(params=_TOY_PARAMS, log_level="off")
+
+    values = np.concatenate(
+        [
+            np.asarray(solution[period][name]).ravel()
+            for period in sorted(solution)
+            for name in sorted(solution[period])
+        ]
+    )
+    assert values.size == _FINITE_GRID_BASELINE_SIZE
+    assert np.isfinite(values).all()
+    np.testing.assert_allclose(
+        values[:6], _FINITE_GRID_BASELINE_HEAD, rtol=_FINITE_GRID_RTOL
+    )
+    np.testing.assert_allclose(
+        values.sum(), _FINITE_GRID_BASELINE_SUM, rtol=_FINITE_GRID_RTOL
+    )
