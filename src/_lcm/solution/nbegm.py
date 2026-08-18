@@ -216,34 +216,43 @@ class NBEGM(Solver):
       their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
-    """Batch size for the per-interval continuation read.
+    """Intervals committed per iteration of the per-interval continuation read.
 
     When a carry target's next-state law reads the current liquid state, the
     continuation core evaluates the continuation DAG once per declared liquid
-    interval. `0` evaluates all intervals in one vectorized pass; a positive
-    batch size runs them in sequential chunks of that many intervals
-    (identical result, peak intermediates bounded by one chunk). Raise it when
-    the per-interval continuation buffers dominate the per-cell memory budget.
+    interval. The body runs at a fixed vector width, so peak intermediates
+    follow that width and not this value: `0` commits the whole axis in one
+    iteration and is both the fastest and the smallest-workspace setting. A
+    positive value commits that many intervals per iteration, rounded up to a
+    multiple of the vector width. Every admitted value runs one executable and
+    publishes bit-identical values, because the partition is a loop stride
+    rather than part of the compilation key.
     """
     cell_block_size: int = 0
-    """Block size for streaming the ride-along solve over ride cells.
+    """Ride cells committed per iteration of the ride-along solve.
 
     Both ride-along cores fan out per cell — the continuation core's transition/
-    child-interpolation read and the envelope core's candidate solve; `0` vmaps
-    the whole flattened ride mesh at once in each, so every cell's buffers are in
-    flight together — the dominant peak-memory term at production mesh sizes. A
-    positive block size scans the mesh in blocks of that many cells in both cores
-    (identical result, peak bounded by one block's buffers).
+    child-interpolation read and the envelope core's candidate solve. Each
+    evaluates cells at a fixed vector width, so no cell's buffers wait on the
+    whole mesh and peak intermediates follow that width rather than this value:
+    `0` commits the whole mesh in one iteration and is both the fastest and the
+    smallest-workspace setting. A positive value commits that many cells per
+    iteration, rounded up to a multiple of the vector width. Every admitted
+    value runs one executable and publishes bit-identical values, because the
+    partition is a loop stride rather than part of the compilation key.
     """
     branch_batch_size: int = 0
-    """Block size for streaming the discrete-action branch axis.
+    """Discrete-action branches committed per iteration.
 
     Both ride-along cores evaluate one instance per discrete-action branch — the
     continuation core one continuation row per branch, the envelope core one
-    continuous subproblem per branch. `0` runs the whole branch axis in one
-    vectorized pass; a positive block size scans it in blocks of that many
-    branches (identical result, per-branch intermediates bounded by one block).
-    Either way the branch body compiles once — the axis is never Python-unrolled.
+    continuous subproblem per branch. Each evaluates branches at a fixed vector
+    width, so per-branch intermediates follow that width rather than this value:
+    `0` commits the whole axis in one iteration and is both the fastest and the
+    smallest-workspace setting. A positive value commits that many branches per
+    iteration, rounded up to a multiple of the vector width. Every admitted
+    value runs one executable and publishes bit-identical values, because the
+    partition is a loop stride rather than part of the compilation key.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -4314,10 +4323,9 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                 # (the actions ride into `combo_pool` → `next_state_func`). A leading
                 # branch axis is added over the product of the declared grids; when
                 # the actions do not feed the continuation the branch rows are
-                # identical, matching the shared-continuation case. `lax.map` compiles
-                # the branch body once and streams it in `branch_batch_size` blocks
-                # (the whole axis in one vectorized pass by default), so per-branch
-                # intermediates never all sit in flight.
+                # identical, matching the shared-continuation case. The branch body
+                # compiles once and runs at a fixed vector width, so per-branch
+                # intermediates never all sit in flight whatever the partition.
                 def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
                     binding = {
                         name: codes_row[position]
@@ -4418,14 +4426,11 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                         if cliff_targets is None
                         else (midpoints, cliff_targets)
                     )
-                    if statics.interval_batch_size:
-                        rows = jax.lax.map(
-                            interval_rows,
-                            interval_inputs,
-                            batch_size=statics.interval_batch_size,
-                        )
-                    else:
-                        rows = jax.vmap(interval_rows)(interval_inputs)
+                    rows = map_partitioned(
+                        func=interval_rows,
+                        xs=interval_inputs,
+                        requested_block_size=statics.interval_batch_size,
+                    )
                     if cliff_targets is None:
                         return rows
                     return (*rows, cliff_targets)
@@ -4454,11 +4459,10 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
             ride_grids = tuple(jnp.asarray(kwargs[name]) for name in inner_ride_names)
             mesh = jnp.meshgrid(*ride_grids, indexing="ij")
             flat_cells = tuple(grid.ravel() for grid in mesh)
-            solve_cells = jax.vmap(lambda *vals: cell_continuation(vals))
-            return _stream_cell_solves(
-                solve_cells=solve_cells,
-                inputs=flat_cells,
-                cell_block=statics.cell_block_size,
+            return map_partitioned(
+                func=cell_continuation,
+                xs=flat_cells,
+                requested_block_size=statics.cell_block_size,
             )
 
         def _solve_with_co_map(
@@ -4527,7 +4531,7 @@ def _split_cliff_columns(
     )
 
 
-def _vmapped_cell_solver(
+def _cell_solver(
     *,
     solve_one_cell: Callable,
     flat_cells: tuple[FloatND | IntND, ...],
@@ -4535,21 +4539,25 @@ def _vmapped_cell_solver(
     cont_marginal_stack: FloatND,
     cliff_savings_stack: FloatND | None,
 ) -> tuple[Callable, tuple[FloatND | IntND, ...]]:
-    """Vmap the per-cell solve over the ride mesh and its continuation stacks.
+    """Bind the per-cell solve to one row of the ride mesh and its stacks.
 
     The trailing per-cell inputs are the continuation core's stacks — value and
     marginal rows, plus the save-to-cliff savings targets when the one-sided
-    read publishes jump topology.
+    read publishes jump topology. The returned body takes one row of the mesh;
+    the caller decides at which width rows are evaluated.
     """
     if cliff_savings_stack is None:
-        return jax.vmap(lambda *args: solve_one_cell(args[:-2], args[-2], args[-1])), (
+        return lambda row: solve_one_cell(row[:-2], row[-2], row[-1]), (
             *flat_cells,
             cont_value_stack,
             cont_marginal_stack,
         )
-    return jax.vmap(
-        lambda *args: solve_one_cell(args[:-3], args[-3], args[-2], args[-1])
-    ), (*flat_cells, cont_value_stack, cont_marginal_stack, cliff_savings_stack)
+    return lambda row: solve_one_cell(row[:-3], row[-3], row[-2], row[-1]), (
+        *flat_cells,
+        cont_value_stack,
+        cont_marginal_stack,
+        cliff_savings_stack,
+    )
 
 
 def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
@@ -4858,17 +4866,17 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
         flat_cells = tuple(grid.ravel() for grid in mesh)
-        solve_cells, stream_inputs = _vmapped_cell_solver(
+        solve_cell, stream_inputs = _cell_solver(
             solve_one_cell=solve_one_cell,
             flat_cells=flat_cells,
             cont_value_stack=cont_value_stack,
             cont_marginal_stack=cont_marginal_stack,
             cliff_savings_stack=cliff_savings_stack,
         )
-        stacks = _stream_cell_solves(
-            solve_cells=solve_cells,
-            inputs=stream_inputs,
-            cell_block=statics.cell_block_size,
+        stacks = map_partitioned(
+            func=solve_cell,
+            xs=stream_inputs,
+            requested_block_size=statics.cell_block_size,
         )
         value_arr, carry = _assemble_ride_carry(
             stacks=stacks,
@@ -5281,40 +5289,6 @@ def _build_nbegm_discrete_core(
         return value, carry
 
     return core
-
-
-def _stream_cell_solves(
-    *,
-    solve_cells: Callable,
-    inputs: tuple[FloatND | IntND, ...],
-    cell_block: int,
-) -> tuple[FloatND, ...]:
-    """Run the vmapped per-cell solve over the flattened ride mesh.
-
-    A non-positive (or mesh-covering) `cell_block` solves every cell in one
-    vmap; otherwise the mesh is scanned in cell blocks so only one block's
-    candidate buffers are in flight — padding repeats the last cell and its
-    results are dropped after the scan.
-    """
-    n_cells = int(inputs[0].shape[0])
-    if cell_block <= 0 or cell_block >= n_cells:
-        return solve_cells(*inputs)
-    pad = (-n_cells) % cell_block
-
-    def to_blocks(arr: FloatND | IntND) -> FloatND | IntND:
-        padded = (
-            jnp.concatenate([arr, jnp.repeat(arr[-1:], pad, axis=0)]) if pad else arr
-        )
-        return padded.reshape(-1, cell_block, *arr.shape[1:])
-
-    blocked = jax.lax.map(
-        lambda args: solve_cells(*args), tuple(to_blocks(arr) for arr in inputs)
-    )
-
-    def from_blocks(arr: FloatND | IntND) -> FloatND | IntND:
-        return arr.reshape(-1, *arr.shape[2:])[:n_cells]
-
-    return tuple(from_blocks(arr) for arr in blocked)
 
 
 def _assemble_ride_carry(
