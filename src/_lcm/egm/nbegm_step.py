@@ -349,7 +349,7 @@ def _invert_coh_with_linear_extension(
     # for the reason given in `_framed_difference`: a raw `a - b` overflows on
     # opposite-signed top-binade operands even though both are finite normals,
     # and one `inf` in a boundary width poisons the whole inversion with NaN
-    # (round-13 audit F2, the same defect class as in the envelope query).
+    # (the same defect class as in the envelope query).
     #
     # The two guards are direct float comparisons on the stored nodes. They used
     # to test a materialized width against zero, which needs the very difference

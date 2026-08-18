@@ -48,7 +48,7 @@ def derive_inner_sim_policy(
     An NB-EGM inner publishes its carry rows *re-read on the shared liquid
     state grid* (`carry_rows_share_state_grid`), so the row abscissae are the
     state grid itself. The exact optimal consumption on that grid is computed
-    during the solve and carried in `carry.policy` (round-3 audit F2): the
+    during the solve and carried in `carry.policy`: the
     marginal is NOT `u'(c)` but `(d cash_on_hand/d liquid) * u'(c)`, so
     inverting it would recover `c` only for a unit budget slope — a general
     affine budget (e.g. `coh = net_income + R*wealth`, slope `R`) would
@@ -101,7 +101,7 @@ def derive_inner_sim_policy(
         row_passive_state_names=row_passive_state_names,
         # No inner discrete-action provenance rides in the carry: the NNBEGM
         # kernel gates nested publication off `inner_discrete_action_names`
-        # (round-3 audit F8), so this derivation is only ever reached for a
+        # so this derivation is only ever reached for a
         # continuous-only inner where there is no discrete branch to record.
         row_discrete_action_names=(),
     )

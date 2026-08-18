@@ -62,7 +62,7 @@ _SCRIPT = textwrap.dedent(
     )
     assert plain is template
 
-    # The policy-carrying branch shards identically: the round-4 F1 leaf must be
+    # The policy-carrying branch shards identically: the policy leaf must be
     # laid out like the other rows, or a distributed ride-along solve would lower
     # against a template whose policy shard disagrees with the runtime carry.
     with_policy = _build_ride_along_carry_template(

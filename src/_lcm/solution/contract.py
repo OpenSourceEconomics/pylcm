@@ -80,7 +80,7 @@ from lcm.typing import Float1D, FloatND
 #
 # The read set says what may be read off a row; this union says which rows
 # exist, and the two are separate rules. The simulation read dispatches on the
-# concrete payload type over this CLOSED union (round-3 audit F11): a
+# concrete payload type over this CLOSED union: a
 # `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
 # (`_read_nested_policy`, which the self-describing payload parameterizes), a
 # flat `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is

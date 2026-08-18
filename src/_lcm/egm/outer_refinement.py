@@ -139,8 +139,8 @@ def safeguarded_continuous_argmax(
         max_brackets: Node-local maxima refined per cell. ``None`` (the default)
             refines EVERY node so no local maximum is left un-polished — the
             correctness default: a fixed top-K cap can skip a basin whose
-            off-node interpolant peak beats the reported optimum (round-3 audit
-            F7), because the skipped basin's local maximum then competes only at
+            off-node interpolant peak beats the reported optimum, because
+            the skipped basin's local maximum then competes only at
             its exact node. An explicit integer caps the number of refined
             brackets (the top ones by exact value) as a performance knob; the
             remaining local maxima still compete as exact nodes, so only their
@@ -164,7 +164,7 @@ def safeguarded_continuous_argmax(
     is_local_max = _node_local_max_mask(finite_values)
 
     # --- Local maxima per cell; unused slots masked invalid. Default refines
-    # every node (max_brackets=None) so no local-max basin is skipped (F7). ---
+    # every node (max_brackets=None) so no local-max basin is skipped. ---
     n_brackets = n_nodes if max_brackets is None else min(n_nodes, max_brackets)
     masked = jnp.where(is_local_max, finite_values, -jnp.inf)
     masked_last = jnp.moveaxis(masked, 0, -1)  # (*S, C)
@@ -523,7 +523,7 @@ def _mark_intervals(
     state_axes = tuple(range(1, error.ndim))
     interval_error = jnp.max(error, axis=state_axes) if state_axes else error  # (C-1,)
 
-    # Certified global safeguard (round-2 audit F2). Midpoint validation alone is
+    # Certified global safeguard. Midpoint validation alone is
     # mesh-relative: a peak narrower than the mesh that misses every sampled
     # midpoint is neither seen nor bounded. With a Lipschitz constant `L` of the
     # outer surface, interval `[a, b]` cannot exceed `max(V(a), V(b)) + L*(b-a)/2`
@@ -541,7 +541,7 @@ def _mark_intervals(
         )
         endpoint_max = jnp.maximum(finite_values[:-1], finite_values[1:])
         lipschitz_ub = endpoint_max + config.outer_lipschitz_bound * widths / 2.0
-        # F9 (round-3 audit): a finite-surface Lipschitz regularity bound is only
+        # A finite-surface Lipschitz regularity bound is only
         # valid on an interval that lies ENTIRELY in the finite (feasible) region.
         # Applied across a finite/nonfinite feasibility boundary it never
         # terminates: `endpoint_max` stays finite off the one live endpoint while

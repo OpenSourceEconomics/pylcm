@@ -42,7 +42,7 @@ class ResultMetadata:
     """Whether each regime can publish a nested continuous-outer policy read.
 
     True exactly for regimes solved by NNBEGM, the only solver that constructs a
-    `NestedEGMSimPolicy`. The `nested_policy_fallback` column (round-3 audit F4)
+    `NestedEGMSimPolicy`. The `nested_policy_fallback` column
     is emitted only for those regimes: elsewhere it would be a constant-False
     column in every user's dataframe, which is what it silently became when the
     flag was first surfaced.

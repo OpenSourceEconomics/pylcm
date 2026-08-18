@@ -43,7 +43,11 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    ExactAffineKernelUnavailableError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.typing import (
     ActionName,
     FloatND,
@@ -311,7 +315,7 @@ class DCEGM(Solver):
                     "`pixi run build-exact-affine`; select another envelope only "
                     "when its documented approximation contract is acceptable."
                 )
-                raise ModelInitializationError(msg)
+                raise ExactAffineKernelUnavailableError(msg)
 
         from _lcm.egm.validation import validate_dcegm_regime  # noqa: PLC0415
 

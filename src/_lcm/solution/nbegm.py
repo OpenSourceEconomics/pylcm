@@ -4865,7 +4865,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             if statics.n_published_jumps == 0:
                 # Continuous-only, jump-free rows carry the exact consumption so
                 # the continuous-outer replay reads it instead of re-inverting a
-                # slope-scaled marginal (round-3 audit F2). Discrete-branch rows
+                # slope-scaled marginal. Discrete-branch rows
                 # never reach that replay, so they keep the two-array shape.
                 if policy_row is not None:
                     return (value_row, marginal_row, policy_row)
@@ -5393,7 +5393,7 @@ def _assemble_ride_carry(
         policy_rows = None
     elif carry_policy:
         # Continuous-only, jump-free rows: the cell solve returns the exact
-        # consumption alongside value and marginal (round-3 audit F2).
+        # consumption alongside value and marginal.
         value_stack, marginal_stack, policy_stack = stacks
         carry_rows = (
             jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
@@ -5492,7 +5492,7 @@ def _build_ride_along_carry_template(
     # returns a `policy` array leaf, so the template must carry the same leaf or
     # a standalone ride-along NBEGM continuation (rolled cross-period, lowered
     # against this template) would have a different pytree than the runtime carry
-    # (round-4 audit F1). The NNBEGM collapse strips its own runtime leaf, so its
+    # than the runtime carry. The NNBEGM collapse strips its own runtime leaf, so its
     # outer continuation stays policy-free against its own template.
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]

@@ -12,7 +12,7 @@ It is published in exactly one place: the continuous-only, jump-free ride-along
 NB-EGM core, whose per-cell EGM step has already computed the optimal
 consumption. The continuous-outer simulation replay reads it instead of
 re-inverting `marginal_utility`, which is only valid at unit budget slope
-(round-3 audit F2). So the field exists, and its *presence* is what varies.
+So the field exists, and its *presence* is what varies.
 """
 
 import jax

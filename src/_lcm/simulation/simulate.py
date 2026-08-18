@@ -747,7 +747,7 @@ def _replace_continuous_action_with_policy_read(
       `_read_nested_policy` on the continuous-outer path, or `None` on every
       other path (no policy, the flat single-EGM read, passive rows, the
       discrete-branch redecide). The caller resolves `None` to all-False where
-      the regime's subject count is known (F4).
+      the regime's subject count is known.
     """
     if sim_policy is None:
         return optimal_actions, grid_values, None
@@ -1020,7 +1020,7 @@ _UNIT_SLOPE_ATOL = 1e-8
 # through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
 # A two-point 0/1 slope probe cannot see a non-affine transition that merely
 # happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
-# the ACTUAL recovered action and rejects the subject otherwise (round-3 F3).
+# the ACTUAL recovered action and rejects the subject otherwise.
 _TRANSITION_RESIDUAL_RTOL = 1e-6
 
 

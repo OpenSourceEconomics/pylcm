@@ -1,7 +1,7 @@
-"""Round-4 audit F1: the standalone ride-along NBEGM continuation pytree.
+"""The standalone ride-along NBEGM continuation pytree.
 
 On the continuous-only, jump-free ride-along path, `_assemble_ride_carry` populates
-the exact-consumption `EGMCarry.policy` leaf (round-3 audit F2), so the runtime carry
+the exact-consumption `EGMCarry.policy` leaf, so the runtime carry
 has `policy=array`. JAX treats `policy=None` and `policy=array` as DIFFERENT pytree
 structures (`None` is an empty subtree, not a leaf), so the lowering template
 (`_build_ride_along_carry_template`) must carry the same leaf under the same
@@ -11,7 +11,7 @@ differs from the runtime carry, and the compiled solve rejects it.
 
 These tests pin the template's pytree against the real runtime producer
 (`_assemble_ride_carry`) on both the `carry_policy=True` and `carry_policy=False`
-paths, so a regression to a policy-free template (the F1 bug) fails structurally
+paths, so a regression to a policy-free template fails structurally
 without needing the full model solve.
 """
 
@@ -75,7 +75,7 @@ def test_carry_policy_toggles_the_pytree_structure():
     """The policy leaf's presence is what distinguishes the two structures.
 
     Guards against a regression where the template drops the policy leaf on the
-    continuous-only path (the F1 bug): the two carry_policy structures must differ,
+    continuous-only path: the two carry_policy structures must differ,
     so a policy-free template could not match the policy-carrying runtime carry.
     """
     assert jax.tree.structure(_template(carry_policy=True)) != jax.tree.structure(

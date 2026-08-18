@@ -268,7 +268,7 @@ def _cusp_surface(nodes: jnp.ndarray, state_shape: tuple[int, ...]) -> jnp.ndarr
 def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
     """A rank-4 state through the safeguarded argmax must not crash XLA/CPU.
 
-    Pre-fix this segfaulted the interpreter (a rank-7 eager gather); the guard
+    This used to segfault the interpreter (a rank-7 eager gather); the guard
     is that it now returns finite per-cell optima. A reintroduced regression
     would kill the test process outright, which is the loud signal we want.
     """
@@ -408,7 +408,7 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
 def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
     """The global off-node optimum in a low-ranked basin must not be skipped.
 
-    Audit finding F7: ``safeguarded_continuous_argmax`` refined only the top-8
+    ``safeguarded_continuous_argmax`` used to refine only the top-8
     node-local maxima (``max_brackets=8``). A surface with nine local maxima
     whose ninth-ranked basin (by exact node value) hides the tallest OFF-node
     interpolant peak then had that basin refined only as its exact node — the
@@ -684,9 +684,9 @@ def test_genuine_smooth_optimum_stays_resolved() -> None:
 
 
 def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
-    """The exact branch-identity certificate catches a sub-heuristic kink (F1).
+    """The exact branch-identity certificate catches a sub-heuristic kink.
 
-    Round-3 finding F1: the multi-radius slope-jump contraction test is still a
+    The multi-radius slope-jump contraction test is still a
     value-only HEURISTIC, not a differentiability certificate. A kink whose jump
     is drowned by the smooth curvature at the probe radius passes as stationary,
     yet the IFT tangent `-Q_ftheta/Q_ff = 1` is order-one wrong (`df*/dtheta = 0`
@@ -727,7 +727,7 @@ def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
 
 def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
     """A constant branch across the probe neighborhood leaves a smooth optimum
-    resolved — the exact certificate adds no false positives (F1)."""
+    resolved — the exact certificate adds no false positives."""
 
     def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
         return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
@@ -853,7 +853,7 @@ def test_nested_policy_reads_exact_consumption_not_the_slope_scaled_marginal() -
         np.asarray(sim_policy.policy), np.asarray(true_c), rtol=1e-12
     )
 
-    # The pre-fix recovery inverted the slope-scaled marginal:
+    # The earlier recovery inverted the slope-scaled marginal:
     #   inverse_marginal(slope * c**-crra) = slope**(-1/crra) * c  != c  (slope != 1).
     # Confirm the correct policy genuinely diverges from that buggy value, so
     # the test would fail on the old code path (guards against slope == 1).

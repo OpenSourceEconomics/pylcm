@@ -121,8 +121,8 @@ from lcm_examples.mahler_yum_2024 import (
 # - `cell_block_size=256` with `branch_batch_size=1`: ~10.4 GiB resident, ran
 #   15 minutes without blowing up.
 #
-# An earlier measurement at `8828b33` put the unbounded request at 318 GiB; the
-# round-11 rewrite of the exact comparator brought it down to 242.6 GiB, which is
+# An earlier measurement at `8828b33` put the unbounded request at 318 GiB; a later
+# rewrite of the exact comparator brought it down to 242.6 GiB, which is
 # still far past any available machine -- so these knobs remain necessary rather
 # than merely prudent.
 #

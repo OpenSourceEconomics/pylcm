@@ -8,9 +8,9 @@ silent — the envelope keeps naming a winner, and the winner is right almost
 always, so nothing downstream looks wrong.
 
 Every other artifact in this chain tests published VALUES. This one tests the
-CERTIFICATE, which is the gap the round-15 completion record names as the thing
-it most wants attacked: the radius is the same quantity as before, but it is now
-computed from `_framed_affine`'s own framed addends rather than beside them, and
+CERTIFICATE, which is the gap most worth attacking: the radius is the same
+quantity as before, but it is now computed from `_framed_affine`'s own framed
+addends rather than beside them, and
 a subtly-too-small radius would not surface anywhere else.
 
 The oracle is exact rational arithmetic over the stored floats, so it cannot

@@ -217,7 +217,7 @@ def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:
         f"the scan found {len(sites)} annotated `fori_loop` bodies; the known "
         "one lives in `_lcm.optimization.golden_section`, so a smaller count "
         "means the scan broke, not that the code is clean. The second site, in "
-        "`_lcm.egm.upper_envelope.query`, went away with the round-13 exact "
+        "`_lcm.egm.upper_envelope.query`, went away with the exact "
         "kernel: it carries arrays through a `lax.scan` and annotates no loop "
         "index at all."
     )
@@ -240,7 +240,7 @@ def test_the_exact_sign_kernel_runs_eagerly() -> None:
     This test exists because a `jax.Array`-only annotation on a loop index made
     every EAGER call raise a beartype violation, and the exact sign kernel is
     reached eagerly only from `test_jitted_solve_matches_the_eager_solve`. The
-    round-13 rewrite carries arrays through a `lax.scan` instead of an index
+    exact-kernel rewrite carries arrays through a `lax.scan` instead of an index
     through a `fori_loop`, so the original hazard is gone; the eager reachability
     guard is kept because that is what caught it.
     """
