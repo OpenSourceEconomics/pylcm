@@ -13,8 +13,10 @@ import numpy as np
 import pytest
 
 from _lcm.egm.fixed_width_map import (
+    PROFILE_WINDOW,
     admitted_block_size,
     map_fixed_width,
+    map_partitioned,
     validate_block_size,
 )
 
@@ -120,3 +122,38 @@ def test_requested_block_sizes_round_up_to_an_admitted_partition(
         )
         == expected
     )
+
+
+_WIDE_ROWS = 1024
+_WIDE_COLUMNS = 512
+
+
+def _wide_row(row):
+    """A body whose per-row output is far larger than its intermediates."""
+    return jnp.sin(row + jnp.arange(_WIDE_COLUMNS, dtype=row.dtype))
+
+
+def _compiled_temp_bytes(*, requested_block_size: int) -> int:
+    rows = jnp.arange(_WIDE_ROWS, dtype=jnp.float64)
+    lowered = jax.jit(
+        lambda xs: map_partitioned(
+            func=_wide_row, xs=xs, requested_block_size=requested_block_size
+        )
+    ).lower(rows)
+    analysis = lowered.compile().memory_analysis()
+    assert analysis is not None, "the backend reported no memory analysis"
+    return analysis.temp_size_in_bytes
+
+
+@pytest.mark.parametrize("requested_block_size", [4, 64, _WIDE_ROWS])
+def test_wide_rows_are_padded_by_at_most_one_window(requested_block_size: int) -> None:
+    """Streaming a wide-row body costs one result stack plus a window, not two.
+
+    The row buffers are padded by the static window, so a window that covered
+    the whole axis would pad them to twice the axis — a second full stack of
+    results, on every setting, for a knob whose reason to exist is to bound
+    memory.
+    """
+    stack_bytes = _WIDE_ROWS * _WIDE_COLUMNS * 8
+    ceiling = stack_bytes * (1.0 + 4.0 * PROFILE_WINDOW / _WIDE_ROWS)
+    assert _compiled_temp_bytes(requested_block_size=requested_block_size) < ceiling

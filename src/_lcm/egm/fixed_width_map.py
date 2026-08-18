@@ -21,7 +21,8 @@ Two properties do the work:
 
 The cost is that work and workspace follow `max_block_size` rather than the
 smaller runtime block: a smaller block changes how many iterations run, not how
-much each one computes.
+much each one computes. `max_block_size` is therefore kept small — it bounds
+both the per-iteration work and the padding the row buffers carry.
 """
 
 import math
@@ -187,6 +188,13 @@ def _pad_rows(leaf: Array, *, n_padded: int) -> Array:
 # changing it recompiles. Partitions are rounded up to a multiple of it.
 MICROTILE_WIDTH: int = 4
 
+# Rows sliced per loop iteration. Bounded rather than derived from the row
+# count, because the window is what the row buffers are padded by: a window
+# covering the whole axis pads them to twice the axis, which costs a second
+# full stack of results on any body whose rows are wide. Set with the width by
+# the same profile measurement; a multiple of it.
+PROFILE_WINDOW: int = 64
+
 
 def enclosing_max_block_size(*, n_rows: int, microtile_width: int) -> int:
     """Return the smallest admitted static window covering `n_rows`."""
@@ -223,8 +231,9 @@ def map_partitioned(
     call site states only which axis it is streaming and how finely.
     """
     n_rows = _leading_size(xs)
-    max_block_size = enclosing_max_block_size(
-        n_rows=n_rows, microtile_width=MICROTILE_WIDTH
+    max_block_size = min(
+        PROFILE_WINDOW,
+        enclosing_max_block_size(n_rows=n_rows, microtile_width=MICROTILE_WIDTH),
     )
     return map_fixed_width(
         func=func,
