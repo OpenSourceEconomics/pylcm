@@ -25,6 +25,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.mortality import WEALTH_GRID
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution.test_retirement_only_oracle import (
     ANALYTICAL_CASES,
     load_analytical_values_retired,
@@ -36,6 +37,12 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_model,
     get_retirement_only_params,
 )
+
+# Every model here is solved by `DCEGM`, whose default envelope is `ExactEnvelope`,
+# and that envelope resolves candidate ownership through the native exact-affine
+# library. No test in this file names an envelope, so the requirement arrives with
+# the solver's default rather than from anything visible in the test itself.
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
