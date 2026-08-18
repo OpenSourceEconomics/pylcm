@@ -68,7 +68,7 @@ def safe_to_float_dtype(value: object, *, name: str) -> FloatND:
 
     - Down-cast (float64 → float32 under `jax_enable_x64=False`): raise
       `OverflowError` if any element exceeds float32 magnitude rather
-      than letting JAX silently saturate to ``±inf``.
+      than letting JAX silently saturate to `±inf`.
     - Up-cast or same-width cast: skip the range check. Precision loss
       within range is not an error — it is an inherent consequence of
       `jax_enable_x64=False`.

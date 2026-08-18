@@ -49,18 +49,18 @@ _FLOAT64_MANTISSA_BITS = 52
 
 
 def log_of_nonnegative(values: FloatND) -> FloatND:
-    """Return ``log(values)`` without reading a subnormal as floating data.
+    """Return `log(values)` without reading a subnormal as floating data.
 
     Some XLA backends preserve a subnormal's IEEE representation through a
     gather or bitcast but flush it when a transcendental primitive consumes it.
-    A direct ``log`` therefore reports ``-inf`` for a strictly positive number.
+    A direct `log` therefore reports `-inf` for a strictly positive number.
     Decompose every finite positive value from its bit pattern instead: its
-    significand is rebuilt as a normal number in ``[1, 2)`` and its unbiased
+    significand is rebuilt as a normal number in `[1, 2)` and its unbiased
     base-two exponent is carried as an ordinary integer.  Only the normal
-    significand is passed to ``log``.
+    significand is passed to `log`.
 
     Zero, infinities, NaNs, and negative inputs retain the ordinary logarithm
-    conventions.  The custom tangent is the mathematical ``dx / x``; the bit
+    conventions.  The custom tangent is the mathematical `dx / x`; the bit
     decomposition is only a representation device for the primal.
 
     Args:
@@ -93,7 +93,7 @@ def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
 def _log_of_nonnegative_jvp(
     primals: tuple[FloatND], tangents: tuple[FloatND]
 ) -> tuple[FloatND, FloatND]:
-    """Differentiate the representation-aware logarithm as ``dx / x``."""
+    """Differentiate the representation-aware logarithm as `dx / x`."""
     (values,) = primals
     (values_dot,) = tangents
     return _log_of_nonnegative_with_tangent(values), values_dot / values
@@ -717,7 +717,7 @@ def scaled_down_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     for every non-positive shift, including the normal/subnormal boundary,
     without materialising a subnormal scaling operand.
 
-    The map is linear in ``values`` away from the usual rounding boundaries, so
+    The map is linear in `values` away from the usual rounding boundaries, so
     its custom derivative multiplies by the same exact power of two. The tangent
     remains an ordinary multiplication and can be transposed by reverse mode.
 
