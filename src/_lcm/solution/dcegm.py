@@ -304,19 +304,6 @@ class DCEGM(Solver):
             )
             raise ModelInitializationError(msg)
 
-        if isinstance(self.envelope, ExactEnvelope):
-            from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
-
-            if not ffi.kernel_available_for_current_backend():
-                msg = (
-                    f"Regime {context.regime_name!r} selects ExactEnvelope, but "
-                    "the native exact-affine library is unavailable or unloadable. "
-                    "Install a pylcm build carrying the library or build it with "
-                    "`pixi run build-exact-affine`; select another envelope only "
-                    "when its documented approximation contract is acceptable."
-                )
-                raise ExactAffineKernelUnavailableError(msg)
-
         from _lcm.egm.validation import validate_dcegm_regime  # noqa: PLC0415
 
         validate_dcegm_regime(
@@ -325,6 +312,30 @@ class DCEGM(Solver):
             user_regimes=context.user_regimes,
             solution_reachability=context.solution_reachability,
         )
+
+    def validate_build(self, *, context: SolverBuildContext) -> None:
+        """Validate capabilities required by the selected envelope backend.
+
+        Model semantics are checked earlier by :meth:`validate_model`, without
+        consulting machine-local capabilities. Reaching this build-stage hook
+        therefore means the regime satisfies the DC-EGM contract; only then is
+        it meaningful to ask whether this installation can execute its selected
+        backend.
+        """
+        if not isinstance(self.envelope, ExactEnvelope):
+            return
+
+        from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
+
+        if not ffi.kernel_available_for_current_backend():
+            msg = (
+                f"Regime {context.regime_name!r} selects ExactEnvelope, but "
+                "the native exact-affine library is unavailable or unloadable. "
+                "Install a pylcm build carrying the library or build it with "
+                "`pixi run build-exact-affine`; select another envelope only "
+                "when its documented approximation contract is acceptable."
+            )
+            raise ExactAffineKernelUnavailableError(msg)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.

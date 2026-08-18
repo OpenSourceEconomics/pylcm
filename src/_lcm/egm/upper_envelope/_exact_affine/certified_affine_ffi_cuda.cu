@@ -65,6 +65,28 @@ __global__ void QueryWinnerKernel(
 
 
 template <typename T>
+__global__ void QueryWinnerBatchedKernel(
+    int64_t n_row, int32_t n_segment, int32_t n_query, const T* left_grid,
+    const T* right_grid, const T* left_value, const T* right_value,
+    const int32_t* live, const T* query, int32_t* winner, int32_t* status) {
+  const int64_t total = n_row * static_cast<int64_t>(n_query);
+  for (int64_t index =
+           static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+       index < total;
+       index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+    const int64_t segment_base = (index / n_query) * n_segment;
+    int32_t selected = 0;
+    const bool ok = core::ExactQueryWinner(
+        left_grid + segment_base, right_grid + segment_base,
+        left_value + segment_base, right_value + segment_base,
+        live + segment_base, n_segment, query[index], &selected);
+    winner[index] = selected;
+    status[index] = ok ? 0 : core::kUnresolved;
+  }
+}
+
+
+template <typename T>
 __global__ void HandoverKernel(
     int64_t n, const T* ax0, const T* ax1, const T* av0, const T* av1,
     const T* bx0, const T* bx1, const T* bv0, const T* bv1,
@@ -198,6 +220,59 @@ ffi::Error QueryWinnerImpl(
       left_value.typed_data(), right_value.typed_data(), live.typed_data(),
       query.typed_data(), (*winner).typed_data(), (*status).typed_data());
   return LaunchError("exact query winner launch failed");
+}
+
+
+template <typename T, ffi::DataType DType>
+ffi::Error QueryWinnerBatchedImpl(
+    cudaStream_t stream, ffi::Buffer<DType> left_grid,
+    ffi::Buffer<DType> right_grid, ffi::Buffer<DType> left_value,
+    ffi::Buffer<DType> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<DType> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  const size_t segment_rank = left_grid.dimensions().size();
+  const size_t query_rank = query.dimensions().size();
+  if (segment_rank < 2 || query_rank != segment_rank) {
+    return ffi::Error::InvalidArgument(
+        "batched exact-query operands must share a rank of at least two");
+  }
+  const int64_t n_segment_size = left_grid.dimensions()[segment_rank - 1];
+  const int64_t n_query_size = query.dimensions()[query_rank - 1];
+  if (n_segment_size == 0 || n_segment_size > INT32_MAX ||
+      n_query_size > INT32_MAX) {
+    return ffi::Error::InvalidArgument(
+        "batched exact-query segment axis must be nonempty and representable");
+  }
+  const int64_t n_row =
+      static_cast<int64_t>(left_grid.element_count()) / n_segment_size;
+  const size_t segment_elements =
+      static_cast<size_t>(n_row) * static_cast<size_t>(n_segment_size);
+  if (query.element_count() !=
+          static_cast<size_t>(n_row) * static_cast<size_t>(n_query_size) ||
+      right_grid.element_count() != segment_elements ||
+      left_value.element_count() != segment_elements ||
+      right_value.element_count() != segment_elements ||
+      live.element_count() != segment_elements) {
+    return ffi::Error::InvalidArgument(
+        "batched exact-query segment buffers must be nonempty and share the "
+        "query's row count");
+  }
+  const int64_t total = n_row * n_query_size;
+  if ((*winner).element_count() != static_cast<size_t>(total) ||
+      (*status).element_count() != static_cast<size_t>(total)) {
+    return ffi::Error::InvalidArgument(
+        "batched exact-query outputs must match the query buffer");
+  }
+  if (total == 0) return ffi::Error::Success();
+  constexpr int threads = 128;
+  const int blocks = static_cast<int>((total + threads - 1) / threads);
+  QueryWinnerBatchedKernel<<<blocks, threads, 0, stream>>>(
+      n_row, static_cast<int32_t>(n_segment_size),
+      static_cast<int32_t>(n_query_size), left_grid.typed_data(),
+      right_grid.typed_data(), left_value.typed_data(),
+      right_value.typed_data(), live.typed_data(), query.typed_data(),
+      (*winner).typed_data(), (*status).typed_data());
+  return LaunchError("batched exact query winner launch failed");
 }
 
 
@@ -360,6 +435,29 @@ ffi::Error QueryWinnerF64Impl(
 }
 
 
+ffi::Error QueryWinnerBatchedF32Impl(
+    cudaStream_t stream, ffi::Buffer<ffi::F32> left_grid,
+    ffi::Buffer<ffi::F32> right_grid, ffi::Buffer<ffi::F32> left_value,
+    ffi::Buffer<ffi::F32> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::F32> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerBatchedImpl<float, ffi::F32>(
+      stream, left_grid, right_grid, left_value, right_value, live, query,
+      winner, status);
+}
+
+ffi::Error QueryWinnerBatchedF64Impl(
+    cudaStream_t stream, ffi::Buffer<ffi::F64> left_grid,
+    ffi::Buffer<ffi::F64> right_grid, ffi::Buffer<ffi::F64> left_value,
+    ffi::Buffer<ffi::F64> right_value, ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::F64> query, ffi::ResultBuffer<ffi::S32> winner,
+    ffi::ResultBuffer<ffi::S32> status) {
+  return QueryWinnerBatchedImpl<double, ffi::F64>(
+      stream, left_grid, right_grid, left_value, right_value, live, query,
+      winner, status);
+}
+
+
 ffi::Error HandoverF32Impl(
     cudaStream_t stream, ffi::Buffer<ffi::F32> ax0,
     ffi::Buffer<ffi::F32> ax1, ffi::Buffer<ffi::F32> av0,
@@ -481,6 +579,32 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     ExactQueryWinnerF64, QueryWinnerF64Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F64>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerBatchedF32, QueryWinnerBatchedF32Impl,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::S32>>()
+        .Ret<ffi::Buffer<ffi::S32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    ExactQueryWinnerBatchedF64, QueryWinnerBatchedF64Impl,
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Arg<ffi::Buffer<ffi::F64>>()

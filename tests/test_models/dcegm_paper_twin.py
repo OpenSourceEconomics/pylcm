@@ -36,7 +36,7 @@ from lcm import (
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, EnvelopeConfig
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -289,14 +289,22 @@ def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
     )
 
 
-def build_dcegm_model(*, savings_grid: ContinuousGrid = SAVINGS_GRID) -> Model:
-    """Build the DC-EGM twin, optionally with a custom savings grid.
+def build_dcegm_model(
+    *,
+    savings_grid: ContinuousGrid = SAVINGS_GRID,
+    envelope: EnvelopeConfig | None = None,
+) -> Model:
+    """Build the DC-EGM twin with optional grid and envelope overrides.
 
     The default reproduces the fixture run's pinned uniform grid; a grid
     clustered toward the borrowing limit resolves the low-wealth region the
-    uniform grid cannot.
+    uniform grid cannot. `envelope=None` retains pylcm's documented exact
+    default; backend-independent construction tests pass a portable envelope
+    explicitly.
     """
     solver = dataclasses.replace(DCEGM_SOLVER, savings_grid=savings_grid)
+    if envelope is not None:
+        solver = dataclasses.replace(solver, envelope=envelope)
     return Model(
         regimes={
             "working_life": _working_life("dcegm").replace(solver=solver),

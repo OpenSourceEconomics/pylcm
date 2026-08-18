@@ -11,8 +11,10 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
-from tests.conftest import assert_agrees_to_ulp
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution._envelope_oracle import exact_envelope
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Bound on how far the blocked scan may sit from the dense reduction. The two
 # paths evaluate the same expressions and differ only in how XLA lowers them: a
