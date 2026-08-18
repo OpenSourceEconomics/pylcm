@@ -35,6 +35,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, EnvelopeConfig
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -204,15 +205,13 @@ done_retired = UserRegime(
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
 )
 
 
-def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
+def _working_life(
+    solver: Literal["brute_force", "dcegm"],
+) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
         transition=next_regime_from_working,
         states={"wealth": WEALTH_GRID},
@@ -232,7 +231,12 @@ def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
     )
     if solver == "brute_force":
         return brute
-    return brute.replace(
+    return ConsumptionSavingsRegime(
+        transition=brute.transition,
+        states=brute.states,
+        actions=brute.actions,
+        taste_shocks=brute.taste_shocks,
+        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -244,10 +248,18 @@ def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
 
-def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
+def _retirement(
+    solver: Literal["brute_force", "dcegm"],
+) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
         transition=next_regime_from_retirement,
         states={"wealth": WEALTH_GRID},
@@ -259,7 +271,12 @@ def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
     )
     if solver == "brute_force":
         return brute
-    return brute.replace(
+    return ConsumptionSavingsRegime(
+        transition=brute.transition,
+        states=brute.states,
+        actions=brute.actions,
+        taste_shocks=brute.taste_shocks,
+        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -269,6 +286,12 @@ def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
 

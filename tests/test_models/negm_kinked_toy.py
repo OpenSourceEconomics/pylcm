@@ -29,7 +29,11 @@ from lcm import (
     NEGM,
     AgeGrid,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
     categorical,
 )
@@ -163,29 +167,20 @@ SAVINGS_GRID = LinSpacedGrid(start=-5.0, stop=35.0, n_points=80)
 
 NEGM_SOLVER = NEGM(
     inner=DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="liquid_savings",
         savings_grid=SAVINGS_GRID,
     ),
-    outer_action="illiquid_investment",
-    outer_state="illiquid",
-    outer_post_decision="new_durable",
     outer_grid=OUTER_GRID,
-    outer_no_adjustment_candidate="keep_illiquid",
-    outer_cost="credited",
 )
 
 
-def build_alive_regime(*, outer_batch_size: int = 0) -> Regime:
+def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavingsRegime:
     """The non-terminal NEGM regime (two assets, two continuous actions).
 
     `outer_batch_size` chunks the NEGM outer durable search (`0` = all at once).
     """
     final_age_alive = 20 + (N_PERIODS - 2) * 5
     solver = replace(NEGM_SOLVER, outer_batch_size=outer_batch_size)
-    return Regime(
+    return NestedConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
@@ -204,6 +199,22 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> Regime:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=solver,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment="keep_illiquid",
+        ),
     )
 
 

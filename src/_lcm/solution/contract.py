@@ -46,10 +46,12 @@ from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
+    ActionName,
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
     FlatParams,
+    FunctionName,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     QAndFFunction,
@@ -369,6 +371,28 @@ class PeriodKernel(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class _BoundLiquidMargin:
+    """Resolved DAG role names carried privately by an EGM-family solver."""
+
+    state: StateName
+    action: ActionName
+    resources: FunctionName
+    post_decision_state: FunctionName
+    before_cost: FunctionName | None = None
+    cost: FunctionName | None = None
+
+
+@dataclass(frozen=True)
+class _BoundOuterContinuousMargin:
+    """Resolved outer-margin DAG role names carried privately by a solver."""
+
+    state: StateName
+    action: ActionName
+    post_decision_state: FunctionName
+    no_adjustment: FunctionName
+
+
 @dataclass(frozen=True, kw_only=True)
 class SolutionKernels:
     """Per-period solve adapters produced by a solver."""
@@ -469,3 +493,27 @@ class Solver(ABC):
         array, it aggregates any certainty equivalent in concrete values.
         """
         return False
+
+class OneMarginSolver(Solver):
+    """Marker base for solvers consuming one explicit liquid margin.
+
+    Future NB-EGM implementations can join this family without changing the
+    regime interface; the only shared operation is immutable role binding.
+    """
+
+    @abstractmethod
+    def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> OneMarginSolver:
+        """Return an immutable solver copy bound to one liquid margin."""
+
+
+class TwoMarginSolver(Solver):
+    """Marker base for solvers consuming liquid and outer continuous margins."""
+
+    @abstractmethod
+    def _with_margins(
+        self,
+        *,
+        liquid: _BoundLiquidMargin,
+        outer: _BoundOuterContinuousMargin,
+    ) -> TwoMarginSolver:
+        """Return an immutable solver copy bound to both margins."""

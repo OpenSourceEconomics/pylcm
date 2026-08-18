@@ -145,8 +145,13 @@ from lcm.processes import (  # noqa: E402
 )
 from lcm.regime import (  # noqa: E402
     ConsumptionSavingsRegime,
+    LiquidMargin,
     MarkovTransition,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
+    outer_unchanged,
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
@@ -160,7 +165,9 @@ from lcm.solvers import (  # noqa: E402
     GridSearch,
     LTMEnvelope,
     MSSEnvelope,
+    OneMarginSolver,
     RFCEnvelope,
+    TwoMarginSolver,
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
@@ -206,13 +213,18 @@ __all__ = [
     "LinSpacedGrid",
     "LinearAggregator",
     "LinearExpectation",
+    "LiquidMargin",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MSSEnvelope",
     "MarkovTransition",
     "Model",
+    "NestedConsumptionSavingsRegime",
+    "NetOfAdjustmentCost",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
+    "OneMarginSolver",
+    "OuterContinuousMargin",
     "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
@@ -227,6 +239,7 @@ __all__ = [
     "SolveSnapshot",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
+    "TwoMarginSolver",
     "UniformIIDProcess",
     "__version__",
     "affine_breakpoint",
@@ -239,6 +252,7 @@ __all__ = [
     "liquid_law_from_savings",
     "load_snapshot",
     "load_solution",
+    "outer_unchanged",
     "piece",
     "piecewise_affine",
     "save_solution",

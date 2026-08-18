@@ -46,12 +46,7 @@ jobs:
           - os: macos-latest
             pytest_extra: -m "not slow"
           - os: windows-latest
-            pytest_extra: >-
-              -m "not slow"
-              --exact-kernel-skip-inventory=reports/exact-kernel-skips-Windows.json
-              --expected-exact-kernel-skip-inventory
-              tests/ci/expected-exact-kernel-skips-windows.json
-              --max-total-skips=25
+            pytest_extra: -m "not slow"
     steps:
       - uses: actions/checkout@v7
       - uses: prefix-dev/setup-pixi@v0.10.1
@@ -62,6 +57,9 @@ jobs:
           environments: tests-cpu
           activate-environment: true
           frozen: true
+      - name: Activate the MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Build the exact-affine kernel
         # The kernel is a gitignored build artifact living in the source tree,
         # so a checkout never brings it and an environment cache cannot carry
@@ -78,6 +76,14 @@ jobs:
         run: >-
           pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
           --precision=64 --output-dir=reports
+      - name: Run the Windows exact-kernel capability matrix
+        if: runner.os == 'Windows' && matrix.python-version == '3.14'
+        shell: bash {0}
+        run: |
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=32 --output-dir=reports
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=64 --output-dir=reports
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
@@ -266,6 +272,9 @@ jobs:
           environments: tests-cpu
           activate-environment: true
           frozen: true
+      - name: Activate the MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Build the exact-affine kernel
         # Same rationale as the `tests` job's build step above: the kernel is a
         # source-tree artifact that neither the checkout nor the environment

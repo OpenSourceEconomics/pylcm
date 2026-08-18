@@ -23,6 +23,7 @@ import numpy as np
 
 from _lcm.egm.upper_envelope.fues import refine_envelope
 from lcm import AgeGrid, IrregSpacedGrid, LinSpacedGrid, Model
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
@@ -114,7 +115,7 @@ def _get_means_tested_model(variant: str) -> Model:
             functions={"utility": utility, "resources": resources_with_floor},
         )
     else:
-        regime = UserRegime(
+        regime = ConsumptionSavingsRegime(
             transition=next_regime_from_retirement,
             active=active,
             actions={"consumption": CONSUMPTION_GRID},
@@ -127,12 +128,14 @@ def _get_means_tested_model(variant: str) -> Model:
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
             solver=DCEGM(
-                continuous_state="wealth",
-                continuous_action="consumption",
-                resources="resources",
-                post_decision_function="savings",
                 savings_grid=SAVINGS_GRID,
                 n_constrained_points=64,
+            ),
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
             ),
         )
     return Model(
@@ -153,7 +156,7 @@ def _get_corner_model() -> Model:
     """
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
-    regime = UserRegime(
+    regime = ConsumptionSavingsRegime(
         transition=next_regime_from_retirement,
         active=lambda age, la=last_age: age < la,
         actions={"consumption": CORNER_CONSUMPTION_GRID},
@@ -166,12 +169,14 @@ def _get_corner_model() -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=CORNER_SAVINGS_GRID,
             n_constrained_points=64,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     return Model(

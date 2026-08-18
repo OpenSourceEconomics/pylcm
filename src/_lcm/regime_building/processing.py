@@ -5,7 +5,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jax
 from dags import concatenate_functions, get_annotations, with_signature
@@ -78,6 +78,10 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
     normalize_all_regime_phases,
 )
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+
 from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -1630,21 +1634,25 @@ def _build_simulation_phase(
     )
     own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
+    bound_solver = cast("_BoundDCEGM", solver) if isinstance(solver, DCEGM) else None
     if (
-        isinstance(solver, DCEGM)
-        and _envelope_publishes_crossings(solver)
+        bound_solver is not None
+        and _envelope_publishes_crossings(bound_solver)
         and phase_invariant
         and not has_taste_shocks
         and not _regime_has_process_state(own_v_info)
         and not _regime_has_passive_state(
-            v_interpolation_info=own_v_info, euler_state_name=solver.continuous_state
+            v_interpolation_info=own_v_info,
+            euler_state_name=bound_solver.continuous_state,
         )
-        and not savings_stage_reads_euler_state(user_regime=user_regime, solver=solver)
+        and not savings_stage_reads_euler_state(
+            user_regime=user_regime, solver=bound_solver
+        )
     ):
         egm_policy_read = EGMPolicyRead(
-            action_name=solver.continuous_action,
-            resources_target=solver.resources,
-            savings_lower_bound=float(solver.savings_grid.to_jax()[0]),
+            action_name=bound_solver.continuous_action,
+            resources_target=bound_solver.resources,
+            savings_lower_bound=float(bound_solver.savings_grid.to_jax()[0]),
         )
 
     # Inventory the periodized nodes the additional-target guard must reject —

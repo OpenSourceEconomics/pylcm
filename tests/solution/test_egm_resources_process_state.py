@@ -28,6 +28,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -132,10 +133,6 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -154,7 +151,7 @@ def _get_model(solver: str) -> Model:
         "wage": RouwenhorstAR1Process(n_points=N_WAGE_NODES),
     }
     if solver == "dcegm":
-        alive = UserRegime(
+        alive = ConsumptionSavingsRegime(
             transition=next_regime,
             active=active,
             actions={"consumption": CONSUMPTION_GRID},
@@ -168,6 +165,12 @@ def _get_model(solver: str) -> Model:
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
             solver=DCEGM_SOLVER,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
         )
     else:
         alive = UserRegime(

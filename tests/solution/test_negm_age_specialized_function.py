@@ -20,7 +20,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, AgeSpecializedFunction, Model, Regime
+from lcm import (
+    AgeGrid,
+    AgeSpecializedFunction,
+    LiquidMargin,
+    Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+)
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import negm_kinked_toy
@@ -93,7 +101,7 @@ def _build_model(*, helper_name: str, override) -> Model:
     }
     if override is not None:
         functions[helper_name] = override
-    alive = Regime(
+    alive = NestedConsumptionSavingsRegime(
         active=lambda age: age <= _FINAL_AGE_ALIVE,
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
@@ -110,6 +118,22 @@ def _build_model(*, helper_name: str, override) -> Model:
         transition=next_regime,
         functions=functions,
         solver=replace(NEGM_SOLVER),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment="keep_illiquid",
+        ),
     )
     return Model(
         regimes={"alive": alive, "dead": build_dead_regime()},

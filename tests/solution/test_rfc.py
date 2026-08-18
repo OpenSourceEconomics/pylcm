@@ -50,10 +50,6 @@ _GRID_ATOL = 1e-12 if X64_ENABLED else 1e-5
 
 def _rfc_solver():
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         envelope=envelope_config("rfc"),
     )

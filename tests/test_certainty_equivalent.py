@@ -19,9 +19,11 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     CESAggregator,
+    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     Phased,
@@ -182,6 +184,14 @@ def _budget(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
     return consumption <= wealth
 
 
+def _resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
 def _next_regime() -> ScalarInt:
     return _RegimeId.dead
 
@@ -227,7 +237,23 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
     }
-    alive = Regime(**(base_alive | alive_kwargs))
+    if isinstance(alive_kwargs.get("solver"), DCEGM):
+        base_alive["functions"] = {
+            "utility": _utility_alive,
+            "resources": _resources,
+            "savings": _savings,
+        }
+        alive = ConsumptionSavingsRegime(
+            **(base_alive | alive_kwargs),
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+    else:
+        alive = Regime(**(base_alive | alive_kwargs))
     dead = Regime(**(base_dead | dead_kwargs))
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -272,10 +298,6 @@ def test_terminal_regime_rejects_the_linear_certainty_equivalent():
 def test_dcegm_rejects_certainty_equivalent():
     """DC-EGM's Euler inversion assumes expected utility; the guard names GridSearch."""
     dcegm = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
@@ -2052,10 +2074,6 @@ def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
 ):
     """A continuation solver must not silently substitute plain expectation."""
     dcegm = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):

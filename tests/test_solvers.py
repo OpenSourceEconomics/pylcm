@@ -68,10 +68,6 @@ def _build_model(*, working_solver: object | None = None) -> Model:
 
 def _valid_dcegm() -> DCEGM:
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=WEALTH_GRID,
     )
 
@@ -96,9 +92,10 @@ def test_explicit_grid_search_matches_default_solution():
 
 
 def test_dcegm_config_constructs():
-    """A `DCEGM` config with valid fields constructs and exposes its defaults."""
+    """A `DCEGM` config exposes numerical settings while the regime owns names."""
     cfg = _valid_dcegm()
-    assert cfg.continuous_state == "wealth"
+    assert cfg.savings_grid is WEALTH_GRID
+    assert not hasattr(cfg, "continuous_state")
     assert isinstance(cfg.envelope, ExactEnvelope)
     assert cfg.envelope.max_runs == 24
 
@@ -118,10 +115,6 @@ def test_model_with_dcegm_solver_builds():
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=50)
 
 _BASE_DCEGM = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=_SAVINGS_GRID,
 )
 

@@ -25,8 +25,14 @@ from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import Regime as UserRegime
-from lcm.solvers import NEGM
+from lcm.regime import (
+    NetOfAdjustmentCost,
+    _composition_rule_message,
+    _EGMFamilyRegime,
+)
+from lcm.regime import (
+    Regime as UserRegime,
+)
 from lcm.transition import _AgeSpecialized
 from lcm.typing import FloatND, UserFunction
 
@@ -82,7 +88,7 @@ def finalize_regimes(
             derived_categoricals=derived_categoricals,
         )
         functions = dict(user_regime.functions)
-        _compose_negm_resources(
+        _compose_margin_resources(
             regime_name=regime_name,
             user_regime=user_regime,
             functions=functions,
@@ -121,63 +127,64 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
-def _compose_negm_resources(
+def _compose_margin_resources(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction | Phased | None],
 ) -> None:
-    """Inject `resources = base - outer_cost` for an NEGM regime with a cost.
+    """Compose a ``NetOfAdjustmentCost`` resources declaration.
 
-    The NEGM stacked-carry lift is exact only when the inner resources are
-    affine in the declared outer cost with coefficient exactly `-1`. That is
-    not a property finitely many probes can certify on an arbitrary user
-    function, so pylcm performs the subtraction itself: the user supplies the
-    cost-free base `<resources>_before_outer_cost`, and the resources function
-    every consumer sees — the inner EGM solve, the budget constraint, the
-    parent's child-resources read — is composed here, at the single point
-    before validation and processing. Mutates `functions` in place; regimes
-    whose solver is not `NEGM`, or whose `outer_cost` is `None`, are untouched
-    (they define the resources function directly).
+    The regime owns the three names explicitly.  pylcm performs the subtraction
+    at the single model-finalization seam, before validation and DAG processing,
+    so the coefficient on the cost is exactly ``-1`` by construction rather than
+    inferred from probes.  Bare resources declarations are untouched.
 
     Raises:
         ModelInitializationError: If the regime defines the resources function
             itself, or the cost-free base or the declared cost is missing.
 
     """
-    solver = user_regime.solver
-    if not isinstance(solver, NEGM) or solver.outer_cost is None:
+    if not isinstance(user_regime, _EGMFamilyRegime):
         return
-    resources_name = solver.inner.resources
-    base_name = f"{resources_name}_before_outer_cost"
-    cost_name = solver.outer_cost
+    resources = user_regime.liquid.resources
+    if not isinstance(resources, NetOfAdjustmentCost):
+        return
+
+    resources_name = resources.name_in_dag
+    base_name = resources.before_cost
+    cost_name = resources.cost
 
     if resources_name in functions:
-        msg = (
-            f"Regime '{regime_name}' defines the resources function "
-            f"'{resources_name}' alongside a declared `NEGM.outer_cost` "
-            f"('{cost_name}'). With a declared outer cost the resources "
-            f"function is composed by pylcm as `{base_name} - {cost_name}`, "
-            "so its affine use of the cost holds by construction — define "
-            f"the cost-free base '{base_name}' instead of '{resources_name}'."
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} defines the composed resources "
+                    f"function {resources_name!r}. "
+                ),
+            )
         )
-        raise ModelInitializationError(msg)
     if base_name not in functions:
-        msg = (
-            f"Regime '{regime_name}' declares `NEGM.outer_cost` "
-            f"('{cost_name}') but no cost-free resources base "
-            f"'{base_name}'. pylcm composes the resources function as "
-            f"`{base_name} - {cost_name}` — declare the base function."
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} is missing the cost-free resources "
+                    f"function {base_name!r}. "
+                ),
+            )
         )
-        raise ModelInitializationError(msg)
     if cost_name not in functions:
-        msg = (
-            f"NEGM.outer_cost '{cost_name}' is not a declared function of "
-            f"regime '{regime_name}'. The credited outer cost must be a "
-            "regime function reading only the durable state, the outer "
-            "post-decision, and params."
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} is missing the adjustment-cost "
+                    f"function {cost_name!r}. "
+                ),
+            )
         )
-        raise ModelInitializationError(msg)
 
     base_annotation = _return_annotation(functions[base_name])
     cost_annotation = _return_annotation(functions[cost_name])
