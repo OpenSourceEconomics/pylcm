@@ -70,7 +70,14 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, Float1D, FloatND, FunctionName, StateName
+from lcm.typing import (
+    ActionName,
+    Float1D,
+    FloatND,
+    FunctionName,
+    StateName,
+    outer_unchanged,
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -234,8 +241,6 @@ class NNBEGM(TwoMarginSolver):
           ride-along state.
         """
         bound = cast("_BoundNNBEGM", self)
-        from lcm.regime import outer_unchanged  # noqa: PLC0415
-
         # The adjuster's outer post-decision arrives per outer-grid node as a
         # bound param, so the function declaring the chosen stock leaves the
         # inner DAG — leaving it in would let the inner scope check walk through
