@@ -87,7 +87,9 @@ def _build_model(*, solver: OneMarginSolver | GridSearch, epstein_zin: bool) -> 
         actions={"consumption": _CONSUMPTION_GRID},
         transition=_next_regime,
         functions=functions,
-        constraints={"feasible": _feasible},
+        constraints=(
+            {} if isinstance(solver, OneMarginSolver) else {"feasible": _feasible}
+        ),
         koopmans_aggregator=CESAggregator() if epstein_zin else None,
         certainty_equivalent=PowerMean() if epstein_zin else None,
         solver=solver,

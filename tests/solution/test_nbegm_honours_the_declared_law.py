@@ -66,7 +66,7 @@ def _model(*, variant, n_consumption=120):
         },
         liquid_law=next_liquid_net_of_a_fixed_cost,
         alive_solver=resolve_solver(variant, savings_grid=_SAVINGS_GRID),
-        constraints={"feasible": feasible},
+        constraints={} if variant == "nbegm" else {"feasible": feasible},
     )
 
 
