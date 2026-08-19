@@ -196,7 +196,14 @@ def test_round_trip_cost_creates_an_inaction_wedge():
 
 
 @pytest.mark.slow
-@pytest.mark.skip(reason="gpu-01 only: 2-D+AR1 NEGM solve OOMs locally")
+@pytest.mark.skip(
+    reason=(
+        "Runs in no environment: an unconditional skip, so neither the local "
+        "box nor the GPU CI legs execute it. The 2-D+AR1 NEGM solve OOMs "
+        "locally; enabling it means marking it `gpu` and accepting the GPU "
+        "CI cost."
+    )
+)
 def test_housing_model_solves_on_gpu():
     """The DS App.2 housing model solves to a finite value function.
 

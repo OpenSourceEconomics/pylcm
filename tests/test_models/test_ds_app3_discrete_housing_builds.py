@@ -209,7 +209,8 @@ def test_brute_solve_at_tiny_grid_yields_a_finite_value_function():
 
 @pytest.mark.skip(
     reason=(
-        "DC-EGM kernel scope gap on feat/dcegm: the solve raises "
+        "Runs in no environment: an unconditional skip, so neither the local "
+        "box nor the GPU CI legs execute it. DC-EGM kernel scope gap: the solve raises "
         "NotImplementedError because (1) resources reads the Markov wage process "
         "state and (2) the discrete housing state reaches the terminal regime via "
         "a non-identity transition (next_housing = housing_choice). The model "

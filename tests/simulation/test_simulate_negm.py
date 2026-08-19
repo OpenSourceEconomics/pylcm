@@ -22,7 +22,14 @@ from tests.test_models.negm_kinked_toy import RegimeId
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skip(reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"),
+    pytest.mark.skip(
+        reason=(
+            "Runs in no environment: an unconditional skip, so neither the "
+            "local box nor the GPU CI legs execute it. The NEGM/DC-EGM solve "
+            "OOMs locally; enabling it means marking it `gpu` and accepting "
+            "the GPU CI cost."
+        )
+    ),
 ]
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
