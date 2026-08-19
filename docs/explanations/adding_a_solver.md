@@ -110,15 +110,19 @@ it is meant to attach to** — it is not a style choice.
 
 | Regime class                     | Accepts                           | Base class to subclass |
 | -------------------------------- | --------------------------------- | ---------------------- |
-| `Regime`                         | any `Solver`                      | `Solver`               |
+| `Regime`                         | any non-margin `Solver`           | `Solver`               |
 | `ConsumptionSavingsRegime`       | `OneMarginSolver` or `GridSearch` | `OneMarginSolver`      |
 | `NestedConsumptionSavingsRegime` | `TwoMarginSolver` or `GridSearch` | `TwoMarginSolver`      |
 
-The two specialised regimes enforce this at construction, not at solve time: each runs
-an `isinstance` check in `__post_init__` and raises `RegimeInitializationError` naming
-the base it wanted. So a solver that subclasses `Solver` directly is complete and
-correct for a plain `Regime`, and a `ConsumptionSavingsRegime` will refuse it — the
-error arrives when the regime is built, long before any kernel runs.
+All three regime classes enforce the pairing at construction, not at solve time, and
+they guard in both directions. Each specialised regime checks in `__post_init__` that
+its solver is the base it wants, and a plain `Regime` checks that its solver is *not* a
+margin-family one: hand it an `EGM`, `DCEGM` or `NEGM` and it raises
+`RegimeInitializationError` telling you to use the specialised regime instead, because
+the four role names such a solver needs have nowhere to be declared. So a solver
+subclassing `Solver` directly is complete and correct for a plain `Regime` and a
+`ConsumptionSavingsRegime` will refuse it, and the reverse is refused too. Either error
+arrives when the regime is built, long before any kernel runs.
 
 ### The `Solver`-direct path
 
