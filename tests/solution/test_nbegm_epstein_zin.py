@@ -92,7 +92,9 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
             "resources": _resources,
             "savings": _savings,
         },
-        constraints={"feasible": _feasible},
+        constraints=(
+            {} if isinstance(solver, OneMarginSolver) else {"feasible": _feasible}
+        ),
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=solver,
