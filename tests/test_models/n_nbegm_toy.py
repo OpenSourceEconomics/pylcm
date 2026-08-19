@@ -172,7 +172,7 @@ def build_solver(
     *, variant: str, outer_batch_size: int = 0
 ) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime."""
-    if variant == "brute":
+    if variant in {"brute", "brute_direct"}:
         return GridSearch()
     if variant == "negm":
         return NEGM(
@@ -200,6 +200,8 @@ def build_model(
     outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
     illiquid_grid: Grid = ILLIQUID_GRID,
+    illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
+    consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -208,7 +210,13 @@ def build_model(
     isolating the outer wrapper from the nested-carry publication; longer
     horizons chain published nested carries between alive periods.
 
-    `illiquid_grid` overrides the durable state's grid in both regimes.
+    `illiquid_grid` overrides the durable state's grid in both regimes, and
+    `illiquid_investment_grid` the action that moves it. Together they set
+    which `new_illiquid` levels the brute variant can reach, so a caller can
+    align the brute candidate set with the nested solvers' outer grid.
+    `consumption_grid` refines the inner action, which the grid search ranks
+    directly and the endogenous-grid solvers do not, so a refinement sequence
+    over it separates the oracle's own discretization error from the solver's.
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
@@ -229,26 +237,42 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    constraints = (
-        {"illiquid_feasible": illiquid_feasible, "budget_feasible": budget_feasible}
-        if variant == "brute"
-        else {}
-    )
+    if variant == "brute":
+        constraints = {
+            "illiquid_feasible": illiquid_feasible,
+            "budget_feasible": budget_feasible,
+        }
+    elif variant == "brute_direct":
+        # `new_illiquid` is the action, so its grid already pins the durable
+        # range; only the inner savings floor still needs stating.
+        constraints = {"budget_feasible": budget_feasible}
+    else:
+        constraints = {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
     state_transitions = {
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
-    actions = {
-        "consumption": CONSUMPTION_GRID,
-        "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
-    }
+    if variant == "brute_direct":
+        # Dropping `new_illiquid` from the DAG turns its output into an
+        # external input, which the action supplies directly. Every reader —
+        # `credited`, `resources`, the durable law — is unchanged.
+        del functions["new_illiquid"]
+        actions = {
+            "consumption": consumption_grid,
+            "new_illiquid": OUTER_GRID,
+        }
+    else:
+        actions = {
+            "consumption": consumption_grid,
+            "illiquid_investment": illiquid_investment_grid,
+        }
     solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
-    if variant == "brute":
+    if variant in {"brute", "brute_direct"}:
         alive = Regime(
             active=active,
             states=states,
