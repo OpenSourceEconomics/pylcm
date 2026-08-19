@@ -50,10 +50,7 @@ class _PostDecisionLowerBound:
         return kwargs[self.post_decision] >= self.lower_bound
 
     def __repr__(self) -> str:
-        return (
-            f"post_decision_lower_bound(post_decision={self.post_decision!r}, "
-            f"lower_bound={self.lower_bound!r})"
-        )
+        return f"<declared lower bound: {self.post_decision} >= {self.lower_bound!r}>"
 
 
 def without_proved_lower_bounds(

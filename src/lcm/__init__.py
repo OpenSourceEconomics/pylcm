@@ -98,6 +98,7 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
+from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
     IrregSpacedGrid,
@@ -139,6 +140,7 @@ from lcm.regime import (  # noqa: E402
     OuterContinuousMargin,
     Regime,
     outer_unchanged,
+    post_decision_lower_bound,
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
@@ -159,7 +161,6 @@ from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     fixed_transition,
-    post_decision_lower_bound,
 )
 
 # Modules with TYPE_CHECKING-only forward references expose a
@@ -186,6 +187,7 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExactEnvelope",
@@ -228,9 +230,11 @@ __all__ = [
     "__version__",
     "categorical",
     "fixed_transition",
+    "implies",
     "load_snapshot",
     "load_solution",
     "outer_unchanged",
     "post_decision_lower_bound",
+    "ref",
     "save_solution",
 ]

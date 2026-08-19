@@ -34,6 +34,13 @@ from lcm.typing import (
 )
 from tests.conftest import DECIMAL_PRECISION
 
+_LIQUID = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
 _ACTION_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
 
@@ -84,7 +91,7 @@ def _model(
     constraints: dict[str, UserFunction] = {}
     if declared_lower_bound is not None:
         constraints["borrowing_limit"] = post_decision_lower_bound(
-            post_decision="savings", lower_bound=declared_lower_bound
+            margin=_LIQUID, lower=declared_lower_bound
         )
     if opaque_constraint is not None:
         constraints["borrowing_constraint"] = opaque_constraint
@@ -103,12 +110,7 @@ def _model(
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=savings_grid_start, stop=4.0, n_points=12)
         ),
-        liquid=LiquidMargin(
-            state="wealth",
-            action="consumption",
-            resources="resources",
-            post_decision_state="savings",
-        ),
+        liquid=_LIQUID,
     )
     done_regime = Regime(
         actions={},
@@ -231,7 +233,7 @@ def _grid_search_model(*, declared_lower_bound: float | None) -> Model:
         if declared_lower_bound is None
         else {
             "borrowing_limit": post_decision_lower_bound(
-                post_decision="savings", lower_bound=declared_lower_bound
+                margin=_LIQUID, lower=declared_lower_bound
             )
         }
     )
