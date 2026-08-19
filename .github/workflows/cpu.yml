@@ -75,20 +75,6 @@ jobs:
         # Windows inventory below makes that capability loss visible. Build the
         # library explicitly wherever this platform supports it.
         run: pixi run -e tests-cpu build-exact-affine
-      - name: Run the fp64 exact-kernel capability matrix
-        if: runner.os == 'Linux' && matrix.python-version == '3.14'
-        shell: bash {0}
-        run: >-
-          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
-          --precision=64 --output-dir=reports
-      - name: Run the Windows exact-kernel capability matrix
-        if: runner.os == 'Windows' && matrix.python-version == '3.14'
-        shell: bash {0}
-        run: |
-          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
-            --precision=32 --output-dir=reports
-          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
-            --precision=64 --output-dir=reports
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
@@ -113,6 +99,27 @@ jobs:
             jax-${{ runner.os }}-${{ matrix.python-version }}-${{
               hashFiles('pixi.lock') }}-
             jax-${{ runner.os }}-${{ matrix.python-version }}-
+      - name: Run the fp64 exact-kernel capability matrix
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=64 --output-dir=reports
+      - name: Run the Windows exact-kernel capability matrix
+        if: runner.os == 'Windows' && matrix.python-version == '3.14'
+        # Both precisions run even when the first fails, because each arm's
+        # report is evidence about a different build; the step then fails if
+        # either did. A bare `bash {0}` template has neither `-e` nor a status
+        # of its own beyond the last command's, so without the explicit exit a
+        # failing fp32 arm is reported as success whenever fp64 passes.
+        shell: bash {0}
+        run: |
+          rc=0
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=32 --output-dir=reports || rc=1
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=64 --output-dir=reports || rc=1
+          exit "$rc"
       - name: Run pytest
         shell: bash {0}
         run: >-
@@ -193,8 +200,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
+          path: reports/junit-cpu-*.xml
+          if-no-files-found: warn
+      - name: Upload exact-kernel capability diagnostics
+        # Kept out of the JUnit artifact above on purpose. The matrix's `broken`
+        # arm is required to produce a failing testcase -- that failure is the
+        # positive control proving the detector fires -- so pooling its report
+        # with the suite's would put a failure and three extra arms per
+        # precision into the counts a healthy run reports.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-kernel-matrix-fp64-${{ runner.os }}-${{ matrix.python-version }}
           path: |
-            reports/junit-*.xml
+            reports/junit-exact-kernel-matrix-*.xml
             reports/exact-kernel-skips-*.json
             reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
@@ -267,11 +286,6 @@ jobs:
         # source-tree artifact that neither the checkout nor the environment
         # cache carries, and a missing one turns certified tests into skips.
         run: pixi run -e tests-cpu build-exact-affine
-      - name: Run the fp32 exact-kernel capability matrix
-        shell: bash {0}
-        run: >-
-          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
-          --precision=32 --output-dir=reports
       - name: Cache JAX compiled programs
         # Same rationale as the `tests` job's cache step above, keyed apart
         # (`jax-fp32-...`) so this leg never shares -- or fights over -- the
@@ -286,6 +300,11 @@ jobs:
             jax-fp32-${{ runner.os }}-3.14-${{
               hashFiles('pixi.lock') }}-
             jax-fp32-${{ runner.os }}-3.14-
+      - name: Run the fp32 exact-kernel capability matrix
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=32 --output-dir=reports
       - name: Run pytest at fp32
         shell: bash {0}
         # Same memory budget as the fp64 leg above, for the same reason: a
@@ -319,8 +338,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp32
+          path: reports/junit-cpu-*.xml
+          if-no-files-found: warn
+      - name: Upload exact-kernel capability diagnostics
+        # Separate from the JUnit artifact for the same reason as the fp64 leg:
+        # the `broken` arm's required failure must not land in the counts a
+        # healthy run reports.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-kernel-matrix-fp32
           path: |
-            reports/junit-*.xml
+            reports/junit-exact-kernel-matrix-*.xml
             reports/exact-kernel-skips-*.json
             reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
