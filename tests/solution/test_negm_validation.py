@@ -363,8 +363,8 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
 
     Affineness of resources in the cost holds by construction only when pylcm
     performs the subtraction itself; a user-defined resources function
-    alongside a declared `NEGM.outer_cost` is rejected at model build with a
-    pointer to the cost-free base.
+    alongside a `NetOfAdjustmentCost` on `liquid.resources` is rejected at
+    model build with a pointer to the cost-free base.
     """
     regime = _VALID.replace(
         functions={
@@ -465,12 +465,12 @@ def test_finalize_composes_resources_with_a_phased_base():
 
 
 def test_missing_outer_cost_with_costful_resources_is_rejected():
-    """Omitting `NEGM.outer_cost` while resources reads the outer margin fails.
+    """A plain `liquid.resources` reading the outer margin is rejected.
 
     With `outer_cost=None` the user defines the resources function directly and
     the lift credits nothing, so a resources function that depends on the outer
     post-decision (here through the `credited` function it reads) is rejected
-    with a pointer to `NEGM.outer_cost`.
+    with a pointer to `liquid.resources`.
     """
     liquid = dataclasses.replace(_VALID.liquid, resources="resources")
     regime = _VALID.replace(

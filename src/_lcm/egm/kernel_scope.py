@@ -11,7 +11,6 @@ kernel build rather than with the model-construction validators.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING
 
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
@@ -23,6 +22,7 @@ from _lcm.egm.regime_introspection import (
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.solution.continuation_target import _namespace_target_param_names
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.transition_laws import TransitionLaws, is_stochastic
 from _lcm.typing import (
     ActionName,
@@ -35,12 +35,6 @@ from _lcm.typing import (
 )
 from _lcm.utils.functools import get_union_of_args
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
-
-if TYPE_CHECKING:
-    from _lcm.solution.dcegm import _BoundDCEGM
-else:
-    _BoundDCEGM = DCEGM
 
 
 def _find_unsupported_feature(

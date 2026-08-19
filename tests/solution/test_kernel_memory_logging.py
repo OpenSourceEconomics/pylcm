@@ -8,10 +8,15 @@ not masked. So the dump emits at a level that always clears the logger's thresho
 
 import logging
 
+import pytest
+
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution.test_egm_discrete import (
     _get_skill_model,
     _get_skill_model_params,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def test_kernel_memory_dump_emits_at_log_level_off(monkeypatch, caplog):

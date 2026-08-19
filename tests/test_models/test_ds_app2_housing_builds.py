@@ -31,7 +31,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import DCEGM
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import ds_app2_housing
 
 # The closed-form cost comparisons are float-eps-limited at the active precision.
@@ -39,6 +39,7 @@ _COST_ATOL = 1e-12 if X64_ENABLED else 1e-5
 _COST_RTOL = 1e-12 if X64_ENABLED else 1e-5
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_model_builds_at_small_grid_without_solving():
     """The DS App.2 housing model builds at a tiny grid as a valid `Model`.
 
@@ -50,6 +51,7 @@ def test_model_builds_at_small_grid_without_solving():
     assert isinstance(model, Model)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_contract_accepts_the_housing_regimes():
     """`validate_negm_regimes` accepts the working and retired NEGM regimes.
 
@@ -70,6 +72,7 @@ def test_negm_contract_accepts_the_housing_regimes():
     assert working.outer_continuous.action == "housing_investment"
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_expected_regimes_states_and_actions_are_present():
     """The model carries the working/retired/dead regimes with their variables.
 
@@ -98,6 +101,7 @@ def test_expected_regimes_states_and_actions_are_present():
     assert {"liquid", "housing"} <= set(dead.states)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_keeper_and_adjuster_are_solver_internal_not_user_actions():
     """The adjust/keep choice is the NEGM dual core, not a discrete action.
 
@@ -205,6 +209,7 @@ def test_housing_model_solves_on_gpu():
     assert solution[0]["working"] is not None
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("liquid_batch_size", [0, 4])
 def test_liquid_batch_size_threads_to_the_liquid_grid(liquid_batch_size: int):
     """`build_model(liquid_batch_size=k)` sets the liquid grid's `batch_size`.

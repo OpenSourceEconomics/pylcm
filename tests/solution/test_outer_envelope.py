@@ -28,11 +28,11 @@ from lcm.typing import Float1D, FloatND
 def test_coh_shift_derives_from_the_declared_cost_alone() -> None:
     """The credited-cost shift evaluates only the declared cost DAG.
 
-    With a declared `NEGM.outer_cost` the resources function is composed at
-    model build as `base - cost`, so the shift is exactly
-    `cost(z, z'_j) - cost(z, keep(z))` — nothing about the wider function set
-    (a wage-only income node, params other states read) enters the evaluation,
-    and no binding for them is demanded.
+    With a `NetOfAdjustmentCost` on `liquid.resources` the resources function is
+    composed at model build as `base - cost`, so the shift is exactly `cost(z, z'_j) -
+    cost(z, keep(z))` — nothing about the wider function set (a wage-only income node,
+    params other states read) enters the evaluation, and no binding for them is
+    demanded.
     """
 
     def income(wage: FloatND) -> FloatND:

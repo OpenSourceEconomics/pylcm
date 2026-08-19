@@ -15,7 +15,7 @@ pulls in no numerical engine modules.
 import functools
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -38,6 +38,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
     _BoundLiquidMargin,
+    bind_roles,
 )
 from _lcm.typing import (
     EGMStepFunction,
@@ -246,13 +247,16 @@ class DCEGM(OneMarginSolver):
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundDCEGM:
         """Bind regime-owned DAG names without exposing them on public `DCEGM`."""
-        kwargs = {field.name: getattr(self, field.name) for field in fields(DCEGM)}
-        return _BoundDCEGM(
-            **kwargs,
-            continuous_state=margin.state,
-            continuous_action=margin.action,
-            resources=margin.resources,
-            post_decision_function=margin.post_decision_state,
+        return cast(
+            "_BoundDCEGM",
+            bind_roles(
+                solver=self,
+                role_type=_BoundDCEGM,
+                continuous_state=margin.state,
+                continuous_action=margin.action,
+                resources=margin.resources,
+                post_decision_function=margin.post_decision_state,
+            ),
         )
 
     @property
@@ -274,7 +278,7 @@ class DCEGM(OneMarginSolver):
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Validate capabilities required by the selected envelope backend.
 
-        Model semantics are checked earlier by :meth:`validate_model`, without
+        Model semantics are checked earlier by `validate_model`, without
         consulting machine-local capabilities. Reaching this build-stage hook
         therefore means the regime satisfies the DC-EGM contract; only then is
         it meaningful to ask whether this installation can execute its selected
@@ -362,9 +366,16 @@ class _BoundDCEGM(DCEGM):
     """Internal DC-EGM configuration with regime-resolved DAG role names."""
 
     continuous_state: StateName
+    """Name of the liquid state DC-EGM inverts the Euler equation over."""
+
     continuous_action: ActionName
+    """Name of the liquid action the endogenous grid is expressed in."""
+
     resources: FunctionName
+    """Name of the function giving resources available for that action."""
+
     post_decision_function: FunctionName
+    """Name of the function giving the savings the exogenous grid spans."""
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -93,8 +93,12 @@ def prob_stop(age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 >= last_age, 1.0, 0.0)
 
 
-def _model(*, solver, n_consumption=200):
-    """A pure consumption--saving lifecycle with no income and no kinks."""
+def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
+    """A pure consumption--saving lifecycle with no income and no kinks.
+
+    `resources_func` and `liquid` let a caller vary the two declarations the
+    EGM contract constrains; both default to the ones it accepts.
+    """
     wealth_grid = _WEALTH_GRID
     last_age = float(_N_PERIODS - 1)
     regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
@@ -111,12 +115,18 @@ def _model(*, solver, n_consumption=200):
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={
+            "utility": utility,
+            "resources": resources if resources_func is None else resources_func,
+            "savings": savings,
+        },
         active=lambda age, la=last_age: age < la,
         solver=solver,
         **(
             {
-                "liquid": LiquidMargin(
+                "liquid": liquid
+                if liquid is not None
+                else LiquidMargin(
                     state="wealth",
                     action="consumption",
                     resources="resources",

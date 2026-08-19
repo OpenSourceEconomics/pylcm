@@ -36,13 +36,13 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
   the last passive row axis, so a (hard) discrete action or a passive
   continuous state declared after the durable is rejected — the per-durable
   candidate lift would otherwise address the wrong axis,
-- outer-cost contract: with a declared `NEGM.outer_cost`, the resources
+- outer-cost contract: with a `NetOfAdjustmentCost` on `liquid.resources`, the resources
   function is composed by `finalize_regimes` as
   `<resources>_before_outer_cost - <outer_cost>` (affine in the cost by
   construction; a user-defined resources function is rejected at
   finalization); the declared cost may read only the durable state, the outer
   post-decision, and params, and the cost-free base must not read the outer
-  post-decision (with `outer_cost=None`, resources must be independent of the
+  post-decision (with a plain `liquid.resources`, resources must be independent of the
   outer post-decision) — otherwise no constant credited-cost translation onto
   a common cash-on-hand axis exists and the stacked lift would be wrong,
 - the no-adjustment candidate is a unary function of the durable state — it is
@@ -177,7 +177,7 @@ def _fail_if_outer_margin_absent(
     )
     if solver.outer_action not in continuous_actions:
         msg = (
-            f"NEGM.outer_action '{solver.outer_action}' is not a continuous "
+            f"outer_continuous.action '{solver.outer_action}' is not a continuous "
             f"action of regime '{regime_name}'. NEGM nests an outer continuous "
             f"margin; this regime declares none (continuous actions: "
             f"{continuous_actions}) — use `DCEGM` for a pure 1-D "
@@ -193,8 +193,9 @@ def _fail_if_outer_margin_absent(
         and solver.outer_post_decision not in transition_names
     ):
         msg = (
-            f"NEGM.outer_post_decision '{solver.outer_post_decision}' is neither "
-            f"a declared function of regime '{regime_name}' nor the transition "
+            f"outer_continuous.post_decision_state "
+            f"'{solver.outer_post_decision}' is neither a declared function of "
+            f"regime '{regime_name}' nor the transition "
             "of one of its states. The outer post-decision (the next-period "
             "durable stock) must be a regime function or the durable state's "
             f"`next_<state>` law that the inner resources and the child-state "
@@ -217,7 +218,7 @@ def _fail_if_margins_not_distinct(
     """
     if solver.outer_action == inner.continuous_action:
         msg = (
-            f"NEGM.outer_action '{solver.outer_action}' of regime "
+            f"outer_continuous.action '{solver.outer_action}' of regime "
             f"'{regime_name}' coincides with the inner DC-EGM continuous action "
             f"'{inner.continuous_action}'. The outer durable/illiquid margin and "
             "the inner consumption margin must be distinct actions."
@@ -225,8 +226,9 @@ def _fail_if_margins_not_distinct(
         raise ModelInitializationError(msg)
     if solver.outer_post_decision == inner.post_decision_function:
         msg = (
-            f"NEGM.outer_post_decision '{solver.outer_post_decision}' of regime "
-            f"'{regime_name}' coincides with the inner DC-EGM post-decision "
+            f"outer_continuous.post_decision_state "
+            f"'{solver.outer_post_decision}' of regime '{regime_name}' "
+            f"coincides with the inner DC-EGM post-decision "
             f"function '{inner.post_decision_function}'. The outer post-decision "
             "(the next-period durable stock) and the inner post-decision (the "
             "liquid savings) must be distinct functions."
@@ -561,17 +563,16 @@ def _fail_if_outer_cost_contract_violated(
     post-decision through a single additive cost term that itself varies only
     with the durable margin. The contract is enforced fail-closed:
 
-    - `NEGM.outer_cost` declared ⇒ the resources function is composed by
-      `finalize_regimes` as `<resources>_before_outer_cost - <outer_cost>`, so
-      its affine use of the cost holds by construction (a user-defined
-      resources function is rejected at finalization). Here: the cost must be
-      a regime function whose DAG ancestors contain no state or action other
-      than the durable state and the outer post-decision (params are fine),
-      and the cost-free base must not read the outer post-decision — its only
-      outer-margin channel is the subtracted cost itself,
-    - `NEGM.outer_cost=None` ⇒ the inner resources must be independent of the
-      outer post-decision altogether (every candidate already shares the
-      keeper's axis; the shift is zero).
+    - a `NetOfAdjustmentCost` on `liquid.resources` ⇒ the resources function is composed
+      by `finalize_regimes` as `<resources>_before_outer_cost - <outer_cost>`, so its
+      affine use of the cost holds by construction (a user-defined resources function is
+      rejected at finalization). Here: the cost must be a regime function whose DAG
+      ancestors contain no state or action other than the durable state and the outer
+      post-decision (params are fine), and the cost-free base must not read the outer
+      post-decision — its only outer-margin channel is the subtracted cost itself, - a
+      plain `liquid.resources` ⇒ the inner resources must be independent of the outer
+      post-decision altogether (every candidate already shares the keeper's axis; the
+      shift is zero).
     """
     inner = solver.inner
     durable_state = solver.outer_state
@@ -588,8 +589,8 @@ def _fail_if_outer_cost_contract_violated(
                 f"In regime '{regime_name}', the inner resources "
                 f"'{inner.resources}' reads the outer post-decision "
                 f"'{solver.outer_post_decision}' but the solver declares no "
-                "outer cost (`NEGM.outer_cost=None`). Declare the credited-cost "
-                "function via `NEGM.outer_cost` so the stacked-carry lift can "
+                "outer cost (`liquid.resources.cost=None`). Declare the credited-cost "
+                "function via `liquid.resources.cost` so the stacked-carry lift can "
                 "place every candidate on a common cash-on-hand axis, or use "
                 "`GridSearch` for this regime."
             )
@@ -599,7 +600,7 @@ def _fail_if_outer_cost_contract_violated(
     cost_func = functions.get(solver.outer_cost)
     if cost_func is None:
         msg = (
-            f"NEGM.outer_cost '{solver.outer_cost}' is not a declared function "
+            f"liquid.resources.cost '{solver.outer_cost}' is not a declared function "
             f"of regime '{regime_name}'. The credited outer cost must be a "
             "regime function reading only the durable state, the outer "
             "post-decision, and params."
@@ -617,7 +618,7 @@ def _fail_if_outer_cost_contract_violated(
     offenders = sorted((cost_ancestors & state_and_action_names) - {durable_state})
     if offenders:
         msg = (
-            f"NEGM.outer_cost '{solver.outer_cost}' of regime '{regime_name}' "
+            f"liquid.resources.cost '{solver.outer_cost}' of regime '{regime_name}' "
             f"reads {offenders}. The declared outer cost may read only the "
             f"durable state '{durable_state}', the outer post-decision "
             f"'{solver.outer_post_decision}', and params: the credited-cost "
@@ -669,7 +670,7 @@ def _fail_if_no_adjustment_candidate_not_unary(
     arg_names = set(inspect.signature(candidate_func).parameters)
     if arg_names != {durable_state}:
         msg = (
-            f"NEGM.outer_no_adjustment_candidate "
+            f"outer_continuous.no_adjustment "
             f"'{solver.outer_no_adjustment_candidate}' of regime "
             f"'{regime_name}' must be a unary function of the durable state "
             f"'{durable_state}' (its signature reads {sorted(arg_names)}). The "

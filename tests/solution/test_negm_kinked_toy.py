@@ -42,7 +42,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -302,6 +302,7 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize(
     ("n_consumption", "n_investment"),
     [(15, 15), (25, 25), (45, 45)],
@@ -325,6 +326,7 @@ def test_negm_weakly_improves_on_the_matched_brute_value(
     assert float(jnp.min(improvement)) >= -1e-4
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_brute_value_converges_up_to_negm_as_grids_refine(
     matched_negm_value: FloatND,
 ) -> None:
@@ -348,6 +350,7 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
     assert max_gaps[-1] < 0.1
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("outer_batch_size", [1, 8])
 def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int):
     """Chunking the NEGM outer search yields the identical solved value function.
