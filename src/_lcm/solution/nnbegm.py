@@ -234,8 +234,6 @@ class NNBEGM(TwoMarginSolver):
           ride-along state.
         """
         bound = cast("_BoundNNBEGM", self)
-        from lcm.regime import outer_unchanged  # noqa: PLC0415
-
         # The adjuster's outer post-decision arrives per outer-grid node as a
         # bound param, so the function declaring the chosen stock leaves the
         # inner DAG — leaving it in would let the inner scope check walk through
@@ -258,9 +256,9 @@ class NNBEGM(TwoMarginSolver):
         )
         adjuster_kernels = bound.inner.build_period_kernels(context=adjuster_context)
         no_adjustment_func = (
-            None
-            if bound.outer_no_adjustment_candidate == outer_unchanged
-            else context.functions[bound.outer_no_adjustment_candidate]
+            context.functions[bound.outer_no_adjustment_candidate]
+            if bound.outer_no_adjustment_candidate is not None
+            else None
         )
         # The keeper computes the post-decision from the durable leaf instead of
         # taking it as a bound param, so the declared law again stands and what
@@ -397,7 +395,7 @@ class _BoundNNBEGM(NNBEGM):
     outer_action: ActionName
     outer_state: StateName
     outer_post_decision: FunctionName
-    outer_no_adjustment_candidate: FunctionName
+    outer_no_adjustment_candidate: FunctionName | None
 
 
 @dataclass(frozen=True, kw_only=True)

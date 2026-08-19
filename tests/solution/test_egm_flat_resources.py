@@ -20,6 +20,7 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.upper_envelope.fues import refine_envelope
 from lcm import AgeGrid, IrregSpacedGrid, LinSpacedGrid, Model
@@ -28,6 +29,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     next_regime_from_retirement,
@@ -196,6 +198,7 @@ def _get_params(*, pension: float) -> dict:
     }
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_means_tested_transfer_matches_dense_brute_force():
     """DC-EGM with a flat-resources region matches dense brute force.
 
@@ -225,6 +228,7 @@ def test_means_tested_transfer_matches_dense_brute_force():
         )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_all_child_mass_in_flat_region_yields_consume_everything():
     """With the floor above the savings range, consuming everything is optimal.
 

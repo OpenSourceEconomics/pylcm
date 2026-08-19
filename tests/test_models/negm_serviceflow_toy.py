@@ -95,8 +95,8 @@ def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND
 def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
     """Cost-free base of the liquid resources consumption is paid out of.
 
-    With `NEGM.outer_cost` declared, pylcm composes the resources function as
-    `resources_before_outer_cost - credited` at model build, so the credited
+    With a `NetOfAdjustmentCost` on `liquid.resources`, pylcm composes the resources
+    function as `resources_before_outer_cost - credited` at model build, so the credited
     durable move enters resources additively by construction.
     """
     return wealth + LABOUR_INCOME

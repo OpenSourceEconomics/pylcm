@@ -56,12 +56,18 @@ class InvalidAdditionalTargetsError(PyLCMError):
     """Raised when the additional targets are invalid."""
 
 
-class RegimeInitializationError(PyLCMError):
-    """Raised when there is an error in the regime initialization."""
-
-
 class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
+
+
+class RegimeInitializationError(ModelInitializationError):
+    """Raised when there is an error in the regime initialization.
+
+    A regime is a component of a model and is validated both at its own
+    construction and again when a model finalizes it, so the same defect
+    surfaces from either call. Catching `ModelInitializationError` catches
+    both.
+    """
 
 
 class GridInitializationError(PyLCMError):

@@ -135,7 +135,7 @@ DC-EGM regime.
 import math
 from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -179,6 +179,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
@@ -196,11 +197,6 @@ from _lcm.utils.dispatchers import productmap
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
-
-if TYPE_CHECKING:
-    from _lcm.solution.dcegm import _BoundDCEGM
-else:
-    _BoundDCEGM = DCEGM
 from lcm.typing import (
     BoolND,
     Float1D,

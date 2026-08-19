@@ -1,14 +1,11 @@
 """A target-only LogNormal entry is priced at its own mean, not at its node mean.
 
-The external review that asked for the target-qualified transition descriptor
-shipped this regression with it, and it is kept verbatim apart from its imports:
-an independent statement of the same requirement is worth more than a paraphrase
-of one, and this one was written against the behaviour rather than against the
-repair.
-
-`from __future__ import annotations` is dropped because this project forbids it —
-under PEP 563 the `ScalarInt` annotations reach `@categorical` as strings and the
-decorator rejects them.
+A transition descriptor is qualified by its target regime, so an entry that
+reaches only one target is priced from that target's own distribution rather
+than from the pooled distribution over every node the state can occupy. The
+model below separates the two: the target-only entry's mean differs from the
+node mean, so a pooled reading shows up as a wrong price rather than as a
+tolerance miss.
 """
 
 import math

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import hatch_build
+from _lcm.egm.upper_envelope._exact_affine import ffi
 
 
 def test_the_default_cuda_build_names_architectures():
@@ -158,14 +159,18 @@ def test_the_build_states_when_it_found_no_cuda_compiler():
 
 
 def test_windows_module_definition_exports_every_handler():
-    """The MSVC linker receives all ten symbols the Python wrapper registers."""
+    """Every name in the export tuple reaches the .def file, in order.
+
+    This compares the generated file against the tuple it is generated from, so
+    it catches a broken generator and nothing else. That the tuple holds the
+    right names is a separate property, pinned against `ffi._TARGETS` below.
+    """
     definition = hatch_build.windows_module_definition().splitlines()
 
     assert definition[:2] == ["LIBRARY certified_affine_ffi_cpu", "EXPORTS"]
     assert definition[2:] == [
         f"    {name}" for name in hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS
     ]
-    assert len(definition[2:]) == 10
 
 
 def test_the_windows_build_uses_msvc_and_the_export_definition(
@@ -205,6 +210,71 @@ def test_the_windows_build_uses_msvc_and_the_export_definition(
     assert f"/DEF:{definition}" in commands[0]
     assert definition.read_text() == hatch_build.windows_module_definition()
     assert "MSVC" in capsys.readouterr().out
+
+
+def test_the_windows_build_writes_its_object_file_beside_the_library(
+    monkeypatch, tmp_path
+):
+    """The intermediate `.obj` lands in the package, not the working directory."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
+    commands = []
+
+    def fake_compile(*, command, target):
+        commands.append(command)
+        target.write_bytes(b"dll")
+        return target
+
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.delenv("CXX", raising=False)
+    monkeypatch.setattr(
+        hatch_build.shutil,
+        "which",
+        lambda name: "C:/VC/cl.exe" if name == "cl" else None,
+    )
+    monkeypatch.setattr(hatch_build, "_compile", fake_compile)
+
+    hatch_build.build_exact_affine(root=tmp_path, jax_include_dir="C:/jax/include")
+
+    assert f"/Fo{source_dir}\\" in commands[0]
+
+
+def test_a_non_msvc_cxx_is_refused_on_windows(monkeypatch, tmp_path):
+    """`CXX` naming a compiler that cannot parse MSVC flags fails with a reason."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
+
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.setenv("CXX", "C:/msys64/mingw64/bin/g++.exe")
+
+    with pytest.raises(RuntimeError, match="does not take MSVC flags"):
+        hatch_build.build_exact_affine(root=tmp_path, jax_include_dir="C:/jax/include")
+
+
+def test_an_msvc_compatible_cxx_is_accepted_on_windows(monkeypatch, tmp_path):
+    """`clang-cl` takes MSVC flags, so it builds like `cl` does."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
+
+    def fake_compile(*, command, target):  # noqa: ARG001
+        target.write_bytes(b"dll")
+        return target
+
+    monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.setenv("CXX", "C:/LLVM/bin/clang-cl.exe")
+    monkeypatch.setattr(hatch_build, "_compile", fake_compile)
+
+    written = hatch_build.build_exact_affine(
+        root=tmp_path, jax_include_dir="C:/jax/include"
+    )
+
+    assert written == [source_dir / hatch_build.WINDOWS_CPU_LIBRARY]
 
 
 def test_the_opt_out_builds_no_kernel(monkeypatch):
@@ -287,3 +357,14 @@ def test_a_compile_failure_reports_diagnostics_written_to_stdout(tmp_path, monke
         hatch_build._compile(command=["cl", "/nologo"], target=target)
 
     assert "error C2065: undeclared" in target.with_suffix(".dll.build.log").read_text()
+
+
+def test_the_export_manifest_names_every_registered_ffi_target():
+    """Every handler the Python wrapper registers is in the Windows export list.
+
+    The two lists are maintained by hand in different files: `hatch_build` owns
+    the export surface the MSVC linker is given, `ffi` owns the targets JAX is
+    told about. A handler added to one and not the other links a DLL missing
+    that export, and no test comparing either manifest to itself can see it.
+    """
+    assert set(hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS) == set(ffi._TARGETS)
