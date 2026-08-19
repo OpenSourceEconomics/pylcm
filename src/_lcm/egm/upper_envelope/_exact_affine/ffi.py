@@ -724,8 +724,13 @@ def exact_cell_hull(
 
 
 def _broadcast(*operands: FloatND) -> tuple[FloatND, ...]:
-    """Broadcast every operand to one common shape."""
-    return jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands])
+    """Broadcast every operand to one common shape.
+
+    `jnp.broadcast_arrays` does not promise a container type and has returned
+    both a list and a tuple across patch releases, so build the published one
+    rather than borrow it.
+    """
+    return tuple(jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands]))
 
 
 def _target_for(*, operands: tuple[FloatND, ...], f32: str, f64: str) -> str:
