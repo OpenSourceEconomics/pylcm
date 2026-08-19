@@ -12,7 +12,7 @@ These checks build the model at a tiny grid and assert structure only.
 
 import pytest
 
-from lcm import DCEGM, DiscreteGrid, GridSearch, Model
+from lcm import DCEGM, ConsumptionSavingsRegime, DiscreteGrid, GridSearch, Model
 from tests.test_models import ds_app2_housing_fues as fues
 
 
@@ -26,11 +26,12 @@ def test_dcegm_variant_builds_with_discrete_housing_choice():
     model = fues.build_model(variant="dcegm", n_grid=6, n_housing=5, n_periods=4)
     assert isinstance(model, Model)
     working = model.user_regimes["working"]
+    assert isinstance(working, ConsumptionSavingsRegime)
     assert "housing_choice" in working.actions
     assert "consumption" in working.actions
     assert isinstance(working.solver, DCEGM)
-    assert working.solver.continuous_state == "liquid"
-    assert working.solver.continuous_action == "consumption"
+    assert working.liquid.state == "liquid"
+    assert working.liquid.action == "consumption"
 
 
 def test_brute_variant_builds_with_grid_search():

@@ -54,6 +54,14 @@ jobs:
               --max-total-skips=25
     steps:
       - uses: actions/checkout@v7
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: prefix-dev/setup-pixi@v0.10.1
         with:
           pixi-version: v0.76.1
@@ -78,6 +86,14 @@ jobs:
         run: >-
           pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
           --precision=64 --output-dir=reports
+      - name: Run the Windows exact-kernel capability matrix
+        if: runner.os == 'Windows' && matrix.python-version == '3.14'
+        shell: bash {0}
+        run: |
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=32 --output-dir=reports
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=64 --output-dir=reports
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
@@ -259,6 +275,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: prefix-dev/setup-pixi@v0.10.1
         with:
           pixi-version: v0.76.1

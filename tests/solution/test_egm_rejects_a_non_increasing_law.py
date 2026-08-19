@@ -34,7 +34,7 @@ def next_wealth_falling_in_savings(
 def test_a_law_falling_in_savings_is_refused_when_the_model_is_solved():
     """Solving reports the ordering requirement, not a wrong number."""
     model = _model(
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings"),
+        solver=EGM(savings_grid=_SAVINGS_GRID),
         law=next_wealth_falling_in_savings,
     )
 

@@ -7,7 +7,7 @@ only correct when every candidate publishes rows at the same abscissae.
 
 import pytest
 
-from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.nnbegm import _fail_if_inner_carry_rows_not_grid_aligned
 from lcm.exceptions import RegimeInitializationError
@@ -29,7 +29,7 @@ def test_an_inner_solver_with_off_grid_carry_rows_is_refused() -> None:
     """`DCEGM` publishes an endogenous grid, so the pointwise fold would mispair."""
     with pytest.raises(RegimeInitializationError, match="off the shared state grid"):
         _fail_if_inner_carry_rows_not_grid_aligned(
-            inner=DCEGM(
+            inner=_BoundDCEGM(
                 savings_grid=_savings_grid(),
                 continuous_state="liquid",
                 continuous_action="consumption",

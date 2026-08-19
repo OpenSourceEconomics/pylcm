@@ -4,6 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 #ifdef __CUDACC__
 #define PYLCM_HD __host__ __device__
 #define PYLCM_INLINE __forceinline__
@@ -99,8 +103,18 @@ PYLCM_HD PYLCM_INLINE int BitLength(const BigUInt<N>& x) {
   for (int i = N - 1; i >= 0; --i) {
     uint32_t word = x.limb[i];
     if (word != 0) {
+      // One count-leading-zeros per toolchain. `std::countl_zero` would say
+      // this once, but it is C++20 and the CUDA translation unit is built at
+      // C++17, so the host pass of a `.cu` would not compile.
 #ifdef __CUDA_ARCH__
       return 32 * i + (32 - __clz(word));
+#elif defined(_MSC_VER)
+      // `_BitScanReverse` reports the index of the highest set bit, so the bit
+      // length is one past it. `word` is non-zero here, which is what the
+      // intrinsic requires.
+      unsigned long highest_set_bit;
+      _BitScanReverse(&highest_set_bit, word);
+      return 32 * i + static_cast<int>(highest_set_bit) + 1;
 #else
       return 32 * i + (32 - __builtin_clz(word));
 #endif
