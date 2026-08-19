@@ -19,7 +19,7 @@ declares no breakpoints, so the inner NB-EGM partition is a single interval —
 the degenerate plain-EGM case.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 
@@ -202,6 +202,7 @@ def build_model(
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
+    constraints: Mapping[str, Callable[..., object]] | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -219,6 +220,9 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `constraints` overrides the constraint pool, which otherwise carries the
+    budget predicate on the grid-search arm and is empty on the endogenous-grid
+    arms, whose kernels enforce the budget identity intrinsically.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -236,7 +240,8 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
+    if constraints is None:
+        constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
     state_transitions = {

@@ -19,6 +19,7 @@ import pytest
 from lcm import LinSpacedGrid, Model
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState
+from tests.test_models import n_nbegm_toy
 from tests.test_models.nbegm_common import (
     make_alive_dead_model,
     next_liquid_from_savings,
@@ -81,3 +82,26 @@ def test_grid_search_accepts_the_same_constraint():
     """The refusal is NBEGM's own: `GridSearch` evaluates the predicate and builds."""
     model = _build_model(variant="brute", constraints={"rationing": rationing})
     assert "rationing" in model._regimes["alive"].solution.constraints
+
+
+def nested_rationing(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    """A general feasibility predicate over the nested toy's liquid margin."""
+    return jnp.square(consumption) + jnp.square(wealth) <= 400.0
+
+
+def test_nnbegm_refuses_a_constraint_its_kernel_cannot_evaluate():
+    """A nested NB-EGM regime declaring a feasibility predicate fails to build."""
+    with pytest.raises(ModelInitializationError, match="nested_rationing"):
+        n_nbegm_toy.build_model(
+            variant="n_nbegm",
+            constraints={"nested_rationing": nested_rationing},
+        )
+
+
+def test_grid_search_accepts_the_same_nested_constraint():
+    """The refusal is the solver's: `GridSearch` builds the same declaration."""
+    model = n_nbegm_toy.build_model(
+        variant="brute",
+        constraints={"nested_rationing": nested_rationing},
+    )
+    assert "nested_rationing" in model._regimes["alive"].solution.constraints

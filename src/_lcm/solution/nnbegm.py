@@ -47,7 +47,7 @@ from _lcm.solution.negm import (
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import ActionName, FloatND, FunctionName, StateName
 
 
@@ -135,10 +135,23 @@ class NNBEGM(TwoMarginSolver):
             validate_nnbegm_regime,
         )
 
+        user_regime = context.user_regimes[context.regime_name]
         validate_nnbegm_regime(
             regime_name=context.regime_name,
-            user_regime=context.user_regimes[context.regime_name],
+            user_regime=user_regime,
         )
+        if user_regime.constraints:
+            constraint_names = sorted(user_regime.constraints)
+            msg = (
+                f"NNBEGM regime '{context.regime_name}' declares constraints "
+                f"{constraint_names}. The inner NB-EGM solve inverts the Euler "
+                "equation and the outer sweep scores an exogenous grid, so no "
+                "user constraint is evaluated in either margin; encode the "
+                "borrowing limit in the first node of the inner `savings_grid` "
+                "and the budget identity in the post-decision function, or use "
+                "GridSearch."
+            )
+            raise ModelInitializationError(msg)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Apply the inner solver's build-time gates to the liquid margin.
