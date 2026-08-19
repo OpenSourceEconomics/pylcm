@@ -82,9 +82,11 @@ def test_the_discrete_branch_binds_somewhere_on_the_grid() -> None:
 def test_the_nested_discrete_solve_tracks_dense_brute() -> None:
     """One alive period reading the terminal carry tracks the grid search.
 
-    Isolates the branch envelope from the accumulation of outer candidate-set
-    differences across periods: the two solvers enumerate different outer
-    candidate sets, so their gap compounds with the horizon.
+    Isolates the branch envelope from the accumulation of approximation error
+    across periods. Both solvers choose the next durable stock on `OUTER_GRID`,
+    so what is left in the gap is the oracle's finite consumption grid and the
+    nested solve's inner representation, not a difference in what the two are
+    allowed to choose.
     """
     gaps = _interior_gaps(build=toy.build_model, params=_PARAMS, n_periods=2)
     assert max(gaps.values()) < 0.05
@@ -98,7 +100,7 @@ def test_the_discrete_branch_costs_no_accuracy_against_the_smooth_nest(
 
     The same two solvers on the same grids without the branch are the control,
     so what remains after the comparison is the branch envelope's own error
-    rather than the outer candidate-set mismatch both models share.
+    rather than the inner-margin approximation both models share.
     """
     control = _interior_gaps(
         build=smooth.build_model, params=_SMOOTH_PARAMS, n_periods=n_periods
