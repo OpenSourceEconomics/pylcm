@@ -11,7 +11,7 @@ each by key.
 
 import functools
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -37,6 +37,7 @@ from _lcm.solution.contract import (
     TwoMarginSolver,
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
+    bind_roles,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM
 from _lcm.typing import (
@@ -137,21 +138,22 @@ class NEGM(TwoMarginSolver):
         outer: _BoundOuterContinuousMargin,
     ) -> _BoundNEGM:
         """Bind both regime-owned margins into a private runtime config."""
-        kwargs = {
-            field.name: getattr(self, field.name)
-            for field in fields(NEGM)
-            if field.name != "inner"
-        }
-        inner = self.inner._with_liquid_margin(liquid)  # noqa: SLF001
-        return _BoundNEGM(
-            **kwargs,
-            inner=inner,
-            outer_action=outer.action,
-            outer_state=outer.state,
-            outer_post_decision=outer.post_decision_state,
-            outer_no_adjustment_candidate=outer.no_adjustment,
-            outer_cost=liquid.cost,
-            outer_cost_base=liquid.before_cost,
+        # The inner solver is bound first and then overrides the copy taken from
+        # this solver, so the nest carries the *bound* inner rather than the
+        # public one it was declared with.
+        return cast(
+            "_BoundNEGM",
+            bind_roles(
+                solver=self,
+                role_type=_BoundNEGM,
+                inner=self.inner._with_liquid_margin(liquid),  # noqa: SLF001
+                outer_action=outer.action,
+                outer_state=outer.state,
+                outer_post_decision=outer.post_decision_state,
+                outer_no_adjustment_candidate=outer.no_adjustment,
+                outer_cost=liquid.cost,
+                outer_cost_base=liquid.before_cost,
+            ),
         )
 
     @property

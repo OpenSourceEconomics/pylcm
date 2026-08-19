@@ -10,7 +10,7 @@ numerical engine modules.
 import functools
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -38,6 +38,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
     _BoundLiquidMargin,
+    bind_roles,
 )
 from _lcm.typing import (
     EconFunction,
@@ -81,10 +82,13 @@ class EGM(OneMarginSolver):
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundEGM:
         """Bind regime-owned DAG names without exposing them on public `EGM`."""
-        kwargs = {field.name: getattr(self, field.name) for field in fields(EGM)}
-        return _BoundEGM(
-            **kwargs,
-            post_decision_function=margin.post_decision_state,
+        return cast(
+            "_BoundEGM",
+            bind_roles(
+                solver=self,
+                role_type=_BoundEGM,
+                post_decision_function=margin.post_decision_state,
+            ),
         )
 
     @property
