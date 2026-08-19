@@ -143,7 +143,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NEGM, Solver
+from lcm.solvers import DCEGM, EGM, NEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -1476,7 +1476,7 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
-    if isinstance(solver, (DCEGM, NEGM)):
+    if isinstance(solver, (EGM, DCEGM, NEGM)):
         if (
             DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
             or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
@@ -1485,7 +1485,7 @@ def _build_simulation_phase(
                 f"Regime '{regime_name}' declares a function or constraint "
                 f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
                 "reserved for the budget constraint the simulate phase "
-                "synthesizes for DC-EGM and NEGM regimes; rename it."
+                "synthesizes for endogenous-grid regimes; rename it."
             )
             raise ModelInitializationError(msg)
         constraints = MappingProxyType(

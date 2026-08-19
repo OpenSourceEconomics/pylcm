@@ -3,8 +3,8 @@
 An age-specialized function is a *different function* at each age, so a period's
 kernel has to be built from that period's concrete function. NEGM reads two helpers
 from the regime's function pool before the inner DC-EGM builder ever runs — the
-no-adjustment candidate (`NEGM.outer_no_adjustment_candidate`) and the outer cost
-(`NEGM.outer_cost`) — and both must be that period's own.
+no-adjustment map (`outer_continuous.no_adjustment`) and the adjustment
+cost (`liquid.resources.cost`) — and both must be that period's own.
 
 The oracle is the last age at which the NEGM regime is active. Its value depends on
 exactly two things: its own economics and a continuation into the terminal regime,

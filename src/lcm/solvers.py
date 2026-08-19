@@ -19,10 +19,12 @@ backward induction:
   needs no upper envelope at all.
 A second continuous state is reached by nesting: `NEGM` solves an inner 1-D
 problem conditional on the outer margin, rather than inverting two coupled
-first-order conditions jointly. `ConsumptionSavingsRegime` can own the liquid
-state, consumption action, resources, and post-decision role names shared by the
-endogenous-grid solvers; ordinary `Regime` remains available when explicit solver
-configuration is preferable.
+first-order conditions jointly. `ConsumptionSavingsRegime` declares the liquid
+state, consumption action, resources, and post-decision role names the
+endogenous-grid solvers read, and `NestedConsumptionSavingsRegime` adds the outer
+continuous margin `NEGM` searches over. The solvers themselves carry numerical
+configuration only, so one of these regimes is required to use them; plain
+`Regime` stays the form for `GridSearch`.
 
 `DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
 requires pylcm's native exact-affine library. Selecting it on an installation

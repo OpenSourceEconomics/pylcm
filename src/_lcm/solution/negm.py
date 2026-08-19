@@ -752,7 +752,7 @@ def _build_coh_shift_function(
     `shift(z, z'_j) = cost(z, z'_j) - cost(z, keep(z))`,
 
     evaluated directly on the regime's declared outer-cost DAG
-    (`NEGM.outer_cost`), whose inputs are only the durable state, the outer
+    (`liquid.resources.cost`), whose inputs are only the durable state, the outer
     post-decision, and params. Nothing about the shift is inferred from the
     wider resources function — with a declared cost the resources are composed
     at model build as `<resources>_before_outer_cost - <outer_cost>`, so their

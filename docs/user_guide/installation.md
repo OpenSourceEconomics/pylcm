@@ -40,9 +40,12 @@ Installing pylcm compiles a small C++ library, the *exact-affine kernel*. It bac
 optional extra: without it, DC-EGM cannot run on its defaults. Brute-force backward
 induction never touches it and is unaffected.
 
-The build needs a C++ compiler (`c++` or `g++` on the path, or `CXX` set). It also
-builds a CUDA variant when `nvcc` is present; where it is not, the certified envelope
-runs on CPU only, and the build says so as it runs. Windows builds no kernel at all.
+The build needs a C++ compiler: `c++` or `g++` on the path on Linux and macOS, `cl.exe`
+from an activated MSVC developer environment on Windows, or `CXX` set to one (on Windows
+that must be `cl` or `clang-cl`, since the compile uses MSVC flags). It also builds a
+CUDA variant when `nvcc` is present; where it is not, the certified envelope runs on CPU
+only, and the build says so as it runs. Windows builds the CPU kernel and, finding no
+compiler, fails the install exactly as the other platforms do.
 
 If no compiler is found, **the install fails with a message naming what is missing.**
 That is deliberate: an install that quietly dropped the kernel would look fine and then
@@ -65,10 +68,11 @@ print(kernel_built())  # False in a skipped install
 ```
 
 A skipped install still imports. Constructing a `Model` whose `DCEGM` regime selects
-`ExactEnvelope` then raises immediately, before compilation or `solve()`, rather than
-returning a silently different answer. Grid-search models and DCEGM models selecting a
-different typed envelope remain usable. To get the certified capability back, unset the
-variable and reinstall.
+`ExactEnvelope` — directly, or as the inner solver of a `NEGM` regime — then raises
+immediately, before compilation or `solve()`, rather than returning a silently different
+answer. Grid-search models and endogenous-grid models selecting a different typed
+envelope remain usable. To get the certified capability back, unset the variable and
+reinstall.
 
 ## GPU Acceleration (optional, but then this is the whole point of it)
 
@@ -188,9 +192,10 @@ import lcm
 
 - **Python version too old**: pylcm requires Python 3.14+. Check with
   `python --version`.
-- **`No C++ compiler found` during install**: install one, or install without the
-  certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1` (see above), accepting that
-  DC-EGM will not run on its defaults.
+- **`No C++ compiler found` during install** (`No MSVC C++ compiler found` on Windows):
+  install one — on Windows, activate an MSVC developer environment so `cl.exe` is on the
+  path — or install without the certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1`
+  (see above), accepting that DC-EGM will not run on its defaults.
 - **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
   kernel, or carries one built by a different toolchain. Rebuild in the current
   environment with `pixi run build-exact-affine`, or explicitly select another typed

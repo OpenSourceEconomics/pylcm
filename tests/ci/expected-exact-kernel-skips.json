@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "skipped": [
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[3-1]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[3-3]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[3-None]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[None-1]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[None-3]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_no_capacity_by_row_array_is_materialized[None-None]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_the_published_row_does_not_depend_on_the_chunk[1]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_the_published_row_does_not_depend_on_the_chunk[2]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_the_published_row_does_not_depend_on_the_chunk[3]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_the_published_row_does_not_depend_on_the_chunk[5]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/solution/test_envelope_cell_workspace.py::test_the_published_row_does_not_depend_on_the_chunk[None]",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    },
+    {
+      "nodeid": "tests/test_exact_kernel_capability_contract.py::test_exact_kernel_answers_in_the_active_precision",
+      "reason": "requires pylcm's native exact-affine kernel for the selected JAX backend"
+    }
+  ]
+}

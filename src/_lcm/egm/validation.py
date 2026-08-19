@@ -55,7 +55,7 @@ offending piece. The rules, in the order they are checked:
 
 import inspect
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -64,6 +64,7 @@ from dags import concatenate_functions, get_ancestors
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.typing import (
     ActionName,
     FunctionName,
@@ -78,12 +79,6 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
-
-if TYPE_CHECKING:
-    from _lcm.solution.dcegm import _BoundDCEGM
-else:
-    # Runtime validation accepts the private bound subclass through its public base.
-    _BoundDCEGM = DCEGM
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -359,9 +354,9 @@ def _fail_if_required_functions_missing(
     """
     required: dict[FunctionName, str] = {
         solver.post_decision_function: (
-            "the post-decision function (`DCEGM.post_decision_function`)"
+            "the post-decision function (`liquid.post_decision_state`)"
         ),
-        solver.resources: "the resources function (`DCEGM.resources`)",
+        solver.resources: "the resources function (`liquid.resources`)",
     }
     missing = [
         f"'{name}' — {role}"

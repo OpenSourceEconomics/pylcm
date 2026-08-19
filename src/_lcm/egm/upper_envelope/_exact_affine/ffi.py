@@ -28,6 +28,9 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope._exact_affine.handler_symbols import (
+    EXACT_AFFINE_HANDLER_SYMBOLS,
+)
 from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -36,18 +39,7 @@ from lcm.typing import BoolND, FloatND, IntND
 # known.
 UNRESOLVED_STATUS: int = 2
 
-_TARGETS = (
-    "CertifiedAffineCompareF32",
-    "CertifiedAffineCompareF64",
-    "ExactAffineReadF32",
-    "ExactAffineReadF64",
-    "ExactQueryWinnerF32",
-    "ExactQueryWinnerF64",
-    "ExactAffineHandoverF32",
-    "ExactAffineHandoverF64",
-    "ExactCellHullF32",
-    "ExactCellHullF64",
-)
+_TARGETS = EXACT_AFFINE_HANDLER_SYMBOLS
 
 _DIRECTORY = Path(__file__).resolve().parent
 _CPU_LIBRARY = _DIRECTORY / (
@@ -71,8 +63,18 @@ def _register_platform(*, library: Path, platform: str) -> None:
 
 # CUDA is optional: without it the certified path runs on CPU only. Building it
 # needs `nvcc` and the target architecture, e.g. NVCCFLAGS='-arch=sm_80'.
-# Whether a kernel for the CUDA platform exists to be registered.
-CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
+
+
+def cuda_kernel_built() -> bool:
+    """Return whether a kernel for the CUDA platform exists to be registered.
+
+    Asked of the filesystem at every call rather than snapshotted at import, so
+    the answer cannot differ between the caller deciding a kernel is there and
+    the registration that acts on it — a split that a test or a plugin moving
+    the library underneath the module produces silently.
+    """
+    return _CUDA_LIBRARY.is_file()
+
 
 # Whether the targets have been registered with XLA in this process.
 _REGISTERED: bool = False
@@ -100,7 +102,7 @@ def kernel_built_for_current_backend() -> bool:
     """
     if not kernel_built():
         return False
-    return jax.default_backend() != "gpu" or _CUDA_LIBRARY.is_file()
+    return jax.default_backend() != "gpu" or cuda_kernel_built()
 
 
 def kernel_available() -> bool:
@@ -121,7 +123,7 @@ def kernel_available_for_current_backend() -> bool:
     """Return whether the selected JAX backend has a loadable exact kernel."""
     if not kernel_available():
         return False
-    return jax.default_backend() != "gpu" or CUDA_AVAILABLE
+    return jax.default_backend() != "gpu" or cuda_kernel_built()
 
 
 def _ensure_registered() -> None:
@@ -153,7 +155,7 @@ def _ensure_registered() -> None:
 
     try:
         _register_platform(library=_CPU_LIBRARY, platform="cpu")
-        if CUDA_AVAILABLE:
+        if cuda_kernel_built():
             _register_platform(library=_CUDA_LIBRARY, platform="CUDA")
     except (OSError, AttributeError) as error:
         msg = (

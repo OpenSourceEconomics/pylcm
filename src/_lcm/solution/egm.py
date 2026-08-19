@@ -87,6 +87,9 @@ class EGM(OneMarginSolver):
             bind_roles(
                 solver=self,
                 role_type=_BoundEGM,
+                continuous_state=margin.state,
+                continuous_action=margin.action,
+                resources=margin.resources,
                 post_decision_function=margin.post_decision_state,
             ),
         )
@@ -167,6 +170,22 @@ class EGM(OneMarginSolver):
 
         liquid_state = continuous_states[0]
         consumption_action = continuous_actions[0]
+        declared = {
+            "liquid.state": (bound.continuous_state, liquid_state),
+            "liquid.action": (bound.continuous_action, consumption_action),
+        }
+        mismatched = sorted(
+            f"{role} names {declared_name!r}, but the regime's only continuous "
+            f"{role.split('.')[1]} is {actual!r}"
+            for role, (declared_name, actual) in declared.items()
+            if declared_name != actual
+        )
+        if mismatched:
+            msg = (
+                f"EGM regime '{regime_name}' declares margin roles the regime "
+                f"does not carry: {'; '.join(mismatched)}."
+            )
+            raise ModelInitializationError(msg)
         if bound.post_decision_function not in user_regime.functions:
             msg = (
                 f"EGM regime '{regime_name}' is missing the declared "
@@ -227,6 +246,34 @@ class EGM(OneMarginSolver):
         x64_enabled = bool(jax.config.read("jax_enable_x64"))
         atol = 1e-8 if x64_enabled else 1e-4
         rtol = 1e-6 if x64_enabled else 1e-3
+        composed_resources = concatenate_functions(functions, targets=bound.resources)
+        resources_arguments = set(inspect.signature(composed_resources).parameters)
+        if resources_arguments != {liquid_state}:
+            msg = (
+                f"The resources DAG '{bound.resources}' of EGM regime "
+                f"'{regime_name}' must be exactly a function of "
+                f"'{liquid_state}', but its leaf arguments are "
+                f"{sorted(resources_arguments)}. The envelope-free kernel reads "
+                f"resources off the liquid state itself, so anything the "
+                f"declared resources add or subtract is silently ignored; use "
+                f"DCEGM or GridSearch."
+            )
+            raise ModelInitializationError(msg)
+        for state_value in state_sample:
+            actual = _call_with_varied(
+                func=composed_resources, fixed={}, varied={liquid_state: state_value}
+            )
+            if not _isclose(actual=actual, expected=state_value, rtol=rtol, atol=atol):
+                msg = (
+                    f"The resources function '{bound.resources}' of EGM regime "
+                    f"'{regime_name}' must equal the liquid state "
+                    f"'{liquid_state}'. At {liquid_state}={float(state_value)} "
+                    f"it returns {float(actual)}. The envelope-free kernel "
+                    f"inverts the Euler equation against the state directly, so "
+                    f"a resources function that transforms it is not applied; "
+                    f"use DCEGM or GridSearch."
+                )
+                raise ModelInitializationError(msg)
         for state_value in state_sample:
             for action_value in action_sample:
                 actual = _call_with_varied(
@@ -430,6 +477,15 @@ class _BoundEGM(EGM):
     subclass before model processing, allowing the numerical implementation to
     keep using explicit names without re-exposing them on the public solver.
     """
+
+    continuous_state: StateName
+    """Name of the liquid state whose resources the action is drawn from."""
+
+    continuous_action: ActionName
+    """Name of the liquid action the endogenous grid is expressed in."""
+
+    resources: FunctionName
+    """Name of the function giving resources available for that action."""
 
     post_decision_function: FunctionName
     """Name of the function giving the savings the exogenous grid spans."""
