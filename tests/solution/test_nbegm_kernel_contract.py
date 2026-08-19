@@ -65,7 +65,9 @@ def _build(*, alive_functions, liquid_law):
         alive_functions=alive_functions,
         liquid_law=liquid_law,
         alive_solver=resolve_solver(
-            "nbegm", savings_grid=SAVINGS_GRID, post_decision_function="savings"
+            "nbegm",
+            savings_grid=SAVINGS_GRID,
+            envelope_arithmetic="ordinary",
         ),
         constraints={},
     )
@@ -129,6 +131,7 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
             n_savings=30,
             savings_max=28.0,
             n_consumption=20,
+            envelope_arithmetic="ordinary",
         )
         return model.solve(
             params=tax_toy.build_params(budget_name=budget_name), log_level="debug"
@@ -213,7 +216,7 @@ def test_a_regime_without_a_post_decision_savings_node_is_refused() -> None:
             alive_solver=resolve_solver(
                 "nbegm",
                 savings_grid=SAVINGS_GRID,
-                post_decision_function="savings",
+                envelope_arithmetic="ordinary",
             ),
             # The budget node reaches the liquid state only through `savings`, so
             # the constraint is what keeps `liquid` live long enough for the

@@ -3,16 +3,16 @@
 `NNBEGM` runs the NEGM-style outer keeper/adjuster search over a durable
 margin with an inner `NBEGM` consumption-saving solve, so declared liquid
 kinks, jumps, and hard constraints keep their exact NB-EGM treatment inside
-every outer candidate. `NNBEGMInnerSpec` normalizes the 1-D inner solver
-config (DC-EGM or NB-EGM vocabulary) so outer kernel code never dispatches
-on the inner type.
+every outer candidate. The regime owns both margins' DAG role names; the
+public solver contains numerical configuration only, and a private bound
+companion carries the resolved names into the kernels.
 
 The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -33,9 +33,11 @@ from _lcm.solution.contract import (
     Solver,
     SolverBuildContext,
     SolverModelContext,
+    TwoMarginSolver,
+    _BoundLiquidMargin,
+    _BoundOuterContinuousMargin,
 )
-from _lcm.solution.dcegm import _BoundDCEGM
-from _lcm.solution.nbegm import NBEGM
+from _lcm.solution.nbegm import NBEGM, _BoundNBEGM
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
@@ -49,89 +51,9 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ActionName, FloatND, FunctionName, StateName
 
 
-@dataclass(frozen=True, kw_only=True)
-class NNBEGMInnerSpec:
-    """Normalized view of a 1-D inner EGM solver config for nested outer search.
-
-    A nested outer-search solver wraps a one-dimensional inner EGM solver and
-    needs its Euler-state slots under one vocabulary. The two inner families
-    name the budget node differently and NBEGM leaves two slots inferable
-    standalone; the spec makes every slot explicit so outer kernel code never
-    dispatches on the inner type.
-    """
-
-    solver: Solver
-    """The inner solver config itself."""
-    continuous_state: StateName
-    """The inner Euler (liquid) state."""
-    post_decision_function: FunctionName
-    """The inner post-decision (savings) node."""
-    budget_target: FunctionName
-    """The inner budget node (DCEGM `resources`, NBEGM `budget_target`)."""
-    savings_grid: ContinuousGrid
-    """The inner exogenous post-decision grid."""
-
-
-def get_nnbegm_inner_spec(*, inner: Solver) -> NNBEGMInnerSpec:
-    """Normalize an inner EGM solver config into a `NNBEGMInnerSpec`.
-
-    Inside a nested solver the regime carries two continuous states, so the
-    single-continuous-state inference NBEGM applies standalone is ambiguous —
-    both `continuous_state` and `post_decision_function` must be explicit.
-
-    Args:
-        inner: The inner 1-D EGM solver config; must be `DCEGM` or `NBEGM`.
-
-    Returns:
-        The normalized spec.
-
-    Raises:
-        RegimeInitializationError: If an NBEGM inner leaves `continuous_state`
-            or `post_decision_function` to inference.
-        TypeError: If `inner` is not a 1-D EGM solver config.
-
-    """
-    match inner:
-        case _BoundDCEGM():
-            return NNBEGMInnerSpec(
-                solver=inner,
-                continuous_state=inner.continuous_state,
-                post_decision_function=inner.post_decision_function,
-                budget_target=inner.resources,
-                savings_grid=inner.savings_grid,
-            )
-        case NBEGM():
-            if inner.continuous_state is None:
-                msg = (
-                    "An NNBEGM inner requires an explicit "
-                    "`continuous_state`: the regime carries two continuous "
-                    "states, so the single-state inference is ambiguous."
-                )
-                raise RegimeInitializationError(msg)
-            if inner.post_decision_function is None:
-                msg = (
-                    "An NNBEGM inner requires an explicit "
-                    "`post_decision_function` naming the inner savings node."
-                )
-                raise RegimeInitializationError(msg)
-            return NNBEGMInnerSpec(
-                solver=inner,
-                continuous_state=inner.continuous_state,
-                post_decision_function=inner.post_decision_function,
-                budget_target=inner.budget_target,
-                savings_grid=inner.savings_grid,
-            )
-        case _:
-            msg = (
-                "A nested inner solver must be DCEGM or NBEGM, got "
-                f"{type(inner).__name__}."
-            )
-            raise TypeError(msg)
-
-
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class NNBEGM(Solver):
+class NNBEGM(TwoMarginSolver):
     """N-NB-EGM — an outer durable grid search over inner 1-D NB-EGM solves.
 
     The regime carries two continuous margins. The outer post-decision margin
@@ -155,39 +77,10 @@ class NNBEGM(Solver):
     """
 
     inner: NBEGM
-    """The inner 1-D NB-EGM config solved per outer candidate.
-
-    `continuous_state` and `post_decision_function` must be explicit — the
-    regime carries two continuous states, so the standalone single-state
-    inference is ambiguous.
-    """
-
-    outer_action: ActionName
-    """The regime's outer continuous action (e.g. the durable investment)."""
-
-    outer_state: StateName
-    """The durable/illiquid state the outer margin moves.
-
-    `outer_post_decision` is this period's chosen level of it, so the two name
-    the same quantity at two points in time: the state is what the regime
-    carries in, the post-decision what the outer search picks. The keeper
-    candidate is a function of this state.
-    """
-
-    outer_post_decision: FunctionName
-    """The outer post-decision function fixed at each outer node.
-
-    This period's chosen level of `outer_state`; the inner budget reads it as a
-    bound constant.
-    """
+    """Numerical configuration of the inner 1-D NB-EGM solve."""
 
     outer_grid: ContinuousGrid
     """Exogenous candidate grid for the outer post-decision margin."""
-
-    outer_no_adjustment_candidate: FunctionName | None = None
-    r"""No-adjustment map $s_t^\textit{post-dec} = keep(s_t)$ the keeper holds.
-
-    `None` keeps the durable stock unchanged (identity)."""
 
     outer_batch_size: int = 0
     """Outer-grid nodes solved per chunk before folding into the running
@@ -195,13 +88,31 @@ class NNBEGM(Solver):
     value-invariant."""
 
     def __post_init__(self) -> None:
-        spec = get_nnbegm_inner_spec(inner=self.inner)
+        _fail_if_inner_is_not_nbegm(self.inner)
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
-        _fail_if_nnbegm_outer_post_decision_is_inner(
-            outer_post_decision=self.outer_post_decision,
-            inner_post_decision=spec.post_decision_function,
-        )
         _fail_if_outer_batch_size_negative(self.outer_batch_size, solver_name="NNBEGM")
+
+    def _with_margins(
+        self,
+        *,
+        liquid: _BoundLiquidMargin,
+        outer: _BoundOuterContinuousMargin,
+    ) -> _BoundNNBEGM:
+        """Bind both regime-owned margins into a private runtime config."""
+        kwargs = {
+            field.name: getattr(self, field.name)
+            for field in fields(NNBEGM)
+            if field.name != "inner"
+        }
+        inner = self.inner._with_liquid_margin(liquid)  # noqa: SLF001
+        return _BoundNNBEGM(
+            **kwargs,
+            inner=inner,
+            outer_action=outer.action,
+            outer_state=outer.state,
+            outer_post_decision=outer.post_decision_state,
+            outer_no_adjustment_candidate=outer.no_adjustment,
+        )
 
     @property
     def requires_continuation(self) -> bool:
@@ -245,10 +156,11 @@ class NNBEGM(Solver):
             validate_case_piece_smoothness,
         )
 
+        bound = cast("_BoundNNBEGM", self)
         fail_if_taste_shocks_declared(context=context)
         validate_case_piece_smoothness(
             context=context,
-            liquid_state_name=get_nnbegm_inner_spec(inner=self.inner).continuous_state,
+            liquid_state_name=bound.inner.continuous_state,
         )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
@@ -262,6 +174,9 @@ class NNBEGM(Solver):
           into the econ functions, so the durable becomes a genuine passive
           ride-along state.
         """
+        bound = cast("_BoundNNBEGM", self)
+        from lcm.regime import outer_unchanged  # noqa: PLC0415
+
         # The adjuster's outer post-decision arrives per outer-grid node as a
         # bound param, so the function declaring the chosen stock leaves the
         # inner DAG — leaving it in would let the inner scope check walk through
@@ -278,15 +193,15 @@ class NNBEGM(Solver):
             context,
             functions=_without_outer_post_decision(
                 functions=context.functions,
-                outer_post_decision=self.outer_post_decision,
+                outer_post_decision=bound.outer_post_decision,
             ),
-            flat_param_names=context.flat_param_names | {self.outer_post_decision},
+            flat_param_names=context.flat_param_names | {bound.outer_post_decision},
         )
-        adjuster_kernels = self.inner.build_period_kernels(context=adjuster_context)
+        adjuster_kernels = bound.inner.build_period_kernels(context=adjuster_context)
         no_adjustment_func = (
-            context.functions[self.outer_no_adjustment_candidate]
-            if self.outer_no_adjustment_candidate is not None
-            else None
+            None
+            if bound.outer_no_adjustment_candidate == outer_unchanged
+            else context.functions[bound.outer_no_adjustment_candidate]
         )
         # The keeper computes the post-decision from the durable leaf instead of
         # taking it as a bound param, so the declared law again stands and what
@@ -295,14 +210,14 @@ class NNBEGM(Solver):
             context,
             functions=_with_no_adjustment_outer_function(
                 functions=context.functions,
-                durable_state=self.outer_state,
-                outer_post_decision=self.outer_post_decision,
+                durable_state=bound.outer_state,
+                outer_post_decision=bound.outer_post_decision,
                 no_adjustment_func=no_adjustment_func,
             ),
         )
-        keeper_kernels = self.inner.build_period_kernels(context=keeper_context)
+        keeper_kernels = bound.inner.build_period_kernels(context=keeper_context)
         template = keeper_kernels.continuation_template
-        _fail_if_inner_carry_rows_not_grid_aligned(inner=self.inner)
+        _fail_if_inner_carry_rows_not_grid_aligned(inner=bound.inner)
         _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         outer_grid_values = self.outer_grid.to_jax()
         period_kernels = MappingProxyType(
@@ -312,7 +227,7 @@ class NNBEGM(Solver):
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
-                    outer_post_decision=self.outer_post_decision,
+                    outer_post_decision=bound.outer_post_decision,
                     outer_batch_size=self.outer_batch_size,
                 )
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
@@ -338,6 +253,17 @@ class NNBEGM(Solver):
                 *keeper_kernels.param_checks,
             ),
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BoundNNBEGM(NNBEGM):
+    """Internal N-NB-EGM config with both regime margins resolved."""
+
+    inner: _BoundNBEGM
+    outer_action: ActionName
+    outer_state: StateName
+    outer_post_decision: FunctionName
+    outer_no_adjustment_candidate: FunctionName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -571,18 +497,20 @@ def _fold_bridged_outer_carry(*, running: EGMCarry, candidate: EGMCarry) -> EGMC
     )
 
 
-def _fail_if_nnbegm_outer_post_decision_is_inner(
-    *, outer_post_decision: FunctionName, inner_post_decision: FunctionName
-) -> None:
-    if outer_post_decision == inner_post_decision:
-        msg = (
-            f"NNBEGM.outer_post_decision '{outer_post_decision}' coincides "
-            f"with the inner NB-EGM post-decision function "
-            f"'{inner_post_decision}'. The outer post-decision (the next-period "
-            "durable stock) and the inner post-decision (the liquid savings) "
-            "must be distinct functions."
+def _fail_if_inner_is_not_nbegm(inner: object) -> None:
+    """Enforce the public NNBEGM composition despite inert type stubs.
+
+    The planned DCEGM-or-NBEGM inner unification belongs to the follow-on NEGM
+    fold.  The current public NNBEGM solver is the NBEGM-specific composition,
+    so accepting another object here would defer a structural error until
+    private margin binding or kernel construction.
+    """
+    if not isinstance(inner, NBEGM):
+        cls = type(inner)
+        raise RegimeInitializationError(
+            "NNBEGM.inner must be an NBEGM numerical configuration, got "
+            f"{cls.__module__}.{cls.__qualname__}."
         )
-        raise RegimeInitializationError(msg)
 
 
 def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:

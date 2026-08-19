@@ -27,13 +27,16 @@ from lcm import (
     CESAggregator,
     GridSearch,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import Solver
+from lcm.solvers import TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -128,21 +131,15 @@ def _consumption_feasible(resources: FloatND, consumption: ContinuousAction) -> 
     return consumption <= resources
 
 
-def _build_solver(*, variant: str) -> Solver:
+def _build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
     if variant == "brute":
         return GridSearch()
     return NNBEGM(
         inner=NBEGM(
-            continuous_state="wealth",
-            post_decision_function="liquid_savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
+            envelope_arithmetic="ordinary",
         ),
-        outer_action="illiquid_investment",
-        outer_state="illiquid",
-        outer_post_decision="new_illiquid",
         outer_grid=_OUTER_GRID,
-        outer_no_adjustment_candidate="keep_illiquid",
     )
 
 
@@ -156,34 +153,70 @@ def _build_model(*, variant: str) -> Model:
             "illiquid_feasible": _illiquid_feasible,
             "budget_feasible": _budget_feasible,
         }
-    alive = Regime(
-        active=lambda age, n=final_age_alive: age <= n,
-        states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
-        state_transitions={
-            "wealth": {"alive": _next_wealth, "dead": _next_wealth},
-            "illiquid": {"alive": _durable_transition, "dead": _durable_transition},
-        },
-        actions={
-            "consumption": _CONSUMPTION_GRID,
-            "illiquid_investment": _ILLIQUID_INVESTMENT_GRID,
-        },
-        transition={
-            "alive": MarkovTransition(_prob_alive),
-            "dead": MarkovTransition(_prob_dead),
-        },
-        functions={
-            "utility": _utility,
-            "new_illiquid": _new_illiquid,
-            "resources": _resources,
-            "liquid_savings": _liquid_savings,
-            "keep_illiquid": _keep_illiquid,
-            "credited": _credited,
-        },
-        constraints=constraints,
-        koopmans_aggregator=CESAggregator(),
-        certainty_equivalent=PowerMean(),
-        solver=_build_solver(variant=variant),
-    )
+    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
+    states = {"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID}
+    state_transitions = {
+        "wealth": {"alive": _next_wealth, "dead": _next_wealth},
+        "illiquid": {"alive": _durable_transition, "dead": _durable_transition},
+    }
+    actions = {
+        "consumption": _CONSUMPTION_GRID,
+        "illiquid_investment": _ILLIQUID_INVESTMENT_GRID,
+    }
+    transition = {
+        "alive": MarkovTransition(_prob_alive),
+        "dead": MarkovTransition(_prob_dead),
+    }
+    functions = {
+        "utility": _utility,
+        "new_illiquid": _new_illiquid,
+        "resources": _resources,
+        "liquid_savings": _liquid_savings,
+        "keep_illiquid": _keep_illiquid,
+        "credited": _credited,
+    }
+    solver = _build_solver(variant=variant)
+    # Built per branch rather than through a shared class and margin mapping:
+    # the nested regime takes two margins and narrows `solver`, and neither
+    # distinction survives a `**kwargs` splat.
+    if variant == "brute":
+        alive = Regime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=transition,
+            functions=functions,
+            constraints=constraints,
+            koopmans_aggregator=CESAggregator(),
+            certainty_equivalent=PowerMean(),
+            solver=solver,
+        )
+    else:
+        alive = NestedConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=transition,
+            functions=functions,
+            constraints=constraints,
+            koopmans_aggregator=CESAggregator(),
+            certainty_equivalent=PowerMean(),
+            solver=solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="liquid_savings",
+            ),
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="illiquid_investment",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            ),
+        )
     dead = Regime(
         transition=None,
         active=lambda age, n=_FIRST_AGE: age > n,

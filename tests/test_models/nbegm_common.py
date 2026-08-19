@@ -27,7 +27,9 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    ConsumptionSavingsRegime,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     categorical,
@@ -35,7 +37,7 @@ from lcm import (
     liquid_law_from_savings,
 )
 from lcm.regime import Regime
-from lcm.solvers import NBEGM, GridSearch, Solver
+from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -99,20 +101,39 @@ def prob_die(age: int, final_age_alive: float) -> FloatND:
 
 def resolve_solver(
     variant: str, *, savings_grid: ContinuousGrid, **nbegm_kwargs: object
-) -> Solver:
+) -> OneMarginSolver | GridSearch:
     """Dispatch the toy's alive-regime solver from the variant name.
 
     - `"brute"` — `GridSearch`, the dense-grid oracle.
-    - `"nbegm"` — `NBEGM` over `savings_grid`, forwarding any extra
-      constructor arguments (`budget_target`, `post_decision_function`, block
-      sizes, …).
+    - `"nbegm"` — numerical `NBEGM` configuration over `savings_grid`,
+      forwarding extra numerical constructor arguments (block sizes, envelope
+      settings, and so on). DAG role names belong to the regime's
+      `LiquidMargin` and are not accepted here.
 
     Any other name raises `ValueError`.
     """
     if variant == "brute":
         return GridSearch()
     if variant == "nbegm":
-        return NBEGM(savings_grid=savings_grid, **nbegm_kwargs)  # ty: ignore[invalid-argument-type]
+        role_names = {
+            "budget_target",
+            "continuous_state",
+            "continuous_action",
+            "post_decision_function",
+        }
+        stale = sorted(role_names & nbegm_kwargs.keys())
+        if stale:
+            msg = (
+                "NBEGM DAG role names moved to LiquidMargin; remove solver "
+                f"arguments {stale}."
+            )
+            raise TypeError(msg)
+        return NBEGM(
+            savings_grid=savings_grid,
+            # Forwards whatever numerical configuration the caller names, so the
+            # values arrive as `object` rather than each parameter's own type.
+            **nbegm_kwargs,  # ty: ignore[invalid-argument-type]
+        )
     msg = f"unknown variant {variant!r}; use 'brute' or 'nbegm'."
     raise ValueError(msg)
 
@@ -125,7 +146,7 @@ def make_alive_dead_model(
     n_consumption: int,
     alive_functions: Mapping[str, Callable[..., object]],
     liquid_law: Callable[..., object],
-    alive_solver: Solver,
+    alive_solver: OneMarginSolver | GridSearch,
     constraints: Mapping[str, Callable[..., object]],
     extra_actions: Mapping[str, Grid] | None = None,
     extra_states: Mapping[str, Grid] | None = None,
@@ -134,6 +155,10 @@ def make_alive_dead_model(
     model_states: Mapping[str, Grid] | None = None,
     liquid_grid: Grid | None = None,
     fixed_params: Mapping[str, Any] | None = None,
+    liquid_state: str = "liquid",
+    liquid_action: str = "consumption",
+    liquid_resources: str = "resources",
+    liquid_post_decision: str = "savings",
 ) -> Model:
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
@@ -172,32 +197,60 @@ def make_alive_dead_model(
     final_age = ages.exact_values[-1]
     if liquid_grid is None:
         liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
-    alive = Regime(
-        actions={
-            "consumption": LinSpacedGrid(
-                start=0.1, stop=liquid_max, n_points=n_consumption
-            ),
-            **(dict(extra_actions) if extra_actions else {}),
-        },
-        states={
-            "liquid": liquid_grid,
-            **(dict(extra_states) if extra_states else {}),
-        },
-        state_transitions={
-            "liquid": {"alive": liquid_law, "dead": liquid_law},
-            **(dict(extra_state_transitions) if extra_state_transitions else {}),
-        },
-        constraints=dict(constraints),
-        transition=dict(survival_transition)
+    alive_actions = {
+        liquid_action: LinSpacedGrid(
+            start=0.1, stop=liquid_max, n_points=n_consumption
+        ),
+        **(dict(extra_actions) if extra_actions else {}),
+    }
+    alive_states = {
+        liquid_state: liquid_grid,
+        **(dict(extra_states) if extra_states else {}),
+    }
+    alive_state_transitions = {
+        liquid_state: {"alive": liquid_law, "dead": liquid_law},
+        **(dict(extra_state_transitions) if extra_state_transitions else {}),
+    }
+    alive_transition = (
+        dict(survival_transition)
         if survival_transition is not None
         else {
             "alive": MarkovTransition(prob_stay_alive),
             "dead": MarkovTransition(prob_die),
-        },
-        functions=dict(alive_functions),
-        active=lambda age, fa=final_age: age < fa,
-        solver=alive_solver,
+        }
     )
+    alive_active = lambda age, fa=final_age: age < fa  # noqa: E731
+    # Built per branch rather than from one shared mapping: the two regime
+    # classes narrow `solver` differently, and a `**kwargs` mapping erases the
+    # argument types the narrowing is expressed in.
+    if isinstance(alive_solver, NBEGM):
+        alive = ConsumptionSavingsRegime(
+            actions=alive_actions,
+            states=alive_states,
+            state_transitions=alive_state_transitions,
+            constraints=dict(constraints),
+            transition=alive_transition,
+            functions=dict(alive_functions),
+            active=alive_active,
+            solver=alive_solver,
+            liquid=LiquidMargin(
+                state=liquid_state,
+                action=liquid_action,
+                resources=liquid_resources,
+                post_decision_state=liquid_post_decision,
+            ),
+        )
+    else:
+        alive = Regime(
+            actions=alive_actions,
+            states=alive_states,
+            state_transitions=alive_state_transitions,
+            constraints=dict(constraints),
+            transition=alive_transition,
+            functions=dict(alive_functions),
+            active=alive_active,
+            solver=alive_solver,
+        )
     # The default survival law dies deterministically into the final age, so the
     # absorbing regime is needed only there. A caller-supplied law may put mass on
     # `dead` at any transition, and mass sent to a target that is inactive when it
