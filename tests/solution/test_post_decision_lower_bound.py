@@ -178,12 +178,17 @@ def _opaque_borrowing_constraint(savings: FloatND) -> FloatND:
 def test_a_plain_callable_borrowing_constraint_is_refused() -> None:
     """An opaque predicate carries no proof, so it stays outside the contract.
 
-    The refusal is attributable to the constraint rather than to the model:
-    it differs by exactly one argument from the builds asserted above, and it
-    matches the message naming the constraint, so an unrelated build failure
-    would not satisfy it.
+    Matches the refused constraint's *name* rather than the wording of the
+    message. Wording is free to improve; which constraint was refused is the
+    claim being made. Matching the sentence instead would go red on any
+    rewrite and stay green if the wrong constraint were named — backwards on
+    both counts.
+
+    The refusal is also attributable to the constraint rather than to the
+    model: it differs by exactly one argument from the builds asserted above,
+    so an unrelated build failure would not satisfy it.
     """
-    with pytest.raises(ModelInitializationError, match="Remove this constraint"):
+    with pytest.raises(ModelInitializationError, match="borrowing_constraint"):
         _model(
             savings_grid_start=-2.0,
             declared_lower_bound=None,
