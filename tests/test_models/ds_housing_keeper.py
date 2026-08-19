@@ -50,6 +50,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import fixed_transition
@@ -228,10 +229,6 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="liquid_assets",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=32,
 )
@@ -277,7 +274,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
                 "income_value": income_value,
             },
         )
-    return UserRegime(
+    return ConsumptionSavingsRegime(
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
@@ -299,6 +296,12 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             "income_value": income_value,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="liquid_assets",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
 

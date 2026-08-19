@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 # `jax` is a build requirement, not only a runtime one: the build hook compiles the
 # exact-affine FFI kernel against the XLA FFI headers that ship inside jaxlib, and
 # locates them through `jax.ffi.include_dir()`.
-requires = [ "hatch-vcs", "hatchling", "jax>=0.11" ]
+requires = [ "hatch-vcs", "hatchling", "jax>=0.11.1" ]
 
 [project]
 name = "pylcm"
@@ -36,13 +36,25 @@ dependencies = [
   "cloudpickle>=3.1.2",
   "dags>=0.6",
   "h5py>=3.12",
-  "jax>=0.11",
+  "jax>=0.11.1",
   "jaxtyping>=0.3.11",
   "orbax-checkpoint>=0.11",
   "pandas",
   "portion>=2.6",
   "pyarrow",
 ]
+[project.readme]
+content-type = "text/markdown"
+file = "README.md"
+[project.license]
+file = "LICENSE"
+[[project.maintainers]]
+name = "Tim Mensinger"
+email = "mensingertim@gmail.com"
+
+[[project.maintainers]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
@@ -56,18 +68,6 @@ name = "Janos Gabler"
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
-[project.license]
-file = "LICENSE"
-[[project.maintainers]]
-name = "Tim Mensinger"
-email = "mensingertim@gmail.com"
-
-[[project.maintainers]]
-name = "Hans-Martin von Gaudecker"
-email = "hmgaudecker@uni-bonn.de"
-[project.readme]
-content-type = "text/markdown"
-file = "README.md"
 [project.urls]
 Github = "https://github.com/opensourceeconomics/pylcm"
 Repository = "https://github.com/opensourceeconomics/pylcm"
@@ -78,7 +78,10 @@ version.source = "vcs"
 metadata.allow-direct-references = true
 # The compiled kernels are gitignored, so they have to be named explicitly or
 # hatchling's VCS-based file selection would leave them out of the wheel.
-build.artifacts = [ "src/_lcm/egm/upper_envelope/_exact_affine/*.so" ]
+build.artifacts = [
+  "src/_lcm/egm/upper_envelope/_exact_affine/*.dll",
+  "src/_lcm/egm/upper_envelope/_exact_affine/*.so",
+]
 build.hooks.vcs.version-file = "src/_lcm/version.py"
 build.targets.wheel.hooks.custom.path = "hatch_build.py"
 build.targets.wheel.only-include = [ "src" ]
@@ -86,6 +89,17 @@ build.targets.wheel.sources = [ "src" ]
 build.targets.sdist.exclude = [ "tests" ]
 build.targets.sdist.only-packages = true
 
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [
+  "linux-64",
+  "linux-aarch64",
+  "osx-arm64",
+  "win-64",
+  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
+]
 [tool.pixi.dependencies]
 asv = "*"
 python = "~=3.14.0"
@@ -100,16 +114,23 @@ pyarrow = "*"
 pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
-[tool.pixi.environments]
-benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-docs = { features = [ "docs" ], solve-group = "default" }
-tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.pypi-dependencies]
+jax = ">=0.11.1"
+pdbp = "*"
+pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-pr-comment = "python benchmarks/pr_comment.py"
+asv-publish = "python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
+asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
+# Recompile the certified path's exact-affine kernel in place. An editable install
+# builds it once; rerun this after editing the C++ or CUDA sources. Set NVCCFLAGS
+# (e.g. '-arch=sm_80') to pick the CUDA target architecture.
+build-exact-affine = "python hatch_build.py"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to an aca-model main that carries both the keyword-only case-piece
 # call sites this branch's API requires and the DC-EGM solver path; flip back
@@ -120,17 +141,17 @@ platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda12" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
 platforms = [ "linux-64-cuda13", "linux-aarch64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda13" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
 [tool.pixi.feature.cuda13.target.linux-aarch64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-aarch64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda13" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
@@ -195,34 +216,16 @@ tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junit
 matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
-[tool.pixi.pypi-dependencies]
-jax = ">=0.11"
-pdbp = "*"
-pylcm = { path = ".", editable = true }
-[tool.pixi.tasks]
-asv-compare = "asv compare"
-asv-preview = "asv preview"
-asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
-asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
-# Recompile the certified path's exact-affine kernel in place. An editable install
-# builds it once; rerun this after editing the C++ or CUDA sources. Set NVCCFLAGS
-# (e.g. '-arch=sm_80') to pick the CUDA target architecture.
-build-exact-affine = "python hatch_build.py"
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [
-  "linux-64",
-  "linux-aarch64",
-  "osx-arm64",
-  "win-64",
-  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
-  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
-  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
-]
+[tool.pixi.environments]
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+docs = { features = [ "docs" ], solve-group = "default" }
+tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 
 [tool.ruff]
 target-version = "py314"
@@ -267,6 +270,9 @@ per-file-ignores."benchmarks/*" = [
   "S603",    # subprocess call without shell=True check
   "S607",    # Partial executable path
   "T201",    # print found
+]
+per-file-ignores."tests/solution/_fused_continuation_envelope_oracle.py" = [
+  "PLR0915", # Too many statements — kept structurally verbatim as an independent reference
 ]
 per-file-ignores."docs/**/*" = [
   "ANN001", # Missing type annotation for function argument
@@ -433,6 +439,7 @@ ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
   "manual: gates that solve the real paper-scale model; run on request, never in CI",
+  "requires_exact_affine_kernel: requires the selected backend's exact-affine kernel",
   "skipif_cpu: skip test when the JAX backend is CPU",
   "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]

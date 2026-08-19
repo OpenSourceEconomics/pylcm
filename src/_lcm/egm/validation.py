@@ -55,7 +55,7 @@ offending piece. The rules, in the order they are checked:
 
 import inspect
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -78,6 +78,12 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+else:
+    # Runtime validation accepts the private bound subclass through its public base.
+    _BoundDCEGM = DCEGM
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
 # Euler grid cell, a function that is smooth at node resolution has
@@ -109,7 +115,7 @@ def validate_dcegm_regimes(
     """
     for regime_name, user_regime in user_regimes.items():
         if isinstance(user_regime.solver, DCEGM):
-            _validate_dcegm_regime(
+            validate_dcegm_regime(
                 regime_name=regime_name,
                 user_regime=user_regime,
                 user_regimes=user_regimes,
@@ -117,7 +123,9 @@ def validate_dcegm_regimes(
             )
 
 
-def savings_stage_reads_euler_state(*, user_regime: UserRegime, solver: DCEGM) -> bool:
+def savings_stage_reads_euler_state(
+    *, user_regime: UserRegime, solver: _BoundDCEGM
+) -> bool:
     """Whether any savings-stage function reads the current Euler state.
 
     Runs the opaque-post-decision ancestor check (`Phased` resolved to the
@@ -188,7 +196,7 @@ def fail_if_custom_koopmans_aggregator(
         raise ModelInitializationError(msg)
 
 
-def _validate_dcegm_regime(
+def validate_dcegm_regime(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
@@ -196,7 +204,7 @@ def _validate_dcegm_regime(
     solution_reachability: PhaseReachability | None,
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
-    solver = cast("DCEGM", user_regime.solver)
+    solver = cast("_BoundDCEGM", user_regime.solver)
 
     _fail_if_terminal(regime_name=regime_name, user_regime=user_regime)
     _fail_if_state_action_classification_invalid(
@@ -294,7 +302,7 @@ def _fail_if_state_action_classification_invalid(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Require exactly one continuous (Euler) state and one continuous action.
 
@@ -341,7 +349,7 @@ def _fail_if_required_functions_missing(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Require the post-decision and resources functions.
 
@@ -372,7 +380,7 @@ def _fail_if_post_decision_signature_invalid(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """The post-decision function consumes the action and the resources function."""
     arg_names = list(
@@ -402,7 +410,7 @@ def _fail_if_constraint_touches_continuous_variables(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """No constraint may touch the continuous state or action.
 
@@ -434,7 +442,7 @@ def _fail_if_utility_depends_on_continuous_state(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """`utility` must reach the state only through the action (envelope condition)."""
     ancestors = get_ancestors(functions, targets=["utility"], include_targets=False)
@@ -452,7 +460,7 @@ def _fail_if_resources_depend_on_continuous_action(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Resources are pre-decision: they must not depend on the continuous action."""
     ancestors = get_ancestors(
@@ -474,7 +482,7 @@ def _fail_if_passive_state_invalid(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Every non-Euler continuous state must be passive.
 
@@ -565,7 +573,7 @@ def _fail_if_euler_transition_stochastic(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """The Euler state's transition must be deterministic."""
     value = user_regime.state_transitions.get(solver.continuous_state)
@@ -588,7 +596,7 @@ def _fail_if_euler_transition_bypasses_post_decision(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """The Euler transition consumes the post-decision function.
 
@@ -640,7 +648,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Savings-node-stage functions must not depend on the current decision.
 
@@ -688,7 +696,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
 def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     exclude_states: frozenset[StateName] = frozenset(),
 ) -> list[tuple[str, str, UserFunction]]:
     """Enumerate every savings-stage function variant of a regime.
@@ -753,7 +761,7 @@ def _savings_stage_euler_state_readers(
     *,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> list[tuple[str, str, UserFunction]]:
     """Savings-stage function variants whose DAG ancestors include the Euler state.
 
@@ -782,7 +790,7 @@ def _fail_if_grid_hygiene_violated(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Reject runtime-supplied points and distributed grids; savings grid covers
     the Euler grid.
@@ -879,7 +887,7 @@ def _fail_if_target_regime_incompatible(
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     solution_reachability: PhaseReachability,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Retained non-terminal targets must be DCEGM regimes with the same state.
 
@@ -900,12 +908,13 @@ def _fail_if_target_regime_incompatible(
                 "way around)."
             )
             raise ModelInitializationError(msg)
-        if target.solver.continuous_state != solver.continuous_state:
+        target_solver = cast("_BoundDCEGM", target.solver)
+        if target_solver.continuous_state != solver.continuous_state:
             msg = (
                 f"Regime '{regime_name}' uses the DCEGM solver with Euler "
                 f"state '{solver.continuous_state}' but can reach regime "
                 f"'{target_name}', whose DCEGM Euler state is "
-                f"'{target.solver.continuous_state}'. All mutually reachable "
+                f"'{target_solver.continuous_state}'. All mutually reachable "
                 "DCEGM regimes must share the same Euler continuous state."
             )
             raise ModelInitializationError(msg)
@@ -916,7 +925,7 @@ def _fail_if_numeric_spot_checks_fail(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Numeric spot checks on small grid samples, evaluated eagerly (no jit).
 
@@ -1055,7 +1064,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     grids: dict[StateOrActionName, Grid],
     action_sample: Float1D,
     rtol: float,
@@ -1152,7 +1161,7 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: DCEGM,
+    solver: _BoundDCEGM,
 ) -> None:
     """Savings-stage reads of the Euler state must be continuous at node resolution.
 

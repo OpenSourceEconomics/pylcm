@@ -12,10 +12,14 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ConsumptionSavingsRegime,
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
     Regime,
     categorical,
 )
@@ -84,7 +88,7 @@ def next_regime(age: int) -> ScalarInt:
 
 def test_nbegm_regime_declaring_taste_shocks_is_rejected():
     """A bare NB-EGM regime with EV1 taste shocks fails at model build."""
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         active=lambda age: age <= 20,
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth},
@@ -101,6 +105,12 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             "labor_income": labor_income,
         },
         solver=NBEGM(savings_grid=SAVINGS_GRID),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="liquid_savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -118,7 +128,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
 
 def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
     """The nested solver inherits the inner NB-EGM's taste-shock rejection."""
-    alive = Regime(
+    alive = NestedConsumptionSavingsRegime(
         active=lambda age: age <= 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
@@ -145,6 +155,18 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "labor_income": labor_income,
         },
         solver=n_nbegm_toy.build_solver(variant="n_nbegm"),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_illiquid",
+            no_adjustment="keep_illiquid",
+        ),
     )
     dead = Regime(
         transition=None,

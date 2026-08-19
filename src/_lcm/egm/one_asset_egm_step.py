@@ -27,6 +27,7 @@ from typing import NamedTuple
 import jax.numpy as jnp
 
 from _lcm.egm.euler import invert_euler
+from _lcm.egm.interp import interp_on_regular_grid
 from _lcm.egm.preferences import Preferences
 from lcm.typing import Float1D, ScalarFloat
 
@@ -90,8 +91,12 @@ def egm_one_asset_step(
         `liquid_grid`.
 
     """
-    value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
-    marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+    value_next = interp_on_regular_grid(
+        x_query=next_liquid, xp=next_liquid_grid, fp=next_value
+    )
+    marginal_next = interp_on_regular_grid(
+        x_query=next_liquid, xp=next_liquid_grid, fp=next_marginal
+    )
 
     consumption = invert_euler(
         expected_marginal_continuation=marginal_return * marginal_next,
@@ -113,7 +118,9 @@ def egm_one_asset_step(
     min_savings = savings_grid[0]
     constrained = liquid_grid < liquid_endog[0]
     constrained_consumption = liquid_grid - min_savings
-    value_at_min_savings = jnp.interp(next_liquid[0], next_liquid_grid, next_value)
+    value_at_min_savings = interp_on_regular_grid(
+        x_query=next_liquid[0], xp=next_liquid_grid, fp=next_value
+    )
     constrained_value = (
         preferences.utility(constrained_consumption)
         + discount_factor * value_at_min_savings

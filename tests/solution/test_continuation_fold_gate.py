@@ -19,14 +19,16 @@ from lcm import (
     NBEGM,
     AgeGrid,
     CESAggregator,
+    ConsumptionSavingsRegime,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import Solver
+from lcm.solvers import GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -71,14 +73,14 @@ def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
 
 
-def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
+def _build_model(*, solver: OneMarginSolver | GridSearch, epstein_zin: bool) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
     functions = {
         "utility": _utility,
         "resources": _resources,
         "savings": _savings,
     }
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
         state_transitions={"liquid": _next_liquid},
@@ -89,6 +91,12 @@ def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
         koopmans_aggregator=CESAggregator() if epstein_zin else None,
         certainty_equivalent=PowerMean() if epstein_zin else None,
         solver=solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -106,10 +114,8 @@ def _build_model(*, solver: Solver, epstein_zin: bool) -> Model:
 
 def _nbegm() -> NBEGM:
     return NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=_SAVINGS_GRID,
-        continuous_state="liquid",
+        envelope_arithmetic="ordinary",
     )
 
 

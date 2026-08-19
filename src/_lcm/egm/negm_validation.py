@@ -63,9 +63,16 @@ import inspect
 from collections.abc import Mapping
 from typing import cast
 
+import jax.numpy as jnp
+from dags import concatenate_functions
+
 from _lcm.egm.validation import (
+    _call_with_varied,
     _continuous_non_process_names,
     _dag_ancestors,
+    _fixed_kwargs,
+    _grid_sample,
+    _isclose,
     _resolve_solve_functions,
     _savings_stage_candidates,
     _solve_grids,
@@ -73,11 +80,18 @@ from _lcm.egm.validation import (
     _without,
 )
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NEGM
-from lcm.typing import UserFunction
+from lcm.solvers import NEGM
+from lcm.typing import FloatND, IntND, ScalarFloat, UserFunction
+
+# A cross-difference needs two distinct points on each margin: the check varies
+# consumption and the durable independently and compares the mixed second
+# difference against zero, which a single point on either axis cannot form.
+_MIN_CROSS_DIFFERENCE_POINTS = 2
 
 
 def validate_negm_regimes(
@@ -97,19 +111,19 @@ def validate_negm_regimes(
     """
     for regime_name, user_regime in user_regimes.items():
         if isinstance(user_regime.solver, NEGM):
-            _validate_negm_regime(
+            validate_negm_regime(
                 regime_name=regime_name,
                 user_regime=user_regime,
             )
 
 
-def _validate_negm_regime(
+def validate_negm_regime(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
 ) -> None:
     """Run all NEGM contract checks for a single regime, in order."""
-    solver = cast("NEGM", user_regime.solver)
+    solver = cast("_BoundNEGM", user_regime.solver)
     inner = solver.inner
 
     functions = _resolve_solve_functions(user_regime=user_regime)
@@ -149,7 +163,7 @@ def _fail_if_outer_margin_absent(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The outer durable margin must be a real action and post-decision function.
 
@@ -193,8 +207,8 @@ def _fail_if_outer_margin_absent(
 def _fail_if_margins_not_distinct(
     *,
     regime_name: RegimeName,
-    solver: NEGM,
-    inner: DCEGM,
+    solver: _BoundNEGM,
+    inner: _BoundDCEGM,
 ) -> None:
     """The outer and inner margins must be distinct actions and post-decisions.
 
@@ -225,7 +239,7 @@ def _fail_if_outer_margin_euler_coupled(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The outer margin must not enter the inner differentiated-Euler pool.
 
@@ -295,6 +309,7 @@ def _fail_if_outer_margin_euler_coupled(
     # inversion couples to it.
     _fail_if_utility_couples_action_and_outer_margin(
         regime_name=regime_name,
+        user_regime=user_regime,
         functions=functions,
         solver=solver,
     )
@@ -305,7 +320,7 @@ def _fail_if_outer_law_reads_the_inner_margin(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """Reject an outer-state law of motion that reaches into the inner margin.
 
@@ -412,44 +427,93 @@ def _ancestors_through_sibling_laws(
 def _fail_if_utility_couples_action_and_outer_margin(
     *,
     regime_name: RegimeName,
+    user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
-    """Utility must read the outer margin additively-separably from consumption.
+    """Require additive separability across the complete utility DAG.
 
-    The inner Euler inversion treats the outer margin's utility term as a
-    constant (`u(c, s') = ũ(c) + g(s')`). If `utility` reaches both the inner
-    continuous action and the outer post-decision through a single function that
-    multiplies/composes them (a cross-term), the inner marginal utility depends
-    on the outer choice and the deterministic outer max over a frozen inner
-    inversion is invalid. The structural proxy: no individual utility-DAG
-    function may take both the inner action and the outer post-decision (or the
-    outer action) as direct arguments.
+    The outer post-decision is removed from the function pool so it becomes an
+    explicit leaf of the composed utility. A two-by-two cross-difference then
+    checks the defining additive identity. This catches a cross-term routed
+    through separate helper branches while accepting a final utility function
+    that simply adds those branches.
     """
     inner = solver.inner
-    outer_names = {solver.outer_action, solver.outer_post_decision}
-    utility_dag_names = _dag_ancestors(
-        functions=functions,
-        target_func=functions["utility"],
-    ) | {"utility"}
-    for func_name in utility_dag_names:
-        func = functions.get(func_name)
-        if func is None:
-            continue
-        arg_names = set(inspect.signature(func).parameters)
-        if inner.continuous_action in arg_names and arg_names & outer_names:
-            crossed = sorted(arg_names & outer_names)
-            msg = (
-                f"In regime '{regime_name}', the utility-DAG function "
-                f"'{func_name}' takes both the inner consumption action "
-                f"'{inner.continuous_action}' and the outer margin {crossed} as "
-                "arguments, so utility couples the two margins (it is not "
-                "additively separable in them). The inner marginal utility then "
-                "depends on the outer choice, so NEGM's deterministic outer max "
-                "over a frozen inner Euler inversion is invalid — use the 2-D EGM "
-                "foundation (G2EGM / multidim-RFC), not NEGM."
+    functions_without_outer = _without(
+        functions=functions, names={solver.outer_post_decision}
+    )
+    utility_func = concatenate_functions(
+        functions=functions_without_outer,
+        targets="utility",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    varied = {inner.continuous_action, solver.outer_post_decision}
+    if not varied <= set(inspect.signature(utility_func).parameters):
+        return
+
+    grids = {
+        **_solve_grids(slot=user_regime.states),
+        **_solve_grids(slot=user_regime.actions),
+    }
+    fixed = _fixed_kwargs(func=utility_func, grids=grids, varied=varied)
+    if fixed is None:
+        return
+    action_sample = _grid_sample(grid=grids[inner.continuous_action])
+    outer_sample = _grid_sample(grid=solver.outer_grid)
+    too_few_points = (
+        action_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
+        or outer_sample.shape[0] < _MIN_CROSS_DIFFERENCE_POINTS
+    )
+    if too_few_points:
+        return
+    c0 = action_sample[0]
+    z0 = outer_sample[0]
+
+    def value(*, consumption: ScalarFloat, outer: ScalarFloat) -> FloatND | IntND:
+        return _call_with_varied(
+            func=utility_func,
+            fixed=fixed,
+            varied={
+                inner.continuous_action: consumption,
+                solver.outer_post_decision: outer,
+            },
+        )
+
+    baseline = value(consumption=c0, outer=z0)
+    tolerance = 1e-8 if jnp.asarray(baseline).dtype == jnp.float64 else 1e-4
+    for consumption in action_sample:
+        for outer in outer_sample:
+            cross_difference = (
+                value(consumption=consumption, outer=outer)
+                - value(consumption=consumption, outer=z0)
+                - value(consumption=c0, outer=outer)
+                + baseline
             )
-            raise ModelInitializationError(msg)
+            scale = max(
+                1.0,
+                abs(float(value(consumption=consumption, outer=outer))),
+                abs(float(baseline)),
+            )
+            if not _isclose(
+                actual=cross_difference,
+                expected=0.0,
+                rtol=tolerance,
+                atol=tolerance * scale,
+            ):
+                msg = (
+                    f"The complete utility DAG of NEGM regime '{regime_name}' is "
+                    f"not additively separable in '{inner.continuous_action}' and "
+                    f"'{solver.outer_post_decision}': its sampled cross-difference "
+                    f"is {float(cross_difference)} at "
+                    f"{inner.continuous_action}={float(consumption)}, "
+                    f"{solver.outer_post_decision}={float(outer)}. The inner "
+                    "marginal utility therefore depends on the outer choice; if "
+                    "the two margins genuinely interact, use the 2-D EGM "
+                    "foundation (G2EGM / multidim-RFC), not NEGM."
+                )
+                raise ModelInitializationError(msg)
 
 
 def _fail_if_taste_shock_ordering_violated(
@@ -487,7 +551,7 @@ def _fail_if_outer_cost_contract_violated(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The declared outer cost must be the sole outer-margin channel of resources.
 
@@ -564,16 +628,17 @@ def _fail_if_outer_cost_contract_violated(
         )
         raise ModelInitializationError(msg)
 
-    base_func = functions.get(f"{inner.resources}_before_outer_cost")
+    base_name = solver.outer_cost_base
+    base_func = functions.get(base_name) if base_name is not None else None
     if base_func is not None:
         base_ancestors = _dag_ancestors(functions=functions, target_func=base_func)
         if solver.outer_post_decision in base_ancestors:
             msg = (
                 f"In regime '{regime_name}', the cost-free resources base "
-                f"'{inner.resources}_before_outer_cost' reads the outer "
+                f"'{base_name}' reads the outer "
                 f"post-decision '{solver.outer_post_decision}'. It must not "
                 "read the outer post-decision: pylcm composes "
-                f"`{inner.resources} = {inner.resources}_before_outer_cost - "
+                f"`{inner.resources} = {base_name} - "
                 f"{solver.outer_cost}`, so the base's only outer-margin "
                 "channel is the subtracted declared cost itself. Route the "
                 f"dependence through '{solver.outer_cost}', or use "
@@ -586,7 +651,7 @@ def _fail_if_no_adjustment_candidate_not_unary(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The no-adjustment candidate must be a unary function of the durable state.
 
@@ -619,65 +684,28 @@ def _fail_if_carry_layout_unsupported(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: NEGM,
-    inner: DCEGM,
+    solver: _BoundNEGM,  # noqa: ARG001
+    inner: _BoundDCEGM,  # noqa: ARG001
 ) -> None:
-    """The stacked outer carry requires durable-last rows and no discrete actions.
+    """Reject discrete-action axes the stacked outer carry cannot represent.
 
-    The published NEGM continuation retains every outer candidate on an axis
-    inserted directly after the durable margin's passive axis, and lifts each
-    candidate by a per-durable-state credited cost addressed through that
-    layout. Two regime shapes break it and are rejected:
-
-    - a **discrete action** (the carry's row block would gain action axes after
-      the durable, so the lift would mis-identify an action axis as the
-      durable) — a taste-shocked discrete choice is already rejected by the
-      aggregation-ordering rule; this rejects the remaining hard case,
-    - a **passive continuous state declared after the durable** (the durable
-      must be the last passive axis for the per-durable lift to address it).
+    Passive-state declaration order is not part of the economic contract: the
+    kernel locates the durable state by name and addresses its carry axis
+    explicitly. A hard discrete action remains unsupported because the carry
+    retains action-specific rows after the passive-state axes while NEGM's outer
+    candidate stack has no aggregation rule for that axis.
     """
-    if user_regime.actions:
-        discrete_action_names = [
-            name
-            for name, grid in _solve_grids(slot=user_regime.actions).items()
-            if not isinstance(grid, ContinuousGrid)
-        ]
-        if discrete_action_names:
-            msg = (
-                f"Regime '{regime_name}' declares discrete action(s) "
-                f"{discrete_action_names} alongside `solver=NEGM(...)`. The "
-                "stacked outer continuation carry does not support "
-                "discrete-action row axes (they would follow the durable "
-                "margin's axis and break the per-durable candidate lift) — "
-                "model the discrete choice with `GridSearch`, or fold it into "
-                "the outer margin."
-            )
-            raise ModelInitializationError(msg)
-
-    durable_state = solver.outer_state
-    passive_state_names = [
+    discrete_action_names = [
         name
-        for name in _continuous_non_process_names(
-            grids=_solve_grids(slot=user_regime.states)
-        )
-        if name != inner.continuous_state
+        for name, grid in _solve_grids(slot=user_regime.actions).items()
+        if not isinstance(grid, ContinuousGrid)
     ]
-    # Only meaningful when the durable is itself a passive continuous state:
-    # the "last passive axis" requirement is a statement about its position
-    # among the passive states. A durable that is not a passive continuous
-    # state at all is a separate error caught upstream, so skip here rather
-    # than emit an "after the durable" message that lists states preceding it.
-    if durable_state in passive_state_names:
-        after_durable = passive_state_names[
-            passive_state_names.index(durable_state) + 1 :
-        ]
-        if after_durable:
-            msg = (
-                f"Regime '{regime_name}' declares passive continuous state(s) "
-                f"{after_durable} after the durable margin '{durable_state}'. "
-                "The stacked outer continuation carry lifts each candidate by a "
-                "per-durable-state credited cost, so the durable must be the "
-                "last passive continuous state the regime declares — reorder "
-                f"`states` so '{durable_state}' comes last."
-            )
-            raise ModelInitializationError(msg)
+    if discrete_action_names:
+        msg = (
+            f"Regime '{regime_name}' declares discrete action(s) "
+            f"{discrete_action_names} alongside `solver=NEGM(...)`. The "
+            "stacked outer continuation carry does not support "
+            "discrete-action row axes; model the discrete choice with "
+            "`GridSearch`, or fold it into the outer margin."
+        )
+        raise ModelInitializationError(msg)

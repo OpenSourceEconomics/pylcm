@@ -29,13 +29,17 @@ from lcm import (
     AgeGrid,
     GridSearch,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
     categorical,
 )
 from lcm.branch_aggregation import OuterBranchAggregator
-from lcm.outer_search import OuterSearch
-from lcm.solvers import NBEGM, Solver
+from lcm.outer_search import FiniteOuterGrid, OuterSearch
+from lcm.solvers import NBEGM, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -177,7 +181,7 @@ def build_solver(
     outer_batch_size: int = 0,
     outer_search: OuterSearch | None = None,
     branch_aggregator: OuterBranchAggregator | None = None,
-) -> Solver:
+) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime.
 
     `outer_search` (n_nbegm only) replaces the legacy finite `OUTER_GRID`
@@ -189,18 +193,9 @@ def build_solver(
     if variant == "negm":
         return NEGM(
             inner=DCEGM(
-                continuous_state="wealth",
-                continuous_action="consumption",
-                resources="resources",
-                post_decision_function="liquid_savings",
                 savings_grid=SAVINGS_GRID,
             ),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
             outer_grid=OUTER_GRID,
-            outer_no_adjustment_candidate="keep_illiquid",
-            outer_cost="credited",
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
@@ -211,18 +206,13 @@ def build_solver(
         )
         return NNBEGM(
             inner=NBEGM(
-                continuous_state="wealth",
-                post_decision_function="liquid_savings",
-                budget_target="resources",
                 savings_grid=SAVINGS_GRID,
             ),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
-            outer_search=outer_search,
-            outer_grid=None if outer_search is not None else OUTER_GRID,
-            outer_no_adjustment_candidate="keep_illiquid",
-            outer_batch_size=0 if outer_search is not None else outer_batch_size,
+            outer_search=(
+                outer_search
+                if outer_search is not None
+                else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
+            ),
             **aggregator_kwargs,
         )
     msg = f"unknown variant: {variant}"
@@ -273,27 +263,68 @@ def build_model(
         if variant == "brute"
         else {}
     )
-    alive = Regime(
-        active=lambda age, n=final_age_alive: age <= n,
-        states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
-        state_transitions={
-            "wealth": next_wealth,
-            "illiquid": durable_law if durable_law is not None else durable_transition,
-        },
-        actions={
-            "consumption": CONSUMPTION_GRID,
-            "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
-        },
-        transition=next_regime,
-        functions=functions,
-        constraints=constraints,
-        solver=build_solver(
-            variant=variant,
-            outer_batch_size=outer_batch_size,
-            outer_search=outer_search,
-            branch_aggregator=branch_aggregator,
-        ),
+    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
+    states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
+    state_transitions = {
+        "wealth": next_wealth,
+        "illiquid": durable_law if durable_law is not None else durable_transition,
+    }
+    actions = {
+        "consumption": CONSUMPTION_GRID,
+        "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
+    }
+    solver = build_solver(
+        variant=variant,
+        outer_batch_size=outer_batch_size,
+        outer_search=outer_search,
+        branch_aggregator=branch_aggregator,
     )
+    # Built per branch rather than from one shared mapping: the two regime
+    # classes narrow `solver` differently, and a `**kwargs` mapping erases the
+    # argument types the narrowing is expressed in.
+    if variant == "brute":
+        alive = Regime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            constraints=constraints,
+            solver=solver,
+        )
+    else:
+        liquid_resources = (
+            NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            )
+            if variant == "negm"
+            else "resources"
+        )
+        alive = NestedConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            constraints=constraints,
+            solver=solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources=liquid_resources,
+                post_decision_state="liquid_savings",
+            ),
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="illiquid_investment",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            ),
+        )
     dead = Regime(
         transition=None,
         active=lambda age, n=final_age_alive: age > n,

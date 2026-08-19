@@ -24,10 +24,11 @@ from lcm import (
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
     categorical,
 )
-from lcm.regime import Regime
+from lcm.regime import ConsumptionSavingsRegime, Regime
 from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
@@ -184,11 +185,14 @@ dead = Regime(
 # from endogenous points spaced like the savings nodes.
 SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
 
-DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
+LIQUID_MARGIN = LiquidMargin(
+    state="wealth",
+    action="consumption",
     resources="resources",
-    post_decision_function="savings",
+    post_decision_state="savings",
+)
+
+DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     # The final decision period consumes everything, so its carry in the
     # queried resources range consists of constrained-segment points only;
@@ -206,7 +210,7 @@ DCEGM_SOLVER = DCEGM(
 #   instead of wealth and consumption directly,
 # - the borrowing constraint is dropped — DC-EGM enforces the budget
 #   identity and the savings-grid lower bound intrinsically.
-dcegm_working_life = Regime(
+dcegm_working_life = ConsumptionSavingsRegime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -223,10 +227,11 @@ dcegm_working_life = Regime(
         "inverse_marginal_utility": inverse_marginal_utility,
     },
     solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
     active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
-dcegm_retirement = Regime(
+dcegm_retirement = ConsumptionSavingsRegime(
     transition=next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
@@ -238,6 +243,7 @@ dcegm_retirement = Regime(
         "inverse_marginal_utility": inverse_marginal_utility,
     },
     solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
     active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 

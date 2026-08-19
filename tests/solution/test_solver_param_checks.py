@@ -83,7 +83,7 @@ class _CheckingGridSearch(GridSearch):
         kernels = super().build_period_kernels(context=context)
         return SolutionKernels(
             period_kernels=kernels.period_kernels,
-            continuation_template=kernels.continuation_template,
+            continuation_spec=kernels.continuation_spec,
             param_checks=(self.check,),
         )
 

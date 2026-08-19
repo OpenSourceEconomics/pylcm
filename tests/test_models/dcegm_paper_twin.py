@@ -35,8 +35,9 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, EnvelopeConfig
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -204,15 +205,13 @@ done_retired = UserRegime(
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
 )
 
 
-def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
+def _working_life(
+    solver: Literal["brute_force", "dcegm"],
+) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
         transition=next_regime_from_working,
         states={"wealth": WEALTH_GRID},
@@ -232,7 +231,12 @@ def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
     )
     if solver == "brute_force":
         return brute
-    return brute.replace(
+    return ConsumptionSavingsRegime(
+        transition=brute.transition,
+        states=brute.states,
+        actions=brute.actions,
+        taste_shocks=brute.taste_shocks,
+        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -244,10 +248,18 @@ def _working_life(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
 
-def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
+def _retirement(
+    solver: Literal["brute_force", "dcegm"],
+) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
         transition=next_regime_from_retirement,
         states={"wealth": WEALTH_GRID},
@@ -259,7 +271,12 @@ def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
     )
     if solver == "brute_force":
         return brute
-    return brute.replace(
+    return ConsumptionSavingsRegime(
+        transition=brute.transition,
+        states=brute.states,
+        actions=brute.actions,
+        taste_shocks=brute.taste_shocks,
+        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -269,6 +286,12 @@ def _retirement(solver: Literal["brute_force", "dcegm"]) -> UserRegime:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
 
@@ -289,14 +312,22 @@ def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
     )
 
 
-def build_dcegm_model(*, savings_grid: ContinuousGrid = SAVINGS_GRID) -> Model:
-    """Build the DC-EGM twin, optionally with a custom savings grid.
+def build_dcegm_model(
+    *,
+    savings_grid: ContinuousGrid = SAVINGS_GRID,
+    envelope: EnvelopeConfig | None = None,
+) -> Model:
+    """Build the DC-EGM twin with optional grid and envelope overrides.
 
     The default reproduces the fixture run's pinned uniform grid; a grid
     clustered toward the borrowing limit resolves the low-wealth region the
-    uniform grid cannot.
+    uniform grid cannot. `envelope=None` retains pylcm's documented exact
+    default; backend-independent construction tests pass a portable envelope
+    explicitly.
     """
     solver = dataclasses.replace(DCEGM_SOLVER, savings_grid=savings_grid)
+    if envelope is not None:
+        solver = dataclasses.replace(solver, envelope=envelope)
     return Model(
         regimes={
             "working_life": _working_life("dcegm").replace(solver=solver),

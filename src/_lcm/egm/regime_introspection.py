@@ -9,25 +9,33 @@ modules import from.
 """
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
+from dags.tree import qname_from_tree_path
 
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import ActionName, FunctionName, StateName
+from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.negm import _BoundNEGM
+else:
+    _BoundDCEGM = DCEGM
+    _BoundNEGM = NEGM
 from lcm.typing import ScalarFloat, UserFunction
 
 
-def _as_dcegm(user_regime: UserRegime) -> DCEGM | None:
+def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
     """Return the DC-EGM config a carry target solves its inner Euler with.
 
     A `DCEGM` regime solves directly; a `NEGM` regime nests the same 1-D
@@ -37,9 +45,9 @@ def _as_dcegm(user_regime: UserRegime) -> DCEGM | None:
     """
     solver = user_regime.solver
     if isinstance(solver, DCEGM):
-        return solver
+        return cast("_BoundDCEGM", solver)
     if isinstance(solver, NEGM):
-        return solver.inner
+        return cast("_BoundNEGM", solver).inner
     return None
 
 
@@ -136,7 +144,7 @@ def _get_child_discrete_actions(
 
 
 def _get_child_resources_function(
-    *, user_regime: UserRegime
+    *, regime_name: RegimeName, user_regime: UserRegime
 ) -> Callable[..., ScalarFloat]:
     """Build the closed-over resources map of one carry target.
 
@@ -148,7 +156,9 @@ def _get_child_resources_function(
     differentiate the composition per carry row.
     """
     if _as_dcegm(user_regime) is not None:
-        return _concatenate_child_resources(user_regime=user_regime)
+        return _concatenate_child_resources(
+            regime_name=regime_name, user_regime=user_regime
+        )
 
     state_name = _get_child_state_name(user_regime=user_regime)
 
@@ -158,22 +168,33 @@ def _get_child_resources_function(
     return identity_resources
 
 
-def _get_child_resources_arg_names(*, user_regime: UserRegime) -> set[str]:
+def _get_child_resources_arg_names(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> set[str]:
     """Argument names of a carry target's resources map."""
     if _as_dcegm(user_regime) is not None:
         return set(
-            get_union_of_args([_concatenate_child_resources(user_regime=user_regime)])
+            get_union_of_args(
+                [
+                    _concatenate_child_resources(
+                        regime_name=regime_name, user_regime=user_regime
+                    )
+                ]
+            )
         )
     return {_get_child_state_name(user_regime=user_regime)}
 
 
-def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
+def _concatenate_child_resources(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> UserFunction:
     """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
 
-    Each user function's params are renamed to their qualified names
-    (`<func>__<param>`) before concatenation, matching the engine's binding
-    vocabulary so the kernel feeds them straight from the combo pool (which
-    carries the regime's flat params). Solve-phase imputed intermediates (a
+    Each user function's params are renamed to target-qualified names
+    (`<regime>__<func>__<param>`) before concatenation, matching the combo
+    pool's cross-regime binding vocabulary. The regime prefix keeps two
+    transition targets with the same inner qualified name distinct.
+    Solve-phase imputed intermediates (a
     `Phased` function or a carried state's solve law) are resolved to their
     solve variant and baked into the DAG, so their outputs are computed from
     leaf states and params rather than demanded as leaves.
@@ -191,7 +212,7 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
     # registry, which imports this module, so a top-level import would cycle.
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
-    dcegm = cast("DCEGM", _as_dcegm(user_regime))
+    dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
     regime_params_template = create_regime_params_template(user_regime)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
@@ -205,24 +226,22 @@ def _concatenate_child_resources(*, user_regime: UserRegime) -> UserFunction:
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
     if isinstance(user_regime.solver, NEGM):
-        no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
-        resolved[user_regime.solver.outer_post_decision] = (
-            _keeper_no_adjustment_function(
-                durable_state=user_regime.solver.outer_state,
-                outer_post_decision=user_regime.solver.outer_post_decision,
-                no_adjustment_func=(
-                    resolved[no_adjustment_name]
-                    if no_adjustment_name is not None
-                    else None
-                ),
-                functions=resolved,
-            )
+        negm = cast("_BoundNEGM", user_regime.solver)
+        no_adjustment_name = negm.outer_no_adjustment_candidate
+        resolved[negm.outer_post_decision] = _keeper_no_adjustment_function(
+            durable_state=negm.outer_state,
+            outer_post_decision=negm.outer_post_decision,
+            no_adjustment_func=(
+                resolved[no_adjustment_name] if no_adjustment_name is not None else None
+            ),
+            functions=resolved,
         )
     qnamed = {
         name: _proc._rename_params_to_qnames(  # noqa: SLF001
             func=func,
             regime_params_template=regime_params_template,
-            param_key=name,
+            param_key=qname_from_tree_path((regime_name, name)),
+            names_key=name,
         )
         for name, func in resolved.items()
     }

@@ -18,7 +18,7 @@ import functools
 from typing import Literal
 
 from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
-from lcm.regime import Regime as UserRegime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
@@ -34,6 +34,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
     utility_retirement,
     utility_working,
 )
+from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 
 # Exogenous end-of-period savings grid; the lower bound is the borrowing limit
@@ -46,10 +47,6 @@ SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in rang
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     # The final decision period consumes everything, so its carry in the
     # queried resources range consists of constrained-segment points only;
@@ -58,8 +55,15 @@ DCEGM_SOLVER = DCEGM(
     n_constrained_points=64,
 )
 
+LIQUID_MARGIN = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
 
-dcegm_retirement = UserRegime(
+
+dcegm_retirement = ConsumptionSavingsRegime(
     transition=retirement_only.next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
@@ -71,10 +75,11 @@ dcegm_retirement = UserRegime(
         "inverse_marginal_utility": inverse_marginal_utility,
     },
     solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
 )
 
 
-dcegm_working_life = UserRegime(
+dcegm_working_life = ConsumptionSavingsRegime(
     transition=base.next_regime_from_working,
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
@@ -91,10 +96,11 @@ dcegm_working_life = UserRegime(
         "inverse_marginal_utility": inverse_marginal_utility,
     },
     solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
 )
 
 
-dcegm_retirement_full = UserRegime(
+dcegm_retirement_full = ConsumptionSavingsRegime(
     transition=base.next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
@@ -106,6 +112,7 @@ dcegm_retirement_full = UserRegime(
         "inverse_marginal_utility": inverse_marginal_utility,
     },
     solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
 )
 
 
@@ -150,7 +157,7 @@ def get_full_model(
     dcegm_solver = (
         DCEGM_SOLVER
         if envelope is None
-        else dataclasses.replace(DCEGM_SOLVER, envelope=envelope)
+        else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
         regimes={

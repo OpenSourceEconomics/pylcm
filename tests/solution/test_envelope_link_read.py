@@ -22,6 +22,9 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def _working_dtype() -> np.dtype:

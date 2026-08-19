@@ -30,6 +30,7 @@ retirement; `1 + return_pension` by default) and `retirement_income_in_first_per
 """
 
 from collections.abc import Callable
+from typing import cast
 
 import jax.numpy as jnp
 
@@ -43,8 +44,8 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import Regime
-from lcm.solvers import GridSearch, Solver
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.solvers import EGM, GridSearch, Solver
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -161,6 +162,10 @@ def next_pension_working(
 ) -> ContinuousState:
     """Pension law of motion while staying in the working regime."""
     return (1.0 + return_pension) * _pension_post_decision(pension, deposit, match_rate)
+
+
+def resources_retired(liquid: ContinuousState) -> FloatND:
+    return liquid
 
 
 def savings_retired(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
@@ -324,7 +329,7 @@ def get_model(
         active=lambda age, ra=retirement_age: age < ra,
         solver=working_solver,
     )
-    retired = Regime(
+    retired = (ConsumptionSavingsRegime if isinstance(retired_solver, EGM) else Regime)(
         actions={"consumption": consumption_grid},
         states={"liquid": retired_liquid_grid or liquid_grid},
         state_transitions={
@@ -333,20 +338,35 @@ def get_model(
                 "dead": liquid_retired,
             }
         },
-        constraints={"feasible": feasible_retired},
+        constraints={}
+        if isinstance(retired_solver, EGM)
+        else {"feasible": feasible_retired},
         transition={
             "retired": MarkovTransition(prob_stay_retired),
             "dead": MarkovTransition(prob_die),
         },
         functions={
             "utility": utility_retired,
+            "resources": resources_retired,
             "savings": savings_retired,
             **_euler_inversion_functions(
                 solver=retired_solver, analytic=analytic_inverse_marginal_utility
             ),
         },
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
-        solver=retired_solver,
+        solver=cast("EGM | GridSearch", retired_solver),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="liquid",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if isinstance(retired_solver, EGM)
+            else {}
+        ),
     )
     dead = Regime(
         transition=None,

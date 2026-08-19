@@ -19,11 +19,15 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     CESAggregator,
+    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
     Phased,
     PowerMean,
     QuasiArithmeticMean,
@@ -40,6 +44,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     ScaledLotteryDifferentiationError,
 )
+from lcm.outer_search import FiniteOuterGrid
 from lcm.solvers import DCEGM, NBEGM, NNBEGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -182,12 +187,34 @@ def _budget(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
     return consumption <= wealth
 
 
+def _resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
 def _next_regime() -> ScalarInt:
     return _RegimeId.dead
 
 
+def _new_stock(stock: ContinuousState, investment: ContinuousAction) -> ContinuousState:
+    return stock + investment
+
+
+def _next_stock(new_stock: ContinuousState) -> ContinuousState:
+    return new_stock
+
+
+def _keep_stock(stock: ContinuousState) -> ContinuousState:
+    return stock
+
+
 _WEALTH = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 _CONSUMPTION = LinSpacedGrid(start=0.5, stop=5.0, n_points=5)
+_STOCK = LinSpacedGrid(start=0.0, stop=5.0, n_points=5)
+_INVESTMENT = LinSpacedGrid(start=-5.0, stop=5.0, n_points=5)
 
 
 def _check_probes(model: Model) -> None:
@@ -212,7 +239,7 @@ def _check_probes(model: Model) -> None:
 
 
 def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
-    """Build a minimal two-regime model with extra kwargs spliced per regime."""
+    """Build a minimal model, attaching regime-owned EGM margins as needed."""
     base_alive: dict[str, Any] = {
         "transition": _next_regime,
         "states": {"wealth": _WEALTH},
@@ -227,8 +254,52 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
     }
-    alive = Regime(**(base_alive | alive_kwargs))
-    dead = Regime(**(base_dead | dead_kwargs))
+    solver = alive_kwargs.get("solver")
+    if isinstance(solver, DCEGM | NBEGM | NNBEGM):
+        base_alive["functions"] = {
+            "utility": _utility_alive,
+            "resources": _resources,
+            "savings": _savings,
+        }
+    merged_alive = base_alive | alive_kwargs
+    merged_dead = base_dead | dead_kwargs
+    liquid = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="resources",
+        post_decision_state="savings",
+    )
+    if isinstance(solver, NNBEGM):
+        merged_alive["states"] = {**merged_alive["states"], "stock": _STOCK}
+        merged_alive["state_transitions"] = {
+            **merged_alive["state_transitions"],
+            "stock": _next_stock,
+        }
+        merged_alive["actions"] = {
+            **merged_alive["actions"],
+            "investment": _INVESTMENT,
+        }
+        merged_alive["functions"] = {
+            **merged_alive["functions"],
+            "new_stock": _new_stock,
+            "keep_stock": _keep_stock,
+        }
+        merged_dead["states"] = {**merged_dead["states"], "stock": _STOCK}
+        alive = NestedConsumptionSavingsRegime(
+            **merged_alive,
+            liquid=liquid,
+            outer_continuous=OuterContinuousMargin(
+                state="stock",
+                action="investment",
+                post_decision_state="new_stock",
+                no_adjustment="keep_stock",
+            ),
+        )
+    elif isinstance(solver, DCEGM | NBEGM):
+        alive = ConsumptionSavingsRegime(**merged_alive, liquid=liquid)
+    else:
+        alive = Regime(**merged_alive)
+    dead = Regime(**merged_dead)
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
@@ -272,10 +343,6 @@ def test_terminal_regime_rejects_the_linear_certainty_equivalent():
 def test_dcegm_rejects_certainty_equivalent():
     """DC-EGM's Euler inversion assumes expected utility; the guard names GridSearch."""
     dcegm = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
@@ -296,8 +363,6 @@ def test_nbegm_with_taste_shocks_rejects_certainty_equivalent():
     expected-utility smoothing with a recursive aggregator.
     """
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="taste_shocks"):
@@ -342,8 +407,6 @@ def test_nbegm_rejects_a_non_power_mean_certainty_equivalent():
         return jnp.exp(value)
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="PowerMean"):
@@ -366,8 +429,6 @@ def test_nbegm_certainty_equivalent_requires_the_epstein_zin_aggregator():
     model build.
     """
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="CESAggregator"):
@@ -390,8 +451,6 @@ def test_nbegm_certainty_equivalent_requires_a_ride_along_route():
     model build rather than silently solve the additive recursion.
     """
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="ride-along"):
@@ -441,11 +500,9 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         return savings
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         transition=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
         state_transitions={
@@ -464,6 +521,12 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
 
     def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
@@ -512,11 +575,9 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         transition=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
         state_transitions={
@@ -533,6 +594,12 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -586,11 +653,9 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         transition=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
@@ -610,6 +675,12 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -656,11 +727,9 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         transition=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
         state_transitions={
@@ -677,6 +746,12 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -730,11 +805,9 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
-        post_decision_function="savings",
-        budget_target="resources",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         transition=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
         state_transitions={
@@ -751,6 +824,12 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         certainty_equivalent=PowerMean(),
         solver=nbegm,
         active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -1047,16 +1126,11 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
 def _minimal_nnbegm() -> Any:
     return NNBEGM(
         inner=NBEGM(
-            continuous_state="wealth",
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         ),
-        outer_action="investment",
-        outer_state="stock",
-        outer_post_decision="new_stock",
-        outer_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-        outer_no_adjustment_candidate="keep_stock",
+        outer_search=FiniteOuterGrid(
+            grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
+        ),
     )
 
 
@@ -2112,10 +2186,6 @@ def test_dcegm_rejects_a_linear_subclass_with_changed_complete_semantics(
 ):
     """A continuation solver must not silently substitute plain expectation."""
     dcegm = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     with pytest.raises(RegimeInitializationError, match="GridSearch"):

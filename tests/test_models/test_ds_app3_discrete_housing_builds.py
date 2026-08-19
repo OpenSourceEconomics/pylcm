@@ -27,8 +27,9 @@ from typing import Literal
 import numpy as np
 import pytest
 
-from lcm import DiscreteGrid, Model
+from lcm import ConsumptionSavingsRegime, DiscreteGrid, Model
 from lcm.solvers import DCEGM, GridSearch
+from tests.envelope_configs import envelope_config
 from tests.test_models import ds_app3_discrete_housing
 
 
@@ -69,10 +70,11 @@ def test_dcegm_regime_carries_the_dcegm_solver_on_assets():
     model = ds_app3_discrete_housing.build_model(
         variant="dcegm", n_assets=20, n_wage_nodes=3, n_periods=4
     )
-    solver = model.user_regimes["working"].solver
-    assert isinstance(solver, DCEGM)
-    assert solver.continuous_state == "assets"
-    assert solver.continuous_action == "consumption"
+    working = model.user_regimes["working"]
+    assert isinstance(working, ConsumptionSavingsRegime)
+    assert isinstance(working.solver, DCEGM)
+    assert working.liquid.state == "assets"
+    assert working.liquid.action == "consumption"
 
 
 @pytest.mark.parametrize("envelope", ["fues", "mss", "ltm"])
@@ -94,7 +96,7 @@ def test_dcegm_accepts_each_table4_upper_envelope(
     )
     solver = model.user_regimes["working"].solver
     assert isinstance(solver, DCEGM)
-    assert solver.envelope == envelope
+    assert solver.envelope == envelope_config(envelope)
 
 
 def test_brute_regime_uses_grid_search():

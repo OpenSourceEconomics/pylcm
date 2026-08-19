@@ -8,13 +8,24 @@ discrete-continuous endogenous grid method; its configuration is validated at
 model build.
 """
 
+import re
 from dataclasses import replace
 
 import pytest
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.backward_induction import _func_dedup_key
-from lcm import DCEGM, AgeGrid, GridSearch, LinSpacedGrid, Model, NormalIIDProcess
+from lcm import (
+    DCEGM,
+    AgeGrid,
+    ExactEnvelope,
+    FUESEnvelope,
+    GridSearch,
+    LinSpacedGrid,
+    Model,
+    MSSEnvelope,
+    NormalIIDProcess,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
@@ -57,10 +68,6 @@ def _build_model(*, working_solver: object | None = None) -> Model:
 
 def _valid_dcegm() -> DCEGM:
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=WEALTH_GRID,
     )
 
@@ -85,11 +92,12 @@ def test_explicit_grid_search_matches_default_solution():
 
 
 def test_dcegm_config_constructs():
-    """A `DCEGM` config with valid fields constructs and exposes its defaults."""
+    """A `DCEGM` config exposes numerical settings while the regime owns names."""
     cfg = _valid_dcegm()
-    assert cfg.continuous_state == "wealth"
-    assert cfg.envelope == "exact"
-    assert cfg.envelope_max_runs == 24
+    assert cfg.savings_grid is WEALTH_GRID
+    assert not hasattr(cfg, "continuous_state")
+    assert isinstance(cfg.envelope, ExactEnvelope)
+    assert cfg.envelope.max_runs == 24
 
 
 def test_model_with_dcegm_solver_builds():
@@ -100,17 +108,13 @@ def test_model_with_dcegm_solver_builds():
     post-decision, and inverse-marginal-utility functions); a stock
     grid-search regime would be rejected for missing them.
     """
-    model = build_dcegm_model()
+    model = build_dcegm_model(envelope=FUESEnvelope())
     assert isinstance(model.user_regimes["working_life"].solver, DCEGM)
 
 
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=50)
 
 _BASE_DCEGM = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=_SAVINGS_GRID,
 )
 
@@ -141,13 +145,13 @@ def test_dcegm_non_finite_or_too_small_refined_grid_factor_is_rejected(
         _dcegm(refined_grid_factor=refined_grid_factor)
 
 
-@pytest.mark.parametrize("fues_jump_thresh", [0.0, -1.0, float("nan"), float("inf")])
-def test_dcegm_non_finite_or_non_positive_fues_jump_thresh_is_rejected(
-    fues_jump_thresh,
-):
+@pytest.mark.parametrize("jump_thresh", [0.0, -1.0, float("nan"), float("inf")])
+def test_fues_non_finite_or_non_positive_jump_thresh_is_rejected(jump_thresh):
     """The segment-switch threshold must be finite and positive (NaN/inf rejected)."""
-    with pytest.raises(RegimeInitializationError, match="fues_jump_thresh"):
-        _dcegm(fues_jump_thresh=fues_jump_thresh)
+    with pytest.raises(
+        RegimeInitializationError, match=re.escape("FUESEnvelope.jump_thresh")
+    ):
+        FUESEnvelope(jump_thresh=jump_thresh)
 
 
 @pytest.mark.parametrize("n_constrained_points", [1, 0])
@@ -157,16 +161,22 @@ def test_dcegm_too_few_constrained_points_is_rejected(n_constrained_points):
         _dcegm(n_constrained_points=n_constrained_points)
 
 
-def test_dcegm_zero_points_to_scan_is_rejected():
+def test_fues_zero_points_to_scan_is_rejected():
     """The FUES forward scan must inspect at least one point."""
-    with pytest.raises(RegimeInitializationError, match="fues_n_points_to_scan"):
-        _dcegm(fues_n_points_to_scan=0)
+    with pytest.raises(RegimeInitializationError, match="n_points_to_scan"):
+        FUESEnvelope(n_points_to_scan=0)
 
 
-def test_dcegm_zero_scan_unroll_is_rejected():
+def test_fues_zero_scan_unroll_is_rejected():
     """The FUES `lax.scan` unroll factor must be at least 1 (no unrolling)."""
-    with pytest.raises(RegimeInitializationError, match="fues_scan_unroll"):
-        _dcegm(fues_scan_unroll=0)
+    with pytest.raises(RegimeInitializationError, match="scan_unroll"):
+        FUESEnvelope(scan_unroll=0)
+
+
+def test_backend_specific_controls_are_not_fields_on_other_backends():
+    """A backend configuration cannot carry controls belonging to another backend."""
+    with pytest.raises(TypeError, match="n_points_to_scan"):
+        MSSEnvelope(n_points_to_scan=8)  # ty: ignore[unknown-argument]
 
 
 def test_period_kernels_sharing_a_config_reuse_one_compiled_core():

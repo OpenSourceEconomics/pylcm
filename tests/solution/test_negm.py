@@ -31,18 +31,18 @@ from lcm import (
     AgeGrid,
     GridSearch,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
     NormalIIDProcess,
+    OuterContinuousMargin,
+    outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models import negm_kinked_toy
 
 _INNER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="liquid_savings",
     savings_grid=LinSpacedGrid(start=0.0, stop=30.0, n_points=40),
 )
 
@@ -52,35 +52,65 @@ _OUTER_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=20)
 def _negm(
     *,
     inner: DCEGM = _INNER,
-    outer_action: str = "illiquid_investment",
-    outer_state: str = "illiquid",
-    outer_post_decision: str = "next_illiquid",
     outer_grid: ContinuousGrid = _OUTER_GRID,
-    outer_no_adjustment_candidate: str | None = None,
 ) -> NEGM:
-    return NEGM(
-        inner=inner,
-        outer_action=outer_action,
-        outer_state=outer_state,
-        outer_post_decision=outer_post_decision,
-        outer_grid=outer_grid,
-        outer_no_adjustment_candidate=outer_no_adjustment_candidate,
+    return NEGM(inner=inner, outer_grid=outer_grid)
+
+
+def _nested_regime(
+    *,
+    outer_action: str = "illiquid_investment",
+    outer_post_decision: str = "new_illiquid",
+    outer_no_adjustment_candidate: str = outer_unchanged,
+) -> NestedConsumptionSavingsRegime:
+    functions = {
+        "utility": lambda consumption: consumption,
+        "resources": lambda wealth: wealth,
+        "liquid_savings": lambda resources, consumption: resources - consumption,
+        outer_post_decision: lambda illiquid, illiquid_investment: (
+            illiquid + illiquid_investment
+        ),
+    }
+    if outer_no_adjustment_candidate != outer_unchanged:
+        functions[outer_no_adjustment_candidate] = lambda illiquid: illiquid
+    return NestedConsumptionSavingsRegime(
+        transition=lambda: 0,
+        states={"wealth": _OUTER_GRID, "illiquid": _OUTER_GRID},
+        state_transitions={
+            "wealth": lambda liquid_savings: liquid_savings,
+            "illiquid": lambda new_illiquid: new_illiquid,
+        },
+        actions={"consumption": _OUTER_GRID, outer_action: _OUTER_GRID},
+        functions=functions,
+        solver=_negm(),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action=outer_action,
+            post_decision_state=outer_post_decision,
+            no_adjustment=outer_no_adjustment_candidate,
+        ),
     )
 
 
 def test_negm_with_valid_fields_constructs():
-    """A `NEGM` with distinct margins and a deterministic outer grid constructs."""
-    solver = _negm()
-    assert solver.inner is _INNER
-    assert solver.outer_action == "illiquid_investment"
-    assert solver.outer_post_decision == "next_illiquid"
-    assert solver.outer_no_adjustment_candidate is None
+    """A nested regime owns distinct liquid and outer margin declarations."""
+    regime = _nested_regime()
+    assert regime.liquid.state == "wealth"
+    assert regime.outer_continuous.action == "illiquid_investment"
+    assert regime.outer_continuous.post_decision_state == "new_illiquid"
+    assert regime.outer_continuous.no_adjustment == outer_unchanged
 
 
 def test_negm_with_no_adjustment_candidate_constructs():
-    """The optional state-specific no-adjustment candidate is accepted."""
-    solver = _negm(outer_no_adjustment_candidate="keep_illiquid")
-    assert solver.outer_no_adjustment_candidate == "keep_illiquid"
+    """The optional state-specific no-adjustment declaration is accepted."""
+    regime = _nested_regime(outer_no_adjustment_candidate="keep_illiquid")
+    assert regime.outer_continuous.no_adjustment == "keep_illiquid"
 
 
 def test_negm_stochastic_outer_grid_is_rejected():
@@ -92,14 +122,14 @@ def test_negm_stochastic_outer_grid_is_rejected():
 
 def test_negm_outer_action_equal_to_inner_continuous_action_is_rejected():
     """The outer durable margin must differ from the inner consumption action."""
-    with pytest.raises(RegimeInitializationError, match="coincides with the inner"):
-        _negm(outer_action="consumption")
+    with pytest.raises(RegimeInitializationError, match="must not collide"):
+        _nested_regime(outer_action="consumption")
 
 
 def test_negm_outer_post_decision_equal_to_inner_post_decision_is_rejected():
     """The outer post-decision must differ from the inner liquid post-decision."""
-    with pytest.raises(RegimeInitializationError, match="coincides with"):
-        _negm(outer_post_decision="liquid_savings")
+    with pytest.raises(RegimeInitializationError, match="must not collide"):
+        _nested_regime(outer_post_decision="liquid_savings")
 
 
 def test_negm_invalid_inner_dcegm_is_rejected_by_inner_guards():

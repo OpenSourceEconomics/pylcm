@@ -7,7 +7,7 @@ only correct when every candidate publishes rows at the same abscissae.
 
 import pytest
 
-from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.dcegm import DCEGM, FUESEnvelope
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.nnbegm import _fail_if_inner_carry_rows_not_grid_aligned
 from lcm.exceptions import RegimeInitializationError
@@ -31,9 +31,6 @@ def test_an_inner_solver_with_off_grid_carry_rows_is_refused() -> None:
         _fail_if_inner_carry_rows_not_grid_aligned(
             inner=DCEGM(
                 savings_grid=_savings_grid(),
-                continuous_state="liquid",
-                continuous_action="consumption",
-                resources="resources",
-                post_decision_function="savings",
+                envelope=FUESEnvelope(),
             )
         )

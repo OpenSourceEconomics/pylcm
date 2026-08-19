@@ -19,8 +19,8 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
-from lcm.regime import Regime
+from lcm.exceptions import ModelInitializationError
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousAction, DiscreteAction, FloatND, ScalarInt
 from tests.solution.test_egm_solver import (
@@ -32,6 +32,8 @@ from tests.solution.test_egm_solver import (
     next_wealth,
     prob_continue,
     prob_stop,
+    resources,
+    savings,
     terminal_utility,
 )
 
@@ -53,7 +55,7 @@ def utility(
 
 def test_a_discrete_action_is_refused_at_model_construction() -> None:
     """A regime with a discrete action and `EGM` names the action and fails."""
-    saving = Regime(
+    saving = ConsumptionSavingsRegime(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=50),
             "effort": DiscreteGrid(Effort),
@@ -65,9 +67,15 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility},
+        functions={"utility": utility, "resources": resources, "savings": savings},
         active=lambda age: age < _LAST_AGE,
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings"),
+        solver=EGM(savings_grid=_SAVINGS_GRID),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     done = Regime(
         transition=None,
@@ -76,7 +84,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         active=lambda age: age >= _LAST_AGE,
         solver=GridSearch(),
     )
-    with pytest.raises(RegimeInitializationError, match="effort"):
+    with pytest.raises(ModelInitializationError, match="effort"):
         Model(
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),

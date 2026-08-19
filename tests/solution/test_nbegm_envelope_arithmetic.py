@@ -15,7 +15,7 @@ import pytest
 
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
 from _lcm.typing import PeriodToRegimeToVArr
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
 from tests.test_models import nbegm_ride_along_toy as toy
 
@@ -54,8 +54,13 @@ def _per_interval_inputs(n_intervals: int) -> dict:
     }
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_the_ordinary_envelope_reproduces_the_certified_value_function():
-    """On a well-separated model both arithmetics publish the same values."""
+    """On a well-separated model both arithmetics publish the same values.
+
+    One of the two arms is the certified comparison, so the agreement is only
+    observable where the native library is built.
+    """
     certified = _solve(envelope_arithmetic="certified")
     ordinary = _solve(envelope_arithmetic="ordinary")
     for period, regime_to_value in certified.items():

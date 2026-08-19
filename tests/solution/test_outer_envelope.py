@@ -157,6 +157,7 @@ def test_adjuster_winning_by_delta_lifts_the_envelope_by_delta() -> None:
         keeper_carry=keeper,
         adjuster_carries=(adjuster,),
         coh_shifts=jnp.asarray([[shift]]),  # one durable state, one adjuster
+        durable_axis=-1,
     )
 
     # The stacked carry keeps every candidate: keeper + one adjuster.
@@ -200,6 +201,7 @@ def test_adjuster_winning_only_on_a_subinterval_is_captured() -> None:
         keeper_carry=keeper,
         adjuster_carries=(adjuster,),
         coh_shifts=jnp.asarray([[shift]]),
+        durable_axis=-1,
     )
 
     # An off-node query in the winning interior: the envelope must equal the
@@ -265,6 +267,7 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
         keeper_carry=keeper,
         adjuster_carries=(adjuster,),
         coh_shifts=jnp.asarray([[shift]]),  # one durable state, one adjuster
+        durable_axis=-1,
     )
 
     assert carry.value.shape == (n_discrete, 1, 2, n_pad)
@@ -275,6 +278,46 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
         np.testing.assert_allclose(
             np.asarray(enveloped), np.asarray(expected), atol=1e-3
         )
+
+
+def test_carry_lift_addresses_the_named_durable_axis() -> None:
+    """A durable axis before another passive state receives its own shifts.
+
+    The first leading axis is durable and the second is an unrelated passive
+    state. Each durable slice receives one credited-cost shift, broadcast over
+    the ride-along axis, without requiring the durable to be last.
+    """
+    base = jnp.asarray([0.0, 1.0, 2.0])
+    keeper_grid = jnp.broadcast_to(base, (2, 3, 3))
+    adjuster_grid = jnp.broadcast_to(base, (2, 3, 3))
+    zeros = jnp.zeros_like(keeper_grid)
+    keeper = EGMCarry(
+        endog_grid=keeper_grid,
+        value=zeros,
+        marginal_utility=zeros,
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+    adjuster = EGMCarry(
+        endog_grid=adjuster_grid,
+        value=zeros,
+        marginal_utility=zeros,
+        taste_shock_scale=jnp.asarray(0.0),
+    )
+
+    carry = build_stacked_outer_carry(
+        keeper_carry=keeper,
+        adjuster_carries=(adjuster,),
+        coh_shifts=jnp.asarray([[10.0], [20.0]]),
+        durable_axis=0,
+    )
+
+    expected_adjuster = jnp.asarray(
+        [
+            [[10.0, 11.0, 12.0]] * 3,
+            [[20.0, 21.0, 22.0]] * 3,
+        ]
+    )
+    np.testing.assert_array_equal(carry.endog_grid[:, :, 1, :], expected_adjuster)
 
 
 def test_keeper_wins_when_no_adjuster_improves() -> None:
@@ -305,6 +348,7 @@ def test_keeper_wins_when_no_adjuster_improves() -> None:
         keeper_carry=keeper,
         adjuster_carries=(adjuster,),
         coh_shifts=jnp.asarray([[shift]]),
+        durable_axis=-1,
     )
 
     query = jnp.asarray([3.0, 5.0, 7.0])

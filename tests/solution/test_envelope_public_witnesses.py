@@ -20,7 +20,9 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.query import envelope_at_query
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Block sizes exercise the dense reduction (0) and the blocked scan (2, 3),
 # which reach ownership through separate code paths.

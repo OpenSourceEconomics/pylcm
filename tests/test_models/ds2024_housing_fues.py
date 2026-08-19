@@ -34,6 +34,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -44,6 +45,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.envelope_configs import envelope_config
 from tests.test_models.ds2024_housing import (
     Income,
     income_transition,
@@ -281,15 +283,11 @@ def build_model(  # noqa: C901
         )
 
     inner_solver = DCEGM(
-        continuous_state="liquid",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=savings_grid,
-        envelope=envelope,
+        envelope=envelope_config(envelope),
         n_constrained_points=32,
     )
-    alive = UserRegime(
+    alive = ConsumptionSavingsRegime(
         transition=next_regime,
         active=lambda age, fa=final_age: age < fa,
         states={
@@ -310,6 +308,12 @@ def build_model(  # noqa: C901
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=inner_solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     return Model(
         regimes={"alive": alive, "dead": dead},

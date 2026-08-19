@@ -54,7 +54,15 @@ from lcm import (
     TauchenAR1Process,
     categorical,
 )
-from lcm.regime import Regime as UserRegime
+from lcm.regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+)
+from lcm.regime import (
+    Regime as UserRegime,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -396,18 +404,9 @@ def build_model(
 
     negm_solver = NEGM(
         inner=DCEGM(
-            continuous_state="liquid",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=savings_grid,
         ),
-        outer_action="housing_investment",
-        outer_state="housing",
-        outer_post_decision="new_housing",
         outer_grid=outer_grid,
-        outer_no_adjustment_candidate="keep_housing",
-        outer_cost="housing_cost",
         outer_batch_size=outer_batch_size,
     )
 
@@ -422,7 +421,24 @@ def build_model(
         "inverse_marginal_utility": inverse_marginal_utility,
     }
 
-    working = UserRegime(
+    liquid_margin = LiquidMargin(
+        state="liquid",
+        action="consumption",
+        resources=NetOfAdjustmentCost(
+            name_in_dag="resources",
+            before_cost="resources_before_outer_cost",
+            cost="housing_cost",
+        ),
+        post_decision_state="savings",
+    )
+    outer_margin = OuterContinuousMargin(
+        state="housing",
+        action="housing_investment",
+        post_decision_state="new_housing",
+        no_adjustment="keep_housing",
+    )
+
+    working = NestedConsumptionSavingsRegime(
         transition=next_regime,
         active=lambda age, ra=retirement_age: age < ra,
         states={
@@ -445,9 +461,11 @@ def build_model(
         },
         constraints={"housing_stays_in_bounds": housing_stays_in_bounds},
         solver=negm_solver,
+        liquid=liquid_margin,
+        outer_continuous=outer_margin,
     )
 
-    retired = UserRegime(
+    retired = NestedConsumptionSavingsRegime(
         transition=next_regime_from_retired,
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
@@ -462,6 +480,8 @@ def build_model(
         functions={**shared_functions, "income": _retirement_income},
         constraints={"housing_stays_in_bounds": housing_stays_in_bounds},
         solver=negm_solver,
+        liquid=liquid_margin,
+        outer_continuous=outer_margin,
     )
 
     dead = UserRegime(

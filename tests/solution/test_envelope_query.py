@@ -26,8 +26,10 @@ from _lcm.egm.upper_envelope.query import (
     _right_continuous_winner,
     envelope_at_query,
 )
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution._envelope_oracle import exact_envelope
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # float64 cases cannot run when the suite is invoked at `--precision=32`: JAX
 # truncates the request to float32 and warns, the suite promotes that warning to
@@ -827,7 +829,8 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     Multiplying every grid and value coordinate by one positive power of two is
     a change of units: exact in binary floating point, and it leaves the value
     ordering and every slope ordering algebraically untouched, so the published
-    policy and marginal must be identical. Round 8 failed this three ways at
+    policy and marginal must be identical. The earlier selector failed this
+    three ways at
     once -- the cross products, the interpolant's products, and Dekker's own
     splitting each break at their own scale -- and each turned a strict exact
     ordering into a branch-order coin flip.
@@ -945,7 +948,8 @@ def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
 ):
     """A candidate that cannot bracket the query is mathematically irrelevant.
 
-    Round 9 normalized the whole problem by ONE grid exponent and ONE value
+    An earlier repair normalized the whole problem by ONE grid exponent and ONE
+    value
     exponent chosen from the largest candidate anywhere in the input. That map
     is not injective: a remote segment which does not bracket the query still
     selected the scale, and two adjacent local floats collapsed into the same
@@ -1402,8 +1406,9 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 ):
     """`q - x0` must survive a segment whose own endpoints span many binades.
 
-    Rounds 9 and 10 both scaled the OPERANDS before differencing them -- round 9
-    with one exponent for the whole array, round 10 with one per candidate. Both
+    Two earlier repairs both scaled the OPERANDS before differencing them -- one
+    with a single exponent for the whole array, the next with one per candidate.
+    Both
     lose the same way: scaling `q` and `x0` before subtracting can map two
     distinct represented grid points onto the same float, after which `q - x0` is
     zero and no downstream exactness can rebuild it. Here the candidate exponent
@@ -1547,7 +1552,7 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
     Branch A's numerator cancels to exactly zero, so its own terms carry no
     information about the answer and the entire comparison rests on branch B's,
     which live `~2 * precision + emax` binades further down. Every normalization
-    tried through round 12 pushed those terms out of the format — the products
+    tried before this one pushed those terms out of the format — the products
     came back as `(-0.0, 0.0)` and `_exact_compare` reported a TIE where the
     exact ordering is strict, so the right-continuity rule handed value, policy
     and marginal to the lower branch.
@@ -1587,7 +1592,7 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     Reads the dyadic term list straight out of `_dyadic_product` and sums it in
     `Fraction`. The result must equal the cross difference computed independently
-    from the two ratios — and dropping the half that round 12 flushed must
+    from the two ratios — and dropping the half the earlier kernel flushed must
     collapse that difference to zero, so the test cannot pass vacuously.
     """
     info = np.finfo(dtype)
@@ -1619,9 +1624,9 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     assert expected > 0, "the witness must be a strict gap"
     assert forward - reverse == expected
-    # Round 12's behaviour: with `reverse` flushed the difference is exactly zero
-    # and the comparator reports a tie. If that does not happen the assertion
-    # above is not testing what it claims to.
+    # The earlier kernel's behaviour: with `reverse` flushed the difference is
+    # exactly zero and the comparator reports a tie. If that does not happen
+    # the assertion above is not testing what it claims to.
     assert forward == 0
     assert float(_exact_compare(cols_a=cols_a, cols_b=cols_b, q=q)) == 1.0
 
@@ -1729,7 +1734,7 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
 def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     """`H - (-H)` must be represented, not computed.
 
-    Round 13 built differences with `_two_diff` on operands lifted into
+    An earlier repair built differences with `_two_diff` on operands lifted into
     mid-range, and justified it with the claim that subtraction of two finite
     floats cannot overflow. Opposite-signed top-binade operands refute that:
     for `H = 2**127` in float32 both operands are finite normals while their

@@ -15,14 +15,16 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     categorical,
 )
 from lcm.regime import Regime
-from lcm.solvers import GridSearch
+from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -143,27 +145,50 @@ def build_model(
     young_solver = resolve_solver(
         young_variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        post_decision_function="savings",
     )
     young_liquid_law = next_liquid_from_savings
     young_constraints = {} if young_variant == "nbegm" else {"feasible": feasible}
 
-    young = Regime(
-        actions={"consumption": consumption_grid},
-        states={"liquid": liquid_grid, "kind": kind_grid},
-        state_transitions={
-            "liquid": {"old": young_liquid_law, "dead": young_liquid_law},
-            "kind": {"old": lcm.fixed_transition("kind")},
-        },
-        constraints=young_constraints,
-        transition={
-            "old": MarkovTransition(prob_to_old),
-            "dead": MarkovTransition(prob_young_dead),
-        },
-        functions=young_functions,
-        active=lambda age: age < 1,
-        solver=young_solver,
-    )
+    young_states = {"liquid": liquid_grid, "kind": kind_grid}
+    young_state_transitions = {
+        "liquid": {"old": young_liquid_law, "dead": young_liquid_law},
+        "kind": {"old": lcm.fixed_transition("kind")},
+    }
+    young_transition = {
+        "old": MarkovTransition(prob_to_old),
+        "dead": MarkovTransition(prob_young_dead),
+    }
+    young_active = lambda age: age < 1  # noqa: E731
+    # Built per branch: the NBEGM schedule solver takes its DAG role names from
+    # the regime's liquid margin, which only the margin-declaring class carries.
+    if isinstance(young_solver, NBEGM):
+        young = ConsumptionSavingsRegime(
+            actions={"consumption": consumption_grid},
+            states=young_states,
+            state_transitions=young_state_transitions,
+            constraints=young_constraints,
+            transition=young_transition,
+            functions=young_functions,
+            active=young_active,
+            solver=young_solver,
+            liquid=LiquidMargin(
+                state="liquid",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+    else:
+        young = Regime(
+            actions={"consumption": consumption_grid},
+            states=young_states,
+            state_transitions=young_state_transitions,
+            constraints=young_constraints,
+            transition=young_transition,
+            functions=young_functions,
+            active=young_active,
+            solver=young_solver,
+        )
     old_actions = {"consumption": consumption_grid}
     old_functions = {"utility": utility, "tax": tax, "resources": resources}
     if old_discrete_action:

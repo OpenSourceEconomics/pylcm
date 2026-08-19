@@ -30,9 +30,11 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    ConsumptionSavingsRegime,
     EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     Regime,
@@ -182,15 +184,27 @@ def _make_gated_regimes() -> dict[str, Regime]:
 
 def _make_mixed_regimes() -> dict[str, Regime]:
     """Add an unconnected endogenous-grid branch to the gated-edge branch."""
-    saver = Regime(
+    saver = ConsumptionSavingsRegime(
         transition={"saver_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"assets": ASSET_GRID},
         state_transitions={"assets": _next_assets},
         actions={"consumption": CONSUMPTION_GRID},
-        constraints={"affordable": _affordable},
-        functions={"utility": _saver_utility, "savings": _savings},
-        solver=EGM(savings_grid=SAVINGS_GRID, post_decision_function="savings"),
+        # No `affordable` constraint: plain EGM evaluates no user constraint,
+        # and `SAVINGS_GRID` starting at zero already forbids borrowing, which
+        # is all `consumption <= assets` ever said.
+        functions={
+            "utility": _saver_utility,
+            "resources": _saver_resources,
+            "savings": _savings,
+        },
+        liquid=LiquidMargin(
+            state="assets",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+        solver=EGM(savings_grid=SAVINGS_GRID),
     )
     saver_terminal = Regime(
         transition=None,
@@ -245,6 +259,11 @@ def _saver_utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
+def _saver_resources(assets: ContinuousState) -> FloatND:
+    """Assets are the whole of what consumption is paid out of here."""
+    return assets
+
+
 def _savings(assets: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The post-decision balance the asset law of motion is written through."""
     return assets - consumption
@@ -253,11 +272,6 @@ def _savings(assets: ContinuousState, consumption: ContinuousAction) -> FloatND:
 def _next_assets(savings: FloatND) -> ContinuousState:
     """Assets carry forward at a gross return of one."""
     return savings
-
-
-def _affordable(assets: ContinuousState, consumption: ContinuousAction) -> BoolND:
-    """The household cannot consume more than it holds."""
-    return consumption <= assets
 
 
 def _saver_terminal_utility(assets: ContinuousState) -> FloatND:

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
-from lcm.regime import Regime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousState, FloatND
 from tests.solution.test_egm_solver import (
@@ -32,6 +32,7 @@ from tests.solution.test_egm_solver import (
     feasible,
     prob_continue,
     prob_stop,
+    resources,
     savings,
     terminal_utility,
     utility,
@@ -54,20 +55,33 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
     """The closed-form consumption--saving lifecycle, plus a fixed cost."""
     last_age = float(_N_PERIODS - 1)
     law = {"saving": law, "done": law}
-    saving = Regime(
+    regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
+    saving = regime_type(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=n_consumption)
         },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
-        constraints={"feasible": feasible},
+        constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
         transition={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility, "savings": savings},
+        functions={"utility": utility, "resources": resources, "savings": savings},
         active=lambda age, la=last_age: age < la,
         solver=solver,
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if isinstance(solver, EGM)
+            else {}
+        ),
     )
     done = Regime(
         transition=None,
@@ -104,9 +118,9 @@ def _params():
 def test_a_fixed_cost_in_the_law_reaches_the_egm_value(period):
     """`EGM` and a dense `GridSearch` agree on a law carrying a fixed cost."""
     params = _params()
-    egm = _model(
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    ).solve(params=params, log_level="debug")
+    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
+        params=params, log_level="debug"
+    )
     brute = _model(solver=GridSearch(), n_consumption=1200).solve(
         params=params, log_level="debug"
     )

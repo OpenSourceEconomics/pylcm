@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.continuation import EGMContinuationLayout
 from _lcm.engine import StateActionSpace
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
@@ -49,14 +50,12 @@ class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
     @property
-    def carry_retains_discrete_action_rows(self) -> bool:
-        """A brute living child publishes an already-action-maxed value array."""
-        return False
-
-    @property
-    def carry_rows_share_state_grid(self) -> bool:
-        """Grid-search carries sit on the regime's own state grid."""
-        return True
+    def egm_continuation_layout(self) -> EGMContinuationLayout:
+        """A brute child publishes one action-maxed row on its state grid."""
+        return EGMContinuationLayout(
+            retains_discrete_action_rows=False,
+            rows_share_state_grid=True,
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.

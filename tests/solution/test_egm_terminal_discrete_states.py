@@ -31,6 +31,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -160,14 +161,10 @@ def _get_dcegm_model() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     solver = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings_post",
         savings_grid=SAVINGS_GRID,
         n_constrained_points=64,
     )
-    retirement = UserRegime(
+    retirement = ConsumptionSavingsRegime(
         transition=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "pref_type": DiscreteGrid(PrefType)},
@@ -182,6 +179,12 @@ def _get_dcegm_model() -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=solver,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings_post",
+        ),
         active=lambda age, la=last_age: age < la,
     )
     return Model(
@@ -280,10 +283,6 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     solver = DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings_post",
         savings_grid=SAVINGS_GRID,
         n_constrained_points=64,
     )
@@ -292,7 +291,7 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         return jnp.log(consumption)
 
     # The parent does NOT carry `pref_type`; only `dead` does.
-    retirement = UserRegime(
+    retirement = ConsumptionSavingsRegime(
         transition=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -304,6 +303,12 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=solver,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings_post",
+        ),
         active=lambda age, la=last_age: age < la,
     )
     with pytest.raises(ModelInitializationError, match="pref_type"):

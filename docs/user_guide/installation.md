@@ -64,9 +64,11 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_built
 print(kernel_built())  # False in a skipped install
 ```
 
-A skipped install still imports, and the certified path reports its own absence when
-something reaches for it, rather than returning a silently different answer. To get the
-capability back, unset the variable and reinstall.
+A skipped install still imports. Constructing a `Model` whose `DCEGM` regime selects
+`ExactEnvelope` then raises immediately, before compilation or `solve()`, rather than
+returning a silently different answer. Grid-search models and DCEGM models selecting a
+different typed envelope remain usable. To get the certified capability back, unset the
+variable and reinstall.
 
 ## GPU Acceleration (optional, but then this is the whole point of it)
 
@@ -189,9 +191,10 @@ import lcm
 - **`No C++ compiler found` during install**: install one, or install without the
   certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1` (see above), accepting that
   DC-EGM will not run on its defaults.
-- **`The exact-affine kernel is not built`, or `exists but could not be loaded`, at
-  solve time**: the install skipped the kernel, or carries one built by a different
-  toolchain. Rebuild in the current environment with `pixi run build-exact-affine`.
+- **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
+  kernel, or carries one built by a different toolchain. Rebuild in the current
+  environment with `pixi run build-exact-affine`, or explicitly select another typed
+  envelope under its approximation contract.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).

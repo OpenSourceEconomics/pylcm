@@ -41,3 +41,13 @@ def test_a_marginal_continuation_of_zero_yields_a_finite_action() -> None:
     )
     assert jnp.isfinite(action)
     assert action == pytest.approx(1.0 / jnp.finfo(action.dtype).eps, rel=1e-6)
+
+
+def test_a_negative_marginal_continuation_fails_loudly() -> None:
+    """A negative Euler target is invalid and reaches diagnostics as NaN."""
+    action = invert_euler(
+        expected_marginal_continuation=jnp.asarray(-0.5),
+        discount_factor=jnp.asarray(1.0),
+        inverse_marginal_utility=_crra_inverse,
+    )
+    assert jnp.isnan(action)

@@ -24,6 +24,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -104,7 +105,7 @@ def _model(batch_size: int) -> Model:
     """Asset-row DC-EGM model with `batch_size` splaying on the Euler grid."""
     ages = _ages()
     last_age = ages.exact_values[-1]
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -124,12 +125,14 @@ def _model(batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=SAVINGS_GRID,
             n_constrained_points=32,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     dead = UserRegime(

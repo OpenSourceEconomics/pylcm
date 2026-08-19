@@ -1,7 +1,10 @@
 import ctypes
 import ctypes.util
 import functools
+import json
+import os
 import pathlib
+import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 
@@ -12,7 +15,9 @@ import pytest
 from jax import config as jax_config
 from numpy.typing import ArrayLike
 
-from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_built
+from _lcm.egm.upper_envelope._exact_affine.ffi import (
+    kernel_built_for_current_backend,
+)
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -21,7 +26,6 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
-from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import ScalarInt
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
@@ -39,6 +43,17 @@ DECIMAL_PRECISION: int = 12
 # relative departure from the unsplayed solve is under 3 eps at either
 # precision; eight is that with headroom.
 INVARIANCE_EPS_MULTIPLE: float = 8.0
+
+# Marker naming a test whose subject needs the native exact-affine kernel.
+EXACT_KERNEL_MARKER = "requires_exact_affine_kernel"
+
+# Canonical reason used by exact-kernel tests and their skip inventory.
+EXACT_KERNEL_SKIP_REASON = (
+    "requires pylcm's native exact-affine kernel for the selected JAX backend"
+)
+
+_EXACT_KERNEL_SKIPS_STASH_KEY: pytest.StashKey[list[dict[str, str]]] = pytest.StashKey()
+_CONTROLLER_EXACT_KERNEL_SKIPS: list[dict[str, str]] = []
 
 
 def invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
@@ -91,6 +106,34 @@ def pytest_addoption(parser):
             "change what is being measured."
         ),
     )
+    parser.addoption(
+        "--exact-kernel-skip-inventory",
+        action="store",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write the exact node ids and reasons skipped because an explicitly "
+            "required exact-affine kernel was not built for this backend."
+        ),
+    )
+    parser.addoption(
+        "--expected-exact-kernel-skip-inventory",
+        action="store",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Fail when the exact-kernel skip inventory differs from this checked-in "
+            "JSON file."
+        ),
+    )
+    parser.addoption(
+        "--max-total-skips",
+        action="store",
+        default=None,
+        type=int,
+        metavar="N",
+        help="Fail when the completed test session reports more than N skipped tests.",
+    )
 
 
 def pytest_configure(config):
@@ -110,6 +153,9 @@ def pytest_configure(config):
     # the format rather than the code. Asking for the declared precision costs
     # some throughput on that hardware and nothing anywhere else.
     jax_config.update("jax_default_matmul_precision", "highest")
+    config.stash[_EXACT_KERNEL_SKIPS_STASH_KEY] = []
+    if getattr(config, "workerinput", None) is None:
+        _CONTROLLER_EXACT_KERNEL_SKIPS.clear()
 
 
 def assert_agrees_to_ulp(
@@ -183,56 +229,181 @@ def pytest_collection_modifyitems(items):
         if "solution" in item.path.parts:
             item.add_marker(slow)
 
+    _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
 
 
-def is_missing_kernel_failure(
-    *, failed: bool, asked_for_kernel: bool, kernel_built: bool
-) -> bool:
-    """Return whether a failure is only this host's missing exact-affine kernel.
+def _validate_exact_kernel_markers(*, items: list[pytest.Item]) -> None:
+    """Require one explicit, canonical reason on every exact-kernel marker."""
+    for item in items:
+        marker = item.get_closest_marker(EXACT_KERNEL_MARKER)
+        if marker is None:
+            continue
+        reason = marker.kwargs.get("reason")
+        if marker.args or set(marker.kwargs) != {"reason"}:
+            msg = (
+                f"{item.nodeid}: @{EXACT_KERNEL_MARKER} takes exactly one "
+                "keyword argument, reason=."
+            )
+            raise pytest.UsageError(msg)
+        if reason != EXACT_KERNEL_SKIP_REASON:
+            msg = (
+                f"{item.nodeid}: @{EXACT_KERNEL_MARKER} reason must be "
+                f"{EXACT_KERNEL_SKIP_REASON!r}, got {reason!r}."
+            )
+            raise pytest.UsageError(msg)
 
-    All three must hold: the test failed, it failed asking for an exact verdict,
-    and no kernel was ever built here. A host that has one reports every failure
-    as the failure it is, so this can never absorb a real defect.
 
-    Absence is decided by the file rather than by whether a verdict could be
-    obtained, because the two are different situations with opposite verdicts. A
-    platform with no kernel skips; a kernel that is present and cannot answer is
-    a broken build and must fail. Treating them alike would let a shared object
-    left over from an earlier build turn the whole certified suite green by
-    removing every test that could have caught it.
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip only a test that declared exact-kernel intent before execution.
+
+    File presence decides absence. If a library file exists but cannot load or
+    answer, this hook does not skip: the test reaches the request and the broken
+    build fails loudly.
     """
-    return failed and asked_for_kernel and not kernel_built
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """Report a test that needed an unbuilt exact-affine kernel as skipped.
-
-    The certified upper envelope decides ownership in a compiled kernel, which
-    is not built for every platform pylcm otherwise supports. Tests that ask for
-    an exact verdict there cannot pass and are not defects, while their
-    neighbours in the same module — construction, validation, dispatch — are
-    exactly the platform surface those runners exist to cover. Deciding per test
-    rather than per module keeps that coverage instead of skipping a whole file
-    for the few cases inside it that reach the kernel.
-    """
-    outcome = yield
-    report = outcome.get_result()
-    asked_for_kernel = call.excinfo is not None and call.excinfo.errisinstance(
-        ExactAffineKernelUnavailableError
-    )
-    if is_missing_kernel_failure(
-        failed=report.outcome == "failed",
-        asked_for_kernel=asked_for_kernel,
-        kernel_built=kernel_built(),
-    ):
-        report.outcome = "skipped"
-        report.longrepr = (
-            str(item.path),
-            item.location[1],
-            "Skipped: the exact-affine kernel is not built for this platform",
+    marker = item.get_closest_marker(EXACT_KERNEL_MARKER)
+    if marker is None or kernel_built_for_current_backend():
+        return
+    reason = marker.kwargs["reason"]
+    records = item.config.stash[_EXACT_KERNEL_SKIPS_STASH_KEY]
+    records.append({"nodeid": item.nodeid, "reason": reason})
+    worker_output = getattr(item.config, "workeroutput", None)
+    if worker_output is not None:
+        # Update eagerly: xdist may serialize workeroutput in its own
+        # session-finish hook before a try-last local hook would run.
+        worker_output["lcm_exact_kernel_skips"] = _normalise_exact_kernel_skip_records(
+            records
         )
+    pytest.skip(reason)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: object, error: object) -> None:  # noqa: ARG001
+    """Collect exact-kernel skips reported by an xdist worker."""
+    records = getattr(node, "workeroutput", {}).get("lcm_exact_kernel_skips", [])
+    _CONTROLLER_EXACT_KERNEL_SKIPS.extend(records)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Write and enforce the exact-skip inventory and the backup total ceiling."""
+    config = session.config
+    local_records = _normalise_exact_kernel_skip_records(
+        config.stash[_EXACT_KERNEL_SKIPS_STASH_KEY]
+    )
+    if getattr(config, "workeroutput", None) is not None:
+        return
+
+    records = _normalise_exact_kernel_skip_records(
+        [*_CONTROLLER_EXACT_KERNEL_SKIPS, *local_records]
+    )
+    inventory_path = config.getoption("--exact-kernel-skip-inventory")
+    if inventory_path is not None:
+        _write_exact_kernel_skip_inventory(
+            path=pathlib.Path(inventory_path), records=records, config=config
+        )
+
+    expected_path = config.getoption("--expected-exact-kernel-skip-inventory")
+    if expected_path is not None:
+        try:
+            expected = _read_exact_kernel_skip_inventory(
+                path=pathlib.Path(expected_path)
+            )
+        except (OSError, ValueError, TypeError) as error:
+            _fail_session(
+                session=session,
+                message=f"Cannot read exact-kernel skip inventory: {error}.",
+            )
+        else:
+            if records != expected:
+                _fail_session(
+                    session=session,
+                    message=(
+                        "Exact-kernel skip inventory changed. "
+                        f"Expected {expected!r}, observed {records!r}."
+                    ),
+                )
+
+    ceiling = config.getoption("--max-total-skips")
+    if ceiling is not None:
+        terminal_reporter = config.pluginmanager.get_plugin("terminalreporter")
+        if terminal_reporter is None:
+            _fail_session(
+                session=session,
+                message="Cannot enforce --max-total-skips without terminalreporter.",
+            )
+            return
+        skipped = len(terminal_reporter.stats.get("skipped", []))
+        if skipped > ceiling:
+            _fail_session(
+                session=session,
+                message=f"Skipped-test ceiling exceeded: {skipped} > {ceiling}.",
+            )
+
+
+def _normalise_exact_kernel_skip_records(
+    records: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Return sorted, duplicate-free node-id/reason records."""
+    unique = {(record["nodeid"], record["reason"]) for record in records}
+    return [{"nodeid": nodeid, "reason": reason} for nodeid, reason in sorted(unique)]
+
+
+def _write_exact_kernel_skip_inventory(
+    *,
+    path: pathlib.Path,
+    records: list[dict[str, str]],
+    config: pytest.Config,
+) -> None:
+    """Atomically write the actual exact-kernel skip inventory."""
+    payload = {
+        "schema_version": 1,
+        "platform": platform.system(),
+        "backend": jax.default_backend(),
+        "precision": config.getoption("--precision"),
+        "kernel_built_for_current_backend": kernel_built_for_current_backend(),
+        "skipped": records,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _read_exact_kernel_skip_inventory(*, path: pathlib.Path) -> list[dict[str, str]]:
+    """Read the checked-in expected node-id/reason inventory."""
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        msg = f"Malformed exact-kernel skip inventory: {path}"
+        raise TypeError(msg)
+    skipped = payload.get("skipped")
+    if payload.get("schema_version") != 1 or not isinstance(skipped, list):
+        msg = f"Malformed exact-kernel skip inventory: {path}"
+        raise ValueError(msg)
+    if any(
+        not isinstance(record, dict)
+        or set(record) != {"nodeid", "reason"}
+        or not isinstance(record["nodeid"], str)
+        or not isinstance(record["reason"], str)
+        for record in skipped
+    ):
+        msg = f"Malformed exact-kernel skip records: {path}"
+        raise ValueError(msg)
+    return _normalise_exact_kernel_skip_records(skipped)
+
+
+def _fail_session(*, session: pytest.Session, message: str) -> None:
+    """Fail the session while preserving any earlier, stronger exit status."""
+    terminal_reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if terminal_reporter is None:
+        # Last-resort channel: without a terminal reporter there is nowhere else
+        # to surface why the session failed, and a warning can be filtered away.
+        print(message)  # noqa: T201
+    else:
+        terminal_reporter.write_line(message, red=True, bold=True)
+    if session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 # How far a worker may grow past its last release before the next one, in MiB.

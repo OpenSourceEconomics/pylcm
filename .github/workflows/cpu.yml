@@ -46,9 +46,22 @@ jobs:
           - os: macos-latest
             pytest_extra: -m "not slow and not manual"
           - os: windows-latest
-            pytest_extra: -m "not slow and not manual"
+            pytest_extra: >-
+              -m "not slow and not manual"
+              --exact-kernel-skip-inventory=reports/exact-kernel-skips-Windows.json
+              --expected-exact-kernel-skip-inventory
+              tests/ci/expected-exact-kernel-skips-windows.json
+              --max-total-skips=25
     steps:
       - uses: actions/checkout@v7
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: prefix-dev/setup-pixi@v0.10.1
         with:
           pixi-version: v0.76.1
@@ -62,9 +75,10 @@ jobs:
         # so a checkout never brings it and an environment cache cannot carry
         # it. `pixi install` builds it only when it decides the editable
         # package needs reinstalling, which makes its presence a function of
-        # whether the project cache hit. Tests that ask for an exact verdict
-        # without a kernel are reported as skipped, so a cache hit would turn
-        # the certified suite green by removing it. Build it explicitly.
+        # whether the project cache hit. Tests that explicitly require an exact
+        # verdict skip only when the corresponding library file is absent; the
+        # Windows inventory below makes that capability loss visible. Build the
+        # library explicitly wherever this platform supports it.
         run: pixi run -e tests-cpu build-exact-affine
       - name: Cache JAX compiled programs
         # `setup-pixi` caches the environment but not JAX's persistent
@@ -90,6 +104,27 @@ jobs:
             jax-${{ runner.os }}-${{ matrix.python-version }}-${{
               hashFiles('pixi.lock') }}-
             jax-${{ runner.os }}-${{ matrix.python-version }}-
+      - name: Run the fp64 exact-kernel capability matrix
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=64 --output-dir=reports
+      - name: Run the Windows exact-kernel capability matrix
+        if: runner.os == 'Windows' && matrix.python-version == '3.14'
+        # Both precisions run even when the first fails, because each arm's
+        # report is evidence about a different build; the step then fails if
+        # either did. A bare `bash {0}` template has neither `-e` nor a status
+        # of its own beyond the last command's, so without the explicit exit a
+        # failing fp32 arm is reported as success whenever fp64 passes.
+        shell: bash {0}
+        run: |
+          rc=0
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=32 --output-dir=reports || rc=1
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
+            --precision=64 --output-dir=reports || rc=1
+          exit "$rc"
       - name: Run pytest
         shell: bash {0}
         run: >-
@@ -194,7 +229,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
-          path: reports/junit-*.xml
+          path: reports/junit-cpu-*.xml
+          if-no-files-found: warn
+      - name: Upload exact-kernel capability diagnostics
+        # Kept out of the JUnit artifact above on purpose. The matrix's `broken`
+        # arm is required to produce a failing testcase -- that failure is the
+        # positive control proving the detector fires -- so pooling its report
+        # with the suite's would put a failure and three extra arms per
+        # precision into the counts a healthy run reports.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-kernel-matrix-fp64-${{ runner.os }}-${{ matrix.python-version }}
+          path: |
+            reports/junit-exact-kernel-matrix-*.xml
+            reports/exact-kernel-skips-*.json
+            reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -244,6 +294,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: prefix-dev/setup-pixi@v0.10.1
         with:
           pixi-version: v0.76.1
@@ -271,6 +329,11 @@ jobs:
             jax-fp32-${{ runner.os }}-3.14-${{
               hashFiles('pixi.lock') }}-
             jax-fp32-${{ runner.os }}-3.14-
+      - name: Run the fp32 exact-kernel capability matrix
+        shell: bash {0}
+        run: >-
+          pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
+          --precision=32 --output-dir=reports
       - name: Run pytest at fp32
         shell: bash {0}
         # Same memory budget as the fp64 leg above, for the same reason: a
@@ -306,7 +369,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-cpu-fp32
-          path: reports/junit-*.xml
+          path: reports/junit-cpu-*.xml
+          if-no-files-found: warn
+      - name: Upload exact-kernel capability diagnostics
+        # Separate from the JUnit artifact for the same reason as the fp64 leg:
+        # the `broken` arm's required failure must not land in the counts a
+        # healthy run reports.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-kernel-matrix-fp32
+          path: |
+            reports/junit-exact-kernel-matrix-*.xml
+            reports/exact-kernel-skips-*.json
+            reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
       - name: Prune superseded JAX caches for this ref
         if: always()

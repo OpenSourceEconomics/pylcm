@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from _lcm.egm.preferences import Preferences
 from tests.solution._crra_preferences import crra_preferences
 from tests.test_models.deterministic.ds_pension import get_model, get_params
 
@@ -91,3 +92,33 @@ def test_retired_egm_value_is_increasing_in_liquid():
     # Consumption is positive and weakly increasing in liquid wealth.
     assert np.all(np.asarray(step.consumption) > 0)
     assert np.all(np.diff(np.asarray(step.consumption)) >= -1e-6)
+
+
+def test_plain_egm_extrapolates_a_child_continuation_below_its_grid() -> None:
+    """A landing below the child grid continues its first value segment."""
+
+    def utility(consumption):
+        return jnp.zeros_like(consumption)
+
+    def marginal_utility(consumption):
+        return jnp.ones_like(consumption)
+
+    def inverse_marginal_utility(marginal_continuation):
+        return jnp.ones_like(marginal_continuation)
+
+    result = egm_one_asset_step(
+        next_value=jnp.asarray([1.0, 2.0, 3.0]),
+        next_marginal=jnp.asarray([1.0, 1.0, 1.0]),
+        liquid_grid=jnp.asarray([1.0]),
+        next_liquid_grid=jnp.asarray([1.0, 2.0, 3.0]),
+        savings_grid=jnp.asarray([0.0]),
+        discount_factor=jnp.asarray(0.5),
+        preferences=Preferences(
+            utility=utility,
+            marginal_utility=marginal_utility,
+            inverse_marginal_utility=inverse_marginal_utility,
+        ),
+        next_liquid=jnp.asarray([0.0]),
+        marginal_return=jnp.asarray([1.0]),
+    )
+    np.testing.assert_allclose(np.asarray(result.value), np.asarray([0.0]))

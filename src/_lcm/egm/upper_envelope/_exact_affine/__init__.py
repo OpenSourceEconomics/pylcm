@@ -8,6 +8,7 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import (
     exact_affine_read,
     exact_cell_hull,
     exact_query_winner,
+    exact_query_winner_batched,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "exact_affine_read",
     "exact_cell_hull",
     "exact_query_winner",
+    "exact_query_winner_batched",
 ]

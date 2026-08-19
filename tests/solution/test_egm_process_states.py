@@ -34,6 +34,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidValueFunctionError
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -171,10 +172,6 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -224,7 +221,7 @@ def _get_model(solver: str, shock_type: str) -> Model:
         brute_next_wealth = next_wealth_brute_iid
 
     if solver == "dcegm":
-        alive = UserRegime(
+        alive = ConsumptionSavingsRegime(
             transition=next_regime,
             active=active,
             actions=actions,
@@ -237,6 +234,12 @@ def _get_model(solver: str, shock_type: str) -> Model:
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
             solver=DCEGM_SOLVER,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
         )
     else:
         alive = UserRegime(
