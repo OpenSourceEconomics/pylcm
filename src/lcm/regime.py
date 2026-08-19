@@ -741,7 +741,13 @@ def _bind_two_margin_solver(
             state=outer.state,
             action=outer.action,
             post_decision_state=outer.post_decision_state,
-            no_adjustment=outer.no_adjustment,
+            # `outer_unchanged` is a declaration, not a function name. Resolving
+            # it here, at the one seam where a public margin becomes a bound
+            # one, is what lets every engine consumer read the identity map as
+            # the absence of a candidate function.
+            no_adjustment=(
+                None if outer.no_adjustment == outer_unchanged else outer.no_adjustment
+            ),
         ),
     )
 

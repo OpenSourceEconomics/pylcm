@@ -385,12 +385,16 @@ class _BoundLiquidMargin:
 
 @dataclass(frozen=True)
 class _BoundOuterContinuousMargin:
-    """Resolved outer-margin DAG role names carried privately by a solver."""
+    """Resolved outer-margin DAG role names carried privately by a solver.
+
+    `no_adjustment` is `None` where the regime declares the identity map with
+    `lcm.outer_unchanged`, which is the form every consumer branches on.
+    """
 
     state: StateName
     action: ActionName
     post_decision_state: FunctionName
-    no_adjustment: FunctionName
+    no_adjustment: FunctionName | None
 
 
 @dataclass(frozen=True, kw_only=True)

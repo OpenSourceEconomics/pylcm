@@ -176,7 +176,7 @@ def test_nested_regime_binds_both_margins_into_negm():
     assert solver.outer_state == "durable"
     assert solver.outer_action == "new_durable"
     assert solver.outer_post_decision == "durable_after_choice"
-    assert solver.outer_no_adjustment_candidate == outer_unchanged
+    assert solver.outer_no_adjustment_candidate is None
 
 
 def test_pairing_check_rejects_two_margin_solver_on_one_margin_regime():
