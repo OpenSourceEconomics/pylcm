@@ -106,6 +106,17 @@ def build_model(*, variant: str, n_periods: int = 3) -> Model:
     }
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     if variant == "brute":
+        # Same oracle correction as the smooth toy: reaching `s'` through an
+        # investment action would let the oracle land on only 3 of the 15 outer
+        # nodes, and on none at all from 8 of the 10 `illiquid` states, so it
+        # would score a candidate set the nested solve never sweeps. Choosing
+        # the next stock directly puts both variants on `OUTER_GRID`.
+        del functions["new_illiquid"]
+        actions = {
+            "consumption": smooth.CONSUMPTION_GRID,
+            "new_illiquid": smooth.OUTER_GRID,
+            "buy_private": DiscreteGrid(BuyPrivate),
+        }
         alive = Regime(
             active=active,
             states=states,
@@ -113,10 +124,7 @@ def build_model(*, variant: str, n_periods: int = 3) -> Model:
             actions=actions,
             transition=smooth.next_regime,
             functions=functions,
-            constraints={
-                "illiquid_feasible": smooth.illiquid_feasible,
-                "budget_feasible": smooth.budget_feasible,
-            },
+            constraints={"budget_feasible": smooth.budget_feasible},
             solver=build_solver(variant=variant),
         )
     else:
