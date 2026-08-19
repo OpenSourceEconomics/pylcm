@@ -8,7 +8,16 @@ NBEGM. Building the model must reject it either way.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    ConsumptionSavingsRegime,
+    LinSpacedGrid,
+    LiquidMargin,
+    Model,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    categorical,
+)
 from lcm.case_piece import boundary, case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
@@ -89,35 +98,65 @@ def next_regime(age: int) -> ScalarInt:
 
 def _inner_nbegm() -> NBEGM:
     return NBEGM(
-        continuous_state="wealth",
-        post_decision_function="liquid_savings",
-        budget_target="resources",
         savings_grid=SAVINGS_GRID,
     )
 
 
-def _build_model(*, solver):
-    alive = Regime(
-        active=lambda age: age <= 20,
-        states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
-        state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
-        actions={
-            "consumption": CONSUMPTION_GRID,
-            "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
-        },
-        transition=next_regime,
-        functions={
-            "utility": utility,
-            "new_illiquid": new_illiquid,
-            "resources": resources,
-            "liquid_savings": liquid_savings,
-            "keep_illiquid": keep_illiquid,
-            "eligible": eligible,
-            "subsidy_eligible": subsidy_eligible,
-            "subsidy_private": subsidy_private,
-        },
-        solver=solver,
+def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
+    liquid = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="resources",
+        post_decision_state="liquid_savings",
     )
+    active = lambda age: age <= 20  # noqa: E731
+    states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
+    state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}
+    actions = {
+        "consumption": CONSUMPTION_GRID,
+        "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
+    }
+    functions = {
+        "utility": utility,
+        "new_illiquid": new_illiquid,
+        "resources": resources,
+        "liquid_savings": liquid_savings,
+        "keep_illiquid": keep_illiquid,
+        "eligible": eligible,
+        "subsidy_eligible": subsidy_eligible,
+        "subsidy_private": subsidy_private,
+    }
+    # Built per branch rather than through a shared class and margin mapping:
+    # the two regime classes take different margins and narrow `solver`
+    # differently, and neither distinction survives a `**kwargs` splat.
+    if isinstance(solver, NNBEGM):
+        alive = NestedConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            solver=solver,
+            liquid=liquid,
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="illiquid_investment",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            ),
+        )
+    else:
+        alive = ConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            solver=solver,
+            liquid=liquid,
+        )
     dead = Regime(
         transition=None,
         active=lambda age: age > 20,
@@ -142,11 +181,7 @@ def test_nnbegm_rejects_a_piece_that_hides_a_branch():
     """The nested solver applies its inner NBEGM's smoothness gate too."""
     solver = NNBEGM(
         inner=_inner_nbegm(),
-        outer_action="illiquid_investment",
-        outer_state="illiquid",
-        outer_post_decision="new_illiquid",
         outer_grid=ILLIQUID_GRID,
-        outer_no_adjustment_candidate="keep_illiquid",
     )
     with pytest.raises(NBEGMCaseError, match="smoothness gate"):
         _build_model(solver=solver)

@@ -10,7 +10,9 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     DCEGM,
     EGM,
+    NBEGM,
     NEGM,
+    NNBEGM,
     ConsumptionSavingsRegime,
     FUESEnvelope,
     GridSearch,
@@ -135,11 +137,18 @@ def _fues_dcegm() -> DCEGM:
 def test_public_solver_dataclasses_contain_numerical_configuration_only():
     assert {item.name for item in fields(EGM)} == {"savings_grid"}
     assert {
+        "budget_target",
         "continuous_state",
         "continuous_action",
-        "resources",
         "post_decision_function",
+        "resources",
     }.isdisjoint(item.name for item in fields(DCEGM))
+    assert {
+        "budget_target",
+        "continuous_state",
+        "continuous_action",
+        "post_decision_function",
+    }.isdisjoint(item.name for item in fields(NBEGM))
     assert {
         "outer_action",
         "outer_state",
@@ -147,6 +156,12 @@ def test_public_solver_dataclasses_contain_numerical_configuration_only():
         "outer_no_adjustment_candidate",
         "outer_cost",
     }.isdisjoint(item.name for item in fields(NEGM))
+    assert {
+        "outer_action",
+        "outer_state",
+        "outer_post_decision",
+        "outer_no_adjustment_candidate",
+    }.isdisjoint(item.name for item in fields(NNBEGM))
 
 
 def test_dcegm_receives_all_four_names_from_the_liquid_margin():
@@ -165,6 +180,16 @@ def test_plain_egm_receives_its_post_decision_name_from_the_margin():
     assert cast("Any", regime.solver).post_decision_function == "savings"
 
 
+def test_nbegm_receives_all_liquid_names_from_the_margin():
+    regime = _regime(solver=NBEGM(savings_grid=_GRID))
+
+    solver = cast("Any", regime.solver)
+    assert solver.continuous_state == "wealth"
+    assert solver.continuous_action == "consumption"
+    assert solver.budget_target == "resources"
+    assert solver.post_decision_function == "savings"
+
+
 def test_nested_regime_binds_both_margins_into_negm():
     regime = _nested_regime(solver=NEGM(inner=_fues_dcegm(), outer_grid=_GRID))
 
@@ -172,6 +197,25 @@ def test_nested_regime_binds_both_margins_into_negm():
     assert solver.inner.continuous_state == "wealth"
     assert solver.inner.continuous_action == "consumption"
     assert solver.inner.resources == "resources"
+    assert solver.inner.post_decision_function == "savings"
+    assert solver.outer_state == "durable"
+    assert solver.outer_action == "new_durable"
+    assert solver.outer_post_decision == "durable_after_choice"
+    assert solver.outer_no_adjustment_candidate == outer_unchanged
+
+
+def test_nested_regime_binds_both_margins_into_nnbegm():
+    regime = _nested_regime(
+        solver=NNBEGM(
+            inner=NBEGM(savings_grid=_GRID),
+            outer_grid=_GRID,
+        )
+    )
+
+    solver = cast("Any", regime.solver)
+    assert solver.inner.continuous_state == "wealth"
+    assert solver.inner.continuous_action == "consumption"
+    assert solver.inner.budget_target == "resources"
     assert solver.inner.post_decision_function == "savings"
     assert solver.outer_state == "durable"
     assert solver.outer_action == "new_durable"

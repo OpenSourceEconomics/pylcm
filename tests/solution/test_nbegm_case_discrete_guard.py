@@ -93,7 +93,6 @@ def test_a_case_piece_regime_with_a_discrete_action_is_rejected():
             alive_solver=resolve_solver(
                 "nbegm",
                 savings_grid=SAVINGS_GRID,
-                post_decision_function="savings",
             ),
             constraints={"feasible": feasible},
             extra_actions={"insurance_plan": DiscreteGrid(InsurancePlan)},
@@ -133,7 +132,6 @@ def test_a_case_piece_regime_with_a_second_state_names_that_state() -> None:
             alive_solver=resolve_solver(
                 "nbegm",
                 savings_grid=SAVINGS_GRID,
-                post_decision_function="savings",
             ),
             constraints={"feasible": feasible},
             extra_states={"health": DiscreteGrid(Health)},

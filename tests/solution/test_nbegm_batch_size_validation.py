@@ -44,12 +44,7 @@ def test_a_negative_nnbegm_outer_batch_size_names_nnbegm() -> None:
         NNBEGM(
             inner=NBEGM(
                 savings_grid=SAVINGS_GRID,
-                continuous_state="liquid",
-                post_decision_function="savings",
             ),
-            outer_action="investment",
-            outer_state="durable",
-            outer_post_decision="new_durable",
             outer_grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=4),
             outer_batch_size=-1,
         )

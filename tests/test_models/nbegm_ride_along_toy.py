@@ -136,7 +136,6 @@ def build_model(
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        post_decision_function="savings",
         **(dict(nbegm_overrides) if nbegm_overrides else {}),
     )
     # The liquid law is stated as a function of the post-decision savings node,

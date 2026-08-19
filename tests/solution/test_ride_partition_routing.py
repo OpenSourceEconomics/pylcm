@@ -1,119 +1,143 @@
-"""The ride knobs reach the fixed-width map, and the mesh decides what they buy.
+"""The five NBEGM partition sites select explicit ride or branch geometry.
 
-`cell_block_size` and `interval_batch_size` are requests, not partitions: each
-is coarsened to a multiple of the vector width and capped by the window that
-covers its axis. On a short axis every request therefore admits to the same
-partition, and a bit-identity test over such an axis compares a configuration
-with itself. These tests assert the routing — that the requested value reaches
-`map_partitioned` at the ride call sites — and state the admitted partition the
-toy's mesh actually produces, so a mesh change that makes a knob inert is
-visible rather than silent.
-
-Bit identity across *distinct* admitted partitions is covered where the axis is
-long enough to have them: `test_fixed_width_map.py` at the unit level and
-`test_nbegm_partition_bit_identity.py` on the branch axis.
-
-The solves run the ordinary envelope comparison. What is under test is which
-partition reaches the map, which no arithmetic choice changes, so requiring the
-certified comparison would make the routing untestable wherever the
-exact-affine kernel is not built.
+These are routing tests, not throughput or arithmetic tests.  They record the
+geometry passed by the production wrappers and return a shape-equivalent
+``vmap`` result, so they remain runnable without an exact-affine kernel and
+never compile the wide ride tile.
 """
 
-from collections.abc import Mapping
+import ast
+from collections import Counter
+from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import pytest
 
 from _lcm.egm import fixed_width_map
-from tests.test_models import nbegm_next_asset_cliff_toy as interval_toy
-from tests.test_models import nbegm_ride_along_toy as cell_toy
+from _lcm.solution import nbegm
 
 
-def _record_partitions(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, int]]:
-    """Collect `(n_rows, requested, admitted)` for every fixed-width map call."""
-    calls: list[tuple[int, int, int]] = []
-    original = fixed_width_map.map_partitioned
+def _record_partitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[int, int, int, int, int]]:
+    """Collect rows, request, admission, width, and window for every call."""
+    calls: list[tuple[int, int, int, int, int]] = []
 
-    def spy(*, func, xs, requested_block_size):
+    def spy(*, func, xs, requested_block_size, geometry):
         n_rows = fixed_width_map._leading_size(xs)
-        window = min(
-            fixed_width_map.PROFILE_WINDOW,
-            fixed_width_map.enclosing_max_block_size(
-                n_rows=n_rows, microtile_width=fixed_width_map.MICROTILE_WIDTH
-            ),
+        window = fixed_width_map.max_block_size_for_axis(
+            n_rows=n_rows,
+            geometry=geometry,
+        )
+        admitted = fixed_width_map.admitted_block_size(
+            requested=requested_block_size,
+            max_block_size=window,
+            microtile_width=geometry.microtile_width,
         )
         calls.append(
             (
                 n_rows,
                 requested_block_size,
-                fixed_width_map.admitted_block_size(
-                    requested=requested_block_size,
-                    max_block_size=window,
-                    microtile_width=fixed_width_map.MICROTILE_WIDTH,
-                ),
+                admitted,
+                geometry.microtile_width,
+                geometry.profile_window,
             )
         )
-        return original(func=func, xs=xs, requested_block_size=requested_block_size)
+        return jax.vmap(func)(xs)
 
-    monkeypatch.setattr(fixed_width_map, "map_partitioned", spy)
-    monkeypatch.setattr("_lcm.solution.nbegm.map_partitioned", spy)
+    monkeypatch.setattr(nbegm, "map_partitioned", spy)
     return calls
 
 
-def _solve_cells(*, cell_block_size: int) -> Mapping[int, Mapping]:
-    return cell_toy.build_model(
-        variant="nbegm",
-        n_liquid=120,
-        liquid_max=30.0,
-        n_savings=180,
-        savings_max=28.0,
-        nbegm_overrides={
-            "cell_block_size": cell_block_size,
-            "envelope_arithmetic": "ordinary",
-        },
-    ).solve(params=cell_toy.build_params(), log_level="off")
-
-
-def _solve_intervals(*, interval_batch_size: int) -> Mapping[int, Mapping]:
-    return interval_toy.build_model(
-        variant="nbegm",
-        interval_batch_size=interval_batch_size,
-        envelope_arithmetic="ordinary",
-    ).solve(params=interval_toy.build_params(), log_level="off")
+def _identity(row):
+    return row
 
 
 def test_cell_block_size_reaches_the_fixed_width_map(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The requested cell block arrives at the map rather than being dropped."""
+    """A cell request arrives with the ride geometry rather than being dropped."""
     calls = _record_partitions(monkeypatch)
-    _solve_cells(cell_block_size=3)
-    assert 3 in {requested for _n_rows, requested, _admitted in calls}
+    result = nbegm._map_ride_partitioned(
+        func=_identity,
+        xs=jnp.arange(3),
+        requested_block_size=3,
+    )
+
+    assert result.shape == (3,)
+    assert calls == [(3, 3, 256, 256, 256)]
 
 
 def test_interval_batch_size_reaches_the_fixed_width_map(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The requested interval batch arrives at the map rather than being dropped."""
+    """An interval request uses the same explicitly declared ride geometry."""
     calls = _record_partitions(monkeypatch)
-    _solve_intervals(interval_batch_size=2)
-    assert 2 in {requested for _n_rows, requested, _admitted in calls}
+    nbegm._map_ride_partitioned(
+        func=_identity,
+        xs=jnp.arange(11),
+        requested_block_size=2,
+    )
+
+    assert calls == [(11, 2, 256, 256, 256)]
 
 
 @pytest.mark.parametrize("requested", [0, 1, 3])
-def test_a_short_ride_axis_admits_one_partition_whatever_is_requested(
+def test_a_short_ride_axis_admits_one_ride_microtile_whatever_is_requested(
     monkeypatch: pytest.MonkeyPatch, requested: int
 ) -> None:
-    """Every request collapses to one partition on an axis shorter than the width.
-
-    This is what makes a bit-identity test over this toy's ride mesh vacuous:
-    the compared solves run the same partition. A toy whose mesh grew past the
-    vector width would fail here, which is the signal to add the comparison.
-    """
+    """A short ride axis admits one 256-row microtile for every request."""
     calls = _record_partitions(monkeypatch)
-    _solve_cells(cell_block_size=requested)
-    admitted = {
-        admitted
-        for n_rows, _requested, admitted in calls
-        if n_rows <= fixed_width_map.MICROTILE_WIDTH
-    }
-    assert admitted == {fixed_width_map.MICROTILE_WIDTH}
+    nbegm._map_ride_partitioned(
+        func=_identity,
+        xs=jnp.arange(2),
+        requested_block_size=requested,
+    )
+
+    assert calls[0][2:] == (256, 256, 256)
+
+
+def test_branch_batch_size_keeps_the_narrow_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening ride rows does not widen the independent branch axis."""
+    calls = _record_partitions(monkeypatch)
+    nbegm._map_branch_partitioned(
+        func=_identity,
+        xs=jnp.arange(20),
+        requested_block_size=4,
+    )
+
+    assert calls == [(20, 4, 4, 4, 64)]
+
+
+def test_all_five_production_sites_use_the_axis_specific_wrappers() -> None:
+    """The source contains exactly three ride and two branch routing calls."""
+    tree = ast.parse(Path(nbegm.__file__).read_text(encoding="utf-8"))
+    names = Counter(
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    )
+
+    assert names["_map_ride_partitioned"] == 3
+    assert names["_map_branch_partitioned"] == 2
+
+
+def test_production_ride_and_branch_geometries_are_independent() -> None:
+    """The measured 256x4 geometry is expressible without widening branches."""
+    assert (
+        fixed_width_map.FixedWidthMapGeometry(
+            microtile_width=256,
+            profile_window=256,
+        )
+        == nbegm._RIDE_MAP_GEOMETRY
+    )
+    assert (
+        fixed_width_map.FixedWidthMapGeometry(
+            microtile_width=4,
+            profile_window=64,
+        )
+        == nbegm._BRANCH_MAP_GEOMETRY
+    )
