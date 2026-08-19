@@ -1,11 +1,10 @@
-"""NBEGM solves against a budget node named other than the solver's convention.
+"""NBEGM solves against a regime-owned budget node with a domain name.
 
 The continuous-budget EGM path composes the regime's budget from the model DAG.
 A real model may name that node for its own domain (`cash_on_hand`, `coh`), not
-the solver's convention `resources`. The `budget_target` field selects which
-DAG node is the consumption budget, mirroring how `DCEGM` takes `resources=`.
-Solving the tax toy with its budget node renamed to a non-default name and
-`NBEGM(budget_target=...)` set accordingly must reproduce the dense-grid
+`resources`. The regime's `LiquidMargin.resources` declaration selects the DAG
+node consumed by the solver; the numerical `NBEGM` configuration carries no DAG
+role names. Solving the renamed tax toy must reproduce the dense-grid
 `GridSearch` value across the asset interior and through the bracket kink.
 """
 
@@ -35,8 +34,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
     )
 
 
-def test_nbegm_with_renamed_budget_target_matches_brute_every_age():
-    """An explicitly named budget node solved by NBEGM equals brute at every age."""
+def test_nbegm_with_regime_owned_renamed_budget_matches_brute_every_age():
+    """A margin-owned renamed budget solved by NBEGM equals brute at every age."""
     nbegm = _solve("nbegm")
     brute = _solve("brute", n_consumption=1500)
     for period in brute:

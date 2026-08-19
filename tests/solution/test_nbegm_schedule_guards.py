@@ -100,7 +100,9 @@ def _build(*, alive_functions: Mapping[str, Callable[..., object]]) -> Model:
         alive_functions=alive_functions,
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm", savings_grid=SAVINGS_GRID, post_decision_function="savings"
+            "nbegm",
+            savings_grid=SAVINGS_GRID,
+            envelope_arithmetic="ordinary",
         ),
         constraints={"feasible": feasible},
     )

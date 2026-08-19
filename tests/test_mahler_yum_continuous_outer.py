@@ -38,6 +38,7 @@ from lcm_examples.mahler_yum_2024 import (
 )
 from lcm_examples.mahler_yum_2024.paper import (
     adapt_params_to_paper_mode,
+    build_alive_regime,
     build_paper_solver,
     cash_on_hand,
     create_mahler_yum_model,
@@ -134,11 +135,14 @@ def test_params_adapter_keeps_the_floor_and_renames_the_penalty() -> None:
 
 
 def test_paper_solver_wiring_matches_the_plan_interface() -> None:
+    """The DAG names live on the regime's outer margin, the numerics on the solver."""
+    outer = build_alive_regime().outer_continuous
+    assert outer.action == "effort"
+    assert outer.state == "lagged_effort"
+    assert outer.post_decision_state == "new_lagged_effort"
+    assert outer.no_adjustment == "keep_effort"
+
     solver = build_paper_solver()
-    assert solver.outer_action == "effort"
-    assert solver.outer_state == "lagged_effort"
-    assert solver.outer_post_decision == "new_lagged_effort"
-    assert solver.outer_no_adjustment_candidate == "keep_effort"
     aggregator = solver.branch_aggregator
     assert isinstance(aggregator, UniformObservedFixedCost)
     assert aggregator.scale_function == "adjustment_cost_scale"

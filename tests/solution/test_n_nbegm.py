@@ -9,6 +9,7 @@ to outer batching — before any breakpoint machinery enters.
 
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from lcm import NNBEGM, FiniteOuterGrid, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
@@ -18,27 +19,23 @@ from tests.test_models import n_nbegm_toy as toy
 _PARAMS = {"discount_factor": 0.95}
 
 
-def _nbegm_inner(**overrides: object) -> NBEGM:
-    config: dict[str, object] = {
-        "continuous_state": "wealth",
-        "post_decision_function": "liquid_savings",
-        "budget_target": "resources",
-        "savings_grid": toy.SAVINGS_GRID,
+def _nbegm_inner() -> NBEGM:
+    return NBEGM(
+        savings_grid=toy.SAVINGS_GRID,
+        envelope_arithmetic="ordinary",
+    )
+
+
+def test_public_nnbegm_contains_only_numerical_configuration() -> None:
+    """DAG role names live on the regime-owned margins, not the solver."""
+    solver = NNBEGM(
+        inner=_nbegm_inner(), outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID)
+    )
+    assert set(solver.__dataclass_fields__) == {
+        "inner",
+        "outer_search",
+        "branch_aggregator",
     }
-    config.update(overrides)
-    return NBEGM(**config)  # ty: ignore[invalid-argument-type]
-
-
-def test_rejects_outer_post_decision_equal_to_inner_post_decision() -> None:
-    """The outer durable and inner liquid post-decision must be distinct."""
-    with pytest.raises(RegimeInitializationError, match=r"post[-_]decision"):
-        NNBEGM(
-            inner=_nbegm_inner(),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="liquid_savings",
-            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
-        )
 
 
 def test_rejects_stochastic_outer_grid() -> None:
@@ -46,23 +43,22 @@ def test_rejects_stochastic_outer_grid() -> None:
     with pytest.raises(RegimeInitializationError, match="stochastic"):
         NNBEGM(
             inner=_nbegm_inner(),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
             outer_search=FiniteOuterGrid(
                 grid=NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
             ),
         )
 
 
-def test_rejects_inner_without_explicit_continuous_state() -> None:
-    """An inner NBEGM leaving `continuous_state` to inference is rejected."""
-    with pytest.raises(RegimeInitializationError, match="continuous_state"):
+def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
+    """`NNBEGM` cannot be built around an inner it does not support.
+
+    Two mechanisms refuse it and which one fires depends on whether runtime
+    type checking is active, so both are accepted here; that the explicit
+    structural guard exists is asserted separately against the guard itself.
+    """
+    with pytest.raises((RegimeInitializationError, BeartypeCallHintParamViolation)):
         NNBEGM(
-            inner=_nbegm_inner(continuous_state=None),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
+            inner=object(),  # ty: ignore[invalid-argument-type]
             outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
         )
 

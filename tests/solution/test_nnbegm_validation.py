@@ -1,109 +1,99 @@
-"""Spec for NNBEGM build-time validation (the fail-loudly nesting contract).
+"""Validation tests for the regime-owned NNBEGM nesting contract.
 
-A regime with `solver=NNBEGM(...)` must declare a real outer margin that is
-distinct from the margin the inner NB-EGM consumes. Violations raise
-`ModelInitializationError` at model build, naming the offending feature and the
-correct alternative solver. The checks run on the user regimes directly
-(`validate_nnbegm_regimes`), so each case asserts the outcome without building
-kernels or solving.
-
-The cases mutate the valid smooth two-asset toy one rule at a time:
-
-1. no outer margin (outer action absent) → use `NBEGM`,
-2. outer post-decision naming no declared function of the regime,
-3. outer action equals the inner consumption action → reject (distinct
-   margins).
-
-Two shapes NEGM rejects are *accepted* here, because the outer sweep re-solves
-the whole inner problem per outer node instead of lifting a frozen inversion:
-an Euler-state law that reads the outer post-decision, and a utility that
-multiplies consumption by it.
+`NestedConsumptionSavingsRegime` owns the two structural margins.  Its three
+validation tiers establish their kind, existence, and disjointness before the
+model-stage NNBEGM validator runs.  The solver-side validator therefore owns
+only the dynamic condition that the outer carried-state law must not depend on
+the inner liquid post-decision margin, directly or through a sibling law.
 """
-
-import dataclasses
-from typing import cast
 
 import pytest
 
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from lcm import AgeGrid, Model
-from lcm.exceptions import ModelInitializationError
-from lcm.regime import Regime as UserRegime
-from lcm.solvers import NNBEGM
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    Regime,
+)
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy
 
-_SOLVER = cast("NNBEGM", n_nbegm_toy.build_solver(variant="n_nbegm"))
 
-_VALID = UserRegime(
-    active=lambda age: age <= 20,
-    states={
-        "wealth": n_nbegm_toy.WEALTH_GRID,
-        "illiquid": n_nbegm_toy.ILLIQUID_GRID,
-    },
-    state_transitions={
-        "wealth": n_nbegm_toy.next_wealth,
-        "illiquid": n_nbegm_toy.durable_transition,
-    },
-    actions={
-        "consumption": n_nbegm_toy.CONSUMPTION_GRID,
-        "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
-    },
-    transition=n_nbegm_toy.next_regime,
-    functions={
-        "utility": n_nbegm_toy.utility,
-        "new_illiquid": n_nbegm_toy.new_illiquid,
-        "resources": n_nbegm_toy.resources,
-        "liquid_savings": n_nbegm_toy.liquid_savings,
-        "keep_illiquid": n_nbegm_toy.keep_illiquid,
-        "credited": n_nbegm_toy.credited,
-    },
-    solver=_SOLVER,
-)
+def _valid_regime() -> NestedConsumptionSavingsRegime:
+    return NestedConsumptionSavingsRegime(
+        active=lambda age: age <= 20,
+        states={
+            "wealth": n_nbegm_toy.WEALTH_GRID,
+            "illiquid": n_nbegm_toy.ILLIQUID_GRID,
+        },
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": n_nbegm_toy.durable_transition,
+        },
+        actions={
+            "consumption": n_nbegm_toy.CONSUMPTION_GRID,
+            "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
+        },
+        transition=n_nbegm_toy.next_regime,
+        functions={
+            "utility": n_nbegm_toy.utility,
+            "new_illiquid": n_nbegm_toy.new_illiquid,
+            "resources": n_nbegm_toy.resources,
+            "liquid_savings": n_nbegm_toy.liquid_savings,
+            "keep_illiquid": n_nbegm_toy.keep_illiquid,
+            "credited": n_nbegm_toy.credited,
+        },
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_illiquid",
+            no_adjustment="keep_illiquid",
+        ),
+        solver=n_nbegm_toy.build_solver(variant="n_nbegm"),
+    )
 
 
-def _validate(regime: UserRegime) -> None:
-    """Run the NNBEGM contract check on a single-regime mapping."""
+_VALID = _valid_regime()
+
+
+def _validate(regime: Regime) -> None:
+    """Run the NNBEGM dynamic contract check on a single-regime mapping."""
     validate_nnbegm_regimes(user_regimes={"alive": regime})
 
 
-def test_valid_two_asset_toy_nnbegm_regime_passes_validation():
+def test_valid_two_asset_toy_nnbegm_regime_passes_validation() -> None:
     """The smooth two-asset toy satisfies the nesting contract."""
     _validate(_VALID)
 
 
-def test_outer_action_absent_is_rejected_with_nbegm_pointer():
-    """A regime with no outer continuous action is a pure 1-D problem.
-
-    Dropping the durable action leaves a single continuous action; NNBEGM would
-    silently run as plain NB-EGM, so it is rejected with a pointer to `NBEGM`.
-    """
-    regime = _VALID.replace(actions={"consumption": n_nbegm_toy.CONSUMPTION_GRID})
-    with pytest.raises(ModelInitializationError, match="use `NBEGM`"):
-        _validate(regime)
-
-
-def test_outer_post_decision_not_declared_is_rejected():
-    """An outer post-decision naming no function of the regime fails."""
-    regime = _VALID.replace(
-        solver=dataclasses.replace(_SOLVER, outer_post_decision="not_a_function")
-    )
-    with pytest.raises(ModelInitializationError, match="not a declared function"):
-        _validate(regime)
+def test_margin_collision_is_rejected_before_solver_validation() -> None:
+    """Tier one rejects a role name shared by the liquid and outer margins."""
+    with pytest.raises(RegimeInitializationError, match="must not collide"):
+        _VALID.replace(
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="consumption",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            )
+        )
 
 
-def test_outer_action_equal_to_the_inner_consumption_action_is_rejected():
-    """The outer margin must not be the action the inner NB-EGM consumes.
-
-    The inner solver claims the regime's first continuous action as its
-    consumption margin, so an outer action pointing at it swaps the two
-    margins.
-    """
-    regime = _VALID.replace(
-        solver=dataclasses.replace(_SOLVER, outer_action="consumption")
-    )
-    with pytest.raises(ModelInitializationError, match="coincides with the inner"):
-        _validate(regime)
+def test_explicitly_masked_outer_function_is_rejected_before_model_build() -> None:
+    """Tier two rejects an explicitly masked outer post-decision function."""
+    with pytest.raises(RegimeInitializationError, match="explicitly masked"):
+        _VALID.replace(
+            functions={**dict(_VALID.functions), "new_illiquid": None},
+        )
 
 
 def _euler_law_reading_outer_margin(
@@ -113,13 +103,8 @@ def _euler_law_reading_outer_margin(
     return (1.0 + n_nbegm_toy.LIQUID_RATE) * liquid_savings + 0.01 * new_illiquid
 
 
-def test_an_euler_law_reading_the_outer_margin_is_accepted():
-    """A liquid law that reads the outer post-decision stays in scope.
-
-    The outer sweep binds the outer post-decision as a flat param and re-runs
-    the whole inner solve per outer node, so the law sees a constant and the
-    inner Euler inversion is exact conditional on that node.
-    """
+def test_an_euler_law_reading_the_outer_margin_is_accepted() -> None:
+    """The outer node is fixed while the inner solve runs, so this is valid."""
     regime = _VALID.replace(
         state_transitions={
             "wealth": _euler_law_reading_outer_margin,
@@ -132,20 +117,15 @@ def test_an_euler_law_reading_the_outer_margin_is_accepted():
 def _utility_coupling_consumption_and_durable_move(
     consumption: ContinuousAction, new_illiquid: ContinuousState
 ) -> FloatND:
-    """A Cobb-Douglas composite of consumption and the chosen durable service."""
+    """A Cobb-Douglas composite of consumption and chosen durable service."""
     composite = consumption**0.8 * new_illiquid**0.2
     return composite ** (1.0 - n_nbegm_toy.RISK_AVERSION) / (
         1.0 - n_nbegm_toy.RISK_AVERSION
     )
 
 
-def test_a_utility_composite_of_consumption_and_the_durable_is_accepted():
-    """A multiplicative composite flow stays in scope.
-
-    With the durable node bound, the composite collapses to a single power of
-    consumption, so the inner inversion is well defined — this is the
-    Kaplan-Violante flow the two-asset models use.
-    """
+def test_a_utility_composite_of_consumption_and_the_durable_is_accepted() -> None:
+    """Conditional on an outer node, utility remains a 1-D inner problem."""
     regime = _VALID.replace(
         functions={
             **dict(_VALID.functions),
@@ -155,36 +135,18 @@ def test_a_utility_composite_of_consumption_and_the_durable_is_accepted():
     _validate(regime)
 
 
-def test_a_regime_with_a_non_nested_solver_is_left_alone():
-    """The NNBEGM contract check only inspects regimes with an `NNBEGM` solver."""
-    regime = _VALID.replace(
-        solver=n_nbegm_toy.build_solver(variant="brute"),
+def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
+    """The dynamic NNBEGM check ignores regimes not bound to NNBEGM."""
+    regime = Regime(
+        active=_VALID.active,
+        states=_VALID.states,
+        state_transitions=_VALID.state_transitions,
         actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
+        transition=_VALID.transition,
+        functions=_VALID.functions,
+        solver=n_nbegm_toy.build_solver(variant="brute"),
     )
     _validate(regime)
-
-
-def test_model_build_runs_the_nnbegm_contract_check():
-    """`Model(...)` rejects a swapped-margin NNBEGM regime, not only the check."""
-    alive = _VALID.replace(
-        solver=dataclasses.replace(_SOLVER, outer_action="consumption")
-    )
-    dead = UserRegime(
-        transition=None,
-        active=lambda age: age > 20,
-        states={
-            "wealth": n_nbegm_toy.WEALTH_GRID,
-            "illiquid": n_nbegm_toy.ILLIQUID_GRID,
-        },
-        functions={"utility": n_nbegm_toy.terminal_utility},
-    )
-    with pytest.raises(ModelInitializationError, match="coincides with the inner"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            regime_id_class=n_nbegm_toy.RegimeId,
-            ages=AgeGrid(start=20, stop=25, step="5Y"),
-            fixed_params={"final_age_alive": 20},
-        )
 
 
 def _outer_law_reading_the_inner_savings(
@@ -194,14 +156,8 @@ def _outer_law_reading_the_inner_savings(
     return new_illiquid + 0.01 * liquid_savings
 
 
-def test_an_outer_law_reading_the_inner_savings_margin_is_rejected():
-    """A durable law depending on the inner savings choice is not an NNBEGM model.
-
-    The solver evaluates the declared law to find what the next period carries.
-    Reading the inner post-decision ties the stock carried forward to the
-    consumption the inner Euler inversion is solving for, so the outer max stops
-    ranging over independent problems and the nesting is no longer valid.
-    """
+def test_an_outer_law_reading_the_inner_savings_margin_is_rejected() -> None:
+    """Direct dependence on the inner post-decision axis breaks nesting."""
     regime = _VALID.replace(
         state_transitions={
             "wealth": n_nbegm_toy.next_wealth,
@@ -215,17 +171,12 @@ def test_an_outer_law_reading_the_inner_savings_margin_is_rejected():
 def _outer_law_reading_a_sibling_law(
     new_illiquid: ContinuousState, next_wealth: ContinuousState
 ) -> ContinuousState:
-    """A durable law reaching the inner margin through the Euler state's law."""
+    """A durable law reaching the inner margin through the Euler-state law."""
     return new_illiquid + 0.01 * next_wealth
 
 
-def test_an_outer_law_reaching_the_inner_margin_through_a_sibling_is_rejected():
-    """The coupling is caught even when a sibling law stands between.
-
-    `next_illiquid` reads `next_wealth`, which reads the inner post-decision. A
-    check that stopped at the sibling's name would see a law reading only states
-    and miss the coupling entirely.
-    """
+def test_an_outer_law_reaching_the_inner_margin_through_a_sibling_is_rejected() -> None:
+    """The dependency traversal follows sibling state-transition laws."""
     regime = _VALID.replace(
         state_transitions={
             "wealth": n_nbegm_toy.next_wealth,
@@ -236,12 +187,8 @@ def test_an_outer_law_reaching_the_inner_margin_through_a_sibling_is_rejected():
         _validate(regime)
 
 
-def test_a_depreciating_outer_law_is_accepted():
-    """A law reading only the chosen stock stays in scope.
-
-    `next_z = alpha * s'` is the ordinary durable law; the guard must not reject
-    it while catching the coupled shapes above.
-    """
+def test_a_depreciating_outer_law_is_accepted() -> None:
+    """A law reading only the chosen outer stock stays in scope."""
 
     def depreciating(new_illiquid: ContinuousState) -> ContinuousState:
         return 0.7 * new_illiquid
@@ -253,3 +200,29 @@ def test_a_depreciating_outer_law_is_accepted():
         },
     )
     _validate(regime)
+
+
+def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
+    """`Model(...)` invokes the same dynamic coupling guard."""
+    alive = _VALID.replace(
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": _outer_law_reading_the_inner_savings,
+        }
+    )
+    dead = Regime(
+        transition=None,
+        active=lambda age: age > 20,
+        states={
+            "wealth": n_nbegm_toy.WEALTH_GRID,
+            "illiquid": n_nbegm_toy.ILLIQUID_GRID,
+        },
+        functions={"utility": n_nbegm_toy.terminal_utility},
+    )
+    with pytest.raises(ModelInitializationError, match="belongs to the inner margin"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            regime_id_class=n_nbegm_toy.RegimeId,
+            ages=AgeGrid(start=20, stop=25, step="5Y"),
+            fixed_params={"final_age_alive": 20},
+        )

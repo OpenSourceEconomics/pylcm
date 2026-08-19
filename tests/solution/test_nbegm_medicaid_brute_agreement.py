@@ -13,7 +13,14 @@ import numpy as np
 import pytest
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
+from lcm import (
+    AgeGrid,
+    ConsumptionSavingsRegime,
+    LinSpacedGrid,
+    LiquidMargin,
+    MarkovTransition,
+    Model,
+)
 from lcm.case_piece import BoundaryKind, EqualityOwner
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
@@ -142,7 +149,7 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
     split.
     """
     grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=40)
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         states={"liquid": grid},
         state_transitions={
@@ -165,7 +172,16 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
             "savings": toy.savings,
         },
         active=lambda age: age < 1.0,
-        solver=NBEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40)),
+        solver=NBEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40),
+            envelope_arithmetic="ordinary",
+        ),
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
