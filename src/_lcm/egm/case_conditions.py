@@ -86,12 +86,25 @@ def _threshold_condition(
 
 
 def _fail_if_threshold_is_not_a_named_value(*, edge: AffineBreakpoint) -> None:
-    """Refuse a threshold the IR has no way to refer to.
+    """Refuse a threshold the condition language has no way to refer to.
 
     An indexed, sub-keyed, or column-selected threshold is a read out of a
     table at a position, not a named value. Rendering it as a bare reference to
     the table would compare the variable against the whole table and read, to
     every consumer, like an ordinary scalar boundary.
+
+    This is the settled arrangement rather than a gap. A condition earns its
+    keep by being *provable*: a threshold known when the model is built can be
+    compared against a grid and either proved or refused. A table entry is
+    resolved from params at solve time, so a comparison against one could never
+    be proved — it would only add a second right-operand kind that every shape
+    test has to tell apart from a constant, and the first test that forgot
+    would prove something against a value nobody knew yet.
+
+    Such a schedule keeps its own route, which reads the table at the ride-along
+    cell and the selected column rather than receiving it flattened into a name.
+    The case for revisiting is therefore not that the language could be more
+    expressive; it is a schedule that route cannot consume.
     """
     table_valued = {
         "indexed_by": edge.indexed_by,
@@ -103,9 +116,9 @@ def _fail_if_threshold_is_not_a_named_value(*, edge: AffineBreakpoint) -> None:
         msg = (
             f"The threshold '{edge.threshold}' declares {declared}, so it "
             "is read out of a table rather than named directly. The condition "
-            "language refers to values by name and has no spelling for that "
-            "read, so the threshold cannot be stated as a condition; a solver "
-            "that needs one must take this schedule through the route that "
-            "resolves the table itself."
+            "language refers to values by name and has no spelling for a read "
+            "at a position, so this threshold is not statable as a condition. "
+            "The schedule stays on the boundary route, which resolves the "
+            "table itself; only the constraint path treats it as opaque."
         )
         raise ModelInitializationError(msg)
