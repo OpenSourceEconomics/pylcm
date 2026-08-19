@@ -175,6 +175,17 @@ class NEGM(TwoMarginSolver):
             user_regime=context.user_regimes[context.regime_name],
         )
 
+    def validate_build(self, *, context: SolverBuildContext) -> None:
+        """Apply the inner solver's build-time gates to this regime.
+
+        The inner kernels run unchanged inside every outer candidate, so a
+        build-time capability the inner solver requires is required here for
+        exactly the same reason. The inner gates read the inner solver's own
+        configuration rather than any state name, so they carry over without
+        being re-pointed at the nest's axes.
+        """
+        self.inner.validate_build(context=context)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 

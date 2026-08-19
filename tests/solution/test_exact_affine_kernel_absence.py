@@ -16,6 +16,7 @@ import pytest
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
@@ -241,3 +242,11 @@ def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
     ffi._ensure_registered()
 
     assert calls == ["cpu"]
+
+
+def test_a_nested_regime_reports_its_inner_exact_backend_as_unavailable(monkeypatch):
+    """A NEGM regime carries its inner solver's capability gate to model build."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
+        negm_kinked_toy.build_model()
