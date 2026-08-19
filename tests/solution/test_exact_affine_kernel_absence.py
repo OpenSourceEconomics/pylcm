@@ -71,7 +71,7 @@ def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
 def test_a_gpu_backend_requires_a_loadable_cuda_exact_kernel(monkeypatch):
     """A loadable CPU library alone does not satisfy an exact GPU request."""
     monkeypatch.setattr(ffi, "kernel_available", lambda: True)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
 
     assert ffi.kernel_available_for_current_backend() is False
@@ -118,7 +118,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
 
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_register_platform", raise_missing_symbol)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
@@ -140,7 +140,7 @@ def test_a_present_unloadable_kernel_is_unavailable_but_not_absent(
 
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_register_platform", raise_load_error)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
@@ -232,7 +232,7 @@ def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
     library.touch()
     calls = []
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
     monkeypatch.setattr(
         ffi, "_register_platform", lambda **kwargs: calls.append(kwargs["platform"])

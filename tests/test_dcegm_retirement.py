@@ -19,13 +19,17 @@ from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import FloatND
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base, dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
     get_full_params,
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+]
 
 ANALYTICAL_CASES = {
     "iskhakov_2017_five_periods": {"n_periods": 6, "disutility_of_work": 1.0},

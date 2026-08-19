@@ -170,22 +170,6 @@ class EGM(OneMarginSolver):
 
         liquid_state = continuous_states[0]
         consumption_action = continuous_actions[0]
-        declared = {
-            "liquid.state": (bound.continuous_state, liquid_state),
-            "liquid.action": (bound.continuous_action, consumption_action),
-        }
-        mismatched = sorted(
-            f"{role} names {declared_name!r}, but the regime's only continuous "
-            f"{role.split('.')[1]} is {actual!r}"
-            for role, (declared_name, actual) in declared.items()
-            if declared_name != actual
-        )
-        if mismatched:
-            msg = (
-                f"EGM regime '{regime_name}' declares margin roles the regime "
-                f"does not carry: {'; '.join(mismatched)}."
-            )
-            raise ModelInitializationError(msg)
         if bound.post_decision_function not in user_regime.functions:
             msg = (
                 f"EGM regime '{regime_name}' is missing the declared "

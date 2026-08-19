@@ -8,15 +8,19 @@ the same `(u')^{-1}`.
 """
 
 import numpy as np
+import pytest
 
 from lcm import AgeGrid, Model
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_model,
     get_retirement_only_params,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def _numeric_retirement_model(n_periods: int) -> Model:

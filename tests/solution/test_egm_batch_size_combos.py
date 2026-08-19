@@ -36,7 +36,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import invariance_tolerances
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, invariance_tolerances
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 N_PERIODS = 4
 N_WEALTH = 12

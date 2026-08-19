@@ -19,7 +19,12 @@ import pytest
 
 from _lcm.config import TEST_DATA
 from lcm import IrregSpacedGrid
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import dcegm_paper_twin
+
+_NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 pytestmark = pytest.mark.slow
 
@@ -60,6 +65,7 @@ def _wealth_node_indices(wealth_points: np.ndarray) -> np.ndarray:
     return indices
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
     """A savings grid clustered toward the borrowing limit fixes the low-wealth rows.
 
@@ -96,7 +102,14 @@ def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
     ("solver", "rtol", "atol"),
     [
         ("brute_force", 2e-2, 2e-2),
-        ("dcegm", 2e-3, 2e-3),
+        pytest.param(
+            "dcegm",
+            2e-3,
+            2e-3,
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
     ],
 )
 def test_twin_smoothed_value_matches_dcegm_reference(solver, rtol, atol, reference):
