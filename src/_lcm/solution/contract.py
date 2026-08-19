@@ -376,11 +376,22 @@ class _BoundLiquidMargin:
     """Resolved DAG role names carried privately by an EGM-family solver."""
 
     state: StateName
+    """Name of the continuous state the liquid margin is solved over."""
+
     action: ActionName
+    """Name of the continuous action the Euler equation is inverted for."""
+
     resources: FunctionName
+    """Name of the function giving resources available before the action."""
+
     post_decision_state: FunctionName
+    """Name of the function giving the post-decision state the grid spans."""
+
     before_cost: FunctionName | None = None
+    """Gross-resources function of a composed `NetOfAdjustmentCost`, else `None`."""
+
     cost: FunctionName | None = None
+    """Cost function of a composed `NetOfAdjustmentCost`, else `None`."""
 
 
 @dataclass(frozen=True)
@@ -392,9 +403,16 @@ class _BoundOuterContinuousMargin:
     """
 
     state: StateName
+    """Name of the continuous state the outer margin searches over."""
+
     action: ActionName
+    """Name of the continuous action setting the outer margin."""
+
     post_decision_state: FunctionName
+    """Name of the function giving the outer post-decision state."""
+
     no_adjustment: FunctionName | None
+    """Name of the no-adjustment map, or `None` for the identity map."""
 
 
 @dataclass(frozen=True, kw_only=True)

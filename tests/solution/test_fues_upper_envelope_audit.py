@@ -77,9 +77,9 @@ def test_dominated_duplicate_point_is_not_retained():
 def test_interior_duplicate_collapses_to_max_value():
     """An interior duplicate abscissa keeps only its maximal-value candidate.
 
-    The reviewer's counterexample: two candidates at `R=1` with values `0` and
-    `1` (the lower one listed first). The refined envelope must keep `(1, 1)`
-    and drop `(1, 0)`, so an interpolated read at `R=1` returns the envelope
+    Two candidates sit at `R=1` with values `0` and `1`, the lower one listed
+    first. The refined envelope keeps `(1, 1)` and drops `(1, 0)`, so an
+    interpolated read at `R=1` returns the envelope
     value `1`, not the dominated `0` that index-ordered interpolation would
     otherwise surface for queries just below the duplicate.
     """

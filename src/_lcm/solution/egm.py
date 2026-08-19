@@ -425,13 +425,14 @@ class EGM(OneMarginSolver):
 class _BoundEGM(EGM):
     """Internal EGM configuration with regime-resolved DAG role names.
 
-    Public :class:`EGM` contains numerical configuration only.  A
-    ``ConsumptionSavingsRegime`` binds its liquid margin into this private
+    Public `EGM` contains numerical configuration only.  A
+    `ConsumptionSavingsRegime` binds its liquid margin into this private
     subclass before model processing, allowing the numerical implementation to
     keep using explicit names without re-exposing them on the public solver.
     """
 
     post_decision_function: FunctionName
+    """Name of the function giving the savings the exogenous grid spans."""
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -96,7 +96,7 @@ def kernel_built_for_current_backend() -> bool:
     A missing file is a supported capability absence and can justify skipping a
     test that explicitly declares an exact-kernel requirement. A file that is
     present but stale, unloadable, or missing a symbol is a broken build and must
-    reach :func:`_ensure_registered`, where it fails loudly.
+    reach `_ensure_registered`, where it fails loudly.
     """
     if not kernel_built():
         return False
@@ -290,7 +290,7 @@ def exact_query_winner(
     winner is chosen.
 
     Segment operands are one-dimensional and shared by all elements of
-    ``x_query``. An outer :func:`jax.vmap` is supported with
+    `x_query`. An outer `jax.vmap` is supported with
     ``vmap_method="sequential"``: the transformed program contains one loop
     around this opaque call rather than exposing the integer representation to
     XLA, while an unbatched array of queries is resolved by one call.

@@ -410,12 +410,25 @@ class _BoundNEGM(NEGM):
     """Internal NEGM configuration with both regime margins resolved."""
 
     inner: _BoundDCEGM
+    """The liquid-margin solver run inside every outer candidate."""
+
     outer_action: ActionName
+    """Name of the continuous action setting the outer margin."""
+
     outer_state: StateName
+    """Name of the continuous state the outer margin searches over."""
+
     outer_post_decision: FunctionName
+    """Name of the function giving the outer post-decision state."""
+
     outer_no_adjustment_candidate: FunctionName | None
+    """Name of the no-adjustment map, or `None` for the identity map."""
+
     outer_cost: FunctionName | None
+    """Cost function of a composed `NetOfAdjustmentCost`, else `None`."""
+
     outer_cost_base: FunctionName | None
+    """Gross-resources function of that composition, else `None`."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -973,32 +986,5 @@ def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:
             "is the exogenous search grid over the durable post-decision margin; "
             "it carries no transition. A stochastic durable margin belongs in a "
             "process state, not the NEGM outer search."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_outer_action_is_inner_action(
-    *, outer_action: ActionName, inner: _BoundDCEGM
-) -> None:
-    if outer_action == inner.continuous_action:
-        msg = (
-            f"NEGM.outer_action '{outer_action}' coincides with the inner "
-            f"DC-EGM continuous action '{inner.continuous_action}'. The outer "
-            "durable/illiquid margin and the inner consumption margin must be "
-            "distinct actions."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_outer_post_decision_is_inner_post_decision(
-    *, outer_post_decision: FunctionName, inner: _BoundDCEGM
-) -> None:
-    if outer_post_decision == inner.post_decision_function:
-        msg = (
-            f"NEGM.outer_post_decision '{outer_post_decision}' coincides with "
-            f"the inner DC-EGM post-decision function "
-            f"'{inner.post_decision_function}'. The outer post-decision (the "
-            "next-period durable stock) and the inner post-decision (the liquid "
-            "savings) must be distinct functions."
         )
         raise RegimeInitializationError(msg)
