@@ -8,7 +8,8 @@ A regime's `solver` field selects the algorithm that computes its value function
 backward induction. pylcm ships four solvers (`GridSearch`, `DCEGM`, `NEGM`, `EGM`; see
 `lcm.solvers`), and the engine is designed so that new ones can be added without
 touching the backward-induction loop. This page specifies the contract a solver
-implements, the lifecycle the engine drives it through, and the invariants that keep the
+implements, which of the three base classes it subclasses and why the regime decides
+that, the lifecycle the engine drives it through, and the invariants that keep the
 generic layer solver-agnostic.
 
 The single normative source is `src/_lcm/solution/contract.py`. Everything the
@@ -100,6 +101,109 @@ switches on solver type to bind params.
 **`BackwardInductionResult`.** The loop's return value: `value_functions` (period →
 regime → V array) and `simulation_policies` (period → regime → published policy, sparse
 over regimes). Internal — `Model.solve` unpacks it into the public return shape.
+
+## Choosing the base class
+
+`Solver` is not the only base. The solver family has three members, all exported from
+`lcm` and `lcm.solvers`, and **which one a new solver subclasses is forced by the regime
+it is meant to attach to** — it is not a style choice.
+
+| Regime class                     | Accepts                           | Base class to subclass |
+| -------------------------------- | --------------------------------- | ---------------------- |
+| `Regime`                         | any `Solver`                      | `Solver`               |
+| `ConsumptionSavingsRegime`       | `OneMarginSolver` or `GridSearch` | `OneMarginSolver`      |
+| `NestedConsumptionSavingsRegime` | `TwoMarginSolver` or `GridSearch` | `TwoMarginSolver`      |
+
+The two specialised regimes enforce this at construction, not at solve time: each runs
+an `isinstance` check in `__post_init__` and raises `RegimeInitializationError` naming
+the base it wanted. So a solver that subclasses `Solver` directly is complete and
+correct for a plain `Regime`, and a `ConsumptionSavingsRegime` will refuse it — the
+error arrives when the regime is built, long before any kernel runs.
+
+### The `Solver`-direct path
+
+Subclass `Solver` when the algorithm reads its state and action grids straight off the
+state-action space and needs no DAG node singled out. Grid search is exactly this case:
+it maximises over the action grid at every state, so no node in the regime's DAG plays a
+distinguished role. Implement `build_period_kernels`, override the validation hooks and
+`requires_continuation` if the algorithm needs them, and nothing else. `GridSearch` is
+the minimal reference.
+
+### The margin families
+
+An endogenous-grid method cannot work from the grids alone. It has to know *which* DAG
+node is the liquid state, which is the action it inverts for, which node carries
+resources, and which is the post-decision state — the Euler equation is written in those
+four specific quantities. Those names belong to the model, so the **regime** declares
+them and the **solver** carries numerical configuration only: grids, batch sizes,
+envelope choice, tolerances.
+
+`OneMarginSolver` is the marker for solvers consuming one such margin, and
+`TwoMarginSolver` for solvers consuming a liquid margin plus an outer continuous
+(durable or illiquid) margin. Each adds exactly one abstract operation to `Solver`: a
+binding method that takes the regime's resolved names and returns an immutable copy of
+the solver carrying them.
+
+```python
+class OneMarginSolver(Solver):
+    def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> OneMarginSolver: ...
+
+
+class TwoMarginSolver(Solver):
+    def _with_margins(
+        self,
+        *,
+        liquid: _BoundLiquidMargin,
+        outer: _BoundOuterContinuousMargin,
+    ) -> TwoMarginSolver: ...
+```
+
+% TODO(binding-seam): the method and bound-margin names above are the private spelling.
+% Replace with the published names once the public surface of this seam is settled; the
+% surrounding prose and the `bind_roles` guidance below are unaffected by that rename.
+
+These names are private today, so a solver defined outside the package imports them from
+`_lcm.solution.contract`. Everything else the family needs — `Solver`,
+`OneMarginSolver`, `TwoMarginSolver`, `SolverBuildContext`, `SolutionKernels` — is
+public.
+
+### Implementing the binding method
+
+Do not construct the bound copy by hand. Route it through `bind_roles`, which returns an
+object that is still the type the user constructed: a subclass keeps the fields it added
+and the methods it overrides, so a custom solver reaches the engine as itself rather
+than as the stock class it derived from.
+
+```python
+def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundMySolver:
+    """Bind regime-owned DAG names without exposing them on the public config."""
+    return cast(
+        "_BoundMySolver",
+        bind_roles(
+            solver=self,
+            role_type=_BoundMySolver,
+            continuous_state=margin.state,
+            continuous_action=margin.action,
+            resources=margin.resources,
+            post_decision_function=margin.post_decision_state,
+        ),
+    )
+```
+
+`role_type` is a private frozen dataclass subclassing the public solver and declaring
+one field per resolved name. The public class stays free of them, so a user never sees —
+or can set — a role the regime owns. Inside the kernels, recover the names by casting
+`self` to the bound type; the engine only ever hands back an instance that carries them.
+
+### Worked examples in the tree
+
+- **`Solver` directly** — `GridSearch`.
+- **`OneMarginSolver`** — `EGM` and `DCEGM`. Both bind the same four liquid names, and
+  `EGM._with_liquid_margin` is the shortest complete instance of the pattern above.
+- **`TwoMarginSolver`** — `NEGM`, which binds a liquid margin for its inner solve and an
+  outer margin for the durable grid search around it. A nest hands on its *bound* inner
+  solver rather than the public one it was declared with; `bind_roles` supports that by
+  letting a role entry replace a field the solver already carries.
 
 ## The lifecycle
 
