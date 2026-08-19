@@ -19,16 +19,18 @@ from lcm import (
     NBEGM,
     AgeGrid,
     CESAggregator,
+    ConsumptionSavingsRegime,
     GridSearch,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import Solver
+from lcm.solvers import OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -91,9 +93,9 @@ def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
 
 
-def _build_model(*, solver: Solver) -> Model:
+def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
         state_transitions={"liquid": _next_liquid},
@@ -108,6 +110,12 @@ def _build_model(*, solver: Solver) -> Model:
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -164,10 +172,8 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
     sigma = _PARAMS["alive"]["health"]["sigma"]
     nbegm = _build_model(
         solver=NBEGM(
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
-            continuous_state="liquid",
+            envelope_arithmetic="ordinary",
         )
     ).solve(params=_PARAMS, log_level="debug")
     values = np.asarray(nbegm[1]["alive"])[:, 0]
@@ -186,10 +192,8 @@ def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:
     """The joint CE over a flow-scaling IID node matches the dense grid search."""
     nbegm = _build_model(
         solver=NBEGM(
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
-            continuous_state="liquid",
+            envelope_arithmetic="ordinary",
         )
     ).solve(params=_PARAMS, log_level="debug")
     brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
@@ -211,18 +215,14 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
     """
     fused = _build_model(
         solver=NBEGM(
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
-            continuous_state="liquid",
+            envelope_arithmetic="ordinary",
         )
     ).solve(params=_PARAMS, log_level="debug")
     batched = _build_model(
         solver=NBEGM(
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
-            continuous_state="liquid",
+            envelope_arithmetic="ordinary",
             stochastic_node_batch_size=2,
         )
     ).solve(params=_PARAMS, log_level="debug")

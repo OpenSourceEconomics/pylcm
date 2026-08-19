@@ -15,14 +15,16 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     categorical,
 )
 from lcm.regime import Regime
-from lcm.solvers import GridSearch
+from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -109,37 +111,58 @@ def _build_living_regime(
     solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        post_decision_function="savings",
     )
     liquid_law = next_liquid_from_savings
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
+    regime_actions = {
+        "consumption": LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
+    }
+    regime_states = {"liquid": liquid_grid, "kind": DiscreteGrid(ConsumerKind)}
+    regime_state_transitions = {
+        "liquid": {
+            "alive_a": liquid_law,
+            "alive_b": liquid_law,
+            "dead": liquid_law,
+        },
+        "kind": {
+            "alive_a": lcm.fixed_transition("kind"),
+            "alive_b": lcm.fixed_transition("kind"),
+        },
+    }
+    regime_transition = {
+        "alive_a": MarkovTransition(prob_to_alive_a),
+        "alive_b": MarkovTransition(prob_to_alive_b),
+        "dead": MarkovTransition(prob_to_dead),
+    }
+    active = lambda age, fa=final_age: age < fa  # noqa: E731
+    # Built per branch: the NBEGM schedule solver takes its DAG role names from
+    # the regime's liquid margin, which only the margin-declaring class carries.
+    if isinstance(solver, NBEGM):
+        return ConsumptionSavingsRegime(
+            actions=regime_actions,
+            states=regime_states,
+            state_transitions=regime_state_transitions,
+            constraints=constraints,
+            transition=regime_transition,
+            functions=functions,
+            active=active,
+            solver=solver,
+            liquid=LiquidMargin(
+                state="liquid",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
     return Regime(
-        actions={
-            "consumption": LinSpacedGrid(
-                start=0.1, stop=liquid_max, n_points=n_consumption
-            )
-        },
-        states={"liquid": liquid_grid, "kind": DiscreteGrid(ConsumerKind)},
-        state_transitions={
-            "liquid": {
-                "alive_a": liquid_law,
-                "alive_b": liquid_law,
-                "dead": liquid_law,
-            },
-            "kind": {
-                "alive_a": lcm.fixed_transition("kind"),
-                "alive_b": lcm.fixed_transition("kind"),
-            },
-        },
+        actions=regime_actions,
+        states=regime_states,
+        state_transitions=regime_state_transitions,
         constraints=constraints,
-        transition={
-            "alive_a": MarkovTransition(prob_to_alive_a),
-            "alive_b": MarkovTransition(prob_to_alive_b),
-            "dead": MarkovTransition(prob_to_dead),
-        },
+        transition=regime_transition,
         functions=functions,
-        active=lambda age, fa=final_age: age < fa,
+        active=active,
         solver=solver,
     )
 

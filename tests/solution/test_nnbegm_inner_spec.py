@@ -1,94 +1,151 @@
-"""The nested-inner adapter normalizes 1-D EGM solver configs.
+"""Regime margins replace the retired NNBEGM inner-name normalizer.
 
-Outer-search solvers wrap a one-dimensional inner EGM solver (DCEGM or
-NBEGM). The two inner configs name the same concepts differently (`resources`
-vs `budget_target`) and NBEGM leaves two slots inferable (`continuous_state`,
-`post_decision_function`); `get_nnbegm_inner_spec` maps either config onto one
-explicit spec so the outer kernel code never dispatches on the inner type.
+The public NBEGM and NNBEGM dataclasses contain numerical configuration only.
+Specialized regime construction binds one shared ``LiquidMargin`` into the
+private solver companions, so the nested kernel receives the same explicit
+liquid names without dispatching on an inner-solver type.
 """
+
+from dataclasses import fields
+from typing import cast
 
 import pytest
 
-from _lcm.solution.dcegm import _BoundDCEGM
-from _lcm.solution.nnbegm import get_nnbegm_inner_spec
-from lcm import LinSpacedGrid
+from _lcm.solution.nbegm import NBEGM, _BoundNBEGM
+from _lcm.solution.nnbegm import (
+    NNBEGM,
+    _BoundNNBEGM,
+    _fail_if_inner_is_not_nbegm,
+)
+from lcm import (
+    ConsumptionSavingsRegime,
+    FiniteOuterGrid,
+    GridSearch,
+    LinSpacedGrid,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import NBEGM, GridSearch
+from lcm.typing import UserFunction
 
-_SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)
-
-
-def _dcegm() -> _BoundDCEGM:
-    """A DC-EGM inner carrying the DAG names a regime's liquid margin supplies.
-
-    The nested spec is read off a solver whose margin names are already
-    resolved, so the bound form is what the function under test receives.
-    """
-    return _BoundDCEGM(
-        continuous_state="liquid",
-        continuous_action="consumption",
-        resources="cash_on_hand",
-        post_decision_function="liquid_savings",
-        savings_grid=_SAVINGS_GRID,
-    )
+_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)
+_LIQUID = LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="cash_on_hand",
+    post_decision_state="liquid_savings",
+)
+_OUTER = OuterContinuousMargin(
+    state="illiquid",
+    action="illiquid_investment",
+    post_decision_state="new_illiquid",
+    no_adjustment=outer_unchanged,
+)
 
 
-def _nbegm(**overrides: object) -> NBEGM:
-    config: dict[str, object] = {
-        "continuous_state": "liquid",
-        "post_decision_function": "liquid_savings",
-        "budget_target": "cash_on_hand",
-        "savings_grid": _SAVINGS_GRID,
+def _functions() -> dict[str, UserFunction]:
+    return {
+        "utility": lambda consumption: consumption,
+        "cash_on_hand": lambda liquid: liquid,
+        "liquid_savings": lambda cash_on_hand, consumption: cash_on_hand - consumption,
+        "new_illiquid": lambda illiquid_investment: illiquid_investment,
     }
-    config.update(overrides)
-    return NBEGM(**config)  # ty: ignore[invalid-argument-type]
 
 
-def test_dcegm_inner_spec_maps_resources_to_budget_target() -> None:
-    """A DCEGM inner's `resources` slot fills the spec's `budget_target`."""
-    spec = get_nnbegm_inner_spec(inner=_dcegm())
-    assert spec.budget_target == "cash_on_hand"
-
-
-def test_dcegm_inner_spec_carries_state_post_decision_and_grid() -> None:
-    """The spec mirrors the DCEGM config's Euler-state slots verbatim."""
-    spec = get_nnbegm_inner_spec(inner=_dcegm())
-    assert (spec.continuous_state, spec.post_decision_function) == (
-        "liquid",
-        "liquid_savings",
+def _one_margin(*, solver: NBEGM) -> ConsumptionSavingsRegime:
+    return ConsumptionSavingsRegime(
+        transition=lambda: 0,
+        states={"liquid": _GRID},
+        actions={"consumption": _GRID},
+        functions={
+            key: value for key, value in _functions().items() if key != "new_illiquid"
+        },
+        solver=solver,
+        liquid=_LIQUID,
     )
-    assert spec.savings_grid is _SAVINGS_GRID
 
 
-def test_nbegm_inner_spec_carries_explicit_slots() -> None:
-    """An NBEGM inner with explicit slots maps onto the spec verbatim."""
-    inner = _nbegm()
-    spec = get_nnbegm_inner_spec(inner=inner)
+def _two_margin(*, solver: NNBEGM) -> NestedConsumptionSavingsRegime:
+    return NestedConsumptionSavingsRegime(
+        transition=lambda: 0,
+        states={"liquid": _GRID, "illiquid": _GRID},
+        actions={"consumption": _GRID, "illiquid_investment": _GRID},
+        functions=_functions(),
+        solver=solver,
+        liquid=_LIQUID,
+        outer_continuous=_OUTER,
+    )
+
+
+def test_public_nbegm_contains_numerical_configuration_only() -> None:
+    names = {item.name for item in fields(NBEGM)}
+    assert {
+        "continuous_state",
+        "continuous_action",
+        "budget_target",
+        "post_decision_function",
+    }.isdisjoint(names)
+
+
+def test_one_margin_regime_binds_nbegm_from_liquid_margin() -> None:
+    regime = _one_margin(solver=NBEGM(savings_grid=_GRID))
+    solver = cast("_BoundNBEGM", regime.solver)
+
+    assert isinstance(solver, _BoundNBEGM)
     assert (
-        spec.continuous_state,
-        spec.post_decision_function,
-        spec.budget_target,
-    ) == ("liquid", "liquid_savings", "cash_on_hand")
-    assert spec.solver is inner
+        solver.continuous_state,
+        solver.continuous_action,
+        solver.budget_target,
+        solver.post_decision_function,
+    ) == ("liquid", "consumption", "cash_on_hand", "liquid_savings")
 
 
-def test_nbegm_inner_spec_requires_explicit_continuous_state() -> None:
-    """An NBEGM inner leaving `continuous_state` to inference is rejected.
+def test_public_nnbegm_contains_numerical_configuration_only() -> None:
+    names = {item.name for item in fields(NNBEGM)}
+    assert names == {"inner", "outer_search", "branch_aggregator"}
 
-    Inside a nested solver the regime has two continuous states, so the
-    single-continuous-state inference NBEGM applies standalone is ambiguous.
+
+def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
+    regime = _two_margin(
+        solver=NNBEGM(
+            inner=NBEGM(savings_grid=_GRID),
+            outer_search=FiniteOuterGrid(grid=_GRID),
+        )
+    )
+    solver = cast("_BoundNNBEGM", regime.solver)
+
+    assert isinstance(solver, _BoundNNBEGM)
+    assert isinstance(solver.inner, _BoundNBEGM)
+    assert (
+        solver.inner.continuous_state,
+        solver.inner.continuous_action,
+        solver.inner.budget_target,
+        solver.inner.post_decision_function,
+    ) == ("liquid", "consumption", "cash_on_hand", "liquid_savings")
+    assert (
+        solver.outer_state,
+        solver.outer_action,
+        solver.outer_post_decision,
+        solver.outer_no_adjustment_candidate,
+    ) == (
+        "illiquid",
+        "illiquid_investment",
+        "new_illiquid",
+        outer_unchanged,
+    )
+
+
+def test_non_nbegm_inner_is_rejected_by_explicit_structural_guard() -> None:
+    """A non-NBEGM inner is refused by an explicit check, not only by a type hint.
+
+    The guard is called directly: wherever runtime type checking is active the
+    constructor's own annotation refuses the value first, which would leave the
+    explicit check unexercised.
     """
-    with pytest.raises(RegimeInitializationError, match="continuous_state"):
-        get_nnbegm_inner_spec(inner=_nbegm(continuous_state=None))
-
-
-def test_nbegm_inner_spec_requires_explicit_post_decision_function() -> None:
-    """An NBEGM inner without `post_decision_function` is rejected."""
-    with pytest.raises(RegimeInitializationError, match="post_decision_function"):
-        get_nnbegm_inner_spec(inner=_nbegm(post_decision_function=None))
-
-
-def test_non_egm_inner_is_rejected_with_the_offending_type() -> None:
-    """A non-1-D-EGM inner raises `TypeError` naming the offending type."""
-    with pytest.raises(TypeError, match="GridSearch"):
-        get_nnbegm_inner_spec(inner=GridSearch())
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"NNBEGM\.inner must be an NBEGM",
+    ):
+        _fail_if_inner_is_not_nbegm(GridSearch())

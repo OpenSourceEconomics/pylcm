@@ -31,16 +31,7 @@ _TOY_PARAMS = {"discount_factor": 0.95}
 
 def _make_nnbegm(*, outer_search: OuterSearch) -> NNBEGM:
     return NNBEGM(
-        inner=NBEGM(
-            continuous_state="wealth",
-            post_decision_function="liquid_savings",
-            budget_target="resources",
-            savings_grid=SAVINGS_GRID,
-        ),
-        outer_action="illiquid_investment",
-        outer_state="illiquid",
-        outer_post_decision="new_illiquid",
-        outer_no_adjustment_candidate="keep_illiquid",
+        inner=NBEGM(savings_grid=SAVINGS_GRID),
         outer_search=outer_search,
     )
 
@@ -102,16 +93,7 @@ def test_nnbegm_without_outer_search_raises_at_construction() -> None:
     """
     with pytest.raises(TypeError, match="outer_search"):
         NNBEGM(  # ty: ignore[missing-argument]
-            inner=NBEGM(
-                continuous_state="wealth",
-                post_decision_function="liquid_savings",
-                budget_target="resources",
-                savings_grid=SAVINGS_GRID,
-            ),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
-            outer_no_adjustment_candidate="keep_illiquid",
+            inner=NBEGM(savings_grid=SAVINGS_GRID),
         )
 
 

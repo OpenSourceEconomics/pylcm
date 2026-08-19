@@ -48,8 +48,11 @@ from lcm import (
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
     Regime,
     UniformObservedFixedCost,
     affine_breakpoint,
@@ -276,18 +279,11 @@ def build_paper_solver(
     """
     return NNBEGM(
         inner=NBEGM(
-            continuous_state="wealth",
-            post_decision_function="saving",
-            budget_target="cash_on_hand",
             savings_grid=IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             cell_block_size=cell_block_size,
             branch_batch_size=branch_batch_size,
             interval_batch_size=interval_batch_size,
         ),
-        outer_action="effort",
-        outer_state="lagged_effort",
-        outer_post_decision="new_lagged_effort",
-        outer_no_adjustment_candidate="keep_effort",
         outer_search=outer_search
         if outer_search is not None
         else AdaptiveOuterMesh(
@@ -304,9 +300,11 @@ def build_paper_solver(
     )
 
 
-def build_alive_regime(*, outer_search: AdaptiveOuterMesh | None = None) -> Regime:
+def build_alive_regime(
+    *, outer_search: AdaptiveOuterMesh | None = None
+) -> NestedConsumptionSavingsRegime:
     """The paper-mode alive regime (continuous effort and habit)."""
-    return Regime(
+    return NestedConsumptionSavingsRegime(
         transition=MarkovTransition(next_regime),
         active=partial(alive_is_active, final_age_alive=int(ages.values[-2])),
         states={
@@ -358,6 +356,18 @@ def build_alive_regime(*, outer_search: AdaptiveOuterMesh | None = None) -> Regi
             "discount_factor": discount_factor,
         },
         constraints={"retirement_constraint": retirement_constraint},
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="cash_on_hand",
+            post_decision_state="saving",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="lagged_effort",
+            action="effort",
+            post_decision_state="new_lagged_effort",
+            no_adjustment="keep_effort",
+        ),
         solver=build_paper_solver(outer_search=outer_search),
     )
 

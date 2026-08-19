@@ -70,6 +70,7 @@ def _make_model_and_params(
         Regime,
         categorical,
     )
+    from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
     from lcm.solvers import DCEGM
     from lcm.typing import (
         ContinuousAction,
@@ -162,10 +163,6 @@ def _make_model_and_params(
 
     if solver == "dcegm":
         dcegm_solver = DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             # Cubically clustered toward the borrowing limit: the value
             # function curves hardest where the constraint starts to bind,
             # and a uniform grid under-resolves the lowest wealth nodes by
@@ -177,22 +174,42 @@ def _make_model_and_params(
                 )
             ),
         )
+        # The solver carries numerical configuration only; the DAG roles it
+        # solves against are declared by the regime, so an EGM-family solver
+        # goes on a `ConsumptionSavingsRegime` rather than a plain `Regime`.
+        liquid_margin = LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        )
         dcegm_functions = {
             "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         }
-        working_life = working_life.replace(
+        working_life = ConsumptionSavingsRegime(
+            transition=working_life.transition,
+            states=working_life.states,
+            actions=working_life.actions,
+            taste_shocks=working_life.taste_shocks,
+            active=working_life.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(working_life.functions), **dcegm_functions},
             solver=dcegm_solver,
+            liquid=liquid_margin,
         )
-        retirement = retirement.replace(
+        retirement = ConsumptionSavingsRegime(
+            transition=retirement.transition,
+            states=retirement.states,
+            actions=retirement.actions,
+            active=retirement.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(retirement.functions), **dcegm_functions},
             solver=dcegm_solver,
+            liquid=liquid_margin,
         )
 
     dead = Regime(
