@@ -25,7 +25,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, UserFunction, ValueND
+from lcm.typing import BoolND, FloatND, UserFunction, ValueND
 
 type ComparisonOperator = Literal["<", "<=", ">", ">=", "==", "!="]
 
@@ -176,6 +176,40 @@ class Condition:
 
     expression: BoolExpr
     """The expression tree this condition declares."""
+
+    def __post_init__(self) -> None:
+        # A condition has to pass for an ordinary constraint callable, because
+        # every existing consumer -- the DAG builder, the params template, the
+        # feasibility mask -- reaches a constraint through its signature.
+        # Stamping one here is what lets a declared condition reach them all
+        # with no rewiring.
+        if isinstance(self.expression, Opaque):
+            signature = inspect.signature(self.expression.func)
+            name = getattr(self.expression.func, "__name__", "condition")
+        else:
+            parameters = [
+                inspect.Parameter(
+                    arg_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=FloatND,
+                )
+                for arg_name in _arg_names_of(self.expression)
+            ]
+            signature = inspect.Signature(parameters, return_annotation=BoolND)
+            name = "condition"
+        object.__setattr__(self, "__signature__", signature)
+        object.__setattr__(self, "__name__", name)
+        object.__setattr__(
+            self, "__annotations__", _annotations_of_signature(signature)
+        )
+
+    @property
+    def arg_names(self) -> tuple[str, ...]:
+        """Tuple of the argument names the condition is called with."""
+        return _arg_names_of(self.expression)
+
+    def __call__(self, **values: ValueND) -> BoolND:
+        return self.evaluate(**values)
 
     @classmethod
     def from_callable(cls, func: UserFunction) -> Condition:
@@ -408,3 +442,21 @@ def _fail_if_names_are_missing(
             f"Cannot evaluate the condition: no value supplied for "
             f"{', '.join(repr(name) for name in missing)}."
         )
+
+
+def _annotations_of_signature(signature: inspect.Signature) -> dict[str, object]:
+    annotations: dict[str, object] = {
+        arg_name: parameter.annotation
+        for arg_name, parameter in signature.parameters.items()
+        if parameter.annotation is not inspect.Parameter.empty
+    }
+    if signature.return_annotation is not inspect.Signature.empty:
+        annotations["return"] = signature.return_annotation
+    return annotations
+
+
+def _arg_names_of(expression: BoolExpr) -> tuple[str, ...]:
+    """Return the names a condition is called with, in a stable order."""
+    if isinstance(expression, Opaque):
+        return signature_names(expression.func)
+    return tuple(sorted(dependencies_of(expression)))

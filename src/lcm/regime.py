@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.regime_building.phases import normalize_regime_phases
@@ -153,10 +154,15 @@ class Regime:
 
     # `Phased` passes the type check so the validator can reject it with an
     # explanation (constraints are phase-invariant).
-    constraints: Mapping[FunctionName, UserFunction | Phased | None] = field(
+    constraints: Mapping[FunctionName, ConstraintLike | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Mapping of constraint names to constraint functions.
+    """Mapping of constraint names to constraints.
+
+    A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
+    predicate. The two mean the same thing and are evaluated identically; a
+    condition additionally carries what it says, so a solver can prove or
+    refuse it instead of only being able to call it.
 
     Constraints are phase-invariant: a phase-specific feasible set would let
     the simulated argmax range over actions the value function was never

@@ -12,11 +12,14 @@ so a solver that must reason about a constraint can tell it apart from one it
 can prove, and refuse it rather than accepting it and ignoring what it says.
 """
 
+import inspect
+
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
 from _lcm.constraints.processed import normalize_constraints
 from lcm import ref
+from lcm.condition import Condition
 from lcm.regime import LiquidMargin, post_decision_lower_bound
 from lcm.typing import FloatND
 
@@ -110,3 +113,41 @@ def test_a_post_decision_lower_bound_still_evaluates_as_a_predicate() -> None:
 def test_normalizing_nothing_yields_nothing() -> None:
     """A regime declaring no constraints normalizes to an empty mapping."""
     assert dict(normalize_constraints(constraints={})) == {}
+
+
+def test_a_condition_is_callable_like_any_other_constraint() -> None:
+    """A condition can be called directly, so existing consumers still work.
+
+    Every consumer of a constraint — the DAG builder, the params template, the
+    feasibility mask — reaches it through a signature and a call. A condition
+    carries both, so declaring one in `constraints` needs no rewiring of the
+    machinery that already consumes predicates.
+    """
+    condition = ref("savings") >= 0.0
+
+    got = condition(savings=jnp.array([-1.0, 1.0]))
+
+    assert_array_equal(got, jnp.array([False, True]))
+
+
+def test_a_condition_reports_its_argument_names() -> None:
+    """Its argument names are the names it reads, in a stable order."""
+    assert (ref("wealth") >= ref("floor")).arg_names == ("floor", "wealth")
+
+
+def test_an_opaque_condition_keeps_the_wrapped_signature() -> None:
+    """Wrapping a predicate does not reorder or rename its arguments."""
+    condition = Condition.from_callable(_affordable)
+
+    assert condition.arg_names == ("consumption", "wealth")
+
+
+def test_an_opaque_condition_keeps_the_wrapped_annotations() -> None:
+    """A wrapped predicate's annotations survive, so DAG composition still types.
+
+    The DAG builder rejects an unannotated parameter, so a wrapper that lost
+    the annotations would make a previously composable predicate uncomposable.
+    """
+    condition = Condition.from_callable(_affordable)
+
+    assert inspect.signature(condition).parameters["wealth"].annotation is FloatND

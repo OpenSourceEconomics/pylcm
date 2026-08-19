@@ -20,6 +20,7 @@ from lcm import (
     Model,
     categorical,
     post_decision_lower_bound,
+    ref,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
@@ -226,8 +227,16 @@ def test_declaring_the_bound_does_not_change_the_solution() -> None:
             )
 
 
-def _grid_search_model(*, declared_lower_bound: float | None) -> Model:
+def _grid_search_model(
+    *,
+    declared_lower_bound: float | None,
+    hand_written: bool = False,
+) -> Model:
     """The same regime solved by grid search, which enforces nothing implicitly."""
+    if hand_written and declared_lower_bound is not None:
+        return _replace_constraints(
+            constraints={"borrowing_limit": ref("savings") >= declared_lower_bound},
+        )
     constraints = (
         {}
         if declared_lower_bound is None
@@ -290,3 +299,54 @@ def test_grid_search_keeps_the_declaration_as_a_real_constraint() -> None:
         for name, V_arr in regime_to_V.items()
     ]
     assert max(gaps) > 0.0
+
+
+def _replace_constraints(*, constraints: dict) -> Model:
+    """Build the grid-search model with an explicitly supplied constraint pool."""
+    saving_regime = Regime(
+        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
+        states={"wealth": _WEALTH_GRID},
+        state_transitions={"wealth": {"done": next_wealth}},
+        constraints=constraints,
+        transition=next_regime,
+        functions={
+            "utility": utility,
+            "resources": resources,
+            "savings": savings,
+        },
+        active=lambda age: age == 0,
+        solver=GridSearch(),
+    )
+    done_regime = Regime(
+        actions={},
+        transition=None,
+        states={"wealth": _WEALTH_GRID},
+        functions={"utility": terminal_utility},
+        active=lambda age: age == 1,
+        solver=GridSearch(),
+    )
+    return Model(
+        regimes={"saving": saving_regime, "done": done_regime},
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_a_hand_written_condition_matches_the_declared_bound() -> None:
+    """Writing the comparison out means what the convenience constructor means.
+
+    `post_decision_lower_bound` is a way to spell a comparison, not a
+    privileged form of one: an author who writes `ref("savings") >= 1.0`
+    directly declares the same feasible set and must get the same solution.
+    Were the two to diverge, the sugar would carry a meaning its own expansion
+    does not.
+    """
+    sugared = _grid_search_model(declared_lower_bound=1.0)
+    hand_written = _grid_search_model(declared_lower_bound=1.0, hand_written=True)
+
+    from_sugar = sugared.solve(params=_filled_params(sugared), log_level="off")
+    from_hand = hand_written.solve(params=_filled_params(hand_written), log_level="off")
+
+    for period, regime_to_V in from_sugar.items():
+        for regime_name, V_arr in regime_to_V.items():
+            aaae(from_hand[period][regime_name], V_arr, decimal=DECIMAL_PRECISION)
