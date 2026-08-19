@@ -184,6 +184,10 @@ node subclasses `Solver` and works.
 
 ### Implementing the binding method
 
+A solver added inside the package implements this; the closure above is what puts it out
+of reach from outside. It is also why a subclass of a shipped solver reaches the engine
+as itself — the implementation it inherits is the one below.
+
 Do not construct the bound copy by hand. Route it through `bind_roles`, which returns an
 object that is still the type the user constructed: a subclass keeps the fields it added
 and the methods it overrides, so a custom solver reaches the engine as itself rather
