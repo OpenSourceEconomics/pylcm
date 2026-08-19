@@ -9,16 +9,22 @@ explicit spec so the outer kernel code never dispatches on the inner type.
 
 import pytest
 
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nnbegm import get_nnbegm_inner_spec
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import DCEGM, NBEGM, GridSearch
+from lcm.solvers import NBEGM, GridSearch
 
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)
 
 
-def _dcegm() -> DCEGM:
-    return DCEGM(
+def _dcegm() -> _BoundDCEGM:
+    """A DC-EGM inner carrying the DAG names a regime's liquid margin supplies.
+
+    The nested spec is read off a solver whose margin names are already
+    resolved, so the bound form is what the function under test receives.
+    """
+    return _BoundDCEGM(
         continuous_state="liquid",
         continuous_action="consumption",
         resources="cash_on_hand",
