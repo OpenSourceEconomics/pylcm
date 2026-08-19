@@ -494,6 +494,7 @@ class Solver(ABC):
         """
         return False
 
+
 class OneMarginSolver(Solver):
     """Marker base for solvers consuming one explicit liquid margin.
 
