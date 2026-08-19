@@ -126,3 +126,12 @@ class UserFunction(Protocol):
     """
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
+
+
+outer_unchanged: FunctionName = "__outer_unchanged__"
+# Sentinel declaring that an outer state is unchanged without adjustment.
+# Use it as ``OuterContinuousMargin.no_adjustment`` when the no-adjustment map is
+# literally the identity. Any other value is a function name and must resolve in
+# the assembled regime DAG. A sentinel, rather than a generated callable, keeps
+# the public declaration serialisable and avoids callable-wrapper behaviour under
+# the project's beartype claw.
