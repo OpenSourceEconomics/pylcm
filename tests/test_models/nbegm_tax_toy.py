@@ -9,6 +9,8 @@ dense grid and is the agreement oracle; the NBEGM variant reads the declared
 schedule and solves each affine segment by EGM.
 """
 
+from typing import Literal
+
 import jax.numpy as jnp
 from dags import rename_arguments
 
@@ -52,6 +54,7 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     budget_name: str = "resources",
+    envelope_arithmetic: Literal["certified", "ordinary"] = "certified",
 ) -> Model:
     """Create the two-regime (alive, dead) tax-bracket one-asset toy.
 
@@ -65,9 +68,10 @@ def build_model(
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
         budget_name: DAG node name carrying cash-on-hand. The default
-            `"resources"` matches the solver convention; any other name
-            exercises the solver's `budget_target` selection, with the budget's
-            consumers rewired to read it.
+            `"resources"` matches the margin convention; any other name
+            exercises `LiquidMargin.resources`, with the budget's consumers
+            rewired to read it.
+        envelope_arithmetic: Ownership arithmetic for NBEGM. Ignored by brute.
 
     Returns:
         The assembled `Model`.
@@ -92,9 +96,10 @@ def build_model(
         alive_solver=resolve_solver(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-            budget_target=budget_name,
+            envelope_arithmetic=envelope_arithmetic,
         ),
         constraints={"feasible": feasible_func},
+        liquid_resources=budget_name,
     )
 
 

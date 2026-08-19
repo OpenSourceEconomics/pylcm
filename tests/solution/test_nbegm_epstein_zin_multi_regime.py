@@ -20,8 +20,10 @@ from lcm import (
     NBEGM,
     AgeGrid,
     CESAggregator,
+    ConsumptionSavingsRegime,
     GridSearch,
     LinSpacedGrid,
+    LiquidMargin,
     MarkovTransition,
     Model,
     NormalIIDProcess,
@@ -29,7 +31,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solvers import Solver
+from lcm.solvers import OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -88,9 +90,9 @@ def _prob_dead(age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - _SURVIVAL)
 
 
-def _build_model(*, solver: Solver) -> Model:
+def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
-    alive = Regime(
+    alive = ConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
@@ -108,6 +110,12 @@ def _build_model(*, solver: Solver) -> Model:
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     dead = Regime(
         transition=None,
@@ -145,10 +153,8 @@ def test_nbegm_epstein_zin_multi_regime_matches_brute_force() -> None:
     """NBEGM matches the dense grid-search value under a stochastic survival split."""
     nbegm = _build_model(
         solver=NBEGM(
-            post_decision_function="savings",
-            budget_target="resources",
             savings_grid=_SAVINGS_GRID,
-            continuous_state="liquid",
+            envelope_arithmetic="ordinary",
         )
     ).solve(params=_PARAMS, log_level="debug")
     brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")

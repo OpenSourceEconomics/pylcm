@@ -98,14 +98,20 @@ Two cross-cutting factors:
 
 ## Solvers at a glance
 
-| Solver       | Use when                                                                                                                                              | Key constructor arguments                                                        |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `GridSearch` | The default. Any regime, especially with a modest continuous-action grid on a GPU.                                                                    | *(none)*                                                                         |
-| `EGM`        | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`                                                                   |
-| `DCEGM`      | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `continuous_state`, `continuous_action`, `resources`, `savings_grid`, `envelope` |
-| `NEGM`       | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                     |
-| `NNBEGM`     | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_action`, `outer_post_decision`, `outer_grid`                     |
-| `NBEGM`      | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read`                                                      |
+| Solver       | Use when                                                                                                                                              | Key constructor arguments   |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `GridSearch` | The default. Any regime, especially with a modest continuous-action grid on a GPU.                                                                    | *(none)*                    |
+| `EGM`        | Smooth, concave one-asset consumption–saving problem where a fine action grid would otherwise be needed.                                              | `savings_grid`              |
+| `DCEGM`      | One liquid asset with a discrete choice that makes the value function non-concave (secondary kinks).                                                  | `savings_grid`, `envelope`  |
+| `NEGM`       | Two continuous choices with a clean nest: an inner 1-D EGM consumption solve inside an outer deterministic search over a durable/illiquid post-state. | `inner`, `outer_grid`       |
+| `NNBEGM`     | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_grid`       |
+| `NBEGM`      | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read` |
+
+A solver takes numerical configuration only. Which state, action, and function play the
+liquid and outer roles is declared on the regime — `LiquidMargin` on a
+`ConsumptionSavingsRegime`, plus `OuterContinuousMargin` on a
+`NestedConsumptionSavingsRegime` for the nested solvers — so the same solver object can
+be reused across regimes that name their margins differently.
 
 `DCEGM`'s upper-envelope backend is selectable via `envelope=` (`"exact"`, `"fues"`,
 `"rfc"`, `"ltm"`, `"mss"`). `"exact"` is the default and pylcm's own construction, which
@@ -113,6 +119,30 @@ resolves ownership by certified comparison rather than by scanning; the other fo
 ports of the method columns of Dobrescu & Shanker 2024. `"fues"` is a
 topology-discovering scan (CPU-friendly); `"ltm"` is a query-side segment evaluator
 (GPU-friendly). Switch only under a benchmark.
+
+## `EGM` has no resources function; `DCEGM` does
+
+The two one-asset solvers differ in a way that decides how the budget is written, not
+merely in how the envelope is taken.
+
+`EGM`'s kernel forms the endogenous grid as `consumption + savings_grid` and publishes
+the result on the liquid state's own grid. **For `EGM` the liquid state is cash-on-hand,
+by enforced identity — there is no separate resources quantity.** Model build checks
+this rather than assuming it: the post-decision function's leaf arguments must be
+exactly the liquid state and the consumption action, and the composed function is then
+sampled on both grids and required to equal `liquid_state - consumption` at
+precision-aware tolerances. A post-decision function that fails either check is refused,
+naming the liquid state and the action it must be written in.
+
+The same identity is why `EGM` admits exactly one continuous state. The liquid role is
+filled positionally and `liquid = consumption + savings` leaves no axis for a second
+one.
+
+`DCEGM` binds a genuine resources function through its regime's `LiquidMargin`, so there
+`resources = wealth + labour_income` is a legitimate node and the liquid state is a
+stock the budget is built from. If your budget has anything in it beyond the asset
+itself — income, a transfer, a tax — that is a `DCEGM` (or `NBEGM`) model, not an `EGM`
+one, and the check above is what tells you so at build rather than at the wrong answer.
 
 ## A note on current-state dependence
 

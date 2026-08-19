@@ -37,7 +37,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solvers import NBEGM, Solver
+from lcm.solvers import NBEGM, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -168,31 +168,26 @@ def budget_feasible(liquid_savings: FloatND) -> FloatND:
     return liquid_savings >= 0.0
 
 
-def build_solver(*, variant: str, outer_batch_size: int = 0) -> Solver:
+def build_solver(
+    *, variant: str, outer_batch_size: int = 0
+) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime."""
     if variant == "brute":
         return GridSearch()
     if variant == "negm":
-        # NEGM takes its DAG names from the regime's two margins, so the solver
-        # carries only numerical configuration; see `_negm_margins`.
         return NEGM(
-            inner=DCEGM(savings_grid=SAVINGS_GRID),
+            inner=DCEGM(
+                savings_grid=SAVINGS_GRID,
+            ),
             outer_grid=OUTER_GRID,
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
         return NNBEGM(
             inner=NBEGM(
-                continuous_state="wealth",
-                post_decision_function="liquid_savings",
-                budget_target="resources",
                 savings_grid=SAVINGS_GRID,
             ),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
             outer_grid=OUTER_GRID,
-            outer_no_adjustment_candidate="keep_illiquid",
             outer_batch_size=outer_batch_size,
         )
     msg = f"unknown variant: {variant}"
@@ -249,42 +244,11 @@ def build_model(
         "consumption": CONSUMPTION_GRID,
         "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
     }
-    if variant == "negm":
-        # Built here rather than through `build_solver` so the declared type is
-        # the two-margin solver the nested regime accepts, not the base `Solver`.
-        negm_solver = NEGM(
-            inner=DCEGM(savings_grid=SAVINGS_GRID),
-            outer_grid=OUTER_GRID,
-            outer_batch_size=outer_batch_size,
-        )
-        alive = NestedConsumptionSavingsRegime(
-            active=active,
-            states=states,
-            state_transitions=state_transitions,
-            actions=actions,
-            transition=next_regime,
-            functions=functions,
-            constraints=constraints,
-            solver=negm_solver,
-            liquid=LiquidMargin(
-                state="wealth",
-                action="consumption",
-                resources=NetOfAdjustmentCost(
-                    name_in_dag="resources",
-                    before_cost="resources_before_outer_cost",
-                    cost="credited",
-                ),
-                post_decision_state="liquid_savings",
-            ),
-            outer_continuous=OuterContinuousMargin(
-                state="illiquid",
-                action="illiquid_investment",
-                post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
-            ),
-        )
-    else:
-        solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
+    solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
+    # Built per branch rather than from one shared mapping: the two regime
+    # classes narrow `solver` differently, and a `**kwargs` mapping erases the
+    # argument types the narrowing is expressed in.
+    if variant == "brute":
         alive = Regime(
             active=active,
             states=states,
@@ -294,6 +258,38 @@ def build_model(
             functions=functions,
             constraints=constraints,
             solver=solver,
+        )
+    else:
+        liquid_resources = (
+            NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            )
+            if variant == "negm"
+            else "resources"
+        )
+        alive = NestedConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            constraints=constraints,
+            solver=solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources=liquid_resources,
+                post_decision_state="liquid_savings",
+            ),
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="illiquid_investment",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            ),
         )
     dead = Regime(
         transition=None,

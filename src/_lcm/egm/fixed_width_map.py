@@ -27,6 +27,7 @@ both the per-iteration work and the padding the row buffers carry.
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import jax
@@ -34,6 +35,29 @@ import jax.numpy as jnp
 from jax import Array
 
 type PyTree = Any
+
+
+@dataclass(frozen=True, slots=True)
+class FixedWidthMapGeometry:
+    """Static vector width and window selected for one partitioned axis.
+
+    Geometry is explicit at every call site.  It is numerical profile
+    configuration, not a user partition knob: changing either field changes
+    the executable, while ``requested_block_size`` remains a runtime operand of
+    that executable.
+    """
+
+    microtile_width: int
+    """Rows of one economic callback evaluated together."""
+
+    profile_window: int
+    """Maximum rows evaluated by one fixed-shape loop iteration."""
+
+    def __post_init__(self) -> None:
+        _fail_if_static_shape_invalid(
+            max_block_size=self.profile_window,
+            microtile_width=self.microtile_width,
+        )
 
 
 def map_fixed_width(
@@ -183,25 +207,23 @@ def _pad_rows(leaf: Array, *, n_padded: int) -> Array:
     return jnp.concatenate([leaf, jnp.repeat(leaf[:1], pad, axis=0)], axis=0)
 
 
-# The vector width one economic callback is evaluated at. A profile constant,
-# not a user knob: it is chosen once per hardware profile by measurement, and
-# changing it recompiles. Partitions are rounded up to a multiple of it.
-MICROTILE_WIDTH: int = 4
-
-# Rows sliced per loop iteration. Bounded rather than derived from the row
-# count, because the window is what the row buffers are padded by: a window
-# covering the whole axis pads them to twice the axis, which costs a second
-# full stack of results on any body whose rows are wide. Set with the width by
-# the same profile measurement; a multiple of it.
-PROFILE_WINDOW: int = 64
-
-
 def enclosing_max_block_size(*, n_rows: int, microtile_width: int) -> int:
     """Return the smallest admitted static window covering `n_rows`."""
     if n_rows <= 0:
         msg = f"n_rows must be positive, got {n_rows}."
         raise ValueError(msg)
     return math.ceil(n_rows / microtile_width) * microtile_width
+
+
+def max_block_size_for_axis(*, n_rows: int, geometry: FixedWidthMapGeometry) -> int:
+    """Return this call site's static window for an axis with ``n_rows`` rows."""
+    return min(
+        geometry.profile_window,
+        enclosing_max_block_size(
+            n_rows=n_rows,
+            microtile_width=geometry.microtile_width,
+        ),
+    )
 
 
 def admitted_block_size(
@@ -222,29 +244,31 @@ def admitted_block_size(
 
 
 def map_partitioned(
-    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
+    *,
+    func: Callable[[PyTree], PyTree],
+    xs: PyTree,
+    requested_block_size: int,
+    geometry: FixedWidthMapGeometry,
 ) -> PyTree:
-    """Map `func` over `xs`, honouring a requested partition at the profile width.
+    """Map ``func`` over ``xs`` at one call site's declared geometry.
 
-    The caller-facing form of `map_fixed_width`: it derives the static window
-    from the row count and coarsens the request to an admitted partition, so a
-    call site states only which axis it is streaming and how finely.
+    The static window is derived from the axis length and the explicit
+    call-site geometry.  The request is coarsened to an admitted partition but
+    remains a runtime loop stride, so all requests admitted by one geometry use
+    one executable.
     """
     n_rows = _leading_size(xs)
-    max_block_size = min(
-        PROFILE_WINDOW,
-        enclosing_max_block_size(n_rows=n_rows, microtile_width=MICROTILE_WIDTH),
-    )
+    max_block_size = max_block_size_for_axis(n_rows=n_rows, geometry=geometry)
     return map_fixed_width(
         func=func,
         xs=xs,
         max_block_size=max_block_size,
-        microtile_width=MICROTILE_WIDTH,
+        microtile_width=geometry.microtile_width,
         block_size=jnp.int32(
             admitted_block_size(
                 requested=requested_block_size,
                 max_block_size=max_block_size,
-                microtile_width=MICROTILE_WIDTH,
+                microtile_width=geometry.microtile_width,
             )
         ),
     )

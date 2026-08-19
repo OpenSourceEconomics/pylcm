@@ -160,8 +160,6 @@ def build_model(
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        continuous_state="liquid",
-        post_decision_function="savings",
         stochastic_node_batch_size=stochastic_node_batch_size,
     )
     alive_functions = {**alive_functions, "savings": savings}

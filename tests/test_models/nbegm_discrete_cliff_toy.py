@@ -118,7 +118,6 @@ def build_model(
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        continuous_state="liquid",
     )
 
     return make_alive_dead_model(
