@@ -101,6 +101,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
+from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
     TransitionLawInfo,
@@ -303,6 +304,9 @@ def process_regimes(
     # shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is not
     # a `Grid`, so a type-filtered collection of continuous states would drop it.
     for regime_name, user_regime in representative_user_regimes.items():
+        fail_if_solver_is_not_shipped(
+            solver=user_regime.solver, regime_name=regime_name
+        )
         user_regime.solver.validate_model(
             context=SolverModelContext(
                 regime_name=regime_name,

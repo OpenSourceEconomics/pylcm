@@ -40,6 +40,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
 from _lcm.solution.contract import SolverModelContext
+from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -220,6 +221,9 @@ def validate_model_inputs(  # noqa: C901
         user_regimes=user_regimes, ages=ages
     )
     for regime_name, user_regime in solver_validation_regimes.items():
+        fail_if_solver_is_not_shipped(
+            solver=user_regime.solver, regime_name=regime_name
+        )
         user_regime.solver.validate_model(
             context=SolverModelContext(
                 regime_name=regime_name,
