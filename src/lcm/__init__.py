@@ -159,6 +159,7 @@ from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     fixed_transition,
+    post_decision_lower_bound,
 )
 
 # Modules with TYPE_CHECKING-only forward references expose a
@@ -230,5 +231,6 @@ __all__ = [
     "load_snapshot",
     "load_solution",
     "outer_unchanged",
+    "post_decision_lower_bound",
     "save_solution",
 ]

@@ -17,8 +17,42 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
-from _lcm.typing import StateName
+from _lcm.post_decision_bound import _PostDecisionLowerBound
+from _lcm.typing import FunctionName, StateName
 from lcm.typing import FloatND, UserFunction
+
+
+def post_decision_lower_bound(
+    *, post_decision: FunctionName, lower_bound: float
+) -> UserFunction:
+    """Declare a lower bound on a post-decision state, checkably.
+
+    An endogenous-grid solver enforces its borrowing limit through the savings
+    grid, whose lowest node is the limit the solve and the simulation both
+    obey. Declaring the bound here states that number explicitly, so a
+    disagreement with the grid is refused at model build instead of the grid's
+    value quietly taking precedence.
+
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                post_decision="savings", lower_bound=0.0
+            )
+        }
+
+    The returned object is an ordinary constraint callable evaluating
+    `post_decision >= lower_bound`, so it is legal wherever a constraint is.
+
+    Args:
+        post_decision: Name of the post-decision function bounded below. Must
+            be the solver's declared post-decision state.
+        lower_bound: The bound itself. Must equal the savings grid's lowest
+            node exactly.
+
+    Returns:
+        A constraint callable carrying the declared bound.
+
+    """
+    return _PostDecisionLowerBound(post_decision=post_decision, lower_bound=lower_bound)
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
