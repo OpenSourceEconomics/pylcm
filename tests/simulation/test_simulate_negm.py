@@ -24,10 +24,15 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skip(
         reason=(
-            "Runs in no environment: an unconditional skip, so neither the "
-            "local box nor the GPU CI legs execute it. The NEGM/DC-EGM solve "
-            "OOMs locally; enabling it means marking it `gpu` and accepting "
-            "the GPU CI cost."
+            "Runs in no environment: an unconditional module-level skip, so "
+            "neither the local box nor the GPU CI legs execute it. These are "
+            "the only assertions on the NEGM simulate phase's synthesized "
+            "budget mask. NEGM forward simulation is itself exercised "
+            "elsewhere, but against frozen expected consumption values, which "
+            "record what the code did and so cannot separate a borrowing "
+            "limit that was honoured from one that was silently overridden. "
+            "The NEGM/DC-EGM solve OOMs locally; enabling it means marking it "
+            "`gpu` and accepting the GPU CI cost."
         )
     ),
 ]
