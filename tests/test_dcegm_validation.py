@@ -368,7 +368,7 @@ def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
     malformed = _without_function(dcegm_variants.dcegm_retirement, "resources")
 
-    with pytest.raises(ModelInitializationError, match="resources"):
+    with pytest.raises(RegimeInitializationError, match="resources"):
         _build_model(malformed)
 
 
@@ -383,10 +383,16 @@ def test_portable_contract_model_constructs_without_an_exact_kernel(monkeypatch)
     assert model.n_periods == N_PERIODS
 
 
-@pytest.mark.parametrize(("build", "match"), CASES.values(), ids=CASES.keys())
-def test_dcegm_contract_violation_raises(build, match):
+@pytest.mark.parametrize("case_name", CASES)
+def test_dcegm_contract_violation_raises(case_name):
     """Each contract violation fails fast at Model construction."""
-    with pytest.raises(ModelInitializationError, match=match):
+    build, match = CASES[case_name]
+    error_type = (
+        RegimeInitializationError
+        if case_name.startswith("missing_")
+        else ModelInitializationError
+    )
+    with pytest.raises(error_type, match=match):
         _build_model(build())
 
 
@@ -605,9 +611,13 @@ def test_solver_configuration_does_not_change_reachability() -> None:
 
 def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
     """A catalog target outside every adjacent activity window is not an edge."""
-    brute_target = dcegm_variants.dcegm_retirement.replace(
+    source = dcegm_variants.dcegm_retirement
+    brute_target = UserRegime(
+        transition=source.transition,
         solver=GridSearch(),
         active=lambda age: age < 50,
+        states=source.states,
+        actions=source.actions,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
@@ -635,8 +645,13 @@ def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
 
 def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
-    brute_target = dcegm_variants.dcegm_retirement.replace(
+    source = dcegm_variants.dcegm_retirement
+    brute_target = UserRegime(
+        transition=source.transition,
         solver=GridSearch(),
+        active=lambda age: age < 60,
+        states=source.states,
+        actions=source.actions,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
@@ -652,7 +667,7 @@ def test_non_dcegm_non_terminal_target_raises():
         Model(
             regimes={
                 "working_life": dcegm_source,
-                "retirement": brute_target.replace(active=lambda age: age < 60),
+                "retirement": brute_target,
                 "dead": dead,
             },
             ages=ages,

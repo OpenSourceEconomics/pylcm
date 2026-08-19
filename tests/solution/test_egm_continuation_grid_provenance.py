@@ -41,7 +41,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import Regime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -151,6 +151,9 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
     def bequest(wealth: ContinuousState, crra: float) -> FloatND:
         return wealth ** (1.0 - crra) / (1.0 - crra)
 
+    def resources(wealth: ContinuousState) -> FloatND:
+        return wealth
+
     def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
         return wealth - consumption
 
@@ -172,7 +175,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
 
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
     ages = AgeGrid(start=0, stop=3, step="Y")
-    alive = Regime(
+    alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
         },
@@ -183,9 +186,21 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
-        functions={"utility": utility, "savings": savings},
+        functions={"utility": utility, "resources": resources, "savings": savings},
         active=lambda age: age < 3,
         solver=solver,
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if isinstance(solver, EGM)
+            else {}
+        ),
     )
     gone = Regime(
         transition=None,
@@ -223,9 +238,9 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
     kernel's internal liquid role may surface as a requirement on the state's
     name.
     """
-    egm = _renamed_one_asset_model(
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    ).solve(params=_renamed_one_asset_params(), log_level="debug")
+    egm = _renamed_one_asset_model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
+        params=_renamed_one_asset_params(), log_level="debug"
+    )
     brute = _renamed_one_asset_model(solver=GridSearch(), n_consumption=200).solve(
         params=_renamed_one_asset_params(), log_level="debug"
     )

@@ -39,10 +39,6 @@ from tests.solution._envelope_rows import envelope_interp as _envelope_interp
 
 def _mss_solver():
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
         envelope=envelope_config("mss"),
     )

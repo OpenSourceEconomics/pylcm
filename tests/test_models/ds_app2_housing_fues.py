@@ -70,6 +70,7 @@ from lcm import (
     TauchenAR1Process,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -432,15 +433,11 @@ def build_model(  # noqa: C901
         )
 
     inner_solver = DCEGM(
-        continuous_state="liquid",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=savings_grid,
         envelope=envelope_config(envelope),
         n_constrained_points=32,
     )
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition=next_regime,
         active=lambda age, ra=retirement_age: age < ra,
         states={
@@ -462,8 +459,14 @@ def build_model(  # noqa: C901
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=inner_solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
-    retired = UserRegime(
+    retired = ConsumptionSavingsRegime(
         transition=next_regime_from_retired,
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
@@ -480,6 +483,12 @@ def build_model(  # noqa: C901
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=inner_solver,
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
     )
     return Model(
         regimes={"working": working, "retired": retired, "dead": dead},

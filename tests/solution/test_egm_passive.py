@@ -27,6 +27,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import fixed_transition
@@ -133,10 +134,6 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -184,7 +181,7 @@ def _get_model(variant: str) -> Model:
             },
         )
     elif variant == "dcegm_no_skill":
-        working = UserRegime(
+        working = ConsumptionSavingsRegime(
             transition=next_regime,
             active=active,
             actions={
@@ -202,12 +199,18 @@ def _get_model(variant: str) -> Model:
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
             solver=DCEGM_SOLVER,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
         )
     else:
         skill_transition = (
             fixed_transition("skill") if variant == "dcegm_fixed_skill" else next_skill
         )
-        working = UserRegime(
+        working = ConsumptionSavingsRegime(
             transition=next_regime,
             active=active,
             actions={
@@ -228,6 +231,12 @@ def _get_model(variant: str) -> Model:
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
             solver=DCEGM_SOLVER,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
         )
     return Model(
         regimes={"working_life": working, "dead": dead},
