@@ -12,7 +12,28 @@ _SMOKE_NODE = (
     "test_exact_kernel_answers_in_the_active_precision"
 )
 _CONTRACT_FILE = "tests/test_dcegm_validation.py"
-_EXPECTED_INVENTORY = Path("tests/ci/expected-exact-kernel-skips-windows.json")
+# A file whose subject is the certified kernel itself. The contract file above
+# selects portable envelopes deliberately, so on its own the absent arm proves
+# only that one smoke node skips: every other collected node is indifferent to
+# the kernel. This file is where absence has to show up as declared skips.
+_KERNEL_SURFACE = "tests/solution/test_envelope_cell_workspace.py"
+# `tests/solution/` is marked `slow` wholesale so a small runner can deselect
+# it, and every exact-kernel test lives there. A bare `not slow` therefore
+# deselects the entire kernel surface and the absent arm passes having observed
+# nothing — so the kernel-marked nodes are added back explicitly. Only the paths
+# named above are collected, so this admits no heavy solve beyond them.
+_SELECTION = "not slow or requires_exact_affine_kernel"
+
+# The collected size is pinned rather than floored: the point of the arm is to
+# notice a surface that silently stopped being collected, and a floor with slack
+# tolerates exactly that. Adding or removing a test in the files above changes
+# this number, deliberately.
+_EXPECTED_COLLECTED = 46
+# Every path here is anchored to the repository, never to the caller's working
+# directory: pytest runs with its own `cwd`, so a relative path would be read by
+# the parent and written by the child in two different places.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_EXPECTED_INVENTORY = _REPO_ROOT / "tests/ci/expected-exact-kernel-skips.json"
 
 
 def main() -> int:
@@ -22,6 +43,11 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("reports"))
     args = parser.parse_args()
 
+    args.output_dir = (
+        args.output_dir
+        if args.output_dir.is_absolute()
+        else _REPO_ROOT / args.output_dir
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"exact-kernel-matrix-fp{args.precision}"
 
@@ -29,7 +55,7 @@ def main() -> int:
     present = _run_pytest(
         name="present",
         precision=args.precision,
-        pytest_args=[_CONTRACT_FILE, _SMOKE_NODE, "-m", "not slow"],
+        pytest_args=[_CONTRACT_FILE, _KERNEL_SURFACE, _SMOKE_NODE, "-m", _SELECTION],
         junit_path=present_xml,
         log_path=args.output_dir / f"{prefix}-present.log",
     )
@@ -47,8 +73,11 @@ def main() -> int:
         message="present arm skipped a test",
     )
     _require(
-        condition=present_counts["tests"] >= 29,
-        message="present arm did not execute the semantic-contract surface",
+        condition=present_counts["tests"] == _EXPECTED_COLLECTED,
+        message=(
+            f"present arm collected {present_counts['tests']} tests, expected "
+            f"{_EXPECTED_COLLECTED}"
+        ),
     )
 
     absent_xml = args.output_dir / f"junit-{prefix}-absent.xml"
@@ -58,14 +87,15 @@ def main() -> int:
         precision=args.precision,
         pytest_args=[
             _CONTRACT_FILE,
+            _KERNEL_SURFACE,
             _SMOKE_NODE,
             "-m",
-            "not slow",
+            _SELECTION,
             "-p",
             "tests.ci.kernel_absent",
             f"--exact-kernel-skip-inventory={actual_inventory}",
             f"--expected-exact-kernel-skip-inventory={_EXPECTED_INVENTORY}",
-            "--max-total-skips=1",
+            f"--max-total-skips={len(_inventory_records(_EXPECTED_INVENTORY))}",
         ],
         junit_path=absent_xml,
         log_path=args.output_dir / f"{prefix}-absent.log",
@@ -80,8 +110,13 @@ def main() -> int:
         message="absent arm reported a failure",
     )
     _require(
-        condition=absent_counts["skipped"] == 1,
-        message="absent arm did not skip exactly once",
+        condition=(
+            absent_counts["skipped"] == len(_inventory_records(_EXPECTED_INVENTORY))
+        ),
+        message=(
+            f"absent arm skipped {absent_counts['skipped']} nodes, expected "
+            f"{len(_inventory_records(_EXPECTED_INVENTORY))}"
+        ),
     )
     _require(
         condition=absent_counts["tests"] == present_counts["tests"],
@@ -96,12 +131,13 @@ def main() -> int:
     )
 
     broken_xml = args.output_dir / f"junit-{prefix}-broken.xml"
+    broken_log = args.output_dir / f"{prefix}-broken.log"
     broken = _run_pytest(
         name="broken",
         precision=args.precision,
         pytest_args=[_SMOKE_NODE, "-p", "tests.ci.kernel_broken"],
         junit_path=broken_xml,
-        log_path=args.output_dir / f"{prefix}-broken.log",
+        log_path=broken_log,
     )
     _require(
         condition=broken.returncode != 0,
@@ -121,7 +157,7 @@ def main() -> int:
         message="broken kernel did not fail exactly once",
     )
     _require(
-        condition="ExactAffineKernelUnavailableError" in (broken.stdout or ""),
+        condition="ExactAffineKernelUnavailableError" in broken_log.read_text(),
         message="broken arm failed without the exact-kernel capability error",
     )
 
@@ -149,18 +185,29 @@ def _run_pytest(
         *pytest_args,
         f"--precision={precision}",
         "-n0",
+        # `-v` names each test as it starts, so a run killed before it can write
+        # its JUnit report still leaves an attributable record; `--tb=short`
+        # keeps the failing ones readable in that same transcript.
+        "-v",
         "--tb=short",
         f"--junitxml={junit_path}",
     ]
-    completed = subprocess.run(  # noqa: S603
-        command,
-        check=False,
-        cwd=Path(__file__).resolve().parents[2],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    log_path.write_text("$ " + " ".join(command) + "\n\n" + completed.stdout)
+    # The transcript is opened before the subprocess starts and handed to it
+    # directly, so a run the operating system kills leaves everything it had
+    # already printed. Buffering it in this process would lose exactly the
+    # evidence a killed run is diagnosed from.
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w") as transcript:
+        transcript.write("$ " + " ".join(command) + "\n\n")
+        transcript.flush()
+        completed = subprocess.run(  # noqa: S603
+            command,
+            check=False,
+            cwd=_REPO_ROOT,
+            text=True,
+            stdout=transcript,
+            stderr=subprocess.STDOUT,
+        )
     if completed.returncode != 0:
         sys.stdout.write(
             f"{name} arm returned {completed.returncode}; see {log_path}\n"

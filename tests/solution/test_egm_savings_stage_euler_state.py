@@ -45,6 +45,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
 # Number of model periods; the last one is spent in the terminal regime.
 N_PERIODS = 4
@@ -289,6 +290,7 @@ def _survival_prob_model(solver: str) -> Model:
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_smoothstep_survival_probability_matches_brute_force():
     """A wealth-dependent survival probability matches the brute-force oracle.
 
@@ -351,6 +353,7 @@ def _markov_health_model(solver: str) -> Model:
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_markov_weights_reading_wealth_match_brute_force():
     """Asset-reading Markov weights of a discrete state match brute force.
 
@@ -422,6 +425,7 @@ def _passive_skill_model(solver: str) -> Model:
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_passive_skill_law_reading_wealth_matches_brute_force():
     """`next_skill = decay * skill + gain * smoothstep(wealth)` matches brute.
 
@@ -517,6 +521,7 @@ def test_cliff_in_regime_transition_probability_raises(stay, die):
         _build_model_with_survival_cells(stay, die)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_smooth_band_regime_transition_probability_constructs():
     """A survival probability ramping over many grid cells builds fine."""
     model = _build_model_with_survival_cells(smooth_stay_prob, smooth_death_prob)

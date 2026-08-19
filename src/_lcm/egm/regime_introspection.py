@@ -9,7 +9,7 @@ modules import from.
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
@@ -19,19 +19,14 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.utils.functools import get_union_of_args
 from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
-
-if TYPE_CHECKING:
-    from _lcm.solution.dcegm import _BoundDCEGM
-    from _lcm.solution.negm import _BoundNEGM
-else:
-    _BoundDCEGM = DCEGM
-    _BoundNEGM = NEGM
 from lcm.typing import ScalarFloat, UserFunction
 
 

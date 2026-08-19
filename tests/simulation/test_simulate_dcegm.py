@@ -24,6 +24,7 @@ import pytest
 
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution.test_egm_assets_law_terms import (
     LawTermRegimeId,
     _params,
@@ -49,7 +50,10 @@ CONSUMPTION_GRID_STEP = float(
     - dcegm_variants.CONSUMPTION_GRID.to_jax()[0]
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+]
 
 
 def test_dcegm_simulated_consumption_matches_brute_force():

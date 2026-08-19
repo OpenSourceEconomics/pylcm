@@ -27,7 +27,7 @@ import pytest
 
 from lcm import AgeGrid, AgeSpecializedFunction, Model
 from lcm.typing import BoolND, ContinuousAction, FloatND
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models.dcegm_paper_twin import (
     DCEGM_SOLVER,
     MIN_AGE,
@@ -39,6 +39,10 @@ from tests.test_models.dcegm_paper_twin import (
     done_from_working,
     done_retired,
     get_params,
+)
+
+_NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
 )
 
 
@@ -89,6 +93,7 @@ def _twin(
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_the_last_working_age_uses_that_ages_own_utility():
     """The last working age's value equals a plain solve pinned to that age's utility.
 
@@ -121,6 +126,7 @@ def test_the_last_working_age_uses_that_ages_own_utility():
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_age_specialized_utility_actually_moves_the_dcegm_solution():
     """The drifting utility changes the DC-EGM value function.
 
@@ -158,7 +164,18 @@ def _compiled_cores(model: Model, regime_name: str) -> list[int]:
     ]
 
 
-@pytest.mark.parametrize("solver_kind", ["brute_force", "dcegm"])
+@pytest.mark.parametrize(
+    "solver_kind",
+    [
+        "brute_force",
+        pytest.param(
+            "dcegm",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
 def test_periods_with_distinct_signatures_do_not_share_a_compiled_core(solver_kind):
     """Ages whose declared signatures differ never share one compiled program.
 
@@ -172,7 +189,18 @@ def test_periods_with_distinct_signatures_do_not_share_a_compiled_core(solver_ki
     assert len(set(cores)) == len(cores)
 
 
-@pytest.mark.parametrize("solver_kind", ["brute_force", "dcegm"])
+@pytest.mark.parametrize(
+    "solver_kind",
+    [
+        "brute_force",
+        pytest.param(
+            "dcegm",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+    ],
+)
 def test_an_age_invariant_regime_still_shares_programs_across_periods(solver_kind):
     """Without age specialization, periods keep sharing compiled programs.
 

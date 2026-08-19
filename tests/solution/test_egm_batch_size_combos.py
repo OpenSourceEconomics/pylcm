@@ -36,7 +36,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import assert_agrees_to_ulp
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Splaying a combo axis only reschedules the `lax.map`, leaving every operation and
 # its operand order untouched; the two solves differ only by the vectorized kernel

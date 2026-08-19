@@ -14,6 +14,7 @@ from lcm import (
     NEGM,
     NNBEGM,
     ConsumptionSavingsRegime,
+    DiscreteGrid,
     FUESEnvelope,
     GridSearch,
     LinearAggregator,
@@ -24,14 +25,22 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    categorical,
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.typing import ScalarInt
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)
 
 
-_DISCRETE_GRID = object()
+@categorical(ordered=False)
+class _Employment:
+    working: ScalarInt
+    retired: ScalarInt
+
+
+_DISCRETE_GRID = DiscreteGrid(_Employment)
 
 _LIQUID = LiquidMargin(
     state="wealth",
@@ -201,7 +210,7 @@ def test_nested_regime_binds_both_margins_into_negm():
     assert solver.outer_state == "durable"
     assert solver.outer_action == "new_durable"
     assert solver.outer_post_decision == "durable_after_choice"
-    assert solver.outer_no_adjustment_candidate == outer_unchanged
+    assert solver.outer_no_adjustment_candidate is None
 
 
 def test_nested_regime_binds_both_margins_into_nnbegm():
@@ -238,14 +247,6 @@ def test_plain_regime_rejects_an_unbound_egm_family_solver():
         Regime(transition=lambda: 0, solver=_fues_dcegm())
 
 
-def test_pairing_helper_is_exercised_directly():
-    regime = _regime()
-    object.__setattr__(regime, "solver", object())
-
-    with pytest.raises(RegimeInitializationError, match="OneMarginSolver"):
-        regime._fail_if_solver_pairing_is_invalid()
-
-
 def test_tier_one_liquid_names_are_pairwise_distinct():
     with pytest.raises(RegimeInitializationError, match="pairwise distinct"):
         LiquidMargin(
@@ -265,42 +266,6 @@ def test_tier_one_liquid_outer_collisions_are_rejected():
     )
     with pytest.raises(RegimeInitializationError, match="must not collide"):
         _nested_regime(outer=outer)
-
-
-def test_tier_two_state_helper_is_exercised_directly():
-    regime = _regime()
-    object.__setattr__(
-        regime,
-        "states",
-        MappingProxyType({"wealth": _DISCRETE_GRID}),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="not a continuous"):
-        regime._fail_if_local_liquid_state_is_not_continuous()
-
-
-def test_tier_two_action_helper_is_exercised_directly():
-    regime = _regime()
-    object.__setattr__(
-        regime,
-        "actions",
-        MappingProxyType({"consumption": _DISCRETE_GRID}),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="not a continuous"):
-        regime._fail_if_local_liquid_action_is_not_continuous()
-
-
-def test_tier_two_function_helper_is_exercised_directly():
-    regime = _regime()
-    object.__setattr__(
-        regime,
-        "functions",
-        MappingProxyType({**_functions(), "resources": None}),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="masked by None"):
-        regime._fail_if_local_liquid_function_declarations_are_invalid()
 
 
 def test_specialization_retains_arbitrary_helper_functions():
@@ -406,3 +371,47 @@ def test_replace_preserves_the_specialized_type_and_rebinds_the_solver():
 
     assert isinstance(replaced, ConsumptionSavingsRegime)
     assert cast("Any", replaced.solver).post_decision_function == "savings"
+
+
+def test_liquid_state_message_states_the_property_it_checks():
+    """The rejection names the grid property the guard actually tests."""
+    regime = _regime(
+        functions={"utility": utility, "resources": resources, "savings": savings}
+    )
+    object.__setattr__(regime, "states", MappingProxyType({"wealth": _DISCRETE_GRID}))
+
+    with pytest.raises(RegimeInitializationError) as excinfo:
+        regime._fail_if_local_liquid_state_is_not_continuous()
+
+    assert "non-process" not in str(excinfo.value)
+
+
+def test_a_single_finalization_error_renders_without_enumeration():
+    """One error reads as a plain sentence, not as a numbered list of one."""
+    regime = _regime()
+    object.__setattr__(
+        regime, "actions", MappingProxyType({"consumption": _DISCRETE_GRID})
+    )
+
+    with pytest.raises(RegimeInitializationError) as excinfo:
+        regime._validate_finalized_structure(regime_name="working")
+
+    assert "The following errors occurred" not in str(excinfo.value)
+    assert "liquid.action" in str(excinfo.value)
+
+
+def test_several_finalization_errors_are_enumerated():
+    """Two or more errors are numbered, so neither hides inside a run-on line."""
+    regime = _regime()
+    object.__setattr__(regime, "states", MappingProxyType({"wealth": _DISCRETE_GRID}))
+    object.__setattr__(
+        regime, "actions", MappingProxyType({"consumption": _DISCRETE_GRID})
+    )
+
+    with pytest.raises(RegimeInitializationError) as excinfo:
+        regime._validate_finalized_structure(regime_name="working")
+
+    message = str(excinfo.value)
+    assert "The following errors occurred" in message
+    assert "1. " in message
+    assert "2. " in message

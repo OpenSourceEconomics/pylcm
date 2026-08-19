@@ -23,6 +23,7 @@ import pytest
 from _lcm.regime_building import processing
 from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model
 from lcm.transition import AgeSpecializedFunction
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import (
     n_nbegm_toy,
     nbegm_continuous_ride_along_toy,
@@ -41,6 +42,8 @@ from tests.test_models.dcegm_paper_twin import (
     done_retired,
     get_params,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 _NEGM_PARAMS = {"discount_factor": 0.95, "alive": {}}
 

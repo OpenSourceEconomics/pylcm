@@ -37,6 +37,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Model periods; the source regime is active early, the target regime late,
 # so the source carries into a *different* target regime.

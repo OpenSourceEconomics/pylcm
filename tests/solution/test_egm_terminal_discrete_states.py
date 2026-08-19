@@ -41,6 +41,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
 N_PERIODS = 4
 # The lowest wealth nodes are where grid search is least reliable (the value
@@ -231,6 +232,7 @@ def _get_params() -> dict:
     }
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_dcegm_terminal_bequest_by_pref_type_matches_brute_force():
     """DC-EGM matches a dense brute-force spec at every working-life period.
 
@@ -255,6 +257,7 @@ def test_dcegm_terminal_bequest_by_pref_type_matches_brute_force():
         )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_dcegm_terminal_bequest_differs_by_pref_type():
     """The two `pref_type` slices carry materially different value functions.
 

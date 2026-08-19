@@ -27,6 +27,7 @@ found on stdout so that a CPU-only result is read at the time rather than
 inferred later from a library that is not there.
 """
 
+import importlib.util
 import os
 import re
 import shutil
@@ -45,6 +46,28 @@ except ImportError:
 # Location of the FFI sources, relative to the project root.
 PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
 
+
+def _accepts_msvc_flags(compiler: str) -> bool:
+    """Return whether `compiler` is a driver that parses MSVC-style flags."""
+    return Path(compiler).stem.lower() in {"cl", "clang-cl"}
+
+
+def _load_handler_symbols() -> tuple[str, ...]:
+    """Read the handler inventory from the package source, without importing it."""
+    location = Path(__file__).resolve().parent / PACKAGE_DIR / "handler_symbols.py"
+    spec = importlib.util.spec_from_file_location("_lcm_handler_symbols", location)
+    if spec is None or spec.loader is None:  # pragma: no cover - unreachable
+        msg = f"Cannot load the exact-affine handler inventory from {location}."
+        raise RuntimeError(msg)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    symbols: tuple[str, ...] = module.EXACT_AFFINE_HANDLER_SYMBOLS
+    if not symbols:
+        msg = f"The exact-affine handler inventory at {location} is empty."
+        raise RuntimeError(msg)
+    return symbols
+
+
 # Names the Python wrapper loads, per platform. The CUDA one may be absent.
 CPU_LIBRARY = "libcertified_affine_ffi_cpu.so"
 CUDA_LIBRARY = "libcertified_affine_ffi_cuda.so"
@@ -52,22 +75,13 @@ WINDOWS_CPU_LIBRARY = "certified_affine_ffi_cpu.dll"
 
 # XLA_FFI_DEFINE_HANDLER_SYMBOL expands to a plain extern-C definition. MSVC
 # exports no such function unless it is marked __declspec(dllexport) or named in
-# a module-definition file. Keep the export surface in one authoritative tuple;
-# the Windows build writes it to a .def file consumed by link.exe.
-EXACT_AFFINE_HANDLER_SYMBOLS = (
-    "CertifiedAffineCompareF32",
-    "CertifiedAffineCompareF64",
-    "ExactAffineReadF32",
-    "ExactAffineReadF64",
-    "ExactQueryWinnerF32",
-    "ExactQueryWinnerF64",
-    "ExactQueryWinnerBatchedF32",
-    "ExactQueryWinnerBatchedF64",
-    "ExactAffineHandoverF32",
-    "ExactAffineHandoverF64",
-    "ExactCellHullF32",
-    "ExactCellHullF64",
-)
+# a module-definition file, so the Windows build writes this list to a .def file
+# consumed by link.exe. The list is loaded from the package source rather than
+# restated here: the same names are registered with XLA at run time, and a build
+# that exported a different set would produce a library that loads and lacks a
+# target. Loading by path keeps the build hook free of the package's imports,
+# which need JAX and an installed package -- neither of which exists yet here.
+EXACT_AFFINE_HANDLER_SYMBOLS = _load_handler_symbols()
 
 # Architectures the CUDA build emits ready code for. The oldest entry is the
 # oldest card the project supports; a toolchain that has retired it drops it
@@ -202,8 +216,10 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
             importable `jax` when omitted.
 
     Returns:
-        List of shared-object paths written, CPU first. The CUDA entry is absent
-        where `nvcc` is not on the path, and the list is empty on Windows.
+        List of library paths written, CPU first. The CUDA entry is absent where
+        `nvcc` is not on the path. On Windows the list holds the one DLL, which
+        MSVC builds; there is no path on which this function returns an empty
+        list while a compiler was found.
 
     Raises:
         RuntimeError: If no C++ compiler is available, if the FFI headers cannot
@@ -228,6 +244,14 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
 
     if sys.platform == "win32":
         compiler = os.environ.get("CXX") or shutil.which("cl")
+        if compiler is not None and not _accepts_msvc_flags(compiler):
+            msg = (
+                f"CXX is set to {compiler!r}, which does not take MSVC flags. The "
+                "Windows kernel is compiled with `/std:c++20 /LD /Fe: /link "
+                "/DEF:`, so only `cl` or `clang-cl` can build it; unset CXX to "
+                "use the `cl.exe` on PATH, or point it at one of those."
+            )
+            raise RuntimeError(msg)
         if compiler is None:
             msg = (
                 "No MSVC C++ compiler found. pylcm's certified upper envelope "
@@ -253,6 +277,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                     "/LD",
                     f"/I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cpu.cc"),
+                    f"/Fo{source_dir}\\",
                     f"/Fe:{target}",
                     "/link",
                     f"/DEF:{definition}",
