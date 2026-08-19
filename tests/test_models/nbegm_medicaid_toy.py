@@ -124,7 +124,7 @@ def build_model(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         ),
-        constraints={"feasible": feasible},
+        constraints={} if variant == "nbegm" else {"feasible": feasible},
         liquid_grid=liquid_grid,
     )
 

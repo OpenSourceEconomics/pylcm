@@ -158,7 +158,7 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
                 "dead": toy.next_liquid_from_savings,
             }
         },
-        constraints={"feasible": toy.feasible},
+        constraints={},
         transition={
             "alive": MarkovTransition(toy.prob_stay_alive),
             "dead": MarkovTransition(toy.prob_die),

@@ -67,6 +67,7 @@ from _lcm.solution.contract import (
     PeriodKernel,
     SolutionKernels,
     SolverBuildContext,
+    SolverModelContext,
     _BoundLiquidMargin,
 )
 from _lcm.solution.dcegm import _carry_subset
@@ -82,7 +83,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.fixed_forms import (
     FIXED_FORM_ATTRIBUTE,
     cash_on_hand_with_subsidy,
@@ -339,6 +340,29 @@ class NBEGM(OneMarginSolver):
     def publishes_one_sided_jump_reads(self) -> bool:
         """One-sided jump resolution duplicates abscissae across each jump."""
         return self.jump_read == "one_sided"
+
+    def validate_model(self, *, context: SolverModelContext) -> None:
+        """Refuse a declared feasibility constraint the kernel cannot enforce.
+
+        The case-piece kernel inverts the Euler equation at each node of the
+        savings grid, so consumption is produced first and the liquid state
+        falls out of the budget identity afterwards. A predicate over
+        `(state, action)` is evaluable at no point in that step, and the
+        candidates the kernel publishes are never masked by one. Declaring one
+        and solving anyway answers a different problem than the one written
+        down, with no diagnostic.
+        """
+        user_regime = context.user_regimes[context.regime_name]
+        if user_regime.constraints:
+            constraint_names = sorted(user_regime.constraints)
+            msg = (
+                f"NBEGM regime '{context.regime_name}' declares constraints "
+                f"{constraint_names}. The case-piece kernel evaluates no user "
+                "constraint; encode the borrowing limit in the first node of "
+                "`savings_grid` and the budget identity in the post-decision "
+                "function, or use GridSearch."
+            )
+            raise ModelInitializationError(msg)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.

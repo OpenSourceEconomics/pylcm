@@ -98,7 +98,7 @@ def build_model(
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
             envelope_arithmetic=envelope_arithmetic,
         ),
-        constraints={"feasible": feasible_func},
+        constraints={} if variant == "nbegm" else {"feasible": feasible_func},
         liquid_resources=budget_name,
     )
 
