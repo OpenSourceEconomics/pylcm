@@ -145,11 +145,15 @@ def _build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
 
 def _build_model(*, variant: str) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
-    constraints: dict[str, Callable[..., FloatND]] = {
-        "consumption_feasible": _consumption_feasible
-    }
+    # The nested kernels evaluate no user constraint: the inner solve inverts
+    # the Euler equation on a savings grid whose first node is the borrowing
+    # limit, so `consumption <= resources` holds on every candidate it
+    # generates. The grid search ranks a dense product grid and needs all
+    # three stated.
+    constraints: dict[str, Callable[..., FloatND]] = {}
     if variant == "brute":
         constraints |= {
+            "consumption_feasible": _consumption_feasible,
             "illiquid_feasible": _illiquid_feasible,
             "budget_feasible": _budget_feasible,
         }
