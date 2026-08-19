@@ -9,7 +9,7 @@ modules import from.
 """
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
@@ -25,10 +25,17 @@ from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.negm import _BoundNEGM
+else:
+    _BoundDCEGM = DCEGM
+    _BoundNEGM = NEGM
 from lcm.typing import ScalarFloat, UserFunction
 
 
-def _as_dcegm(user_regime: UserRegime) -> DCEGM | None:
+def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
     """Return the DC-EGM config a carry target solves its inner Euler with.
 
     A `DCEGM` regime solves directly; a `NEGM` regime nests the same 1-D
@@ -38,9 +45,9 @@ def _as_dcegm(user_regime: UserRegime) -> DCEGM | None:
     """
     solver = user_regime.solver
     if isinstance(solver, DCEGM):
-        return solver
+        return cast("_BoundDCEGM", solver)
     if isinstance(solver, NEGM):
-        return solver.inner
+        return cast("_BoundNEGM", solver).inner
     return None
 
 
@@ -205,7 +212,7 @@ def _concatenate_child_resources(
     # registry, which imports this module, so a top-level import would cycle.
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
-    dcegm = cast("DCEGM", _as_dcegm(user_regime))
+    dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
     regime_params_template = create_regime_params_template(user_regime)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.functions.items():
@@ -219,18 +226,15 @@ def _concatenate_child_resources(
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
     if isinstance(user_regime.solver, NEGM):
-        no_adjustment_name = user_regime.solver.outer_no_adjustment_candidate
-        resolved[user_regime.solver.outer_post_decision] = (
-            _keeper_no_adjustment_function(
-                durable_state=user_regime.solver.outer_state,
-                outer_post_decision=user_regime.solver.outer_post_decision,
-                no_adjustment_func=(
-                    resolved[no_adjustment_name]
-                    if no_adjustment_name is not None
-                    else None
-                ),
-                functions=resolved,
-            )
+        negm = cast("_BoundNEGM", user_regime.solver)
+        no_adjustment_name = negm.outer_no_adjustment_candidate
+        resolved[negm.outer_post_decision] = _keeper_no_adjustment_function(
+            durable_state=negm.outer_state,
+            outer_post_decision=negm.outer_post_decision,
+            no_adjustment_func=(
+                resolved[no_adjustment_name] if no_adjustment_name is not None else None
+            ),
+            functions=resolved,
         )
     qnamed = {
         name: _proc._rename_params_to_qnames(  # noqa: SLF001

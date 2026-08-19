@@ -32,6 +32,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -159,10 +160,6 @@ def _active(age: int) -> bool:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -206,7 +203,9 @@ def _assert_working_life_V_matches(
 def _same_grid_markov_model(solver: str) -> Model:
     """A Markov health state carried every period into the same-grid target."""
     is_dcegm = solver == "dcegm"
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
@@ -221,6 +220,18 @@ def _same_grid_markov_model(solver: str) -> Model:
             "utility": utility_with_health,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -314,7 +325,8 @@ def _cross_grid_markov_model(solver: str) -> Model:
     source's discrete grid.
     """
     is_dcegm = solver == "dcegm"
-    early = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    early = regime_type(
         transition={
             "late": MarkovTransition(to_live_prob),
             "dead": MarkovTransition(to_dead_prob),
@@ -340,8 +352,20 @@ def _cross_grid_markov_model(solver: str) -> Model:
             "utility": utility_early,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
-    late = UserRegime(
+    late = regime_type(
         transition={
             "late": MarkovTransition(to_live_prob),
             "dead": MarkovTransition(to_dead_prob),
@@ -359,6 +383,18 @@ def _cross_grid_markov_model(solver: str) -> Model:
             "utility": utility_with_health,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"early": early, "late": late, "dead": dead},
@@ -440,7 +476,8 @@ def _joint_process_markov_model(solver: str) -> Model:
     integrates over the joint income-by-health node mesh.
     """
     is_dcegm = solver == "dcegm"
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
@@ -467,6 +504,18 @@ def _joint_process_markov_model(solver: str) -> Model:
             "utility": utility_with_health_only,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -556,7 +605,8 @@ def _point_mass_floor_model(solver: str) -> Model:
     reproduce the deterministic-index result.
     """
     is_dcegm = solver == "dcegm"
-    working = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working = regime_type(
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
@@ -572,6 +622,18 @@ def _point_mass_floor_model(solver: str) -> Model:
             "income_transfer": income_transfer if is_dcegm else income_transfer_brute,
         },
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     return Model(
         regimes={"working_life": working, "dead": dead},

@@ -12,7 +12,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import Regime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -60,6 +60,10 @@ def terminal_utility_with_type(
     return jnp.log(wealth) + 0.01 * preference_type
 
 
+def resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
 def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
@@ -101,17 +105,26 @@ def _model(
         done_actions = {"bequest": _ACTION_GRID}
         done_functions = {"utility": terminal_utility_with_action}
 
-    saving_regime = Regime(
+    saving_regime = ConsumptionSavingsRegime(
         actions={"consumption": _ACTION_GRID},
         states=states,
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
         transition=next_regime,
-        functions={"utility": utility, "savings": post_decision},
+        functions={
+            "utility": utility,
+            "resources": resources,
+            "savings": post_decision,
+        },
         active=lambda age: age == 0,
         solver=EGM(
             savings_grid=_SAVINGS_GRID,
-            post_decision_function="savings",
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     done_regime = Regime(

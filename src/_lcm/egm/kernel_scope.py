@@ -11,6 +11,7 @@ kernel build rather than with the model-construction validators.
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
@@ -36,10 +37,15 @@ from _lcm.utils.functools import get_union_of_args
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+else:
+    _BoundDCEGM = DCEGM
+
 
 def _find_unsupported_feature(
     *,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
@@ -299,7 +305,7 @@ def _find_unsupported_terminal_continuous_state(
 
 def _find_unsupported_function_args(
     *,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stateful_targets: tuple[RegimeName, ...],

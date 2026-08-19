@@ -259,8 +259,13 @@ def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkey
         ffi._ensure_registered()
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_a_cpu_backend_without_a_cuda_kernel_registers(monkeypatch):
-    """A CPU-backed solve needs no CUDA kernel, including on a machine with a GPU."""
+    """A CPU-backed solve needs no CUDA kernel, including on a machine with a GPU.
+
+    Registration is asserted to succeed, so the CPU library has to be loadable —
+    the one test here that needs a build rather than characterising its absence.
+    """
     monkeypatch.setattr(ffi, "_REGISTERED", False)
     monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
     monkeypatch.setattr(ffi, "_default_backend", lambda: "cpu")

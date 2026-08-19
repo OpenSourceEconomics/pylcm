@@ -12,6 +12,11 @@ visible rather than silent.
 Bit identity across *distinct* admitted partitions is covered where the axis is
 long enough to have them: `test_fixed_width_map.py` at the unit level and
 `test_nbegm_partition_bit_identity.py` on the branch axis.
+
+The solves run the ordinary envelope comparison. What is under test is which
+partition reaches the map, which no arithmetic choice changes, so requiring the
+certified comparison would make the routing untestable wherever the
+exact-affine kernel is not built.
 """
 
 from collections.abc import Mapping
@@ -61,13 +66,18 @@ def _solve_cells(*, cell_block_size: int) -> Mapping[int, Mapping]:
         liquid_max=30.0,
         n_savings=180,
         savings_max=28.0,
-        nbegm_overrides={"cell_block_size": cell_block_size},
+        nbegm_overrides={
+            "cell_block_size": cell_block_size,
+            "envelope_arithmetic": "ordinary",
+        },
     ).solve(params=cell_toy.build_params(), log_level="off")
 
 
 def _solve_intervals(*, interval_batch_size: int) -> Mapping[int, Mapping]:
     return interval_toy.build_model(
-        variant="nbegm", interval_batch_size=interval_batch_size
+        variant="nbegm",
+        interval_batch_size=interval_batch_size,
+        envelope_arithmetic="ordinary",
     ).solve(params=interval_toy.build_params(), log_level="off")
 
 

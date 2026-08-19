@@ -24,7 +24,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model, Regime
+from lcm import (
+    AgeGrid,
+    LiquidMargin,
+    Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+    Regime,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import negm_serviceflow_toy as toy
@@ -58,7 +66,7 @@ def _scaled_law_brute(alpha: float):
 
 def _build_negm_model(alpha: float, *, durable_law=None) -> Model:
     """The service-flow toy with a scaled durable law, solved by NEGM."""
-    alive = Regime(
+    alive = NestedConsumptionSavingsRegime(
         active=lambda age, n=toy.FINAL_AGE_ALIVE: age <= n,
         states={"wealth": toy.WEALTH_GRID, "illiquid": toy.ILLIQUID_GRID},
         state_transitions={
@@ -81,6 +89,22 @@ def _build_negm_model(alpha: float, *, durable_law=None) -> Model:
             "inverse_marginal_utility": toy.inverse_marginal_utility,
         },
         solver=toy.NEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                name_in_dag="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment="keep_illiquid",
+        ),
     )
     return _model(alive)
 

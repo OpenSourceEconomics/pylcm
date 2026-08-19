@@ -34,7 +34,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
-from _lcm.solution.dcegm import DCEGM
+from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
@@ -92,7 +92,7 @@ def get_nnbegm_inner_spec(*, inner: Solver) -> NNBEGMInnerSpec:
 
     """
     match inner:
-        case DCEGM():
+        case _BoundDCEGM():
             return NNBEGMInnerSpec(
                 solver=inner,
                 continuous_state=inner.continuous_state,

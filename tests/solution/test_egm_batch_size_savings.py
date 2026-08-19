@@ -16,6 +16,7 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import LinSpacedGrid, MarkovTransition, Model
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from tests.conftest import DECIMAL_PRECISION
@@ -46,7 +47,7 @@ def _model(savings_batch_size: int) -> Model:
     """Asset-row DC-EGM model with `batch_size` splaying on the savings grid."""
     ages = _ages()
     last_age = ages.exact_values[-1]
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
@@ -62,10 +63,6 @@ def _model(savings_batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=LinSpacedGrid(
                 start=0.0,
                 stop=110.0,
@@ -73,6 +70,12 @@ def _model(savings_batch_size: int) -> Model:
                 batch_size=savings_batch_size,
             ),
             n_constrained_points=32,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     dead = UserRegime(

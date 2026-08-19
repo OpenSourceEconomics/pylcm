@@ -80,10 +80,12 @@ from _lcm.egm.validation import (
     _without,
 )
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NEGM
+from lcm.solvers import NEGM
 from lcm.typing import FloatND, IntND, ScalarFloat, UserFunction
 
 # A cross-difference needs two distinct points on each margin: the check varies
@@ -121,7 +123,7 @@ def validate_negm_regime(
     user_regime: UserRegime,
 ) -> None:
     """Run all NEGM contract checks for a single regime, in order."""
-    solver = cast("NEGM", user_regime.solver)
+    solver = cast("_BoundNEGM", user_regime.solver)
     inner = solver.inner
 
     functions = _resolve_solve_functions(user_regime=user_regime)
@@ -161,7 +163,7 @@ def _fail_if_outer_margin_absent(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The outer durable margin must be a real action and post-decision function.
 
@@ -205,8 +207,8 @@ def _fail_if_outer_margin_absent(
 def _fail_if_margins_not_distinct(
     *,
     regime_name: RegimeName,
-    solver: NEGM,
-    inner: DCEGM,
+    solver: _BoundNEGM,
+    inner: _BoundDCEGM,
 ) -> None:
     """The outer and inner margins must be distinct actions and post-decisions.
 
@@ -237,7 +239,7 @@ def _fail_if_outer_margin_euler_coupled(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The outer margin must not enter the inner differentiated-Euler pool.
 
@@ -318,7 +320,7 @@ def _fail_if_outer_law_reads_the_inner_margin(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """Reject an outer-state law of motion that reaches into the inner margin.
 
@@ -427,7 +429,7 @@ def _fail_if_utility_couples_action_and_outer_margin(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """Require additive separability across the complete utility DAG.
 
@@ -549,7 +551,7 @@ def _fail_if_outer_cost_contract_violated(
     regime_name: RegimeName,
     user_regime: UserRegime,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The declared outer cost must be the sole outer-margin channel of resources.
 
@@ -626,16 +628,17 @@ def _fail_if_outer_cost_contract_violated(
         )
         raise ModelInitializationError(msg)
 
-    base_func = functions.get(f"{inner.resources}_before_outer_cost")
+    base_name = solver.outer_cost_base
+    base_func = functions.get(base_name) if base_name is not None else None
     if base_func is not None:
         base_ancestors = _dag_ancestors(functions=functions, target_func=base_func)
         if solver.outer_post_decision in base_ancestors:
             msg = (
                 f"In regime '{regime_name}', the cost-free resources base "
-                f"'{inner.resources}_before_outer_cost' reads the outer "
+                f"'{base_name}' reads the outer "
                 f"post-decision '{solver.outer_post_decision}'. It must not "
                 "read the outer post-decision: pylcm composes "
-                f"`{inner.resources} = {inner.resources}_before_outer_cost - "
+                f"`{inner.resources} = {base_name} - "
                 f"{solver.outer_cost}`, so the base's only outer-margin "
                 "channel is the subtracted declared cost itself. Route the "
                 f"dependence through '{solver.outer_cost}', or use "
@@ -648,7 +651,7 @@ def _fail_if_no_adjustment_candidate_not_unary(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
-    solver: NEGM,
+    solver: _BoundNEGM,
 ) -> None:
     """The no-adjustment candidate must be a unary function of the durable state.
 
@@ -681,8 +684,8 @@ def _fail_if_carry_layout_unsupported(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: NEGM,  # noqa: ARG001
-    inner: DCEGM,  # noqa: ARG001
+    solver: _BoundNEGM,  # noqa: ARG001
+    inner: _BoundDCEGM,  # noqa: ARG001
 ) -> None:
     """Reject discrete-action axes the stacked outer carry cannot represent.
 

@@ -45,7 +45,13 @@ importing the numerical engine. The engine dispatches polymorphically on the
 solver instance (`solver.build_period_kernels(context)`), not on its type.
 """
 
-from _lcm.solution.contract import SolutionKernels, Solver, SolverBuildContext
+from _lcm.solution.contract import (
+    OneMarginSolver,
+    SolutionKernels,
+    Solver,
+    SolverBuildContext,
+    TwoMarginSolver,
+)
 from _lcm.solution.dcegm import (
     DCEGM,
     EnvelopeConfig,
@@ -73,8 +79,10 @@ __all__ = [
     "GridSearch",
     "LTMEnvelope",
     "MSSEnvelope",
+    "OneMarginSolver",
     "RFCEnvelope",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
+    "TwoMarginSolver",
 ]

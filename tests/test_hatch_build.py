@@ -14,6 +14,7 @@ Two properties the build owes its caller:
   says so at the time.
 """
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -156,13 +157,54 @@ def test_the_build_states_when_it_found_no_cuda_compiler():
     assert "no nvcc" in report
 
 
-def test_the_build_states_that_it_produced_nothing_on_windows(monkeypatch, capsys):
-    """A platform that builds no kernel at all says so, rather than exiting quietly."""
+def test_windows_module_definition_exports_every_handler():
+    """The MSVC linker receives all ten symbols the Python wrapper registers."""
+    definition = hatch_build.windows_module_definition().splitlines()
+
+    assert definition[:2] == ["LIBRARY certified_affine_ffi_cpu", "EXPORTS"]
+    assert definition[2:] == [
+        f"    {name}" for name in hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS
+    ]
+    assert len(definition[2:]) == 10
+
+
+def test_the_windows_build_uses_msvc_and_the_export_definition(
+    monkeypatch, tmp_path, capsys
+):
+    """Windows emits a DLL through cl.exe and passes the generated .def file."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
+    commands = []
+
+    def fake_compile(*, command, target):
+        commands.append(command)
+        target.write_bytes(b"dll")
+        return target
+
     monkeypatch.setattr(hatch_build.sys, "platform", "win32")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.delenv("CXX", raising=False)
+    monkeypatch.setattr(
+        hatch_build.shutil,
+        "which",
+        lambda name: "C:/VC/cl.exe" if name == "cl" else None,
+    )
+    monkeypatch.setattr(hatch_build, "_compile", fake_compile)
 
-    hatch_build.build_exact_affine(root=Path("/nowhere"))
+    written = hatch_build.build_exact_affine(
+        root=tmp_path, jax_include_dir="C:/jax/include"
+    )
 
-    assert "no kernel" in capsys.readouterr().out
+    assert written == [source_dir / hatch_build.WINDOWS_CPU_LIBRARY]
+    assert commands
+    assert commands[0][0] == "C:/VC/cl.exe"
+    assert "/LD" in commands[0]
+    assert f"/Fe:{written[0]}" in commands[0]
+    definition = source_dir / "certified_affine_ffi_cpu.def"
+    assert f"/DEF:{definition}" in commands[0]
+    assert definition.read_text() == hatch_build.windows_module_definition()
+    assert "MSVC" in capsys.readouterr().out
 
 
 def test_the_opt_out_builds_no_kernel(monkeypatch):
@@ -220,3 +262,28 @@ def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsy
     hatch_build.build_exact_affine(root=Path("/nowhere"))
 
     assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
+
+
+def test_a_compile_failure_reports_diagnostics_written_to_stdout(tmp_path, monkeypatch):
+    """A failing compile names what the compiler said, whichever stream it used.
+
+    MSVC writes its diagnostics to stdout rather than stderr, so a report built
+    only from stderr states an exit code and nothing else — the one moment the
+    message is needed.
+    """
+    monkeypatch.setattr(
+        hatch_build.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["cl"],
+            returncode=2,
+            stdout="kernel.cc(9): error C2065: undeclared\n",
+            stderr="",
+        ),
+    )
+    target = tmp_path / "certified_affine_ffi_cpu.dll"
+
+    with pytest.raises(RuntimeError, match="error C2065: undeclared"):
+        hatch_build._compile(command=["cl", "/nologo"], target=target)
+
+    assert "error C2065: undeclared" in target.with_suffix(".dll.build.log").read_text()
