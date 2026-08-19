@@ -136,18 +136,22 @@ def test_nbegm_accepts_a_lower_bound_its_savings_grid_already_enforces():
     assert "alive" in model.user_regimes
 
 
-def test_nbegm_refuses_a_lower_bound_that_disagrees_with_its_savings_grid():
+@pytest.mark.parametrize("declared", [-1.0, 1.0])
+def test_nbegm_refuses_a_lower_bound_that_disagrees_with_its_savings_grid(declared):
     """A declared limit the grid contradicts is refused, naming the grid's node.
 
     The grid's lowest node governs both the solve and the simulate-phase mask,
     so a declaration naming a different number would be overridden silently.
+    Both directions are checked: a bound above the grid's start claims a
+    tighter limit than the kernel enforces, one below claims a looser one, and
+    a check written for either alone would pass while the other went unnoticed.
     """
     with pytest.raises(ModelInitializationError, match=r"savings grid starts at 0\.0"):
         _build_model(
             variant="nbegm",
             constraints={
                 "borrowing_limit": post_decision_lower_bound(
-                    margin=_LIQUID_MARGIN, lower=1.0
+                    margin=_LIQUID_MARGIN, lower=declared
                 )
             },
         )
@@ -175,15 +179,16 @@ def test_nnbegm_accepts_a_lower_bound_its_inner_savings_grid_already_enforces():
     assert "alive" in model.user_regimes
 
 
-def test_nnbegm_refuses_a_lower_bound_that_disagrees_with_its_inner_grid():
-    """A nested declaration the inner grid contradicts is refused."""
+@pytest.mark.parametrize("offset", [-1.0, 1.0])
+def test_nnbegm_refuses_a_lower_bound_that_disagrees_with_its_inner_grid(offset):
+    """A nested declaration the inner grid contradicts is refused, either way."""
     with pytest.raises(ModelInitializationError, match="borrowing_limit"):
         n_nbegm_toy.build_model(
             variant="n_nbegm",
             constraints={
                 "borrowing_limit": post_decision_lower_bound(
                     margin=_NESTED_LIQUID_MARGIN,
-                    lower=n_nbegm_toy.SAVINGS_FLOOR + 1.0,
+                    lower=n_nbegm_toy.SAVINGS_FLOOR + offset,
                 )
             },
         )

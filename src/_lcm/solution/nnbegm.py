@@ -139,6 +139,12 @@ class NNBEGM(TwoMarginSolver):
         evaluate. Which declarations qualify is asked of the same function that
         drops them from the engine's constraint set, so the exemption here and
         the drop there cannot come to disagree.
+
+        Keep it that way: a local test for the bound's shape here would be a
+        second spelling of a question that already has an answer, and the two
+        would drift without a symptom. A bound exempted here but not dropped
+        there reaches the engine's constraint set, which is built per discrete
+        combo — no place a continuous post-decision state can be read.
         """
         from _lcm.egm.nnbegm_validation import (  # noqa: PLC0415
             validate_nnbegm_regime,
