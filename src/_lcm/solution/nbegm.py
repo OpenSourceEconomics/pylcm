@@ -380,22 +380,26 @@ class NBEGM(OneMarginSolver):
         )
         registry = collect_nbegm_metadata(functions=functions)
         has_discrete = bool(context.state_action_space.discrete_actions)
+        has_ride_along = self._schedule_has_ride_along(context=context)
         # No declared case pieces routes to the schedule path. With no declared
         # piecewise-affine schedules either, the partition is empty — a single
         # interval covering the whole liquid axis, solved as plain EGM — so a
         # declaration-free budget is in scope. A declaration-free regime with a
-        # discrete action keeps the dedicated discrete path below.
+        # discrete action takes the dedicated single-liquid discrete path below,
+        # unless it also carries a ride-along co-state: only the schedule path's
+        # kernels represent a second state axis, and the partition being
+        # degenerate does not change which axes the branch envelope must span.
         has_schedule = not registry.piece_sets and (
-            bool(registry.piecewise_affine_schedules) or not has_discrete
+            bool(registry.piecewise_affine_schedules)
+            or not has_discrete
+            or has_ride_along
         )
         # A discrete action over a cliffed single-liquid budget composes the
-        # discrete upper envelope with the schedule's per-branch intervals. A
-        # discrete action alongside a ride-along schedule stays rejected below.
-        is_schedule_discrete = (
-            has_schedule
-            and has_discrete
-            and not self._schedule_has_ride_along(context=context)
-        )
+        # discrete upper envelope with the schedule's per-branch intervals.
+        # Alongside a ride-along co-state the branch envelope instead runs per
+        # ride cell, which is the ride-along route's own composition — admitted
+        # subject to the guard it applies below.
+        is_schedule_discrete = has_schedule and has_discrete and not has_ride_along
         is_schedule = has_schedule and not is_schedule_discrete
         is_discrete = not has_schedule and not registry.piece_sets and has_discrete
         schedule_discrete_spec = (

@@ -18,6 +18,7 @@ from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
+    INTRINSIC_BUDGET_SOLVERS,
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
@@ -143,7 +144,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NEGM, Solver
+from lcm.solvers import DCEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -1409,12 +1410,12 @@ def _build_simulation_phase(
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
 
-    For a DC-EGM or NEGM regime, the budget constraint the EGM solve enforces
+    For an endogenous-grid regime, the budget constraint the solve enforces
     intrinsically is synthesized and injected into the constraint set: the
     simulate-phase grid argmax needs it as a feasibility mask exactly like a
-    user-declared borrowing constraint of a brute-force regime. NEGM nests the
-    same inner 1-D solve, so the mask comes from its inner DC-EGM config. The
-    solve phase is unaffected — the EGM kernels never see it.
+    user-declared borrowing constraint of a brute-force regime. A nested
+    solver's mask comes from its inner 1-D config. The solve phase is
+    unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -1478,7 +1479,7 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
-    if isinstance(solver, (DCEGM, NEGM)):
+    if isinstance(solver, INTRINSIC_BUDGET_SOLVERS):
         if (
             DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
             or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
@@ -1487,7 +1488,7 @@ def _build_simulation_phase(
                 f"Regime '{regime_name}' declares a function or constraint "
                 f"named '{DCEGM_BUDGET_CONSTRAINT_NAME}'. That name is "
                 "reserved for the budget constraint the simulate phase "
-                "synthesizes for DC-EGM and NEGM regimes; rename it."
+                "synthesizes for endogenous-grid regimes; rename it."
             )
             raise ModelInitializationError(msg)
         constraints = MappingProxyType(
