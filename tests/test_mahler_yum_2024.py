@@ -5,11 +5,10 @@ factory. The GPU tests pin simulated lifecycle moments at
 `seed=32`, `n=10000`, so a change in the example's economics appears as a change
 in a readable quantity rather than an opaque pickle diff.
 
-Re-frozen on an A100 (2026-08-12, commit 39cd7a3c) after the four correctness fixes
-(income normalizer, spline clipping, P(e) pension, nearest-habit rounding) landed on
-top of main's latest engine numerics (age-specialization, probability/zero-safe
-rework, PRs #398/#414/#416/#418). Every number here moved again; the structural
-invariants at the bottom of the module did not.
+The reference moments correspond to the explicit working, retirement, and dead
+regimes. Splitting the former living regime changes the fixed-seed random-number
+stream for regime transitions, even when the underlying transition probabilities
+stay the same. The values were reproduced exactly on both a Tesla T4 and V100.
 """
 
 from collections.abc import Mapping
@@ -260,10 +259,10 @@ def simulation_result():
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
         (0, 633, 6219, 3148),
-        (1, 622, 7677, 1697),
-        (2, 562, 5869, 3553),
-        (3, 518, 6404, 3051),
-        (4, 452, 5349, 4162),
+        (1, 653, 7687, 1656),
+        (2, 579, 5846, 3559),
+        (3, 526, 6376, 3072),
+        (4, 473, 5329, 4161),
     ],
 )
 def test_labor_supply_distribution(
@@ -288,8 +287,8 @@ def test_labor_supply_distribution(
         (0, 0.0),
         (5, 0.3038),
         (10, 1.0975),
-        (15, 2.3374),
-        (20, 2.8916),
+        (15, 2.3246),
+        (20, 2.8767),
         (25, 1.9310),
         (30, 0.9374),
     ],
@@ -306,7 +305,7 @@ def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
     [
         (0, 0.9219),
         (10, 0.9112),
-        (20, 0.8450),
+        (20, 0.8509),
         (30, 0.7049),
     ],
 )
@@ -322,9 +321,9 @@ def test_health_good_fraction(simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9871),
-        (20, 9140),
-        (30, 5063),
+        (10, 9880),
+        (20, 9113),
+        (30, 5037),
         (37, 510),
     ],
 )
@@ -376,7 +375,7 @@ def test_retirement_regime_starts_at_retirement_period(simulation_result):
 @_gpu_x64
 def test_total_living_rows(simulation_result):
     """Total number of living-regime rows must match reference."""
-    assert abs(len(simulation_result) - 294959) <= 50
+    assert abs(len(simulation_result) - 294706) <= 50
 
 
 @_gpu_x64
