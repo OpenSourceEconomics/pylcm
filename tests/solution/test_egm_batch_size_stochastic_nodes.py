@@ -20,7 +20,7 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
-from lcm.regime import Regime as UserRegime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
 from tests.solution.test_egm_process_states import (
@@ -52,7 +52,7 @@ def _model(stochastic_node_batch_size: int) -> Model:
     """DC-EGM model with an IID income process and a splayable node expectation."""
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
-    working = UserRegime(
+    working = ConsumptionSavingsRegime(
         transition=next_regime,
         active=lambda age, la=last_age: age < la,
         actions={"consumption": CONSUMPTION_GRID},
@@ -65,13 +65,15 @@ def _model(stochastic_node_batch_size: int) -> Model:
             "inverse_marginal_utility": inverse_marginal_utility,
         },
         solver=DCEGM(
-            continuous_state="wealth",
-            continuous_action="consumption",
-            resources="resources",
-            post_decision_function="savings",
             savings_grid=SAVINGS_GRID,
             n_constrained_points=64,
             stochastic_node_batch_size=stochastic_node_batch_size,
+        ),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
         ),
     )
     return Model(

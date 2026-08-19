@@ -10,7 +10,7 @@ numerical engine modules.
 import functools
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -32,11 +32,12 @@ from _lcm.solution.continuation_target import (
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
+    OneMarginSolver,
     PeriodKernel,
     SolutionKernels,
-    Solver,
     SolverBuildContext,
     SolverModelContext,
+    _BoundLiquidMargin,
 )
 from _lcm.typing import (
     EconFunction,
@@ -57,7 +58,7 @@ from lcm.typing import (
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class EGM(Solver):
+class EGM(OneMarginSolver):
     """Endogenous-grid solver for a 1-D consumption--saving regime.
 
     A regime with exactly one continuous state (the liquid wealth), one
@@ -78,18 +79,13 @@ class EGM(Solver):
     The corner is read off this bound rather than assumed to be zero savings.
     """
 
-    post_decision_function: FunctionName = ""
-    """Name of the post-decision function in `Regime.functions`.
-
-    May be omitted only when the solver is attached to a
-    `ConsumptionSavingsRegime`, which owns the role.
-
-    The end-of-period balance (e.g. savings) the liquid state's transition is
-    written through. The Euler inversion needs where a level of savings lands
-    next period and how that landing point moves when savings move; both are
-    read off the declared law as a function of this node, so the law must
-    consume it and must reach the continuous action only through it.
-    """
+    def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundEGM:
+        """Bind regime-owned DAG names without exposing them on public `EGM`."""
+        kwargs = {field.name: getattr(self, field.name) for field in fields(EGM)}
+        return _BoundEGM(
+            **kwargs,
+            post_decision_function=margin.post_decision_state,
+        )
 
     @property
     def requires_continuation(self) -> bool:
@@ -100,6 +96,7 @@ class EGM(Solver):
         self, *, context: SolverModelContext
     ) -> None:
         """Validate assumptions shared by the envelope-free EGM kernel."""
+        bound = cast("_BoundEGM", self)
         from dags import concatenate_functions  # noqa: PLC0415
 
         from _lcm.egm.validation import (  # noqa: PLC0415
@@ -115,14 +112,6 @@ class EGM(Solver):
 
         regime_name = context.regime_name
         user_regime = context.user_regimes[regime_name]
-        if not self.post_decision_function:
-            msg = (
-                f"EGM regime {regime_name!r} has no post_decision_function. "
-                "Supply it on EGM, or attach the solver to "
-                "ConsumptionSavingsRegime so the regime's canonical role is "
-                "bound automatically."
-            )
-            raise ModelInitializationError(msg)
         fail_if_custom_koopmans_aggregator(
             regime_name=regime_name,
             user_regime=user_regime,
@@ -174,19 +163,19 @@ class EGM(Solver):
 
         liquid_state = continuous_states[0]
         consumption_action = continuous_actions[0]
-        if self.post_decision_function not in user_regime.functions:
+        if bound.post_decision_function not in user_regime.functions:
             msg = (
                 f"EGM regime '{regime_name}' is missing the declared "
-                f"post-decision function '{self.post_decision_function}'."
+                f"post-decision function '{bound.post_decision_function}'."
             )
             raise ModelInitializationError(msg)
         functions = _resolve_solve_functions(user_regime=user_regime)
-        post_func = functions[self.post_decision_function]
+        post_func = functions[bound.post_decision_function]
         post_ancestors = _dag_ancestors(functions=functions, target_func=post_func)
         missing_roles = sorted({liquid_state, consumption_action} - set(post_ancestors))
         if missing_roles:
             msg = (
-                f"The post-decision function '{self.post_decision_function}' "
+                f"The post-decision function '{bound.post_decision_function}' "
                 f"of EGM regime '{regime_name}' must depend on the state "
                 f"'{liquid_state}' and action '{consumption_action}'; its DAG "
                 f"does not reach {missing_roles}."
@@ -217,13 +206,13 @@ class EGM(Solver):
             raise ModelInitializationError(msg)
 
         composed_post = concatenate_functions(
-            functions, targets=self.post_decision_function
+            functions, targets=bound.post_decision_function
         )
         post_arguments = set(inspect.signature(composed_post).parameters)
         expected_arguments = {liquid_state, consumption_action}
         if post_arguments != expected_arguments:
             msg = (
-                f"The post-decision DAG '{self.post_decision_function}' of EGM "
+                f"The post-decision DAG '{bound.post_decision_function}' of EGM "
                 f"regime '{regime_name}' must be exactly a function of "
                 f"'{liquid_state}' and '{consumption_action}', but its leaf "
                 f"arguments are {sorted(post_arguments)}."
@@ -248,7 +237,7 @@ class EGM(Solver):
                 if not _isclose(actual=actual, expected=expected, rtol=rtol, atol=atol):
                     msg = (
                         f"Consumption recovery fails in EGM regime "
-                        f"'{regime_name}': '{self.post_decision_function}' must "
+                        f"'{regime_name}': '{bound.post_decision_function}' must "
                         f"equal `{liquid_state} - {consumption_action}`. At "
                         f"{liquid_state}={float(state_value)}, "
                         f"{consumption_action}={float(action_value)}, it returns "
@@ -344,9 +333,10 @@ class EGM(Solver):
         """Build one 1-D EGM period adapter per active period.
 
         Each period's adapter knows the single deterministic continuation
-        target (the transition target whose regime is active next period), so
-        it reads that target's value array and marginal-utility carry.
+        target (the transition target whose value array and marginal-utility carry
+        feed the Euler inversion).
         """
+        bound = cast("_BoundEGM", self)
 
         savings_grid = self.savings_grid.to_jax()
         liquid_state = next(
@@ -398,7 +388,7 @@ class EGM(Solver):
                 laws[target] = build_declared_liquid_law(
                     transitions=context.transitions,
                     functions=context.functions,
-                    post_decision_name=self.post_decision_function,
+                    post_decision_name=bound.post_decision_function,
                     target=target,
                     target_state=target_state,
                     variable_names=variable_names,
@@ -425,6 +415,19 @@ class EGM(Solver):
                 layout=self.egm_continuation_layout,
             ),
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BoundEGM(EGM):
+    """Internal EGM configuration with regime-resolved DAG role names.
+
+    Public :class:`EGM` contains numerical configuration only.  A
+    ``ConsumptionSavingsRegime`` binds its liquid margin into this private
+    subclass before model processing, allowing the numerical implementation to
+    keep using explicit names without re-exposing them on the public solver.
+    """
+
+    post_decision_function: FunctionName
 
 
 @dataclass(frozen=True, kw_only=True)

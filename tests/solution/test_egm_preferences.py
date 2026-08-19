@@ -25,9 +25,7 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 
 
 def _solvers():
-    return {
-        "retired": EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    }
+    return {"retired": EGM(savings_grid=_SAVINGS_GRID)}
 
 
 def test_numeric_inverse_reproduces_the_analytic_euler_inversion():

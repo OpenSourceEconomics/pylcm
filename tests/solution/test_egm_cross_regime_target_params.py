@@ -27,6 +27,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -188,10 +189,6 @@ def next_old_death_prob(wealth: ContinuousState, age: int) -> FloatND:
 
 
 DCEGM_SOLVER = DCEGM(
-    continuous_state="wealth",
-    continuous_action="consumption",
-    resources="resources",
-    post_decision_function="savings",
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
 )
@@ -219,7 +216,8 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
     they are free solve params.
     """
     is_dcegm = solver == "dcegm"
-    young = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    young = regime_type(
         transition={
             "old": MarkovTransition(young_stay_prob),
             "dead": MarkovTransition(young_death_prob),
@@ -251,9 +249,21 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
             }
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
-    old = UserRegime(
+    old = regime_type(
         transition={
             "old": MarkovTransition(next_old_stay_prob),
             "dead": MarkovTransition(next_old_death_prob),
@@ -277,6 +287,18 @@ def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
             else {"utility": utility, "resources": resources_old, **pension_funcs}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
     )
     dead = UserRegime(
         transition=None,

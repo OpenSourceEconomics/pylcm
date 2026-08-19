@@ -135,7 +135,7 @@ DC-EGM regime.
 import math
 from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -196,6 +196,11 @@ from _lcm.utils.dispatchers import productmap
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
+
+if TYPE_CHECKING:
+    from _lcm.solution.dcegm import _BoundDCEGM
+else:
+    _BoundDCEGM = DCEGM
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -209,7 +214,7 @@ from lcm.typing import (
 
 def build_egm_step_functions(
     *,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
@@ -518,7 +523,7 @@ def compute_egm_carry_length(*, solver: DCEGM) -> int:
 
 def _get_egm_step(
     *,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
@@ -821,7 +826,7 @@ def _map_combo_product(
 
 def _build_kernel_pieces(
     *,
-    solver: DCEGM,
+    solver: _BoundDCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,

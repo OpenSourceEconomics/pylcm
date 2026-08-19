@@ -22,6 +22,7 @@ here ever compiles.
 """
 
 import ctypes
+import sys
 from pathlib import Path
 
 import jax
@@ -55,7 +56,11 @@ _TARGETS = (
 )
 
 _DIRECTORY = Path(__file__).resolve().parent
-_CPU_LIBRARY = _DIRECTORY / "libcertified_affine_ffi_cpu.so"
+_CPU_LIBRARY = _DIRECTORY / (
+    "certified_affine_ffi_cpu.dll"
+    if sys.platform == "win32"
+    else "libcertified_affine_ffi_cpu.so"
+)
 _CUDA_LIBRARY = _DIRECTORY / "libcertified_affine_ffi_cuda.so"
 
 

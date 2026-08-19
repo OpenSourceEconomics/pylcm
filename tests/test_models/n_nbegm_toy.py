@@ -29,7 +29,11 @@ from lcm import (
     AgeGrid,
     GridSearch,
     LinSpacedGrid,
+    LiquidMargin,
     Model,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
     Regime,
     categorical,
 )
@@ -187,20 +191,11 @@ def build_solver(
     if variant == "brute":
         return GridSearch()
     if variant == "negm":
+        # NEGM takes its DAG names from the regime's two margins, so the solver
+        # carries only numerical configuration; see `_negm_margins`.
         return NEGM(
-            inner=DCEGM(
-                continuous_state="wealth",
-                continuous_action="consumption",
-                resources="resources",
-                post_decision_function="liquid_savings",
-                savings_grid=SAVINGS_GRID,
-            ),
-            outer_action="illiquid_investment",
-            outer_state="illiquid",
-            outer_post_decision="new_illiquid",
+            inner=DCEGM(savings_grid=SAVINGS_GRID),
             outer_grid=OUTER_GRID,
-            outer_no_adjustment_candidate="keep_illiquid",
-            outer_cost="credited",
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
@@ -275,27 +270,67 @@ def build_model(
         if variant == "brute"
         else {}
     )
-    alive = Regime(
-        active=lambda age, n=final_age_alive: age <= n,
-        states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
-        state_transitions={
-            "wealth": next_wealth,
-            "illiquid": durable_law if durable_law is not None else durable_transition,
-        },
-        actions={
-            "consumption": CONSUMPTION_GRID,
-            "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
-        },
-        transition=next_regime,
-        functions=functions,
-        constraints=constraints,
-        solver=build_solver(
+    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
+    states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
+    state_transitions = {
+        "wealth": next_wealth,
+        "illiquid": durable_law if durable_law is not None else durable_transition,
+    }
+    actions = {
+        "consumption": CONSUMPTION_GRID,
+        "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
+    }
+    if variant == "negm":
+        # Built here rather than through `build_solver` so the declared type is
+        # the two-margin solver the nested regime accepts, not the base `Solver`.
+        negm_solver = NEGM(
+            inner=DCEGM(savings_grid=SAVINGS_GRID),
+            outer_grid=OUTER_GRID,
+            outer_batch_size=outer_batch_size,
+        )
+        alive = NestedConsumptionSavingsRegime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            constraints=constraints,
+            solver=negm_solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources=NetOfAdjustmentCost(
+                    name_in_dag="resources",
+                    before_cost="resources_before_outer_cost",
+                    cost="credited",
+                ),
+                post_decision_state="liquid_savings",
+            ),
+            outer_continuous=OuterContinuousMargin(
+                state="illiquid",
+                action="illiquid_investment",
+                post_decision_state="new_illiquid",
+                no_adjustment="keep_illiquid",
+            ),
+        )
+    else:
+        solver = build_solver(
             variant=variant,
             outer_batch_size=outer_batch_size,
             outer_search=outer_search,
             branch_aggregator=branch_aggregator,
-        ),
-    )
+        )
+        alive = Regime(
+            active=active,
+            states=states,
+            state_transitions=state_transitions,
+            actions=actions,
+            transition=next_regime,
+            functions=functions,
+            constraints=constraints,
+            solver=solver,
+        )
     dead = Regime(
         transition=None,
         active=lambda age, n=final_age_alive: age > n,

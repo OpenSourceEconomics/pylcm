@@ -313,11 +313,17 @@ def test_fold_on_taste_shocks_regime_is_rejected():
 
 
 def test_fold_on_non_gridsearch_solver_is_rejected():
-    from lcm import LinSpacedGrid  # noqa: PLC0415
+    from lcm import (  # noqa: PLC0415
+        ConsumptionSavingsRegime,
+        LinSpacedGrid,
+        LiquidMargin,
+    )
     from lcm.solvers import DCEGM  # noqa: PLC0415
 
+    # The witness carries its Euler names as a regime-owned margin, so the only
+    # thing left for the fold check to reject is the non-`GridSearch` solver.
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
-        Regime(
+        ConsumptionSavingsRegime(
             transition=None,
             states={
                 "wage_shock": _shock(fold=True),
@@ -329,11 +335,13 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
                 "resources": lambda wealth: wealth,
                 "savings": lambda wealth, consumption: wealth - consumption,
             },
-            solver=DCEGM(
-                continuous_state="wealth",
-                continuous_action="consumption",
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
                 resources="resources",
-                post_decision_function="savings",
+                post_decision_state="savings",
+            ),
+            solver=DCEGM(
                 savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             ),
         )

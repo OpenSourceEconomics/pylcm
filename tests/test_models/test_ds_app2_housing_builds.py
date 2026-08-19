@@ -22,7 +22,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import NEGM, LinSpacedGrid, Model
+from lcm import (
+    NEGM,
+    LinSpacedGrid,
+    Model,
+    NestedConsumptionSavingsRegime,
+    outer_unchanged,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import DCEGM
 from tests.conftest import X64_ENABLED
@@ -53,13 +59,15 @@ def test_negm_contract_accepts_the_housing_regimes():
     assets, so both are checked.
     """
     model = ds_app2_housing.build_model(n_grid=5, n_periods=4)
-    working_solver = model.user_regimes["working"].solver
+    working = model.user_regimes["working"]
+    assert isinstance(working, NestedConsumptionSavingsRegime)
+    working_solver = working.solver
     retired_solver = model.user_regimes["retired"].solver
     assert isinstance(working_solver, NEGM)
     assert isinstance(retired_solver, NEGM)
     assert isinstance(working_solver.inner, DCEGM)
-    assert working_solver.inner.continuous_state == "liquid"
-    assert working_solver.outer_action == "housing_investment"
+    assert working.liquid.state == "liquid"
+    assert working.outer_continuous.action == "housing_investment"
 
 
 def test_expected_regimes_states_and_actions_are_present():
@@ -99,10 +107,11 @@ def test_keeper_and_adjuster_are_solver_internal_not_user_actions():
     """
     model = ds_app2_housing.build_model(n_grid=5, n_periods=4)
     working = model.user_regimes["working"]
+    assert isinstance(working, NestedConsumptionSavingsRegime)
     assert "adjust" not in working.actions
     solver = working.solver
     assert isinstance(solver, NEGM)
-    assert solver.outer_no_adjustment_candidate is not None
+    assert working.outer_continuous.no_adjustment != outer_unchanged
 
 
 def test_build_params_threads_the_transaction_cost():

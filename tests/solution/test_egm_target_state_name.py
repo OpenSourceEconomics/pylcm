@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
-from lcm.regime import Regime
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -73,6 +73,10 @@ def bequest(estate: ContinuousState, crra: float) -> FloatND:
     return estate ** (1.0 - crra) / (1.0 - crra)
 
 
+def resources(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
 def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The end-of-period balance both laws below are written through."""
     return wealth - consumption
@@ -109,7 +113,7 @@ def prob_gone(age: int, last_age: float) -> FloatND:
 
 def _model(*, solver, n_consumption=14):
     """A 1-D lifecycle whose terminal regime renames the state it inherits."""
-    alive = Regime(
+    alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=n_consumption)
         },
@@ -125,9 +129,21 @@ def _model(*, solver, n_consumption=14):
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
-        functions={"utility": utility, "savings": savings},
+        functions={"utility": utility, "resources": resources, "savings": savings},
         active=lambda age: age < _LAST_AGE,
         solver=solver,
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if isinstance(solver, EGM)
+            else {}
+        ),
     )
     gone = Regime(
         transition=None,
@@ -163,9 +179,7 @@ def test_egm_accepts_a_target_that_names_the_euler_state_differently():
     into which is fully determined. Only a missing or ambiguous handoff is a
     reason to refuse.
     """
-    model = _model(
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    )
+    model = _model(solver=EGM(savings_grid=_SAVINGS_GRID))
     assert model.user_regimes["gone"].states.keys() == {"estate"}
 
 
@@ -179,9 +193,9 @@ def test_egm_matches_dense_grid_search_across_a_renamed_terminal_state(period):
     beyond this bound.
     """
     params = _params()
-    egm = _model(
-        solver=EGM(savings_grid=_SAVINGS_GRID, post_decision_function="savings")
-    ).solve(params=params, log_level="debug")
+    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
+        params=params, log_level="debug"
+    )
     brute = _model(solver=GridSearch(), n_consumption=600).solve(
         params=params, log_level="debug"
     )

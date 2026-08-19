@@ -26,10 +26,6 @@ def _solver(
 ) -> DCEGM:
     """A minimal DC-EGM solver differing only in its upper-envelope backend."""
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=8),
         envelope=envelope_config(envelope),
     )

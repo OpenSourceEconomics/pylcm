@@ -27,10 +27,6 @@ _BACKEND_TYPES = (
 def _solver(*, envelope: EnvelopeConfig) -> DCEGM:
     """Return a minimal DC-EGM solver using one typed backend configuration."""
     return DCEGM(
-        continuous_state="wealth",
-        continuous_action="consumption",
-        resources="resources",
-        post_decision_function="savings",
         savings_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=4),
         envelope=envelope,
     )

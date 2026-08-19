@@ -26,6 +26,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -143,7 +144,8 @@ def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
     is_dcegm = solver == "dcegm"
     ages = _ages()
     last_age = ages.exact_values[-1]
-    retirement = UserRegime(
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    retirement = regime_type(
         transition=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -165,15 +167,23 @@ def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
         ),
         solver=(
             DCEGM(
-                continuous_state="wealth",
-                continuous_action="consumption",
-                resources="resources",
-                post_decision_function="savings_post",
                 savings_grid=SAVINGS_GRID,
                 n_constrained_points=64,
             )
             if is_dcegm
             else GridSearch()
+        ),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings_post",
+                )
+            }
+            if is_dcegm
+            else {}
         ),
         active=lambda age, la=last_age: age < la,
     )

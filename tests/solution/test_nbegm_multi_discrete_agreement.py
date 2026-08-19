@@ -12,7 +12,14 @@ from collections.abc import Mapping
 import numpy as np
 import pytest
 
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import nbegm_multi_discrete_toy as toy
+
+# The certified comparison is the one that needs the native library; the
+# ordinary cases decide in the working format and run anywhere.
+_REQUIRES_KERNEL = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 _ALIVE = "alive"
 _TAX_EXEMPTION = 12.0
@@ -41,10 +48,10 @@ def _solve(
 @pytest.mark.parametrize(
     ("n_actions", "n_branches", "envelope_arithmetic"),
     [
-        (2, 4, "certified"),
+        pytest.param(2, 4, "certified", marks=_REQUIRES_KERNEL),
         (2, 4, "ordinary"),
         (3, 20, "ordinary"),
-        (3, 20, "certified"),
+        pytest.param(3, 20, "certified", marks=_REQUIRES_KERNEL),
     ],
 )
 def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
