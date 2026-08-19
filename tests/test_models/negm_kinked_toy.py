@@ -54,6 +54,7 @@ ILLIQUID_FLOW = 0.05  # iota
 WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (new_durable < illiquid)
 BORROW_RATE = 0.12  # credit-card rate on liquid_savings < 0
 SAVE_RATE = 0.03  # rate on liquid_savings >= 0
+SAVINGS_FLOOR = -5.0  # borrowing limit on the post-decision savings
 RISK_AVERSION = 2.0
 LABOUR_INCOME = 5.0
 
@@ -162,7 +163,7 @@ ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_Z)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_C)
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-8.0, stop=8.0, n_points=N_AZ)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_AZ)
-SAVINGS_GRID = LinSpacedGrid(start=-5.0, stop=35.0, n_points=80)
+SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=80)
 
 
 NEGM_SOLVER = NEGM(

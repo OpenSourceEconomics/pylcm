@@ -30,6 +30,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -73,17 +74,20 @@ def next_regime(_age: float) -> ScalarInt:
     return RegimeId.done
 
 
-def _model(*, savings_grid_start: float, declared_lower_bound: float | None) -> Model:
+def _model(
+    *,
+    savings_grid_start: float,
+    declared_lower_bound: float | None,
+    opaque_constraint: UserFunction | None = None,
+) -> Model:
     """Build a one-period DC-EGM model, optionally declaring its own limit."""
-    constraints = (
-        {}
-        if declared_lower_bound is None
-        else {
-            "borrowing_limit": post_decision_lower_bound(
-                post_decision="savings", lower_bound=declared_lower_bound
-            )
-        }
-    )
+    constraints: dict[str, UserFunction] = {}
+    if declared_lower_bound is not None:
+        constraints["borrowing_limit"] = post_decision_lower_bound(
+            post_decision="savings", lower_bound=declared_lower_bound
+        )
+    if opaque_constraint is not None:
+        constraints["borrowing_constraint"] = opaque_constraint
     saving_regime = ConsumptionSavingsRegime(
         actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
         states={"wealth": _WEALTH_GRID},
@@ -163,46 +167,24 @@ def test_declaring_nothing_still_builds() -> None:
     assert "saving" in model.user_regimes
 
 
-def test_a_plain_callable_borrowing_constraint_is_still_refused() -> None:
-    """An opaque predicate carries no proof, so it stays outside the contract."""
+def _opaque_borrowing_constraint(savings: FloatND) -> FloatND:
+    """A borrowing limit written as an ordinary predicate, carrying no proof."""
+    return savings >= -2.0
 
-    def borrowing_constraint(savings: FloatND) -> FloatND:
-        return savings >= -2.0
 
-    saving = ConsumptionSavingsRegime(
-        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
-        states={"wealth": _WEALTH_GRID},
-        state_transitions={"wealth": {"done": next_wealth}},
-        constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
-        functions={
-            "utility": utility,
-            "resources": resources,
-            "savings": savings,
-        },
-        active=lambda age: age == 0,
-        solver=DCEGM(savings_grid=LinSpacedGrid(start=-2.0, stop=4.0, n_points=12)),
-        liquid=LiquidMargin(
-            state="wealth",
-            action="consumption",
-            resources="resources",
-            post_decision_state="savings",
-        ),
-    )
-    done = Regime(
-        actions={},
-        transition=None,
-        states={"wealth": _WEALTH_GRID},
-        functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
-        solver=GridSearch(),
-    )
+def test_a_plain_callable_borrowing_constraint_is_refused() -> None:
+    """An opaque predicate carries no proof, so it stays outside the contract.
 
+    The refusal is attributable to the constraint rather than to the model:
+    it differs by exactly one argument from the builds asserted above, and it
+    matches the message naming the constraint, so an unrelated build failure
+    would not satisfy it.
+    """
     with pytest.raises(ModelInitializationError, match="Remove this constraint"):
-        Model(
-            regimes={"saving": saving, "done": done},
-            ages=AgeGrid(start=0, stop=1, step="Y"),
-            regime_id_class=RegimeId,
+        _model(
+            savings_grid_start=-2.0,
+            declared_lower_bound=None,
+            opaque_constraint=_opaque_borrowing_constraint,
         )
 
 

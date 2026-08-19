@@ -37,8 +37,18 @@ from lcm_examples.iskhakov_et_al_2017 import (
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 
-# Exogenous end-of-period savings grid; the lower bound is the borrowing limit
-# (savings >= 0 encodes the original `consumption <= wealth` constraint).
+# Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
+# the original `consumption <= wealth` constraint. This is the number the regime
+# declares, and the engine checks the savings grid against it.
+#
+# Deliberately stated independently of the grid below rather than as its
+# `start`: the two can therefore disagree, which is what gives that check
+# something to catch. A toy whose grid is built from this constant cannot
+# exhibit a grid-versus-declaration mismatch at all, so it can only serve as an
+# end-to-end fixture -- never as evidence about the check.
+SAVINGS_FLOOR = 0.0
+
+# Exogenous end-of-period savings grid, whose lowest node is `SAVINGS_FLOOR`.
 # Nodes are cubically clustered toward the borrowing limit: the value function
 # curves hardest where the constraint starts to bind, and the published V is
 # interpolated from endogenous points spaced like the savings nodes — a
