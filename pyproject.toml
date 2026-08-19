@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 # `jax` is a build requirement, not only a runtime one: the build hook compiles the
 # exact-affine FFI kernel against the XLA FFI headers that ship inside jaxlib, and
 # locates them through `jax.ffi.include_dir()`.
-requires = [ "hatch-vcs", "hatchling", "jax>=0.11" ]
+requires = [ "hatch-vcs", "hatchling", "jax>=0.11.1" ]
 
 [project]
 name = "pylcm"
@@ -36,7 +36,7 @@ dependencies = [
   "cloudpickle>=3.1.2",
   "dags>=0.6",
   "h5py>=3.12",
-  "jax>=0.11",
+  "jax>=0.11.1",
   "jaxtyping>=0.3.11",
   "orbax-checkpoint>=0.11",
   "pandas",
@@ -115,7 +115,7 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 [tool.pixi.pypi-dependencies]
-jax = ">=0.11"
+jax = ">=0.11.1"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 [tool.pixi.tasks]
@@ -141,17 +141,17 @@ platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda12" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
 platforms = [ "linux-64-cuda13", "linux-aarch64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda13" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
 [tool.pixi.feature.cuda13.target.linux-aarch64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-aarch64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda13" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
