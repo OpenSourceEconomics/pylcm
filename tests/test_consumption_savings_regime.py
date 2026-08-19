@@ -230,7 +230,12 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
     assert solver.outer_state == "durable"
     assert solver.outer_action == "new_durable"
     assert solver.outer_post_decision == "durable_after_choice"
-    assert solver.outer_no_adjustment_candidate == outer_unchanged
+    # `_OUTER` declares `no_adjustment=outer_unchanged`, the public spelling of
+    # "the keeper is the state held still". The public->bound seam resolves that
+    # sentinel to `None`, which is what a solver reading the bound margin sees:
+    # no *named* no-adjustment function to call. Asserting the sentinel here
+    # would pin a value that can no longer reach the solver.
+    assert solver.outer_no_adjustment_candidate is None
 
 
 def test_pairing_check_rejects_two_margin_solver_on_one_margin_regime():
