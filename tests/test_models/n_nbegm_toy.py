@@ -159,7 +159,8 @@ CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
 # see `build_model`.
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
-SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=35.0, n_points=60)
+SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
+SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
