@@ -16,6 +16,7 @@ import pytest
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
@@ -70,7 +71,7 @@ def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
 def test_a_gpu_backend_requires_a_loadable_cuda_exact_kernel(monkeypatch):
     """A loadable CPU library alone does not satisfy an exact GPU request."""
     monkeypatch.setattr(ffi, "kernel_available", lambda: True)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "gpu")
 
     assert ffi.kernel_available_for_current_backend() is False
@@ -117,7 +118,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
 
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_register_platform", raise_missing_symbol)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
@@ -139,7 +140,7 @@ def test_a_present_unloadable_kernel_is_unavailable_but_not_absent(
 
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_register_platform", raise_load_error)
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
@@ -231,7 +232,7 @@ def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
     library.touch()
     calls = []
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_REGISTERED", False)
     monkeypatch.setattr(
         ffi, "_register_platform", lambda **kwargs: calls.append(kwargs["platform"])
@@ -240,7 +241,15 @@ def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
     ffi._ensure_registered()
     ffi._ensure_registered()
 
-    assert calls.count("cpu") == 1
+    assert calls == ["cpu"]
+
+
+def test_a_nested_regime_reports_its_inner_exact_backend_as_unavailable(monkeypatch):
+    """A NEGM regime carries its inner solver's capability gate to model build."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
+        negm_kinked_toy.build_model()
 
 
 def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkeypatch):
@@ -252,7 +261,7 @@ def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkey
     the process is still cheap to restart.
     """
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_default_backend", lambda: "gpu")
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
@@ -267,7 +276,7 @@ def test_a_cpu_backend_without_a_cuda_kernel_registers(monkeypatch):
     the one test here that needs a build rather than characterising its absence.
     """
     monkeypatch.setattr(ffi, "_REGISTERED", False)
-    monkeypatch.setattr(ffi, "CUDA_AVAILABLE", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_default_backend", lambda: "cpu")
 
     ffi._ensure_registered()

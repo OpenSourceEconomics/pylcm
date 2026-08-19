@@ -9,10 +9,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### PR #390 maintainer-review follow-up
 
-- `ConsumptionSavingsRegime` can own the liquid state, consumption action,
-  resources node, and post-decision node while retaining an arbitrary regime
-  function DAG. `EGM`, `DCEGM`, and the inner solver of `NEGM` inherit omitted
-  role names from it; ordinary `Regime` remains supported.
+- `ConsumptionSavingsRegime` and `NestedConsumptionSavingsRegime` declare the
+  DAG roles the endogenous-grid solvers need — the liquid state, consumption
+  action, resources node, and post-decision node, plus an outer continuous
+  margin for the nested form — while retaining an arbitrary regime function
+  DAG. `EGM`, `DCEGM`, and `NEGM` carry numerical configuration only and read
+  their role names from the regime that binds them, so an endogenous-grid
+  solver on a plain `Regime` is rejected at construction. `Regime` with
+  `GridSearch` is unchanged.
 - Every solver now participates in model-stage and build-stage validation
   through the common solver contract. Plain `EGM` rejects constraints,
   discrete/process axes, incompatible terminal targets, and a post-decision

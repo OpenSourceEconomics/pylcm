@@ -11,6 +11,7 @@ action-grid nodes (where a grid argmax cannot land).
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy
@@ -18,11 +19,14 @@ from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:

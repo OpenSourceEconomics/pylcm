@@ -11,7 +11,7 @@ each by key.
 
 import functools
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -38,6 +38,7 @@ from _lcm.solution.contract import (
     TwoMarginSolver,
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
+    bind_roles,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM
 from _lcm.typing import (
@@ -138,21 +139,22 @@ class NEGM(TwoMarginSolver):
         outer: _BoundOuterContinuousMargin,
     ) -> _BoundNEGM:
         """Bind both regime-owned margins into a private runtime config."""
-        kwargs = {
-            field.name: getattr(self, field.name)
-            for field in fields(NEGM)
-            if field.name != "inner"
-        }
-        inner = self.inner._with_liquid_margin(liquid)  # noqa: SLF001
-        return _BoundNEGM(
-            **kwargs,
-            inner=inner,
-            outer_action=outer.action,
-            outer_state=outer.state,
-            outer_post_decision=outer.post_decision_state,
-            outer_no_adjustment_candidate=outer.no_adjustment,
-            outer_cost=liquid.cost,
-            outer_cost_base=liquid.before_cost,
+        # The inner solver is bound first and then overrides the copy taken from
+        # this solver, so the nest carries the *bound* inner rather than the
+        # public one it was declared with.
+        return cast(
+            "_BoundNEGM",
+            bind_roles(
+                solver=self,
+                role_type=_BoundNEGM,
+                inner=self.inner._with_liquid_margin(liquid),  # noqa: SLF001
+                outer_action=outer.action,
+                outer_state=outer.state,
+                outer_post_decision=outer.post_decision_state,
+                outer_no_adjustment_candidate=outer.no_adjustment,
+                outer_cost=liquid.cost,
+                outer_cost_base=liquid.before_cost,
+            ),
         )
 
     @property
@@ -175,6 +177,17 @@ class NEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
         )
+
+    def validate_build(self, *, context: SolverBuildContext) -> None:
+        """Apply the inner solver's build-time gates to this regime.
+
+        The inner kernels run unchanged inside every outer candidate, so a
+        build-time capability the inner solver requires is required here for
+        exactly the same reason. The inner gates read the inner solver's own
+        configuration rather than any state name, so they carry over without
+        being re-pointed at the nest's axes.
+        """
+        self.inner.validate_build(context=context)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
@@ -403,12 +416,25 @@ class _BoundNEGM(NEGM):
     """Internal NEGM configuration with both regime margins resolved."""
 
     inner: _BoundDCEGM
+    """The liquid-margin solver run inside every outer candidate."""
+
     outer_action: ActionName
+    """Name of the continuous action setting the outer margin."""
+
     outer_state: StateName
+    """Name of the continuous state the outer margin searches over."""
+
     outer_post_decision: FunctionName
+    """Name of the function giving the outer post-decision state."""
+
     outer_no_adjustment_candidate: FunctionName | None
+    """Name of the no-adjustment map, or `None` for the identity map."""
+
     outer_cost: FunctionName | None
+    """Cost function of a composed `NetOfAdjustmentCost`, else `None`."""
+
     outer_cost_base: FunctionName | None
+    """Gross-resources function of that composition, else `None`."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -732,7 +758,7 @@ def _build_coh_shift_function(
     `shift(z, z'_j) = cost(z, z'_j) - cost(z, keep(z))`,
 
     evaluated directly on the regime's declared outer-cost DAG
-    (`NEGM.outer_cost`), whose inputs are only the durable state, the outer
+    (`liquid.resources.cost`), whose inputs are only the durable state, the outer
     post-decision, and params. Nothing about the shift is inferred from the
     wider resources function — with a declared cost the resources are composed
     at model build as `<resources>_before_outer_cost - <outer_cost>`, so their
@@ -970,32 +996,5 @@ def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:
             "is the exogenous search grid over the durable post-decision margin; "
             "it carries no transition. A stochastic durable margin belongs in a "
             "process state, not the NEGM outer search."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_outer_action_is_inner_action(
-    *, outer_action: ActionName, inner: _BoundDCEGM
-) -> None:
-    if outer_action == inner.continuous_action:
-        msg = (
-            f"NEGM.outer_action '{outer_action}' coincides with the inner "
-            f"DC-EGM continuous action '{inner.continuous_action}'. The outer "
-            "durable/illiquid margin and the inner consumption margin must be "
-            "distinct actions."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_outer_post_decision_is_inner_post_decision(
-    *, outer_post_decision: FunctionName, inner: _BoundDCEGM
-) -> None:
-    if outer_post_decision == inner.post_decision_function:
-        msg = (
-            f"NEGM.outer_post_decision '{outer_post_decision}' coincides with "
-            f"the inner DC-EGM post-decision function "
-            f"'{inner.post_decision_function}'. The outer post-decision (the "
-            "next-period durable stock) and the inner post-decision (the liquid "
-            "savings) must be distinct functions."
         )
         raise RegimeInitializationError(msg)

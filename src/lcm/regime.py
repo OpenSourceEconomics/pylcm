@@ -9,7 +9,6 @@ model build.
 """
 
 import dataclasses
-from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -29,7 +28,9 @@ from _lcm.user_regime_validation import (
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
+    find_duplicates,
 )
+from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -392,7 +393,7 @@ class NetOfAdjustmentCost:
         self._fail_if_names_are_not_pairwise_distinct()
 
     def _fail_if_names_are_not_pairwise_distinct(self) -> None:
-        duplicates = _duplicate_names((self.name_in_dag, self.before_cost, self.cost))
+        duplicates = _repeated_names((self.name_in_dag, self.before_cost, self.cost))
         if duplicates:
             raise RegimeInitializationError(
                 "NetOfAdjustmentCost names must be pairwise distinct; repeated "
@@ -431,7 +432,7 @@ class LiquidMargin:
         names = [self.state, self.action, self.resources_name, self.post_decision_state]
         if isinstance(self.resources, NetOfAdjustmentCost):
             names.extend((self.resources.before_cost, self.resources.cost))
-        duplicates = _duplicate_names(names)
+        duplicates = _repeated_names(names)
         if duplicates:
             raise RegimeInitializationError(
                 "LiquidMargin names must be pairwise distinct; repeated names: "
@@ -454,7 +455,7 @@ class OuterContinuousMargin:
     """This period's chosen post-decision level of the outer state."""
 
     no_adjustment: FunctionName
-    """No-adjustment map, or :data:`lcm.outer_unchanged` for identity."""
+    """No-adjustment map, or `lcm.outer_unchanged` for identity."""
 
     def __post_init__(self) -> None:
         self._fail_if_names_are_not_pairwise_distinct()
@@ -463,7 +464,7 @@ class OuterContinuousMargin:
         names = [self.state, self.action, self.post_decision_state]
         if self.no_adjustment != outer_unchanged:
             names.append(self.no_adjustment)
-        duplicates = _duplicate_names(names)
+        duplicates = _repeated_names(names)
         if duplicates:
             raise RegimeInitializationError(
                 "OuterContinuousMargin names must be pairwise distinct; repeated "
@@ -491,7 +492,7 @@ class _EGMFamilyRegime(Regime):
         if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
             raise RegimeInitializationError(
                 f"LiquidMargin.state {self.liquid.state!r} is declared locally but "
-                "is not a continuous non-process solve-state grid."
+                "is not a continuous solve-state grid."
             )
 
     def _fail_if_local_liquid_action_is_not_continuous(self) -> None:
@@ -528,7 +529,7 @@ class _EGMFamilyRegime(Regime):
         if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
             messages.append(
                 f"liquid.state {self.liquid.state!r} must name a continuous "
-                "non-process solve-state grid"
+                "solve-state grid"
             )
         if not isinstance(self.actions.get(self.liquid.action), ContinuousGrid):
             messages.append(
@@ -551,7 +552,7 @@ class _EGMFamilyRegime(Regime):
         messages = self._liquid_finalization_errors()
         if messages:
             raise RegimeInitializationError(
-                f"In EGM-family regime {regime_name!r}: {'; '.join(messages)}."
+                f"In EGM-family regime {regime_name!r}: {format_messages(messages)}"
             )
 
 
@@ -583,7 +584,7 @@ class ConsumptionSavingsRegime(_EGMFamilyRegime):
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class NestedConsumptionSavingsRegime(_EGMFamilyRegime):
-    """Two-margin sibling of :class:`ConsumptionSavingsRegime`."""
+    """Two-margin sibling of `ConsumptionSavingsRegime`."""
 
     outer_continuous: OuterContinuousMargin
     solver: TwoMarginSolver | GridSearch = field(default_factory=GridSearch)
@@ -648,7 +649,7 @@ class NestedConsumptionSavingsRegime(_EGMFamilyRegime):
         if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
             raise RegimeInitializationError(
                 f"OuterContinuousMargin.state {name!r} is declared locally but "
-                "is not a continuous non-process solve-state grid."
+                "is not a continuous solve-state grid."
             )
 
     def _fail_if_local_outer_action_is_not_continuous(self) -> None:
@@ -684,7 +685,7 @@ class NestedConsumptionSavingsRegime(_EGMFamilyRegime):
         if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
             messages.append(
                 f"outer_continuous.state {outer.state!r} must name a continuous "
-                "non-process solve-state grid"
+                "solve-state grid"
             )
         if not isinstance(self.actions.get(outer.action), ContinuousGrid):
             messages.append(
@@ -707,7 +708,7 @@ class NestedConsumptionSavingsRegime(_EGMFamilyRegime):
         if messages:
             raise RegimeInitializationError(
                 f"In nested consumption-savings regime {regime_name!r}: "
-                f"{'; '.join(messages)}."
+                f"{format_messages(messages)}"
             )
 
 
@@ -733,7 +734,13 @@ def _bind_two_margin_solver(
             state=outer.state,
             action=outer.action,
             post_decision_state=outer.post_decision_state,
-            no_adjustment=outer.no_adjustment,
+            # `outer_unchanged` is a declaration, not a function name. Resolving
+            # it here, at the one seam where a public margin becomes a bound
+            # one, is what lets every engine consumer read the identity map as
+            # the absence of a candidate function.
+            no_adjustment=(
+                None if outer.no_adjustment == outer_unchanged else outer.no_adjustment
+            ),
         ),
     )
 
@@ -757,9 +764,9 @@ def _bound_liquid_margin(liquid: LiquidMargin) -> _BoundLiquidMargin:
     )
 
 
-def _duplicate_names(names: list[str] | tuple[str, ...]) -> list[str]:
-    counts = Counter(names)
-    return sorted(name for name, count in counts.items() if count > 1)
+def _repeated_names(names: list[str] | tuple[str, ...]) -> list[str]:
+    """Return the names occurring more than once, in a deterministic order."""
+    return sorted(find_duplicates(names))
 
 
 def _composition_rule_message(

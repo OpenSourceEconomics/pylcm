@@ -20,6 +20,7 @@ from lcm import (
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.envelope_configs import EnvelopeName, envelope_config
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
@@ -36,6 +37,7 @@ _PORTABLE_DCEGM_SOLVER = dataclasses.replace(
 _PORTABLE_DCEGM_RETIREMENT = dcegm_retirement.replace(solver=_PORTABLE_DCEGM_SOLVER)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_regime_does_not_qualify_for_the_policy_read():
     """A NEGM regime keeps the grid path: its published policy is keeper-only.
 

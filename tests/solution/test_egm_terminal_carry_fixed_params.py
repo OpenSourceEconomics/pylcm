@@ -35,6 +35,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 N_PERIODS = 4
 # The lowest wealth nodes are where grid search is least reliable and the
