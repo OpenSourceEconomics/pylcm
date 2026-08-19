@@ -3,7 +3,7 @@
 The default two-asset toy lets the grid search reach durable levels the nested
 solver never considers and miss most of the ones it does, so a nested-vs-brute
 gap measured there is dominated by the candidate-set mismatch. The
-`brute_direct` variant chooses the post-decision durable stock itself, on the
+`brute` variant chooses the post-decision durable stock itself, on the
 solver's outer grid, so both arms rank the same candidates.
 """
 
@@ -15,19 +15,15 @@ _PARAMS = {"discount_factor": 0.95}
 
 
 def test_the_direct_variant_chooses_the_post_decision_stock_itself() -> None:
-    """`brute_direct` acts on `new_illiquid` over the nested solver's outer grid."""
-    model = toy.build_model(
-        variant="brute_direct", n_periods=2, illiquid_grid=toy.OUTER_GRID
-    )
+    """`brute` acts on `new_illiquid` over the nested solver's outer grid."""
+    model = toy.build_model(variant="brute", n_periods=2, illiquid_grid=toy.OUTER_GRID)
     alive = model.user_regimes["alive"]
     assert set(alive.actions) == {"consumption", "new_illiquid"}
 
 
 def test_the_direct_variant_reaches_exactly_the_outer_grid() -> None:
     """Its durable candidates are the outer grid — no extras, none missing."""
-    model = toy.build_model(
-        variant="brute_direct", n_periods=2, illiquid_grid=toy.OUTER_GRID
-    )
+    model = toy.build_model(variant="brute", n_periods=2, illiquid_grid=toy.OUTER_GRID)
     durable_action = model.user_regimes["alive"].actions["new_illiquid"]
     assert durable_action is not None
     np.testing.assert_allclose(

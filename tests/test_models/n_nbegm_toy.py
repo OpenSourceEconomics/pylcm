@@ -6,7 +6,9 @@ move one-for-one, the liquid return has a single rate, and utility is pure CRRA
 in consumption. Every solver family can represent it, so it isolates the outer
 keeper/adjuster wrapper from the inner solver's kink machinery:
 
-- `"brute"` — dense two-action grid search, the finite-grid oracle;
+- `"brute"` — two-action grid search over `OUTER_GRID` and the consumption
+  grid, the finite-grid oracle: it chooses the next durable stock directly, so
+  it searches the nested solvers' own outer candidate set;
 - `"negm"` — `NEGM(inner=DCEGM(...))`, the smooth nested baseline;
 - `"n_nbegm"` — `NNBEGM(inner=NBEGM(...))`, the target method.
 
@@ -150,17 +152,14 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
 WEALTH_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_WEALTH)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_ILLIQUID)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
-# Covers `s' = Z + Iz` for every (Z, s') pair with Z in [0, 20] and s' in the
-# outer grid, so the brute variant searches the same outer choice set the
-# nested solvers sweep (feasibility constraints below trim the excess).
+# The nested solvers' outer action. Spans `s' = Z + Iz` for every (Z, s') pair
+# with Z in [0, 20] and s' in [0, 20]; spanning the range is all that is asked
+# of it, since the nested solvers reach their candidates through `OUTER_GRID`
+# and not through this grid. The brute variant deliberately does *not* use it —
+# see `build_model`.
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=35.0, n_points=60)
-
-
-def illiquid_feasible(new_illiquid: ContinuousState) -> FloatND:
-    """Brute-only constraint pinning `s'` to the N-NB-EGM outer range."""
-    return (new_illiquid >= OUTER_GRID.start) & (new_illiquid <= OUTER_GRID.stop)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -172,7 +171,7 @@ def build_solver(
     *, variant: str, outer_batch_size: int = 0
 ) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime."""
-    if variant in {"brute", "brute_direct"}:
+    if variant == "brute":
         return GridSearch()
     if variant == "negm":
         return NEGM(
@@ -237,42 +236,39 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    if variant == "brute":
-        constraints = {
-            "illiquid_feasible": illiquid_feasible,
-            "budget_feasible": budget_feasible,
-        }
-    elif variant == "brute_direct":
-        # `new_illiquid` is the action, so its grid already pins the durable
-        # range; only the inner savings floor still needs stating.
-        constraints = {"budget_feasible": budget_feasible}
-    else:
-        constraints = {}
+    constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
     state_transitions = {
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
-    if variant == "brute_direct":
-        # Dropping `new_illiquid` from the DAG turns its output into an
-        # external input, which the action supplies directly. Every reader —
-        # `credited`, `resources`, the durable law — is unchanged.
+    actions = {
+        "consumption": consumption_grid,
+        "illiquid_investment": illiquid_investment_grid,
+    }
+    if variant == "brute":
+        # The oracle has to search the candidate set the nested solvers sweep,
+        # not merely a set that spans its range. Reaching `s'` through an
+        # investment action makes the two sets coincide only where `s' = Z + Iz`
+        # is an outer node, i.e. where 63 divides 9j - 14k for `Z = 20k/9` and
+        # `s' = 20j/14` — 3 of the 15 outer nodes, and those from only 2 of the
+        # 10 `illiquid` states; the other 8 states hit none. Choosing the next
+        # stock directly puts both solvers on `OUTER_GRID` in the same
+        # coordinates, so the comparison is over one candidate set rather than
+        # two, and the `illiquid` grid is untouched — the state space is the
+        # same before and after, which is what makes the two runs comparable.
+        #
+        # Dropping `new_illiquid` from the DAG turns its output into an external
+        # input, which the action supplies directly. Every reader — `credited`,
+        # `resources`, the durable law — is unchanged.
         del functions["new_illiquid"]
-        actions = {
-            "consumption": consumption_grid,
-            "new_illiquid": OUTER_GRID,
-        }
-    else:
-        actions = {
-            "consumption": consumption_grid,
-            "illiquid_investment": illiquid_investment_grid,
-        }
+        actions = {"consumption": consumption_grid, "new_illiquid": OUTER_GRID}
     solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
-    if variant in {"brute", "brute_direct"}:
+    if variant == "brute":
         alive = Regime(
             active=active,
             states=states,
