@@ -162,14 +162,25 @@ class TwoMarginSolver(Solver):
     ) -> TwoMarginSolver: ...
 ```
 
-% TODO(binding-seam): the method and bound-margin names above are the private spelling.
-% Replace with the published names once the public surface of this seam is settled; the
-% surrounding prose and the `bind_roles` guidance below are unaffected by that rename.
+The binding method is private, and so is the margin type it takes — which is the outward
+sign of a deliberate restriction: **the margin families are closed. Subclass one of the
+shipped solvers, not a marker.** A solver deriving straight from `OneMarginSolver` or
+`TwoMarginSolver` is refused when the model is built, by
+`fail_if_solver_is_not_shipped`. A subclass of `EGM`, `DCEGM` or `NEGM` is accepted and
+needs nothing special — it inherits the concrete type the engine tests for.
 
-These names are private today, so a solver defined outside the package imports them from
-`_lcm.solution.contract`. Everything else the family needs — `Solver`,
-`OneMarginSolver`, `TwoMarginSolver`, `SolverBuildContext`, `SolutionKernels` — is
-public.
+The reason is that three engine sites dispatch on the concrete shipped classes rather
+than on the markers: the simulate-phase budget-constraint synthesis in
+`regime_building/processing.py`, the terminal branch of `egm/budget.py`, and `_as_dcegm`
+in `egm/regime_introspection.py`. A solver that satisfies the marker contract but is
+none of those types passes every check, binds its margins, and is then solved with the
+budget constraint and the carry read skipped — a wrong published policy with nothing
+raised. Refusing it at build time is what turns that into an error message.
+
+The restriction is scoped to what the engine can currently dispatch, and lifts when the
+two-asset endogenous-grid solvers need genuinely custom implementations. Until then, the
+`Solver`-direct path above is open and unrestricted: a solver that singles out no DAG
+node subclasses `Solver` and works.
 
 ### Implementing the binding method
 
