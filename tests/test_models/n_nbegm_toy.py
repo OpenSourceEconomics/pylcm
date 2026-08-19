@@ -226,6 +226,8 @@ def build_model(
     illiquid_grid: Grid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     branch_aggregator: OuterBranchAggregator | None = None,
+    illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
+    consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -234,7 +236,13 @@ def build_model(
     isolating the outer wrapper from the nested-carry publication; longer
     horizons chain published nested carries between alive periods.
 
-    `illiquid_grid` overrides the durable state's grid in both regimes.
+    `illiquid_grid` overrides the durable state's grid in both regimes, and
+    `illiquid_investment_grid` the action that moves it. Together they set
+    which `new_illiquid` levels the brute variant can reach, so a caller can
+    align the brute candidate set with the nested solvers' outer grid.
+    `consumption_grid` refines the inner action, which the grid search ranks
+    directly and the endogenous-grid solvers do not, so a refinement sequence
+    over it separates the oracle's own discretization error from the solver's.
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
@@ -257,6 +265,8 @@ def build_model(
         functions["inverse_marginal_utility"] = inverse_marginal_utility
     if branch_aggregator is not None:
         functions["adjustment_scale"] = adjustment_scale
+    # `new_illiquid` is the brute action, so its grid already pins the durable
+    # range; only the inner savings floor still needs stating.
     constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
@@ -265,8 +275,8 @@ def build_model(
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
     actions = {
-        "consumption": CONSUMPTION_GRID,
-        "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
+        "consumption": consumption_grid,
+        "illiquid_investment": illiquid_investment_grid,
     }
     if variant == "brute":
         # The oracle has to search the candidate set the nested solvers sweep,
@@ -279,8 +289,12 @@ def build_model(
         # coordinates, so the comparison is over one candidate set rather than
         # two, and the `illiquid` grid is untouched — the state space is the
         # same before and after, which is what makes the two runs comparable.
+        #
+        # Dropping `new_illiquid` from the DAG turns its output into an external
+        # input the action supplies; every reader — `credited`, `resources`, the
+        # durable law — is unchanged.
         del functions["new_illiquid"]
-        actions = {"consumption": CONSUMPTION_GRID, "new_illiquid": OUTER_GRID}
+        actions = {"consumption": consumption_grid, "new_illiquid": OUTER_GRID}
     solver = build_solver(
         variant=variant,
         outer_batch_size=outer_batch_size,

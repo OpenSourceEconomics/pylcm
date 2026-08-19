@@ -23,6 +23,7 @@ from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Phased, fixed_tran
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, dcegm_variants, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
@@ -212,6 +213,7 @@ def _skill_model() -> Model:
     )
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_passive_state_regime_keeps_the_grid_consumption_path():
     """With a passive continuous state, simulated consumption stays on the grid.
 
@@ -261,6 +263,7 @@ def _phased_alive_utility_simulate(consumption: ContinuousState) -> FloatND:
     return 2.0 * jnp.log(consumption)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_phase_variant_utility_keeps_the_grid_consumption_path():
     """A phase-variant utility disables the solve-policy replay.
 

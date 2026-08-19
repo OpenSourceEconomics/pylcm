@@ -19,6 +19,7 @@ import functools
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from lcm import (
     AgeGrid,
@@ -39,6 +40,9 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 N_PERIODS = 4
 N_WAGE_NODES = 5

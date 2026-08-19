@@ -22,7 +22,7 @@ from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
 from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
-from tests.conftest import X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution.test_egm_process_states import (
     CONSUMPTION_GRID,
     N_INCOME_NODES,
@@ -40,6 +40,8 @@ from tests.solution.test_egm_process_states import (
     savings,
     utility_consumption_only,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # The block reduction reorders the weighted-sum adds: in float64 the match to the
 # unsplayed solve is tight, in float32 the reordering shows at single-precision scale.

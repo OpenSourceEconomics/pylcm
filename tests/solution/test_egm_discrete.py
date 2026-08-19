@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
@@ -38,6 +39,8 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_params,
 )
 from tests.test_models.deterministic.retirement_only import RetirementOnlyRegimeId
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 N_PERIODS = 4
 
