@@ -35,9 +35,18 @@ node_modules/
 __pycache__/
 *.py[cod]
 *.so
+# The Windows kernel and everything link.exe emits alongside it. Only the .dll
+# is packaged (see `build.artifacts` in pyproject.toml); the rest are inputs and
+# by-products of the link step.
+*.def
+*.dll
+*.exp
+*.lib
+*.obj
 # Compiler reports written beside each built kernel: absolute paths and toolchain
 # versions from whichever machine built it, regenerated on every build.
 *.so.build.log
+*.dll.build.log
 *$py.class
 
 # Ruff

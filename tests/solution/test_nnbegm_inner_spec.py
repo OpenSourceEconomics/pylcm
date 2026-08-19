@@ -108,6 +108,7 @@ def test_public_nnbegm_contains_numerical_configuration_only() -> None:
 
 
 def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
+    """A declared identity no-adjustment map reaches the solver as no candidate."""
     regime = _two_margin(
         solver=NNBEGM(
             inner=NBEGM(savings_grid=_GRID),
@@ -133,7 +134,7 @@ def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
         "illiquid",
         "illiquid_investment",
         "new_illiquid",
-        outer_unchanged,
+        None,
     )
 
 

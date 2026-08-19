@@ -30,7 +30,7 @@ field annotations to resolve to real objects when an instance is constructed.
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
@@ -393,21 +393,43 @@ class _BoundLiquidMargin:
     """Resolved DAG role names carried privately by an EGM-family solver."""
 
     state: StateName
+    """Name of the continuous state the liquid margin is solved over."""
+
     action: ActionName
+    """Name of the continuous action the Euler equation is inverted for."""
+
     resources: FunctionName
+    """Name of the function giving resources available before the action."""
+
     post_decision_state: FunctionName
+    """Name of the function giving the post-decision state the grid spans."""
+
     before_cost: FunctionName | None = None
+    """Gross-resources function of a composed `NetOfAdjustmentCost`, else `None`."""
+
     cost: FunctionName | None = None
+    """Cost function of a composed `NetOfAdjustmentCost`, else `None`."""
 
 
 @dataclass(frozen=True)
 class _BoundOuterContinuousMargin:
-    """Resolved outer-margin DAG role names carried privately by a solver."""
+    """Resolved outer-margin DAG role names carried privately by a solver.
+
+    `no_adjustment` is `None` where the regime declares the identity map with
+    `lcm.outer_unchanged`, which is the form every consumer branches on.
+    """
 
     state: StateName
+    """Name of the continuous state the outer margin searches over."""
+
     action: ActionName
+    """Name of the continuous action setting the outer margin."""
+
     post_decision_state: FunctionName
-    no_adjustment: FunctionName
+    """Name of the function giving the outer post-decision state."""
+
+    no_adjustment: FunctionName | None
+    """Name of the no-adjustment map, or `None` for the identity map."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -550,3 +572,55 @@ class TwoMarginSolver(Solver):
         outer: _BoundOuterContinuousMargin,
     ) -> TwoMarginSolver:
         """Return an immutable solver copy bound to both margins."""
+
+
+_BOUND_TYPES: dict[tuple[type, type], type] = {}
+
+
+def bind_roles(*, solver: Solver, role_type: type, **roles: object) -> Solver:
+    """Return a copy of `solver` carrying `roles`, keeping its own type.
+
+    The regime resolves a solver's DAG role names and hands them back to the
+    solver, which has to answer with an object that is still the one the user
+    constructed: a subclass keeps the fields it added and the methods it
+    overrides, so a custom solver reaches the engine as itself.
+
+    `role_type` declares the role fields for the stock solver and is returned
+    directly for it. For any other concrete type, the bound class is derived
+    from that type and `role_type` together, so the subclass sits ahead of the
+    stock solver in the method resolution order.
+
+    Args:
+        solver: The solver whose roles are being bound.
+        role_type: The bound dataclass declaring the role fields, itself a
+            subclass of the stock solver.
+        **roles: The resolved role names, one per field `role_type` declares.
+            An entry naming a field the solver already carries replaces it, which
+            is how a nest hands on its *bound* inner solver rather than the
+            public one it was declared with.
+
+    Returns:
+        A frozen solver of `solver`'s own type carrying the resolved roles.
+
+    """
+    solver_type = type(solver)
+    stock_type = role_type.__bases__[0]
+    values = {
+        field.name: getattr(solver, field.name)
+        for field in fields(solver_type)  # ty: ignore[invalid-argument-type]
+    }
+    if solver_type is stock_type:
+        bound_type = role_type
+    elif issubclass(solver_type, role_type):
+        # Already bound: a regime that replaces one of its own fields rebinds
+        # the solver it is already carrying, and its type is the answer.
+        bound_type = solver_type
+    else:
+        key = (solver_type, role_type)
+        if key not in _BOUND_TYPES:
+            derived = type(
+                f"_Bound{solver_type.__name__}", (solver_type, role_type), {}
+            )
+            _BOUND_TYPES[key] = dataclass(frozen=True, kw_only=True)(derived)
+        bound_type = _BOUND_TYPES[key]
+    return bound_type(**(values | roles))

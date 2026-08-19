@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
-from dags import get_ancestors
+from dags import get_ancestors, with_signature
 
 from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -33,6 +33,7 @@ from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.regime import NetOfAdjustmentCost
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
@@ -420,6 +421,7 @@ def _needed_names(
     )
 
     pool: dict[str, UserFunction] = dict(functions)
+    pool |= _composed_resources_edge(user_regime=user_regime, pool=pool)
     targets = ["utility"] if "utility" in pool else []
     targets += [name for name in user_regime.derived_categoricals if name in pool]
 
@@ -440,6 +442,28 @@ def _needed_names(
     if not targets:
         return set()
     return set(get_ancestors(pool, targets=targets, include_targets=True))
+
+
+def _composed_resources_edge(
+    *, user_regime: UserRegime, pool: Mapping[str, UserFunction]
+) -> dict[str, UserFunction]:
+    """Supply the resources node a `NetOfAdjustmentCost` regime composes later.
+
+    Model finalization installs `<resources> = <before_cost> - <cost>`, but
+    pruning runs first and would otherwise see `resources` as a leaf, reaching
+    neither operand. A variable read only by the cost would then be pruned as
+    unused and the composition would fail on the missing name. The stub carries
+    the composition's argument names and no body: reachability is what is being
+    asked, so only the edge matters.
+    """
+    resources = getattr(getattr(user_regime, "liquid", None), "resources", None)
+    if not isinstance(resources, NetOfAdjustmentCost) or resources.name_in_dag in pool:
+        return {}
+
+    @with_signature(args=[resources.before_cost, resources.cost])
+    def composed_resources(*args: object, **kwargs: object) -> None: ...
+
+    return {resources.name_in_dag: cast("UserFunction", composed_resources)}
 
 
 def _regime_transition_roots(

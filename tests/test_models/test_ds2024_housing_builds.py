@@ -21,8 +21,13 @@ from typing import Literal
 import numpy as np
 import pytest
 
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._ds2024_housing_vfi_oracle import solve_ds2024_housing_vfi
 from tests.test_models.ds2024_housing import build_model, build_params
+
+_NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 pytestmark = pytest.mark.slow
 
@@ -45,7 +50,18 @@ ORACLE_CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.95
 
 
-@pytest.mark.parametrize("variant", ["negm", "brute"])
+@pytest.mark.parametrize(
+    "variant",
+    [
+        pytest.param(
+            "negm",
+            marks=pytest.mark.requires_exact_affine_kernel(
+                reason=EXACT_KERNEL_SKIP_REASON
+            ),
+        ),
+        "brute",
+    ],
+)
 def test_ds2024_housing_builds_and_solves(variant: Literal["negm", "brute"]):
     """Both DS-2024 housing variants construct and solve with a finite interior."""
     model = build_model(
@@ -66,6 +82,7 @@ def test_ds2024_housing_builds_and_solves(variant: Literal["negm", "brute"]):
         assert np.isfinite(interior).all()
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_ds2024_housing_negm_matches_brute_on_interior():
     """The NEGM solve agrees with its grid-search twin on the liquid-housing interior.
 
@@ -148,6 +165,7 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
     assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     """At `delta = 0.10` the NEGM keeper's depreciated hold matches the VFI oracle.
 
@@ -178,6 +196,7 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
     """Refining the outer house grid moves the NEGM solve toward the dense truth.
 

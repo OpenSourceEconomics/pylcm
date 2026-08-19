@@ -187,12 +187,11 @@ def resources_before_outer_cost(
 ) -> FloatND:
     """Cost-free base of the liquid resources consumption is paid from.
 
-    `(1 + r)·a + y`. With `NEGM.outer_cost` declared, pylcm composes the
-    resources function as `resources_before_outer_cost - housing_cost` at
-    model build: with the keep cost `0` that is the keeper's cash `R·a + y`;
-    with the adjust cost it is `R·a + (1+r_H)·h(1-delta) + y - (1+tau)·H'`.
-    The housing cost is bound per outer-grid node, so it enters the inner
-    Euler inversion as a constant.
+    `(1 + r)·a + y`. With a `NetOfAdjustmentCost` on `liquid.resources`, pylcm composes
+    the resources function as `resources_before_outer_cost - housing_cost` at model
+    build: with the keep cost `0` that is the keeper's cash `R·a + y`; with the adjust
+    cost it is `R·a + (1+r_H)·h(1-delta) + y - (1+tau)·H'`. The housing cost is bound
+    per outer-grid node, so it enters the inner Euler inversion as a constant.
     """
     return (1.0 + return_liquid) * liquid + income_value
 

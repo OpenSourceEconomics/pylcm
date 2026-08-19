@@ -40,6 +40,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousState, FloatND
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
 
 _INNER = DCEGM(
@@ -143,6 +144,7 @@ def test_negm_invalid_inner_dcegm_is_rejected_by_inner_guards():
         dataclasses.replace(_INNER, savings_grid=process)
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
     """A NEGM regime's simulate phase carries the inner DC-EGM budget mask.
 
@@ -159,6 +161,7 @@ def test_negm_simulate_phase_synthesizes_inner_budget_constraint():
     assert DCEGM_BUDGET_CONSTRAINT_NAME not in alive.solution.constraints
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_configuration_does_not_change_reachability() -> None:
     """Nested EGM and grid search expose equal lifecycle graphs and hashes."""
 

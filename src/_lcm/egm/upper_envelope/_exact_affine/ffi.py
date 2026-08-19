@@ -28,6 +28,9 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope._exact_affine.handler_symbols import (
+    EXACT_AFFINE_HANDLER_SYMBOLS,
+)
 from lcm.exceptions import ExactAffineKernelUnavailableError
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -40,20 +43,7 @@ UNRESOLVED_STATUS: int = 2
 # holding the segments themselves.
 _MIN_BATCHED_RANK: int = 2
 
-_TARGETS = (
-    "CertifiedAffineCompareF32",
-    "CertifiedAffineCompareF64",
-    "ExactAffineReadF32",
-    "ExactAffineReadF64",
-    "ExactQueryWinnerF32",
-    "ExactQueryWinnerF64",
-    "ExactQueryWinnerBatchedF32",
-    "ExactQueryWinnerBatchedF64",
-    "ExactAffineHandoverF32",
-    "ExactAffineHandoverF64",
-    "ExactCellHullF32",
-    "ExactCellHullF64",
-)
+_TARGETS = EXACT_AFFINE_HANDLER_SYMBOLS
 
 _DIRECTORY = Path(__file__).resolve().parent
 _CPU_LIBRARY = _DIRECTORY / (
@@ -77,8 +67,18 @@ def _register_platform(*, library: Path, platform: str) -> None:
 
 # CUDA is optional: without it the certified path runs on CPU only. Building it
 # needs `nvcc` and the target architecture, e.g. NVCCFLAGS='-arch=sm_80'.
-# Whether a kernel for the CUDA platform exists to be registered.
-CUDA_AVAILABLE: bool = _CUDA_LIBRARY.is_file()
+
+
+def cuda_kernel_built() -> bool:
+    """Return whether a kernel for the CUDA platform exists to be registered.
+
+    Asked of the filesystem at every call rather than snapshotted at import, so
+    the answer cannot differ between the caller deciding a kernel is there and
+    the registration that acts on it — a split that a test or a plugin moving
+    the library underneath the module produces silently.
+    """
+    return _CUDA_LIBRARY.is_file()
+
 
 # Backend names that mean "device compiles will look for the CUDA target".
 _GPU_BACKENDS: frozenset[str] = frozenset({"gpu", "cuda"})
@@ -111,11 +111,11 @@ def kernel_built_for_current_backend() -> bool:
     A missing file is a supported capability absence and can justify skipping a
     test that explicitly declares an exact-kernel requirement. A file that is
     present but stale, unloadable, or missing a symbol is a broken build and must
-    reach :func:`_ensure_registered`, where it fails loudly.
+    reach `_ensure_registered`, where it fails loudly.
     """
     if not kernel_built():
         return False
-    return jax.default_backend() != "gpu" or _CUDA_LIBRARY.is_file()
+    return jax.default_backend() != "gpu" or cuda_kernel_built()
 
 
 def kernel_available() -> bool:
@@ -136,7 +136,7 @@ def kernel_available_for_current_backend() -> bool:
     """Return whether the selected JAX backend has a loadable exact kernel."""
     if not kernel_available():
         return False
-    return jax.default_backend() != "gpu" or CUDA_AVAILABLE
+    return jax.default_backend() != "gpu" or cuda_kernel_built()
 
 
 def _ensure_registered() -> None:
@@ -172,7 +172,7 @@ def _ensure_registered() -> None:
     # anything objects — and on a production mesh that compile is hours in. The
     # CUDA half is skipped whenever the build ran without `nvcc`, which is a
     # property of the environment rather than of the run, so it is knowable here.
-    if not CUDA_AVAILABLE and _default_backend() in _GPU_BACKENDS:
+    if not cuda_kernel_built() and _default_backend() in _GPU_BACKENDS:
         msg = (
             f"The exact-affine kernel has no CUDA half: {_CUDA_LIBRARY} is "
             "missing while JAX's default backend is a GPU, so every certified "
@@ -184,7 +184,7 @@ def _ensure_registered() -> None:
 
     try:
         _register_platform(library=_CPU_LIBRARY, platform="cpu")
-        if CUDA_AVAILABLE:
+        if cuda_kernel_built():
             _register_platform(library=_CUDA_LIBRARY, platform="CUDA")
     except (OSError, AttributeError) as error:
         msg = (
@@ -321,11 +321,12 @@ def exact_query_winner(
     winner is chosen.
 
     Segment operands are one-dimensional and shared by all elements of
-    `x_query`, and one call resolves them. Under an outer `jax.vmap` each batch
-    element carries its own segment set, which is what
-    `exact_query_winner_batched` consumes: the transformed program holds one
-    batched call for the whole batch, so a caller that vectorized its rows keeps
-    that parallelism instead of trading it for a loop.
+    `x_query`, and one call resolves them. An outer `jax.vmap` over the
+    queries is supported with ``vmap_method="sequential"``: the transformed
+    program contains one loop around this opaque call rather than exposing
+    the integer representation to XLA. When each batch element carries its
+    own segment set, `exact_query_winner_batched` is the call that keeps the
+    batch in one program instead of trading it for that loop.
 
     Args:
         left_grid: Stored left abscissa of every segment.

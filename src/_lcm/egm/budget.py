@@ -18,35 +18,34 @@ from typing import TYPE_CHECKING, cast
 from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.egm import _BoundEGM
+from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import (
     ConstraintFunction,
     EconFunctionsMapping,
     FunctionName,
     StateOrActionName,
 )
-from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM
+from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, NNBEGM
 
 if TYPE_CHECKING:
-    from _lcm.solution.dcegm import _BoundDCEGM
     from _lcm.solution.nbegm import _BoundNBEGM
-    from _lcm.solution.negm import _BoundNEGM
     from _lcm.solution.nnbegm import _BoundNNBEGM
 else:
-    _BoundDCEGM = DCEGM
     _BoundNBEGM = NBEGM
-    _BoundNEGM = NEGM
     _BoundNNBEGM = NNBEGM
 from lcm.typing import BoolND, FloatND
 
 # Solvers whose 1-D liquid step enforces the borrowing limit intrinsically.
-INTRINSIC_BUDGET_SOLVERS = (DCEGM, NEGM, NBEGM, NNBEGM)
+INTRINSIC_BUDGET_SOLVERS = (EGM, DCEGM, NEGM, NBEGM, NNBEGM)
 
 DCEGM_BUDGET_CONSTRAINT_NAME: FunctionName = "dcegm_budget_constraint"
 
 
 def get_intrinsic_budget_constraint(
     *,
-    solver: DCEGM | NEGM | NBEGM | NNBEGM,
+    solver: EGM | DCEGM | NEGM | NBEGM | NNBEGM,
     functions: EconFunctionsMapping,
 ) -> ConstraintFunction:
     """Build the budget-feasibility mask the EGM solve enforces intrinsically.
@@ -86,11 +85,12 @@ def get_intrinsic_budget_constraint(
         action_name = case_piece.continuous_action
         resources_name = case_piece.budget_target
     else:
-        inner = (
-            cast("_BoundNEGM", solver).inner
-            if isinstance(solver, NEGM)
-            else cast("_BoundDCEGM", solver)
-        )
+        if isinstance(solver, NEGM):
+            inner = cast("_BoundNEGM", solver).inner
+        elif isinstance(solver, DCEGM):
+            inner = cast("_BoundDCEGM", solver)
+        else:
+            inner = cast("_BoundEGM", solver)
         borrowing_limit = float(inner.savings_grid.to_jax()[0])
         action_name = inner.continuous_action
         resources_name = inner.resources

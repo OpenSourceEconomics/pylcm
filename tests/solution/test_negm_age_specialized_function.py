@@ -3,8 +3,8 @@
 An age-specialized function is a *different function* at each age, so a period's
 kernel has to be built from that period's concrete function. NEGM reads two helpers
 from the regime's function pool before the inner DC-EGM builder ever runs — the
-no-adjustment candidate (`NEGM.outer_no_adjustment_candidate`) and the outer cost
-(`NEGM.outer_cost`) — and both must be that period's own.
+no-adjustment map (`outer_continuous.no_adjustment`) and the adjustment
+cost (`liquid.resources.cost`) — and both must be that period's own.
 
 The oracle is the last age at which the NEGM regime is active. Its value depends on
 exactly two things: its own economics and a continuation into the terminal regime,
@@ -30,7 +30,7 @@ from lcm import (
     OuterContinuousMargin,
 )
 from lcm.typing import ContinuousState, FloatND
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
 from tests.test_models.negm_kinked_toy import (
     N_PERIODS,
@@ -47,6 +47,8 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 _MIN_AGE = 20
 _AGE_STEP = 5

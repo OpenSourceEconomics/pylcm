@@ -12,9 +12,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy, negm_serviceflow_toy
 
-pytestmark = pytest.mark.slow
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+]
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 

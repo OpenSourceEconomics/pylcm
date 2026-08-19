@@ -13,9 +13,13 @@ an out-of-bounds house.
 """
 
 import jax.numpy as jnp
+import pytest
 
 from lcm import LinSpacedGrid
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import ds_app2_housing as m
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def _bounds_constraint():

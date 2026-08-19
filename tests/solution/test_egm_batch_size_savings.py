@@ -19,7 +19,7 @@ from lcm import LinSpacedGrid, MarkovTransition, Model
 from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution.test_egm_batch_size_euler import (
     CONSUMPTION_GRID,
     N_WEALTH,
@@ -35,6 +35,8 @@ from tests.solution.test_egm_batch_size_euler import (
     stay_prob,
     utility,
 )
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 # Prime, so every block size but 1 leaves a ragged final block. Sized for the
 # cheapest solve that still shows that; invariance under the partition does not

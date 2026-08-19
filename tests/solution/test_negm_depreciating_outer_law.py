@@ -35,6 +35,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy as toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -145,6 +146,7 @@ def _solve_period0_alive(model: Model) -> jnp.ndarray:
     return model.solve(params=_PARAMS, log_level="debug")[0]["alive"]
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_negm_applies_the_declared_scaling_of_the_durable_stock():
     """NEGM reproduces the grid-search optimum of the depreciating model.
 
@@ -166,6 +168,7 @@ def test_negm_applies_the_declared_scaling_of_the_durable_stock():
     assert float(deviation.max()) < 0.15
 
 
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_the_value_rises_with_the_share_of_the_stock_that_survives():
     """More of the chosen stock surviving is worth weakly more, everywhere.
 
