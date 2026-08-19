@@ -83,6 +83,7 @@ from _lcm.regime_building.phases import (
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
 
+from _lcm.post_decision_bound import without_proved_lower_bounds
 from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -98,10 +99,13 @@ from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_in
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
+    OneMarginSolver,
     PeriodKernel,
     SolverBuildContext,
     SolverModelContext,
+    TwoMarginSolver,
 )
+from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_laws import (
     TransitionLawInfo,
@@ -305,6 +309,9 @@ def process_regimes(
     # marker is not a `Grid`, so a type-filtered collection of continuous states
     # would drop it.
     for regime_name, user_regime in representative_user_regimes.items():
+        fail_if_solver_is_not_shipped(
+            solver=user_regime.solver, regime_name=regime_name
+        )
         user_regime.solver.validate_model(
             context=SolverModelContext(
                 regime_name=regime_name,
@@ -888,7 +895,12 @@ def _build_solution_phase(
     core = _process_regime_core(
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
-        constraints=spec.solution.constraints,
+        constraints=without_proved_lower_bounds(
+            constraints=spec.solution.constraints,
+            grid_enforces_the_bound=isinstance(
+                solver, OneMarginSolver | TwoMarginSolver
+            ),
+        ),
         state_transitions=spec.solution.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -1466,7 +1478,12 @@ def _build_simulation_phase(
     core = _process_regime_core(
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
-        constraints=spec.simulation.constraints,
+        constraints=without_proved_lower_bounds(
+            constraints=spec.simulation.constraints,
+            grid_enforces_the_bound=isinstance(
+                solver, OneMarginSolver | TwoMarginSolver
+            ),
+        ),
         state_transitions=spec.simulation.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,

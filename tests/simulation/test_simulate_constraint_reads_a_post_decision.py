@@ -21,6 +21,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserInitialConditions,
 )
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.95}}, "dead": {}}
@@ -82,7 +83,7 @@ def model() -> Model:
     )
 
 
-def _initial_conditions(wealth: tuple[float, ...]) -> dict[str, object]:
+def _initial_conditions(wealth: tuple[float, ...]) -> UserInitialConditions:
     return {
         "wealth": jnp.asarray(wealth),
         "age": jnp.full(len(wealth), 0.0),
@@ -125,3 +126,61 @@ def test_the_constraint_is_available_as_an_additional_target(model):
     )
     df = result.to_dataframe(additional_targets=["savings_stay_above_the_floor"])
     assert df.query("regime_name == 'alive'")["savings_stay_above_the_floor"].all()
+
+
+@pytest.fixture
+def model_with_a_renamed_constraint() -> Model:
+    """The same model, declaring the same predicate under a different key."""
+    alive = UserRegime(
+        transition=next_regime,
+        active=lambda age: age < _N_PERIODS - 1,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
+        state_transitions={"wealth": next_wealth},
+        functions={"utility": utility, "new_wealth": new_wealth},
+        constraints={"liquidity_floor": savings_stay_above_the_floor},
+    )
+    dead = UserRegime(
+        transition=None,
+        active=lambda age: age >= _N_PERIODS - 1,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _infeasibility_message(model: Model) -> str:
+    """Report an unaffordable subject provokes, as text."""
+    with pytest.raises(InvalidInitialConditionsError) as excinfo:
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=_initial_conditions((0.1,)),
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+        )
+    return str(excinfo.value)
+
+
+def test_the_diagnostic_names_the_declared_key(model_with_a_renamed_constraint):
+    """The infeasibility report identifies a constraint by the name it was given.
+
+    The key and the callable's `__name__` normally coincide, so a report built
+    from either reads the same and the two cannot be told apart. Declaring the
+    predicate under a key that differs from its `__name__` separates them: the
+    name a model author can act on is the key they wrote.
+    """
+    assert "liquidity_floor" in _infeasibility_message(model_with_a_renamed_constraint)
+
+
+def test_the_diagnostic_does_not_name_the_callable(model_with_a_renamed_constraint):
+    """The report does not fall back to the predicate's own `__name__`.
+
+    Without this half the report could carry both names and still satisfy the
+    check above, which would leave it unable to say which one it was built from.
+    """
+    message = _infeasibility_message(model_with_a_renamed_constraint)
+
+    assert "savings_stay_above_the_floor" not in message

@@ -106,6 +106,7 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
+from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -152,6 +153,7 @@ from lcm.regime import (  # noqa: E402
     OuterContinuousMargin,
     Regime,
     outer_unchanged,
+    post_decision_lower_bound,
 )
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.solvers import (  # noqa: E402
@@ -202,6 +204,7 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExactEnvelope",
@@ -248,6 +251,7 @@ __all__ = [
     "cash_on_hand_with_subsidy",
     "categorical",
     "fixed_transition",
+    "implies",
     "liquid_law_from_resources",
     "liquid_law_from_savings",
     "load_snapshot",
@@ -255,6 +259,8 @@ __all__ = [
     "outer_unchanged",
     "piece",
     "piecewise_affine",
+    "post_decision_lower_bound",
+    "ref",
     "save_solution",
     "smooth_helper",
 ]

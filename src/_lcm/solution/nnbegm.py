@@ -25,6 +25,7 @@ from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
+from _lcm.post_decision_bound import without_proved_lower_bounds
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
@@ -48,7 +49,7 @@ from _lcm.solution.negm import (
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.typing import ActionName, FloatND, FunctionName, StateName
+from lcm.typing import ActionName, FloatND, FunctionName, StateName, UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -130,9 +131,20 @@ class NNBEGM(TwoMarginSolver):
         return self.inner.egm_continuation_layout
 
     def validate_model(self, *, context: SolverModelContext) -> None:
-        """Validate the user-level nested NB-EGM contract for this regime."""
+        """Validate the user-level nested NB-EGM contract for this regime.
+
+        A declared lower bound on the inner post-decision state is admitted:
+        it states the number the inner savings grid already enforces, so it is
+        proved against that grid and leaves no predicate for either margin to
+        evaluate. Which declarations qualify is asked of the same function that
+        drops them from the engine's constraint set, so the exemption here and
+        the drop there cannot come to disagree.
+        """
         from _lcm.egm.nnbegm_validation import (  # noqa: PLC0415
             validate_nnbegm_regime,
+        )
+        from _lcm.egm.validation import (  # noqa: PLC0415
+            fail_if_declared_lower_bound_disagrees_with_the_grid,
         )
 
         user_regime = context.user_regimes[context.regime_name]
@@ -140,8 +152,22 @@ class NNBEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             user_regime=user_regime,
         )
-        if user_regime.constraints:
-            constraint_names = sorted(user_regime.constraints)
+        fail_if_declared_lower_bound_disagrees_with_the_grid(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+            solver=cast("_BoundNNBEGM", self).inner,
+            solver_name="NNBEGM",
+        )
+        unenforceable = without_proved_lower_bounds(
+            # `Phased` is rejected in the constraints slot by the phase
+            # grammar, so every value here is a bare declaration.
+            constraints=cast(
+                "Mapping[FunctionName, UserFunction]", user_regime.constraints
+            ),
+            grid_enforces_the_bound=True,
+        )
+        if unenforceable:
+            constraint_names = sorted(unenforceable)
             msg = (
                 f"NNBEGM regime '{context.regime_name}' declares constraints "
                 f"{constraint_names}. The inner NB-EGM solve inverts the Euler "

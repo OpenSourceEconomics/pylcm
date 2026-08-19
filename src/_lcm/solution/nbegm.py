@@ -53,6 +53,7 @@ from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from _lcm.post_decision_bound import without_proved_lower_bounds
 from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
@@ -99,6 +100,7 @@ from lcm.typing import (
     ScalarFloat,
     StateName,
     StateOrActionName,
+    UserFunction,
 )
 
 # Key under which ride-along periods share one compiled core: the continuation
@@ -351,10 +353,35 @@ class NBEGM(OneMarginSolver):
         candidates the kernel publishes are never masked by one. Declaring one
         and solving anyway answers a different problem than the one written
         down, with no diagnostic.
+
+        A declared lower bound on the post-decision state is the exception: it
+        states the number the savings grid already enforces, so it is proved
+        against that grid and then carries no predicate for the kernel to
+        evaluate. Which declarations qualify is asked of the same function that
+        drops them from the engine's constraint set, so the exemption here and
+        the drop there cannot come to disagree.
         """
+        from _lcm.egm.validation import (  # noqa: PLC0415
+            fail_if_declared_lower_bound_disagrees_with_the_grid,
+        )
+
         user_regime = context.user_regimes[context.regime_name]
-        if user_regime.constraints:
-            constraint_names = sorted(user_regime.constraints)
+        fail_if_declared_lower_bound_disagrees_with_the_grid(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+            solver=cast("_BoundNBEGM", self),
+            solver_name="NBEGM",
+        )
+        unenforceable = without_proved_lower_bounds(
+            # `Phased` is rejected in the constraints slot by the phase
+            # grammar, so every value here is a bare declaration.
+            constraints=cast(
+                "Mapping[FunctionName, UserFunction]", user_regime.constraints
+            ),
+            grid_enforces_the_bound=True,
+        )
+        if unenforceable:
+            constraint_names = sorted(unenforceable)
             msg = (
                 f"NBEGM regime '{context.regime_name}' declares constraints "
                 f"{constraint_names}. The case-piece kernel evaluates no user "

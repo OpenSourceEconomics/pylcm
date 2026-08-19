@@ -17,7 +17,9 @@ from typing import Any, Literal, cast
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.solution.contract import _BoundLiquidMargin, _BoundOuterContinuousMargin
@@ -152,10 +154,15 @@ class Regime:
 
     # `Phased` passes the type check so the validator can reject it with an
     # explanation (constraints are phase-invariant).
-    constraints: Mapping[FunctionName, UserFunction | Phased | None] = field(
+    constraints: Mapping[FunctionName, ConstraintLike | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Mapping of constraint names to constraint functions.
+    """Mapping of constraint names to constraints.
+
+    A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
+    predicate. The two mean the same thing and are evaluated identically; a
+    condition additionally carries what it says, so a solver can prove or
+    refuse it instead of only being able to call it.
 
     Constraints are phase-invariant: a phase-specific feasible set would let
     the simulated argmax range over actions the value function was never
@@ -441,6 +448,48 @@ class LiquidMargin:
 
 
 @beartype(conf=REGIME_CONF)
+def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunction:
+    """Declare a lower bound on a margin's post-decision state, checkably.
+
+    An endogenous-grid solver enforces its borrowing limit through the savings
+    grid, whose lowest node is the limit that the solve and the simulation both
+    obey. Declaring the bound states that number explicitly, so a disagreement
+    with the grid is refused when the model is built instead of the grid's
+    value quietly taking precedence.
+
+        liquid = LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        )
+        constraints={"borrowing_limit": post_decision_lower_bound(
+            margin=liquid, lower=0.0
+        )}
+
+    Taking the margin rather than the post-decision state's name is what makes
+    the two impossible to disagree: there is no second spelling of the name to
+    keep in step.
+
+    The result is an ordinary constraint callable evaluating
+    `post_decision_state >= lower`, so it is legal wherever a constraint is. A
+    solver whose savings grid already enforces the bound proves it and drops
+    it; grid search, which enforces nothing implicitly, evaluates it.
+
+    Args:
+        margin: The Euler margin whose post-decision state is bounded below.
+        lower: The bound itself. Must equal the savings grid's lowest node
+            exactly, where the solver has one.
+
+    Returns:
+        A constraint callable carrying the declared bound.
+
+    """
+    return _PostDecisionLowerBound(
+        post_decision=margin.post_decision_state, lower_bound=lower
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class OuterContinuousMargin:
     """Names defining the outer continuous margin of a nested EGM regime."""

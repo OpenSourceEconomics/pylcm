@@ -143,8 +143,13 @@ def _model(
 
 
 def test_egm_rejects_a_continuous_constraint_during_model_construction() -> None:
-    """Plain EGM refuses a consumption cap that its numerical kernel cannot read."""
-    with pytest.raises(ModelInitializationError, match="evaluates no user constraint"):
+    """Plain EGM refuses a consumption cap that its numerical kernel cannot read.
+
+    Matches the refused constraint's name rather than the wording, so the test
+    survives any rewrite of the message and fails if a different constraint is
+    named — which is the claim worth pinning.
+    """
+    with pytest.raises(ModelInitializationError, match="'cap'"):
         _model(constraint=consumption_cap)
 
 

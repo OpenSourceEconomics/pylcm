@@ -362,6 +362,14 @@ def _find_unsupported_function_args(
                 )
             )
     for constraint_name in constraints:
+        # A declared post-decision lower bound is proved against the savings
+        # grid at model validation, and the solve enforces that same bound
+        # through the grid it was proved against. It therefore needs no kernel
+        # support, and its arguments are not the kernel's to satisfy.
+        if getattr(
+            constraints[constraint_name], "_is_post_decision_lower_bound", False
+        ):
+            continue
         constraint_func = concatenate_regime_function(
             functions=MappingProxyType({**dict(functions), **dict(constraints)}),
             target=constraint_name,
