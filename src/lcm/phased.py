@@ -46,9 +46,10 @@ class Phased[S, T]:
 
     - Period utility and feasibility may not read a `next_<state>` that is
       stochastic in that phase — its value is not known when the action is chosen.
-    - Constraints are phase-invariant through their whole dependency chain, so the
-      simulated agent never chooses an action its value function was not computed
-      for.
+    - Constraints are generally phase-invariant through their dependency chain.
+      A structural lower bound on an EGM-family post-decision state is the
+      exception: the solve grid proves it, and simulation evaluates it against
+      the phase-resolved function pool.
 
     One deliberate exception to "the current period is the `simulate` truth": a
     carried-only state — one the simulation tracks but the solve grid does not

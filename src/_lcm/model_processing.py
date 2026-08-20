@@ -15,6 +15,8 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.constraints.bounds import lower_bound_declaration
+from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -518,6 +520,40 @@ def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
     return True
 
 
+def _post_decision_function_of_solver(solver: object) -> str | None:
+    """Return the bound liquid post-decision role of an EGM-family solver."""
+    current: object | None = solver
+    while current is not None:
+        post_decision = getattr(current, "post_decision_function", None)
+        if isinstance(post_decision, str):
+            return post_decision
+        inner = getattr(current, "inner", None)
+        if inner is current:
+            break
+        current = inner
+    return None
+
+
+def _is_solve_proved_post_decision_lower_bound(
+    *, constraint_name: str, user_regime: UserRegime
+) -> bool:
+    """Whether the solve grid proves this exact structural lower bound.
+
+    This is the one supported phase-resolved feasibility declaration: its solve
+    disposition is a grid proof, while simulation evaluates the declaration
+    against the simulation function pool.
+    """
+    post_decision = _post_decision_function_of_solver(user_regime.solver)
+    declaration = user_regime.constraints[constraint_name]
+    if post_decision is None or declaration is None:
+        return False
+    processed = normalize_constraints(
+        constraints={constraint_name: cast("ConstraintLike", declaration)}
+    )[constraint_name]
+    bound = lower_bound_declaration(constraint=processed)
+    return bound is not None and bound[0] == post_decision
+
+
 def _validate_constraint_phase_invariance(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
@@ -534,7 +570,10 @@ def _validate_constraint_phase_invariance(
     and become phase-specific that way. This walks the whole chain.
 
     A name is phase-varying when its solve and simulate resolutions are different
-    laws (`_law_phase_varies`). Two cases need care:
+    laws (`_law_phase_varies`). A structural lower bound on an EGM-family
+    post-decision state is the deliberate exception: the solve grid proves it,
+    while simulation evaluates it against the phase-resolved function pool.
+    Two other cases need care:
 
     - A per-target law is keyed `next_<state>__<target>`, while a constraint reads
       the unqualified `next_<state>`. If any target's law varies by phase, so does
@@ -613,7 +652,9 @@ def _validate_constraint_phase_invariance(
                 ancestry_funcs, targets=[constraint_name], include_targets=False
             )
             offending = sorted(ancestors & phase_varying)
-            if offending:
+            if offending and not _is_solve_proved_post_decision_lower_bound(
+                constraint_name=constraint_name, user_regime=user_regime
+            ):
                 error_messages.append(
                     f"Constraint '{constraint_name}' in regime '{regime_name}' "
                     f"depends on phase-varying function(s) {offending}. "

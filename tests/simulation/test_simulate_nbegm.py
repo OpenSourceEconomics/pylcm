@@ -15,6 +15,7 @@ from lcm import (
     Phased,
     categorical,
     post_decision_lower_bound,
+    ref,
 )
 from lcm.regime import Regime
 from lcm.solvers import NBEGM
@@ -62,14 +63,17 @@ def next_regime(age: int) -> ScalarInt:
     return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
 
 
-def _model() -> Model:
+def _model(*, hand_written: bool = False) -> Model:
+    borrowing_limit = (
+        ref("savings") >= 0.0
+        if hand_written
+        else post_decision_lower_bound(margin=_MARGIN, lower=0.0)
+    )
     alive = ConsumptionSavingsRegime(
         actions={"consumption": _ACTION_GRID},
         states={"liquid": _ACTION_GRID},
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
-        constraints={
-            "borrowing_limit": post_decision_lower_bound(margin=_MARGIN, lower=0.0)
-        },
+        constraints={"borrowing_limit": borrowing_limit},
         transition=next_regime,
         functions={
             "utility": utility,
@@ -106,9 +110,12 @@ def _filled_params(model: Model) -> dict:
     return fill(model.get_params_template())  # ty: ignore[invalid-return-type]
 
 
-def test_nbegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
+@pytest.mark.parametrize("declaration_kind", ["factory", "hand_written"])
+def test_nbegm_simulation_evaluates_a_phase_resolved_savings_bound(
+    declaration_kind: str,
+) -> None:
     """The chosen action satisfies the simulation post-decision function."""
-    model = _model()
+    model = _model(hand_written=declaration_kind == "hand_written")
     params = _filled_params(model)
     solved = model.solve(params=params, log_level="off")
     zeroed = MappingProxyType(
