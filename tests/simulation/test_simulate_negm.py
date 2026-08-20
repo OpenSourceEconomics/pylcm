@@ -7,9 +7,8 @@ inverse-Euler step that enforces it intrinsically during the solve. These
 tests drive the kinked two-asset toy (`tests/test_models/negm_kinked_toy.py`)
 end to end and assert simulated consumption stays inside that mask.
 
-The whole module is skipped: solving an NEGM model OOMs the local box (DC-EGM /
-NEGM solves are GPU-only, see `feedback_no_heavy_tests_local`). Run it on
-gpu-01.
+The module is marked `gpu`: an NEGM solve OOMs a CPU-only box, so these run on
+the GPU legs rather than on the machine a developer types `pytest` on.
 """
 
 import jax.numpy as jnp
@@ -22,17 +21,16 @@ from tests.test_models.negm_kinked_toy import RegimeId
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skip(
+    pytest.mark.gpu(
         reason=(
-            "Runs in no environment: an unconditional module-level skip, so "
-            "neither the local box nor the GPU CI legs execute it. These are "
-            "the only assertions on the NEGM simulate phase's synthesized "
-            "budget mask. NEGM forward simulation is itself exercised "
-            "elsewhere, but against frozen expected consumption values, which "
-            "record what the code did and so cannot separate a borrowing "
-            "limit that was honoured from one that was silently overridden. "
-            "The NEGM/DC-EGM solve OOMs locally; enabling it means marking it "
-            "`gpu` and accepting the GPU CI cost."
+            "NEGM/DC-EGM solve OOMs a CPU-only box, so this runs on the GPU legs "
+            "rather than nowhere. These are the only assertions anywhere that "
+            "NEGM's synthesized simulate-phase budget mask holds -- that "
+            "consumption stays at or below inner resources minus the borrowing "
+            "limit. Nothing else substitutes: the NEGM simulate test that does "
+            "run on CPU checks a frozen expectation minted by a run in which no "
+            "limit was declared, so it passes whether the limit is honoured or "
+            "ignored."
         )
     ),
 ]

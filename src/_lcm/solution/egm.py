@@ -102,7 +102,26 @@ class EGM(OneMarginSolver):
     def validate_model(  # noqa: C901, PLR0912, PLR0915
         self, *, context: SolverModelContext
     ) -> None:
-        """Validate assumptions shared by the envelope-free EGM kernel."""
+        """Check the preconditions the envelope-free EGM kernel assumes.
+
+        Plain EGM is specialized to cash-on-hand as its continuous state: the
+        kernel constructs its endogenous grid as `state = action + savings`, so
+        `resources(state) == state` and `post_decision(state, action) ==
+        state - action` are **assumptions of the method**, not properties it
+        verifies and not capabilities it offers. A model whose resources map
+        genuinely transforms the state belongs on DCEGM or GridSearch, or
+        should redefine its state as cash-on-hand.
+
+        What happens here is a spot check for ordinary specification mistakes,
+        and it is a diagnostic rather than a proof. Resources is evaluated at
+        every represented state node; the post-decision identity is sampled.
+        Neither establishes an identity *between* nodes, and the kernel can
+        evaluate off-grid, so a callable that agrees wherever it is checked and
+        differs elsewhere will be admitted and then silently not applied. That
+        is a limit of finite evaluation, not something a denser probe closes —
+        so this must not be read as a guarantee that every incompatible
+        callable is rejected.
+        """
         bound = cast("_BoundEGM", self)
         from dags import concatenate_functions  # noqa: PLC0415
 
@@ -243,21 +262,31 @@ class EGM(OneMarginSolver):
                 f"DCEGM or GridSearch."
             )
             raise ModelInitializationError(msg)
-        for state_value in state_sample:
-            actual = _call_with_varied(
-                func=composed_resources, fixed={}, varied={liquid_state: state_value}
+        # Every represented state node, not a sample: resources takes exactly
+        # the liquid state, so one vectorized call costs no more than a few
+        # scalar ones and catches a mistake at any tabulated point. It remains
+        # a diagnostic -- the kernel can evaluate off-grid, and no finite set of
+        # evaluations establishes an identity between the nodes.
+        all_state_nodes = state_grids[liquid_state].to_jax()
+        resources_at_nodes = _call_with_varied(
+            func=composed_resources, fixed={}, varied={liquid_state: all_state_nodes}
+        )
+        disagreeing = ~jnp.isclose(
+            jnp.asarray(resources_at_nodes), all_state_nodes, rtol=rtol, atol=atol
+        )
+        if bool(jnp.any(disagreeing)):
+            first = int(jnp.argmax(disagreeing))
+            msg = (
+                f"The resources function '{bound.resources}' of EGM regime "
+                f"'{regime_name}' must equal the liquid state "
+                f"'{liquid_state}'. At {liquid_state}="
+                f"{float(all_state_nodes[first])} it returns "
+                f"{float(jnp.asarray(resources_at_nodes)[first])}. The "
+                f"envelope-free kernel inverts the Euler equation against the "
+                f"state directly, so a resources function that transforms it is "
+                f"not applied; use DCEGM or GridSearch."
             )
-            if not _isclose(actual=actual, expected=state_value, rtol=rtol, atol=atol):
-                msg = (
-                    f"The resources function '{bound.resources}' of EGM regime "
-                    f"'{regime_name}' must equal the liquid state "
-                    f"'{liquid_state}'. At {liquid_state}={float(state_value)} "
-                    f"it returns {float(actual)}. The envelope-free kernel "
-                    f"inverts the Euler equation against the state directly, so "
-                    f"a resources function that transforms it is not applied; "
-                    f"use DCEGM or GridSearch."
-                )
-                raise ModelInitializationError(msg)
+            raise ModelInitializationError(msg)
         for state_value in state_sample:
             for action_value in action_sample:
                 actual = _call_with_varied(
