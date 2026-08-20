@@ -33,7 +33,9 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.constraints.bounds import without_proved_lower_bounds
 from _lcm.constraints.capabilities import ConstraintCapabilities
+from _lcm.constraints.processed import normalize_constraints
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
@@ -54,7 +56,6 @@ from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
-from _lcm.post_decision_bound import without_proved_lower_bounds
 from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
@@ -400,10 +401,12 @@ class NBEGM(OneMarginSolver):
         unenforceable = without_proved_lower_bounds(
             # `Phased` is rejected in the constraints slot by the phase
             # grammar, so every value here is a bare declaration.
-            constraints=cast(
-                "Mapping[FunctionName, UserFunction]", user_regime.constraints
+            constraints=normalize_constraints(
+                constraints=cast(
+                    "Mapping[FunctionName, UserFunction]", user_regime.constraints
+                )
             ),
-            grid_enforces_the_bound=True,
+            proved_post_decision=getattr(self, "post_decision_function", None),
         )
         if unenforceable:
             constraint_names = sorted(unenforceable)

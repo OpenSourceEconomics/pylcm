@@ -34,6 +34,11 @@ from typing import Any, TypeVar, cast
 
 from jax import numpy as jnp
 
+from _lcm.constraints.processed import (
+    ConstraintLike,
+    ProcessedConstraintsMapping,
+    normalize_constraints,
+)
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -49,7 +54,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import EconFunction, RegimeName, StateName
+from _lcm.typing import EconFunction, FunctionName, RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -642,6 +647,27 @@ def _periodize_functions(
     )
 
 
+def _periodize_constraints(
+    constraints: ProcessedConstraintsMapping,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+) -> ProcessedConstraintsMapping:
+    """Replace every age-function marker declared as a constraint.
+
+    Periodizes the declarations and normalizes the result, rather than
+    periodizing and patching each condition. A constraint holds two objects
+    saying the same thing — what was declared and what it says — and rebuilding
+    the second from the first is what keeps them in step. Patching would leave
+    a periodized declaration beside a condition still closed over the marker.
+    """
+    periodized = _periodize_functions(
+        {name: constraint.declaration for name, constraint in constraints.items()},
+        function_cache,
+    )
+    return normalize_constraints(
+        constraints=cast("Mapping[FunctionName, ConstraintLike]", periodized)
+    )
+
+
 def _periodized_from_marker(
     resolved: _ResolvedFunctionMarker,
 ) -> PeriodizedUserFunction:
@@ -673,10 +699,7 @@ def _rewrite_phase_slice(
             "MappingProxyType",
             _periodize_functions(phase_slice.functions, function_cache),
         ),
-        constraints=cast(
-            "MappingProxyType",
-            _periodize_functions(phase_slice.constraints, function_cache),
-        ),
+        constraints=_periodize_constraints(phase_slice.constraints, function_cache),
         grid_states=MappingProxyType(grid_states),
     )
 

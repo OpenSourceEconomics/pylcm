@@ -7,8 +7,8 @@ inverse-Euler step that enforces it intrinsically during the solve. These
 tests drive the kinked two-asset toy (`tests/test_models/negm_kinked_toy.py`)
 end to end and assert simulated consumption stays inside that mask.
 
-The module is marked `gpu`: an NEGM solve OOMs a CPU-only box, so these run on
-the GPU legs rather than on the machine a developer types `pytest` on.
+Solving an NEGM model exhausts a CPU-only box, so the module carries the `gpu`
+marker: it runs wherever a device is present and skips elsewhere.
 """
 
 import jax.numpy as jnp
@@ -63,15 +63,22 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     """
     n_subjects = 3
     initial_conditions = {
-        "wealth": jnp.array([1.0, 5.0, 50.0]),
+        "wealth": jnp.array([1.0, 5.0, 25.0]),
         "illiquid": jnp.full(n_subjects, 10.0),
         "age": jnp.full(n_subjects, 20.0),
         "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
     }
+    # Every subject starts on the tabulated wealth grid, so what is asserted
+    # below is the mask rather than the model's behaviour off the end of its
+    # own state space.
+    assert float(jnp.max(initial_conditions["wealth"])) <= float(
+        negm_kinked_toy.WEALTH_GRID.to_jax()[-1]
+    )
     # The infeasible region exists by construction: the consumption grid
-    # extends far above the low-wealth subject's liquid resources.
+    # reaches above the poorest subject's liquid resources, so an unmasked
+    # argmax has an infeasible choice available to pick.
     assert float(negm_kinked_toy.CONSUMPTION_GRID.to_jax()[-1]) > float(
-        jnp.max(initial_conditions["wealth"])
+        jnp.min(initial_conditions["wealth"])
     )
 
     df = _alive_dataframe(initial_conditions=initial_conditions)
@@ -98,11 +105,19 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
     """
     n_subjects = 4
     initial_conditions = {
-        "wealth": jnp.array([2.0, 8.0, 15.0, 40.0]),
+        "wealth": jnp.array([2.0, 8.0, 15.0, 28.0]),
         "illiquid": jnp.array([0.0, 5.0, 12.0, 20.0]),
         "age": jnp.full(n_subjects, 20.0),
         "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
     }
+    # Both states start inside their own grids, so a violation of the budget
+    # assertion below is the mask failing rather than extrapolation.
+    assert float(jnp.max(initial_conditions["wealth"])) <= float(
+        negm_kinked_toy.WEALTH_GRID.to_jax()[-1]
+    )
+    assert float(jnp.max(initial_conditions["illiquid"])) <= float(
+        negm_kinked_toy.ILLIQUID_GRID.to_jax()[-1]
+    )
     df = _alive_dataframe(initial_conditions=initial_conditions)
     consumption = df["consumption"].to_numpy()
     assert np.all(consumption > 0.0)

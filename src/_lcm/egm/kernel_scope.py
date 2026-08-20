@@ -12,6 +12,8 @@ kernel build rather than with the model-construction validators.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from _lcm.constraints.bounds import lower_bound_declaration
+from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -44,6 +46,7 @@ def _find_unsupported_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    processed_constraints: ProcessedConstraintsMapping,
     stateful_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
@@ -88,6 +91,7 @@ def _find_unsupported_feature(
             solver=solver,
             functions=functions,
             constraints=constraints,
+            processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -302,6 +306,7 @@ def _find_unsupported_function_args(
     solver: _BoundDCEGM,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
+    processed_constraints: ProcessedConstraintsMapping,
     stateful_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -362,13 +367,20 @@ def _find_unsupported_function_args(
                 )
             )
     for constraint_name in constraints:
-        # A declared post-decision lower bound is proved against the savings
+        # A lower bound on the post-decision state is proved against the savings
         # grid at model validation, and the solve enforces that same bound
         # through the grid it was proved against. It therefore needs no kernel
         # support, and its arguments are not the kernel's to satisfy.
-        if getattr(
-            constraints[constraint_name], "_is_post_decision_lower_bound", False
-        ):
+        #
+        # Unreachable while every proved bound is dropped before the kernel is
+        # built. It stays because the drop is the solver's decision to make, and
+        # a solver that keeps its bounds must still not be asked to evaluate one
+        # per discrete combination, where a continuous post-decision state
+        # cannot be read.
+        bound = lower_bound_declaration(
+            constraint=processed_constraints[constraint_name]
+        )
+        if bound is not None and bound[0] == solver.post_decision_function:
             continue
         constraint_func = concatenate_regime_function(
             functions=MappingProxyType({**dict(functions), **dict(constraints)}),

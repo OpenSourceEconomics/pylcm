@@ -35,6 +35,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.continuation import (
     ContinuationPayload,
     EGMContinuationLayout,
@@ -167,6 +168,13 @@ class SolverBuildContext:
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of the regime's constraint names to functions."""
+
+    processed_constraints: ProcessedConstraintsMapping
+    """The same constraints in the form a solver can reason about.
+
+    Read this to ask what a constraint *says* — whether it bounds a state, which
+    names it reads — and `constraints` to evaluate one. The callables are built
+    from these, so the two cannot disagree about what was declared."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""

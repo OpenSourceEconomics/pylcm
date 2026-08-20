@@ -321,6 +321,7 @@ class DCEGM(OneMarginSolver):
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
             constraints=context.constraints,
+            processed_constraints=context.processed_constraints,
             transitions=context.transitions,
             transition_laws=context.transition_laws,
             compute_regime_transition_probs=context.compute_regime_transition_probs,

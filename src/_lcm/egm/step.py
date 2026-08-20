@@ -141,6 +141,7 @@ import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 
+from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.asset_row import _get_solve_one_combo_asset_rows
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry
@@ -216,6 +217,7 @@ def build_egm_step_functions(
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
+    processed_constraints: ProcessedConstraintsMapping,
     transitions: TransitionFunctionsMapping,
     transition_laws: TransitionLaws,
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -442,6 +444,7 @@ def build_egm_step_functions(
             user_regimes=user_regimes,
             functions=group_functions,
             constraints=group_constraints,
+            processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
             transitions=transitions,
             transition_laws=transition_laws,

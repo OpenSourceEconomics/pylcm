@@ -16,6 +16,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.constraints.processed import (
+    ConstraintLike,
+    ProcessedConstraintsMapping,
+    normalize_constraints,
+)
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import FunctionName, RegimeName, StateName
@@ -151,10 +156,14 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     ) -> RegimePhaseSpec:
         return RegimePhaseSpec(
             functions=MappingProxyType(functions),
-            # Constraints are phase-invariant pure callables by the slot
-            # grammar (phase-variant containers were rejected above).
-            constraints=MappingProxyType(
-                cast("dict[FunctionName, UserFunction]", dict(user_regime.constraints))
+            # Constraints are phase-invariant by the slot grammar (phase-variant
+            # containers were rejected above), so both slices normalize the same
+            # declarations.
+            constraints=normalize_constraints(
+                constraints=cast(
+                    "dict[FunctionName, ConstraintLike]",
+                    dict(user_regime.constraints),
+                )
             ),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
@@ -256,8 +265,8 @@ class RegimePhaseSpec:
     each carried state's imputation as a derived function under the state's
     name; the simulation slice does not — there, the name is a genuine state."""
 
-    constraints: MappingProxyType[FunctionName, UserFunction]
-    """Constraint functions (phase-invariant by the slot grammar)."""
+    constraints: ProcessedConstraintsMapping
+    """Normalized constraints (phase-invariant by the slot grammar)."""
 
     grid_states: MappingProxyType[StateName, Grid | AgeSpecializedGrid]
     """States that are genuine grid states in this phase."""

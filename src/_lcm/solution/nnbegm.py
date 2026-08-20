@@ -21,12 +21,13 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.bounds import without_proved_lower_bounds
 from _lcm.constraints.capabilities import ConstraintCapabilities
+from _lcm.constraints.processed import normalize_constraints
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
-from _lcm.post_decision_bound import without_proved_lower_bounds
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
@@ -178,10 +179,12 @@ class NNBEGM(TwoMarginSolver):
         unenforceable = without_proved_lower_bounds(
             # `Phased` is rejected in the constraints slot by the phase
             # grammar, so every value here is a bare declaration.
-            constraints=cast(
-                "Mapping[FunctionName, UserFunction]", user_regime.constraints
+            constraints=normalize_constraints(
+                constraints=cast(
+                    "Mapping[FunctionName, UserFunction]", user_regime.constraints
+                )
             ),
-            grid_enforces_the_bound=True,
+            proved_post_decision=getattr(self.inner, "post_decision_function", None),
         )
         if unenforceable:
             constraint_names = sorted(unenforceable)
