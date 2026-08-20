@@ -513,6 +513,10 @@ def test_no_adjustment_candidate_with_extra_arguments_is_rejected():
     at model build.
     """
     regime = _VALID.replace(
+        outer_continuous=dataclasses.replace(
+            _VALID.outer_continuous,
+            no_adjustment="keep_illiquid",
+        ),
         functions={
             **dict(_VALID.functions),
             "keep_illiquid": _keep_reading_the_euler_state,
