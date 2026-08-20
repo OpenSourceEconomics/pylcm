@@ -368,15 +368,15 @@ def _find_unsupported_function_args(
             )
     for constraint_name in constraints:
         # A lower bound on the post-decision state is proved against the savings
-        # grid at model validation, and the solve enforces that same bound
-        # through the grid it was proved against. It therefore needs no kernel
-        # support, and its arguments are not the kernel's to satisfy.
+        # grid, and the solve enforces that same bound through the grid it was
+        # proved against. It therefore needs no kernel support, and its
+        # arguments are not the kernel's to satisfy.
         #
-        # Unreachable while every proved bound is dropped before the kernel is
-        # built. It stays because the drop is the solver's decision to make, and
-        # a solver that keeps its bounds must still not be asked to evaluate one
-        # per discrete combination, where a continuous post-decision state
-        # cannot be read.
+        # Unreachable while a discharged bound is kept out of the set the kernel
+        # is built from. It stays because which constraints a solver evaluates
+        # is the solver's declaration to make, and one that keeps its bounds
+        # must still not be asked to evaluate one per discrete combination,
+        # where a continuous post-decision state cannot be read.
         bound = lower_bound_declaration(
             constraint=processed_constraints[constraint_name]
         )

@@ -226,12 +226,6 @@ def validate_dcegm_regime(
         solver=solver,
         solver_name="DCEGM",
     )
-    _fail_if_constraint_touches_continuous_variables(
-        regime_name=regime_name,
-        user_regime=user_regime,
-        functions=functions,
-        solver=solver,
-    )
     _fail_if_utility_depends_on_continuous_state(
         regime_name=regime_name, functions=functions, solver=solver
     )
@@ -531,54 +525,6 @@ def fail_if_grid_withholds_its_points(
             "model construction. Supply them via `points=...`."
         )
         raise ModelInitializationError(msg)
-
-
-def _fail_if_constraint_touches_continuous_variables(
-    *,
-    regime_name: RegimeName,
-    user_regime: UserRegime,
-    functions: dict[FunctionName, UserFunction],
-    solver: _BoundDCEGM,
-) -> None:
-    """No constraint may touch the continuous state or action.
-
-    EGM enforces the budget identity and the borrowing limit
-    (`savings_grid.start`) intrinsically; discrete-only constraints remain
-    supported.
-    """
-    forbidden = {solver.continuous_state, solver.continuous_action}
-    # `Phased` is rejected in the constraints slot by the phase grammar and a
-    # `None` mask is resolved at finalization, so every value here is a
-    # declaration normalization accepts.
-    normalized = normalize_constraints(
-        constraints=cast(
-            "Mapping[FunctionName, ConstraintLike]", dict(user_regime.constraints)
-        )
-    )
-    for constraint_name, constraint_func in user_regime.constraints.items():
-        # A lower bound on the post-decision state is proved against the
-        # savings grid, so it is admitted where an opaque predicate is not.
-        # Read off what the constraint says, so that a hand-written comparison
-        # is admitted exactly where the convenience constructor is.
-        bound = lower_bound_declaration(constraint=normalized[constraint_name])
-        if bound is not None and bound[0] == solver.post_decision_function:
-            continue
-        # Constraints are phase-invariant by the slot grammar (`Phased` is
-        # rejected there), so the value is always a bare callable.
-        ancestors = _dag_ancestors(
-            functions=functions,
-            target_func=cast("UserFunction", constraint_func),
-        )
-        bad = sorted(ancestors & forbidden)
-        if bad:
-            msg = (
-                f"The constraint '{constraint_name}' of regime '{regime_name}' "
-                f"depends on the continuous variables {bad}. The DCEGM solver "
-                "enforces the budget identity and the borrowing limit "
-                "(`savings_grid.start`) intrinsically; only constraints on "
-                "discrete variables are supported. Remove this constraint."
-            )
-            raise ModelInitializationError(msg)
 
 
 def _fail_if_utility_depends_on_continuous_state(
