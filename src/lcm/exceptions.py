@@ -107,22 +107,22 @@ class NBEGMCaseError(PyLCMError):
 
 
 class ExactAffineKernelUnavailableError(PyLCMError):
-    """Raised when the certified upper envelope is used without its kernel.
+    """Raised when `ExactEnvelope` cannot load its exact-affine kernel.
 
-    The certified path decides candidate ownership in exact integer arithmetic
-    over the stored operand bits, which a compiled shared object provides. Where
-    that object is absent or cannot be loaded, the path states so at the moment
-    it is asked for a verdict rather than falling back to floating arithmetic
-    that cannot make the guarantee.
+    `ExactEnvelope` uses exact arithmetic to determine which candidate delivers the
+    highest value. This calculation is performed by the compiled exact-affine kernel
+    shipped as part of pylcm. If that kernel is missing or cannot be loaded, pylcm
+    raises this error instead of silently using approximate floating-point
+    comparisons.
     """
 
 
 class ScaledLotteryDifferentiationError(PyLCMError):
-    """Raised when a scaled certainty-equivalent reduction is differentiated.
+    """Raised when differentiating a lottery with extremely small probabilities.
 
-    A lottery reaches `aggregate_scaled` with its weights split into a
-    coefficient and a base-two shift precisely because no ordinary float states
-    the probability. The same holds of a derivative with respect to such a
-    weight, so the scaled reduction states no derivative rather than reporting
-    a zero that a gradient-based caller would read as a flat objective.
+    `aggregate_scaled` preserves probabilities that are too small to represent as
+    ordinary floating-point numbers. Derivatives with respect to such probabilities
+    are not supported. pylcm therefore raises this error instead of returning zero,
+    which could incorrectly suggest to an optimizer that the objective is locally
+    flat.
     """

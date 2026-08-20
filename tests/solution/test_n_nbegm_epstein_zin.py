@@ -21,22 +21,22 @@ import jax.numpy as jnp
 import numpy as np
 
 from lcm import (
-    NBEGM,
-    NNBEGM,
     AgeGrid,
     CESAggregator,
-    GridSearch,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import TwoMarginSolver
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import NBEGM, NNBEGM, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -95,10 +95,6 @@ def _next_wealth(liquid_savings: FloatND) -> ContinuousState:
 
 def _durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
-
-
-def _keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    return illiquid
 
 
 def _utility(consumption: ContinuousAction, new_illiquid: ContinuousState) -> FloatND:
@@ -176,7 +172,6 @@ def _build_model(*, variant: str) -> Model:
         "new_illiquid": _new_illiquid,
         "resources": _resources,
         "liquid_savings": _liquid_savings,
-        "keep_illiquid": _keep_illiquid,
         "credited": _credited,
     }
     solver = _build_solver(variant=variant)
@@ -218,7 +213,7 @@ def _build_model(*, variant: str) -> Model:
                 state="illiquid",
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             ),
         )
     dead = Regime(

@@ -46,15 +46,14 @@ question Q4): the standard form is concave and consistent with the listed
 import jax.numpy as jnp
 
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
     LinSpacedGrid,
     Model,
     TauchenAR1Process,
     categorical,
+    outer_unchanged,
 )
-from lcm.regime import (
+from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
@@ -62,6 +61,10 @@ from lcm.regime import (
 )
 from lcm.regime import (
     Regime as UserRegime,
+)
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
 )
 from lcm.typing import (
     BoolND,
@@ -187,11 +190,6 @@ def new_housing(
 def next_housing(new_housing: ContinuousState) -> ContinuousState:
     """Housing law of motion: the house chosen this period is next period's."""
     return new_housing
-
-
-def keep_housing(housing: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `H' = H` (the adjustment-cost kink)."""
-    return housing
 
 
 def serviced_housing(new_housing: ContinuousState) -> FloatND:
@@ -415,7 +413,6 @@ def build_model(
         "housing_cost": housing_cost,
         "resources_before_outer_cost": resources_before_outer_cost,
         "savings": savings,
-        "keep_housing": keep_housing,
         "serviced_housing": serviced_housing,
         "inverse_marginal_utility": inverse_marginal_utility,
     }
@@ -434,7 +431,7 @@ def build_model(
         state="housing",
         action="housing_investment",
         post_decision_state="new_housing",
-        no_adjustment="keep_housing",
+        no_adjustment=outer_unchanged,
     )
 
     working = NestedConsumptionSavingsRegime(

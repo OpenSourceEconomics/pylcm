@@ -24,8 +24,9 @@ from lcm import (
     post_decision_lower_bound,
     ref,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.regime import Regime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     ContinuousAction,
@@ -40,7 +41,7 @@ from tests.conftest import DECIMAL_PRECISION
 _LIQUID = LiquidMargin(
     state="wealth",
     action="consumption",
-    resources="resources",
+    resources="wealth",
     post_decision_state="savings",
 )
 
@@ -68,12 +69,8 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(jnp.clip(wealth, 1e-8))
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth(savings: FloatND) -> FloatND:
@@ -107,7 +104,6 @@ def _model(
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
         },
         active=lambda age: age == 0,
@@ -291,7 +287,6 @@ def _grid_search_model(
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
         },
         active=lambda age: age == 0,
@@ -348,7 +343,6 @@ def _replace_constraints(*, constraints: dict) -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
         },
         active=lambda age: age == 0,

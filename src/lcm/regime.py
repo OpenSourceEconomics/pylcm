@@ -12,39 +12,28 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from beartype import beartype
 
+import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
-from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from _lcm.post_decision_bound import _PostDecisionLowerBound
+from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.solution.contract import _BoundLiquidMargin, _BoundOuterContinuousMargin
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
-from _lcm.utils.containers import (
-    ensure_containers_are_immutable,
-    find_duplicates,
-)
-from _lcm.utils.error_messages import format_messages
+from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import (
-    GridSearch,
-    OneMarginSolver,
-    Solver,
-    TwoMarginSolver,
-)
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, MarkovTransition
-from lcm.typing import UserFunction, outer_unchanged
+from lcm.typing import UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -66,6 +55,8 @@ class Regime:
     needed.
 
     """
+
+    _accepts_margin_solver: ClassVar[bool] = False
 
     # `UserFunction`/`Phased` inside the per-target dict pass the type check
     # so the validator can reject them with an explanation.
@@ -174,7 +165,7 @@ class Regime:
     )
     """Categorical grids for DAG function outputs not in states/actions."""
 
-    solver: Solver = field(default_factory=GridSearch)
+    solver: _solvers.Solver = field(default_factory=_solvers.GridSearch)
     """Solution algorithm for this regime during backward induction.
 
     - `GridSearch()` (default): grid search over the full state-action product.
@@ -216,8 +207,7 @@ class Regime:
     `g⁻¹(Σ_r p_r · E_w[g(V')])` instead of the linear expectation, and the
     transform parameters become runtime params under the pseudo-function
     name `certainty_equivalent`. Only non-terminal regimes solved by
-    `GridSearch`, `NBEGM`, or `NNBEGM` support it, and it cannot be combined with
-    `taste_shocks`.
+    `GridSearch` support it.
     """
 
     description: str = ""
@@ -268,9 +258,9 @@ class Regime:
         normalize_regime_phases(self)
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
-        if isinstance(self, _EGMFamilyRegime):
+        if self._accepts_margin_solver:
             return
-        if isinstance(self.solver, OneMarginSolver | TwoMarginSolver):
+        if isinstance(self.solver, _solvers.OneMarginSolver | _solvers.TwoMarginSolver):
             raise RegimeInitializationError(
                 "EGM-family solvers require regime-owned margin declarations: use "
                 "ConsumptionSavingsRegime for a OneMarginSolver or "
@@ -364,6 +354,12 @@ class Regime:
                 result["next_regime"] = cast("UserFunction", transition)
         return MappingProxyType(result)
 
+    def _augment_phase_functions(
+        self, functions: dict[FunctionName, UserFunction]
+    ) -> dict[FunctionName, UserFunction]:
+        """Add internal functions required by a specialized regime declaration."""
+        return functions
+
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
 
@@ -380,451 +376,3 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class NetOfAdjustmentCost:
-    """A resources node composed by pylcm as ``before_cost - cost``."""
-
-    name_in_dag: FunctionName
-    """Name assigned to the composed post-cost resources node."""
-
-    before_cost: FunctionName
-    """Name of the user-declared cost-free resources node."""
-
-    cost: FunctionName
-    """Name of the user-declared adjustment-cost node."""
-
-    def __post_init__(self) -> None:
-        self._fail_if_names_are_not_pairwise_distinct()
-
-    def _fail_if_names_are_not_pairwise_distinct(self) -> None:
-        duplicates = _repeated_names((self.name_in_dag, self.before_cost, self.cost))
-        if duplicates:
-            raise RegimeInitializationError(
-                "NetOfAdjustmentCost names must be pairwise distinct; repeated "
-                f"names: {duplicates}."
-            )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class LiquidMargin:
-    """Names defining the liquid Euler margin of an EGM-family regime."""
-
-    state: StateName
-    """The liquid continuous state."""
-
-    action: ActionName
-    """The continuous action paid from resources."""
-
-    resources: FunctionName | NetOfAdjustmentCost
-    """The resources node, bare or composed net of an adjustment cost."""
-
-    post_decision_state: FunctionName
-    """The post-decision liquid state, conventionally savings."""
-
-    def __post_init__(self) -> None:
-        self._fail_if_names_are_not_pairwise_distinct()
-
-    @property
-    def resources_name(self) -> FunctionName:
-        """Return the DAG name every downstream resources reader consumes."""
-        if isinstance(self.resources, NetOfAdjustmentCost):
-            return self.resources.name_in_dag
-        return self.resources
-
-    def _fail_if_names_are_not_pairwise_distinct(self) -> None:
-        names = [self.state, self.action, self.resources_name, self.post_decision_state]
-        if isinstance(self.resources, NetOfAdjustmentCost):
-            names.extend((self.resources.before_cost, self.resources.cost))
-        duplicates = _repeated_names(names)
-        if duplicates:
-            raise RegimeInitializationError(
-                "LiquidMargin names must be pairwise distinct; repeated names: "
-                f"{duplicates}."
-            )
-
-
-@beartype(conf=REGIME_CONF)
-def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunction:
-    """Declare a lower bound on a margin's post-decision state, checkably.
-
-    An endogenous-grid solver enforces its borrowing limit through the savings
-    grid, whose lowest node is the limit that the solve and the simulation both
-    obey. Declaring the bound states that number explicitly, so a disagreement
-    with the grid is refused when the model is built instead of the grid's
-    value quietly taking precedence.
-
-        liquid = LiquidMargin(
-            state="wealth",
-            action="consumption",
-            resources="resources",
-            post_decision_state="savings",
-        )
-        constraints={"borrowing_limit": post_decision_lower_bound(
-            margin=liquid, lower=0.0
-        )}
-
-    Taking the margin rather than the post-decision state's name is what makes
-    the two impossible to disagree: there is no second spelling of the name to
-    keep in step.
-
-    The result is an ordinary constraint callable evaluating
-    `post_decision_state >= lower`, so it is legal wherever a constraint is. A
-    solver whose savings grid already enforces the bound proves it and drops
-    it; grid search, which enforces nothing implicitly, evaluates it.
-
-    Args:
-        margin: The Euler margin whose post-decision state is bounded below.
-        lower: The bound itself. Must equal the savings grid's lowest node
-            exactly, where the solver has one.
-
-    Returns:
-        A constraint callable carrying the declared bound.
-
-    """
-    return _PostDecisionLowerBound(
-        post_decision=margin.post_decision_state, lower_bound=lower
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class OuterContinuousMargin:
-    """Names defining the outer continuous margin of a nested EGM regime."""
-
-    state: StateName
-    """The second continuous state."""
-
-    action: ActionName
-    """The continuous action moving the outer state."""
-
-    post_decision_state: FunctionName
-    """This period's chosen post-decision level of the outer state."""
-
-    no_adjustment: FunctionName
-    """No-adjustment map, or `lcm.outer_unchanged` for identity."""
-
-    def __post_init__(self) -> None:
-        self._fail_if_names_are_not_pairwise_distinct()
-
-    def _fail_if_names_are_not_pairwise_distinct(self) -> None:
-        names = [self.state, self.action, self.post_decision_state]
-        if self.no_adjustment != outer_unchanged:
-            names.append(self.no_adjustment)
-        duplicates = _repeated_names(names)
-        if duplicates:
-            raise RegimeInitializationError(
-                "OuterContinuousMargin names must be pairwise distinct; repeated "
-                f"names: {duplicates}."
-            )
-
-
-@dataclass(frozen=True, kw_only=True)
-class _EGMFamilyRegime(Regime):
-    """Shared declaration and validation for one- and two-margin EGM regimes."""
-
-    liquid: LiquidMargin
-
-    def __post_init__(self) -> None:
-        self._fail_if_local_liquid_state_is_not_continuous()
-        self._fail_if_local_liquid_action_is_not_continuous()
-        self._fail_if_local_liquid_function_declarations_are_invalid()
-        super().__post_init__()
-
-    def _fail_if_local_liquid_state_is_not_continuous(self) -> None:
-        if self.liquid.state not in self.states:
-            return
-        state = self.states[self.liquid.state]
-        state = state.solve if isinstance(state, Phased) else state
-        if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
-            raise RegimeInitializationError(
-                f"LiquidMargin.state {self.liquid.state!r} is declared locally but "
-                "is not a continuous solve-state grid."
-            )
-
-    def _fail_if_local_liquid_action_is_not_continuous(self) -> None:
-        if self.liquid.action not in self.actions:
-            return
-        if not isinstance(self.actions[self.liquid.action], ContinuousGrid):
-            raise RegimeInitializationError(
-                f"LiquidMargin.action {self.liquid.action!r} is declared locally "
-                "but is not a continuous action grid."
-            )
-
-    def _fail_if_local_liquid_function_declarations_are_invalid(self) -> None:
-        resources = self.liquid.resources
-        if isinstance(resources, NetOfAdjustmentCost):
-            required = (resources.before_cost, resources.cost)
-        else:
-            required = (resources,)
-        required += (self.liquid.post_decision_state,)
-        missing_values = [
-            name
-            for name in required
-            if name in self.functions and self.functions[name] is None
-        ]
-        if missing_values:
-            raise RegimeInitializationError(
-                "Liquid-margin function names explicitly masked by None: "
-                f"{sorted(missing_values)}."
-            )
-
-    def _liquid_finalization_errors(self) -> list[str]:
-        messages: list[str] = []
-        state = self.states.get(self.liquid.state)
-        state = state.solve if isinstance(state, Phased) else state
-        if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
-            messages.append(
-                f"liquid.state {self.liquid.state!r} must name a continuous "
-                "solve-state grid"
-            )
-        if not isinstance(self.actions.get(self.liquid.action), ContinuousGrid):
-            messages.append(
-                f"liquid.action {self.liquid.action!r} must name a continuous "
-                "action grid"
-            )
-        if self.functions.get(self.liquid.resources_name) is None:
-            messages.append(
-                f"liquid.resources {self.liquid.resources_name!r} must name the "
-                "assembled resources function"
-            )
-        if self.functions.get(self.liquid.post_decision_state) is None:
-            messages.append(
-                f"liquid.post_decision_state {self.liquid.post_decision_state!r} "
-                "must name an assembled regime function"
-            )
-        return messages
-
-    def _validate_finalized_structure(self, *, regime_name: RegimeName) -> None:
-        messages = self._liquid_finalization_errors()
-        if messages:
-            raise RegimeInitializationError(
-                f"In EGM-family regime {regime_name!r}: {format_messages(messages)}"
-            )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class ConsumptionSavingsRegime(_EGMFamilyRegime):
-    """One-liquid-margin regime for EGM, DC-EGM, or grid search."""
-
-    solver: OneMarginSolver | GridSearch = field(default_factory=GridSearch)
-
-    def __post_init__(self) -> None:
-        self._fail_if_solver_pairing_is_invalid()
-        object.__setattr__(
-            self,
-            "solver",
-            _bind_one_margin_solver(solver=self.solver, liquid=self.liquid),
-        )
-        super().__post_init__()
-
-    def _fail_if_solver_pairing_is_invalid(self) -> None:
-        if not isinstance(self.solver, OneMarginSolver | GridSearch):
-            raise RegimeInitializationError(
-                "ConsumptionSavingsRegime.solver must be a OneMarginSolver or "
-                f"GridSearch, got {type(self.solver).__module__}."
-                f"{type(self.solver).__qualname__}."
-            )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class NestedConsumptionSavingsRegime(_EGMFamilyRegime):
-    """Two-margin sibling of `ConsumptionSavingsRegime`."""
-
-    outer_continuous: OuterContinuousMargin
-    solver: TwoMarginSolver | GridSearch = field(default_factory=GridSearch)
-
-    def __post_init__(self) -> None:
-        self._fail_if_solver_pairing_is_invalid()
-        self._fail_if_liquid_and_outer_names_collide()
-        self._fail_if_local_outer_state_is_not_continuous()
-        self._fail_if_local_outer_action_is_not_continuous()
-        self._fail_if_local_outer_function_declarations_are_invalid()
-        object.__setattr__(
-            self,
-            "solver",
-            _bind_two_margin_solver(
-                solver=self.solver,
-                liquid=self.liquid,
-                outer=self.outer_continuous,
-            ),
-        )
-        super().__post_init__()
-
-    def _fail_if_solver_pairing_is_invalid(self) -> None:
-        if not isinstance(self.solver, TwoMarginSolver | GridSearch):
-            raise RegimeInitializationError(
-                "NestedConsumptionSavingsRegime.solver must be a TwoMarginSolver "
-                f"or GridSearch, got {type(self.solver).__module__}."
-                f"{type(self.solver).__qualname__}."
-            )
-
-    def _fail_if_liquid_and_outer_names_collide(self) -> None:
-        liquid_names = {
-            self.liquid.state,
-            self.liquid.action,
-            self.liquid.resources_name,
-            self.liquid.post_decision_state,
-        }
-        if isinstance(self.liquid.resources, NetOfAdjustmentCost):
-            liquid_names |= {
-                self.liquid.resources.before_cost,
-                self.liquid.resources.cost,
-            }
-        outer_names = {
-            self.outer_continuous.state,
-            self.outer_continuous.action,
-            self.outer_continuous.post_decision_state,
-        }
-        if self.outer_continuous.no_adjustment != outer_unchanged:
-            outer_names.add(self.outer_continuous.no_adjustment)
-        collisions = sorted(liquid_names & outer_names)
-        if collisions:
-            raise RegimeInitializationError(
-                "Liquid and outer margin names must not collide; repeated names: "
-                f"{collisions}."
-            )
-
-    def _fail_if_local_outer_state_is_not_continuous(self) -> None:
-        name = self.outer_continuous.state
-        if name not in self.states:
-            return
-        state = self.states[name]
-        state = state.solve if isinstance(state, Phased) else state
-        if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
-            raise RegimeInitializationError(
-                f"OuterContinuousMargin.state {name!r} is declared locally but "
-                "is not a continuous solve-state grid."
-            )
-
-    def _fail_if_local_outer_action_is_not_continuous(self) -> None:
-        name = self.outer_continuous.action
-        if name not in self.actions:
-            return
-        if not isinstance(self.actions[name], ContinuousGrid):
-            raise RegimeInitializationError(
-                f"OuterContinuousMargin.action {name!r} is declared locally but "
-                "is not a continuous action grid."
-            )
-
-    def _fail_if_local_outer_function_declarations_are_invalid(self) -> None:
-        required = [self.outer_continuous.post_decision_state]
-        if self.outer_continuous.no_adjustment != outer_unchanged:
-            required.append(self.outer_continuous.no_adjustment)
-        missing_values = [
-            name
-            for name in required
-            if name in self.functions and self.functions[name] is None
-        ]
-        if missing_values:
-            raise RegimeInitializationError(
-                "Outer-margin function names explicitly masked by None: "
-                f"{sorted(missing_values)}."
-            )
-
-    def _validate_finalized_structure(self, *, regime_name: RegimeName) -> None:
-        messages = self._liquid_finalization_errors()
-        outer = self.outer_continuous
-        state = self.states.get(outer.state)
-        state = state.solve if isinstance(state, Phased) else state
-        if not isinstance(state, ContinuousGrid | AgeSpecializedGrid):
-            messages.append(
-                f"outer_continuous.state {outer.state!r} must name a continuous "
-                "solve-state grid"
-            )
-        if not isinstance(self.actions.get(outer.action), ContinuousGrid):
-            messages.append(
-                f"outer_continuous.action {outer.action!r} must name a continuous "
-                "action grid"
-            )
-        if self.functions.get(outer.post_decision_state) is None:
-            messages.append(
-                f"outer_continuous.post_decision_state "
-                f"{outer.post_decision_state!r} must name an assembled regime function"
-            )
-        if (
-            outer.no_adjustment != outer_unchanged
-            and self.functions.get(outer.no_adjustment) is None
-        ):
-            messages.append(
-                f"outer_continuous.no_adjustment {outer.no_adjustment!r} must "
-                "name an assembled regime function"
-            )
-        if messages:
-            raise RegimeInitializationError(
-                f"In nested consumption-savings regime {regime_name!r}: "
-                f"{format_messages(messages)}"
-            )
-
-
-def _bind_one_margin_solver(
-    *, solver: OneMarginSolver | GridSearch, liquid: LiquidMargin
-) -> OneMarginSolver | GridSearch:
-    if isinstance(solver, GridSearch):
-        return solver
-    return solver._with_liquid_margin(_bound_liquid_margin(liquid))  # noqa: SLF001
-
-
-def _bind_two_margin_solver(
-    *,
-    solver: TwoMarginSolver | GridSearch,
-    liquid: LiquidMargin,
-    outer: OuterContinuousMargin,
-) -> TwoMarginSolver | GridSearch:
-    if isinstance(solver, GridSearch):
-        return solver
-    return solver._with_margins(  # noqa: SLF001
-        liquid=_bound_liquid_margin(liquid),
-        outer=_BoundOuterContinuousMargin(
-            state=outer.state,
-            action=outer.action,
-            post_decision_state=outer.post_decision_state,
-            # `outer_unchanged` is a declaration, not a function name. Resolving
-            # it here, at the one seam where a public margin becomes a bound
-            # one, is what lets every engine consumer read the identity map as
-            # the absence of a candidate function.
-            no_adjustment=(
-                None if outer.no_adjustment == outer_unchanged else outer.no_adjustment
-            ),
-        ),
-    )
-
-
-def _bound_liquid_margin(liquid: LiquidMargin) -> _BoundLiquidMargin:
-    resources = liquid.resources
-    if isinstance(resources, NetOfAdjustmentCost):
-        return _BoundLiquidMargin(
-            state=liquid.state,
-            action=liquid.action,
-            resources=resources.name_in_dag,
-            post_decision_state=liquid.post_decision_state,
-            before_cost=resources.before_cost,
-            cost=resources.cost,
-        )
-    return _BoundLiquidMargin(
-        state=liquid.state,
-        action=liquid.action,
-        resources=resources,
-        post_decision_state=liquid.post_decision_state,
-    )
-
-
-def _repeated_names(names: list[str] | tuple[str, ...]) -> list[str]:
-    """Return the names occurring more than once, in a deterministic order."""
-    return sorted(find_duplicates(names))
-
-
-def _composition_rule_message(
-    *, resources: NetOfAdjustmentCost, prefix: str = ""
-) -> str:
-    return (
-        f"{prefix}With NetOfAdjustmentCost, functions[{resources.name_in_dag!r}] "
-        f"must not exist, functions[{resources.before_cost!r}] and "
-        f"functions[{resources.cost!r}] must exist, and pylcm composes "
-        f"{resources.name_in_dag!r} = {resources.before_cost!r} - "
-        f"{resources.cost!r}."
-    )

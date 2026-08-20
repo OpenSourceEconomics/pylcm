@@ -171,11 +171,11 @@ def test_none_masks_the_model_entry() -> None:
     assert "bonus" not in model.user_regimes["retired"].functions
 
 
-def test_none_masks_a_model_constraint_for_the_terminal_regime() -> None:
-    """A terminal regime may mask a constraint broadcast to living regimes."""
+def test_dead_regime_can_mask_a_model_level_constraint() -> None:
+    """A terminal regime can opt out of a constraint shared by living regimes."""
 
-    def _positive_consumption(consumption: float) -> bool:
-        return consumption > 0.0
+    def _borrowing_constraint(wealth: float, consumption: float) -> bool:
+        return consumption <= wealth
 
     model = _build_model(
         regimes={
@@ -184,15 +184,15 @@ def test_none_masks_a_model_constraint_for_the_terminal_regime() -> None:
             "dead": UserRegime(
                 transition=None,
                 functions={"utility": lambda: 0.0},
-                constraints={"positive_consumption": None},
+                constraints={"borrowing_constraint": None},
             ),
         },
-        constraints={"positive_consumption": _positive_consumption},
+        constraints={"borrowing_constraint": _borrowing_constraint},
     )
 
-    assert "positive_consumption" in model.user_regimes["work"].constraints
-    assert "positive_consumption" in model.user_regimes["retired"].constraints
-    assert "positive_consumption" not in model.user_regimes["dead"].constraints
+    assert "borrowing_constraint" in model.user_regimes["work"].constraints
+    assert "borrowing_constraint" in model.user_regimes["retired"].constraints
+    assert "borrowing_constraint" not in model.user_regimes["dead"].constraints
 
 
 def test_mask_without_model_entry_raises() -> None:

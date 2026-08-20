@@ -33,7 +33,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, FloatND, UserFunction, ValueND
+from lcm.typing import BoolND, FloatND, ReferenceName, UserFunction, ValueND
 
 type ComparisonOperator = Literal["<", "<=", ">", ">=", "==", "!="]
 
@@ -58,7 +58,7 @@ class Ref(Operand):
     `.name` for that.
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: ReferenceName) -> None:
         self.name = name
         """The name this leaf resolves against when the condition is evaluated."""
 

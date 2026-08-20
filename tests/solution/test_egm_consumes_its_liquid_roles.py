@@ -10,6 +10,7 @@ worse than a refusal — so the solver checks the identity it relies on.
 import pytest
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
+from lcm.consumption_savings_regime import LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import EGM
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model
@@ -19,9 +20,23 @@ def _egm_model():
     return _model(solver=EGM(savings_grid=_SAVINGS_GRID))
 
 
-def test_a_resources_function_equal_to_the_state_is_accepted():
-    """The model the solver's identity does hold for builds."""
-    assert "saving" in _egm_model().user_regimes
+def test_the_liquid_state_can_fill_the_resources_role_directly():
+    """A state used as resources needs no identity DAG function."""
+    liquid = LiquidMargin(
+        state="wealth",
+        action="consumption",
+        resources="wealth",
+        post_decision_state="savings",
+    )
+
+    model = _model(
+        solver=EGM(savings_grid=_SAVINGS_GRID),
+        resources_func=None,
+        liquid=liquid,
+    )
+
+    assert "resources" not in model.user_regimes["saving"].functions
+    assert model.user_regimes["saving"].liquid.resources == "wealth"
 
 
 def test_resources_reading_beyond_the_state_are_refused():

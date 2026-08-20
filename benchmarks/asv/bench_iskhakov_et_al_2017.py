@@ -70,7 +70,7 @@ def _make_model_and_params(
         Regime,
         categorical,
     )
-    from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+    from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
     from lcm.solvers import DCEGM
     from lcm.typing import (
         ContinuousAction,
@@ -113,11 +113,8 @@ def _make_model_and_params(
     def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.retirement)
 
-    def resources(wealth: ContinuousState) -> FloatND:
-        return wealth
-
-    def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-        return resources - consumption
+    def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+        return wealth - consumption
 
     def next_wealth_from_savings(
         savings: FloatND, labor_income: FloatND, interest_rate: float
@@ -180,11 +177,10 @@ def _make_model_and_params(
         liquid_margin = LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         )
         dcegm_functions = {
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         }

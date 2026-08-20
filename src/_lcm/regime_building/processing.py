@@ -2561,6 +2561,9 @@ def _rename_params_to_qnames(
         The function with renamed parameters.
 
     """
+    if getattr(func, "_lcm_internal_no_params", False):
+        return cast("EconFunction", func)
+
     # Per-target keys are qnames (`<target>__<func>`) addressing a nested
     # template branch; walk the tree path instead of subscripting directly.
     branch: Mapping[str, object] = regime_params_template

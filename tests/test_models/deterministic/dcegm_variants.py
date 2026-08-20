@@ -18,7 +18,7 @@ import functools
 from typing import Literal
 
 from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
@@ -29,7 +29,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
     is_working,
     labor_income,
     next_wealth_from_savings,
-    resources,
     savings,
     utility_retirement,
     utility_working,
@@ -68,7 +67,7 @@ DCEGM_SOLVER = DCEGM(
 LIQUID_MARGIN = LiquidMargin(
     state="wealth",
     action="consumption",
-    resources="resources",
+    resources="wealth",
     post_decision_state="savings",
 )
 
@@ -80,7 +79,6 @@ dcegm_retirement = ConsumptionSavingsRegime(
     state_transitions={"wealth": next_wealth_from_savings},
     functions={
         "utility": utility_retirement,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
@@ -101,7 +99,6 @@ dcegm_working_life = ConsumptionSavingsRegime(
         "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
@@ -117,7 +114,6 @@ dcegm_retirement_full = ConsumptionSavingsRegime(
     state_transitions={"wealth": next_wealth_from_savings},
     functions={
         "utility": utility_retirement,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },

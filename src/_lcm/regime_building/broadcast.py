@@ -31,8 +31,8 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
+from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import NetOfAdjustmentCost
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction

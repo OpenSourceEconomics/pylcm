@@ -30,8 +30,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -104,12 +104,8 @@ def utility_retirement(
     return jnp.log(consumption) + taste
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings_post(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings_post(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth_from_savings(
@@ -175,7 +171,6 @@ def _get_dcegm_model() -> Model:
         },
         functions={
             "utility": utility_retirement,
-            "resources": resources,
             "savings_post": savings_post,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -183,7 +178,7 @@ def _get_dcegm_model() -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings_post",
         ),
         active=lambda age, la=last_age: age < la,
@@ -301,7 +296,6 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         state_transitions={"wealth": next_wealth_from_savings},
         functions={
             "utility": plain_utility,
-            "resources": resources,
             "savings_post": savings_post,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -309,7 +303,7 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings_post",
         ),
         active=lambda age, la=last_age: age < la,

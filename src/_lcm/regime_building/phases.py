@@ -69,6 +69,12 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_functions, simulate_functions, function_errors = _split_functions(
         user_regime=user_regime
     )
+    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        solve_functions
+    )
+    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        simulate_functions
+    )
     solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
         _split_states(user_regime=user_regime)
     )
@@ -146,6 +152,12 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     if errors:
         raise RegimeInitializationError(format_messages(errors))
 
+    constraints = {
+        name: cast("ConstraintLike", declaration)
+        for name, declaration in user_regime.constraints.items()
+        if declaration is not None
+    }
+
     def _phase_spec(
         *,
         functions: dict[FunctionName, UserFunction],
@@ -158,16 +170,9 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             functions=MappingProxyType(functions),
             # Constraints are phase-invariant by the slot grammar (phase-variant
             # containers were rejected above), so both slices normalize the same
-            # declarations. `None` is a model-level broadcast mask rather than a
-            # declaration; the model merge validates and removes it before this
-            # phase spec becomes part of the prepared model structure.
-            constraints=normalize_constraints(
-                constraints={
-                    name: cast("ConstraintLike", declaration)
-                    for name, declaration in user_regime.constraints.items()
-                    if declaration is not None
-                }
-            ),
+            # declarations. A `None` entry is a model-level broadcast mask: it
+            # has no local constraint to normalize and is removed during merge.
+            constraints=normalize_constraints(constraints=constraints),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
             koopmans_aggregator=koopmans_aggregator,

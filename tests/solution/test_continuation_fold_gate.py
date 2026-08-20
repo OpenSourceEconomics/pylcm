@@ -16,19 +16,17 @@ import numpy as np
 
 from _lcm.egm import continuation
 from lcm import (
-    NBEGM,
     AgeGrid,
     CESAggregator,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import GridSearch, OneMarginSolver
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3

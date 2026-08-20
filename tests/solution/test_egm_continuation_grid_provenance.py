@@ -41,7 +41,8 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,

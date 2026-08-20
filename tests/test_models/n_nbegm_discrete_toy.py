@@ -19,15 +19,17 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    GridSearch,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     Regime,
     categorical,
 )
-from lcm.solvers import NBEGM, NNBEGM, TwoMarginSolver
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import NBEGM, NNBEGM, GridSearch, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -90,7 +92,6 @@ def build_model(*, variant: str, n_periods: int = 3) -> Model:
         "new_illiquid": smooth.new_illiquid,
         "resources": resources,
         "liquid_savings": smooth.liquid_savings,
-        "keep_illiquid": smooth.keep_illiquid,
         "credited": smooth.credited,
     }
     states = {"wealth": smooth.WEALTH_GRID, "illiquid": smooth.ILLIQUID_GRID}
@@ -145,7 +146,7 @@ def build_model(*, variant: str, n_periods: int = 3) -> Model:
                 state="illiquid",
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             ),
         )
     dead = Regime(

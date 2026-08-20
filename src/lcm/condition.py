@@ -27,11 +27,12 @@ condition stays readable to a solver even though the number is not in it.
 """
 
 from _lcm.constraints.ir import Condition, Implies, Ref
+from lcm.typing import ReferenceName
 
 __all__ = ["Condition", "implies", "ref"]
 
 
-def ref(name: str) -> Ref:
+def ref(name: ReferenceName) -> Ref:
     """Refer to a named value by name, for use in a condition.
 
     Args:

@@ -25,21 +25,20 @@ import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
 from lcm import (
-    DCEGM,
-    NEGM,
-    NNBEGM,
     AgeGrid,
-    GridSearch,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    NetOfAdjustmentCost,
-    OuterContinuousMargin,
     Regime,
     categorical,
 )
-from lcm.solvers import NBEGM, TwoMarginSolver
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, GridSearch, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -117,11 +116,6 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
 def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     """Durable law of motion: the stock chosen this period is next period's."""
     return new_illiquid
-
-
-def keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `s' = Z`."""
-    return illiquid
 
 
 def utility(consumption: ContinuousAction) -> FloatND:
@@ -231,7 +225,6 @@ def build_model(
         "new_illiquid": new_illiquid,
         "resources": resources,
         "liquid_savings": liquid_savings,
-        "keep_illiquid": keep_illiquid,
         "credited": credited,
     }
     if variant == "negm":
@@ -314,7 +307,7 @@ def build_model(
                 state="illiquid",
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             ),
         )
     dead = Regime(

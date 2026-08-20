@@ -15,13 +15,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from lcm import (
-    NBEGM,
     AgeGrid,
     CESAggregator,
-    ConsumptionSavingsRegime,
-    GridSearch,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
     NormalIIDProcess,
@@ -29,7 +25,8 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.solvers import OneMarginSolver
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3

@@ -14,7 +14,6 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    FUESEnvelope,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -27,7 +26,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import GridSearch
+from lcm.solvers import FUESEnvelope, GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -46,6 +45,7 @@ from tests.test_models.deterministic import (
     dcegm_variants,
     retirement_only,
 )
+from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
 
 N_PERIODS = 3
 
@@ -230,7 +230,9 @@ PORTABLE_DCEGM_WORKING_LIFE = dcegm_variants.dcegm_working_life.replace(
 
 CASES = {
     "missing_resources_function": (
-        lambda: _without_function(VALID, "resources"),
+        lambda: VALID.replace(
+            liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources")
+        ),
         "resources",
     ),
     "missing_post_decision_function": (
@@ -366,7 +368,9 @@ def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
     from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
 
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
-    malformed = _without_function(dcegm_variants.dcegm_retirement, "resources")
+    malformed = dcegm_variants.dcegm_retirement.replace(
+        liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources")
+    )
 
     with pytest.raises(RegimeInitializationError, match="resources"):
         _build_model(malformed)

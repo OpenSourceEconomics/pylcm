@@ -22,7 +22,7 @@ from _lcm.constraints.ir import describe
 from _lcm.constraints.processed import normalize_constraints
 from lcm import implies, ref
 from lcm.condition import Condition
-from lcm.regime import LiquidMargin, post_decision_lower_bound
+from lcm.consumption_savings_regime import LiquidMargin, post_decision_lower_bound
 from lcm.typing import FloatND
 
 _LIQUID = LiquidMargin(

@@ -25,8 +25,6 @@ from dataclasses import replace
 import jax.numpy as jnp
 
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
     LinSpacedGrid,
     LiquidMargin,
@@ -36,6 +34,11 @@ from lcm import (
     OuterContinuousMargin,
     Regime,
     categorical,
+    outer_unchanged,
+)
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
 )
 from lcm.typing import (
     ContinuousAction,
@@ -123,11 +126,6 @@ def durable_transition(new_durable: ContinuousState) -> ContinuousState:
     return new_durable
 
 
-def keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `s' = Z` (the withdrawal-penalty kink)."""
-    return illiquid
-
-
 def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
     """CRRA over `consumption + iota * illiquid` — additively separable in `s'`."""
     flow = consumption + ILLIQUID_FLOW * illiquid
@@ -195,7 +193,6 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavings
             "new_durable": new_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
-            "keep_illiquid": keep_illiquid,
             "credited": credited,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -214,7 +211,7 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavings
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
 
