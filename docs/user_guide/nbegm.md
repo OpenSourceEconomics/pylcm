@@ -33,6 +33,54 @@ NB-EGM methods paper; this page is the how-to.
   along* — it enters the budget, utility, and transitions but carries no first-order
   condition of its own.
 
+## Declaring feasibility constraints
+
+First decide whether the restriction itself needs retained structure. Use an ordinary
+callable for arbitrary executable logic that does not fit the named-comparison algebra:
+
+```python
+import jax.numpy as jnp
+
+
+def finite_positive_consumption(consumption, resources):
+    return jnp.isfinite(consumption) & (consumption > 0.0) & (consumption <= resources)
+```
+
+Use `lcm.ref` when the restriction is a named comparison whose structure pylcm must
+retain. The borrowing limit of a consumption-saving problem is the central example:
+
+```python
+import lcm
+
+nonnegative_savings = lcm.ref("savings") >= 0.0
+```
+
+An `NBEGM` solve does not call an arbitrary feasibility predicate along its endogenous
+savings path. It can nevertheless prove `savings >= 0` because its savings grid already
+enforces that exact lower bound. Prefer the specialized spelling when the bound belongs
+to the regime's declared liquid margin:
+
+```python
+liquid = lcm.LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+borrowing_limit = lcm.post_decision_lower_bound(margin=liquid, lower=0.0)
+```
+
+The specialized declaration and `lcm.ref("savings") >= 0.0` mean the same thing. The
+specialized form prevents the condition's post-decision name from drifting away from the
+margin declaration. A general callable remains opaque; `NBEGM` accepts it only if a
+route can evaluate every required name and otherwise refuses the model before lowering.
+`Condition` itself grants no extra solver capability.
+
+See
+[Writing a constraint: callable or `Condition`](choosing_a_solver.md#writing-a-constraint-callable-or-condition)
+for named-to-literal and named-to-named comparisons, intersections, unions, complements,
+implications, and the cross-solver decision table.
+
 ## Declaring breakpoints
 
 Institutional boundaries are **declared, not discovered** — no solver can recover a
@@ -214,13 +262,21 @@ The solver is a per-regime slot. Pass an `NBEGM` instance where you would otherw
 leave the default `GridSearch`:
 
 ```python
-from lcm import LinSpacedGrid, Regime
+import lcm
+from lcm import LinSpacedGrid
 from lcm.solvers import NBEGM
 
-alive_regime = Regime(
+liquid = lcm.LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+
+alive_regime = lcm.ConsumptionSavingsRegime(
     transition=next_regime,
     states={"liquid": LinSpacedGrid(start=0.0, stop=20.0, n_points=80)},
-    actions={},  # consumption is the solver's continuous action
+    actions={"consumption": LinSpacedGrid(start=0.0, stop=20.0, n_points=80)},
     state_transitions={"liquid": next_liquid},
     functions={
         "utility": utility,
@@ -228,9 +284,16 @@ alive_regime = Regime(
         "subsidy_medicaid": subsidy_medicaid,
         "subsidy_private": subsidy_private,
         "resources": resources,
+        "savings": savings,
     },
-    constraints={"feasible": feasible},
+    constraints={
+        "borrowing_limit": lcm.post_decision_lower_bound(
+            margin=liquid,
+            lower=0.0,
+        )
+    },
     solver=NBEGM(savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=100)),
+    liquid=liquid,
 )
 ```
 
