@@ -37,7 +37,11 @@ from _lcm.solution.contract import (
     _BoundOuterContinuousMargin,
     simulation_route,
 )
-from lcm import LinSpacedGrid, LiquidMargin, post_decision_lower_bound
+from lcm import LinSpacedGrid
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.solvers import NBEGM, NNBEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState
 

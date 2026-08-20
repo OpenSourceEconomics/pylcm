@@ -27,7 +27,8 @@ from typing import Literal
 import numpy as np
 import pytest
 
-from lcm import ConsumptionSavingsRegime, DiscreteGrid, Model
+from lcm import DiscreteGrid, Model
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime
 from lcm.solvers import DCEGM, GridSearch
 from tests.envelope_configs import envelope_config
 from tests.test_models import ds_app3_discrete_housing

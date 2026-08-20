@@ -15,13 +15,12 @@ import pytest
 import lcm
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
 )
 from lcm.case_piece import BoundaryKind, EqualityOwner
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch

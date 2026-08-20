@@ -19,15 +19,11 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     CESAggregator,
-    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     Phased,
     PowerMean,
     QuasiArithmeticMean,
@@ -36,6 +32,12 @@ from lcm import (
     categorical,
     fixed_transition,
     piecewise_affine,
+)
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
 )
 from lcm.exceptions import (
     InvalidNameError,

@@ -17,7 +17,11 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import LinSpacedGrid, LiquidMargin, Model, post_decision_lower_bound
+from lcm import LinSpacedGrid, Model
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState
 from tests.conftest import DECIMAL_PRECISION

@@ -21,10 +21,13 @@ from lcm import (
     LinSpacedGrid,
     Model,
     categorical,
-    post_decision_lower_bound,
     ref,
 )
-from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.solvers import DCEGM, GridSearch

@@ -169,13 +169,18 @@ can be written directly as `lcm.ref("savings") >= 0.0`, but the specialized form
 the name to the regime's declared liquid margin and therefore cannot drift away from it:
 
 ```python
-liquid = lcm.LiquidMargin(
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    post_decision_lower_bound,
+)
+
+liquid = LiquidMargin(
     state="wealth",
     action="consumption",
-    resources="resources",
+    resources="wealth",
     post_decision_state="savings",
 )
-borrowing_limit = lcm.post_decision_lower_bound(margin=liquid, lower=0.0)
+borrowing_limit = post_decision_lower_bound(margin=liquid, lower=0.0)
 ```
 
 Both spell the same comparison. The specialized form is preferred when the declaration

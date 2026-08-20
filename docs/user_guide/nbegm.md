@@ -61,13 +61,18 @@ enforces that exact lower bound. Prefer the specialized spelling when the bound 
 to the regime's declared liquid margin:
 
 ```python
-liquid = lcm.LiquidMargin(
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    post_decision_lower_bound,
+)
+
+liquid = LiquidMargin(
     state="liquid",
     action="consumption",
-    resources="resources",
+    resources="liquid",
     post_decision_state="savings",
 )
-borrowing_limit = lcm.post_decision_lower_bound(margin=liquid, lower=0.0)
+borrowing_limit = post_decision_lower_bound(margin=liquid, lower=0.0)
 ```
 
 The specialized declaration and `lcm.ref("savings") >= 0.0` mean the same thing. The
@@ -262,18 +267,22 @@ The solver is a per-regime slot. Pass an `NBEGM` instance where you would otherw
 leave the default `GridSearch`:
 
 ```python
-import lcm
 from lcm import LinSpacedGrid
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
 from lcm.solvers import NBEGM
 
-liquid = lcm.LiquidMargin(
+liquid = LiquidMargin(
     state="liquid",
     action="consumption",
-    resources="resources",
+    resources="liquid",
     post_decision_state="savings",
 )
 
-alive_regime = lcm.ConsumptionSavingsRegime(
+alive_regime = ConsumptionSavingsRegime(
     transition=next_regime,
     states={"liquid": LinSpacedGrid(start=0.0, stop=20.0, n_points=80)},
     actions={"consumption": LinSpacedGrid(start=0.0, stop=20.0, n_points=80)},
@@ -283,11 +292,10 @@ alive_regime = lcm.ConsumptionSavingsRegime(
         "medicaid_eligible": medicaid_eligible,
         "subsidy_medicaid": subsidy_medicaid,
         "subsidy_private": subsidy_private,
-        "resources": resources,
         "savings": savings,
     },
     constraints={
-        "borrowing_limit": lcm.post_decision_lower_bound(
+        "borrowing_limit": post_decision_lower_bound(
             margin=liquid,
             lower=0.0,
         )

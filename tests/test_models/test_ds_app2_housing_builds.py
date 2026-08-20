@@ -25,6 +25,8 @@ import pytest
 from lcm import (
     LinSpacedGrid,
     Model,
+)
+from lcm.consumption_savings_regime import (
     NestedConsumptionSavingsRegime,
     outer_unchanged,
 )
