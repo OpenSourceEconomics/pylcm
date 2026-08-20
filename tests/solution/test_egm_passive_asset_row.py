@@ -32,7 +32,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -125,12 +125,8 @@ def pension_income(aime: ContinuousState) -> FloatND:
     return PENSION_RATE * aime
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -153,12 +149,12 @@ def next_wealth_dcegm(
 
 
 def next_wealth_brute(
-    resources: FloatND,
+    wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
     pension_income: FloatND,
 ) -> ContinuousState:
-    return resources - consumption + labor_income + pension_income
+    return wealth - consumption + labor_income + pension_income
 
 
 def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
@@ -217,12 +213,11 @@ def _model(solver: str) -> Model:
         functions=(
             {
                 **_shared_functions(),
-                "resources": resources,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
             }
             if is_dcegm
-            else {**_shared_functions(), "resources": resources}
+            else {**_shared_functions()}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
         **(
@@ -230,7 +225,7 @@ def _model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -412,7 +407,6 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
         functions=(
             {
                 **_shared_functions(),
-                "resources": resources,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
                 **_means_test_intermediates(),
@@ -420,7 +414,6 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
             if is_dcegm
             else {
                 **_shared_functions(),
-                "resources": resources,
                 **_means_test_intermediates(),
             }
         ),
@@ -430,7 +423,7 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -526,7 +519,6 @@ def _model_with_aime_batch(aime_batch_size: int) -> Model:
         constraints={},
         functions={
             **_shared_functions(),
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -534,7 +526,7 @@ def _model_with_aime_batch(aime_batch_size: int) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

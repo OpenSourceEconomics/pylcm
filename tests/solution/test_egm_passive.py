@@ -28,7 +28,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.transition import fixed_transition
@@ -96,12 +96,8 @@ def next_skill(skill: ContinuousState, is_working: BoolND) -> ContinuousState:
     return jnp.minimum(skill + jnp.where(is_working, SKILL_GAIN, 0.0), SKILL_MAX)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -198,7 +194,6 @@ def _get_model(variant: str) -> Model:
                 "utility": utility,
                 "labor_income": labor_income_fixed_skill,
                 "is_working": is_working,
-                "resources": resources,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
@@ -206,7 +201,7 @@ def _get_model(variant: str) -> Model:
             liquid=LiquidMargin(
                 state="wealth",
                 action="consumption",
-                resources="resources",
+                resources="wealth",
                 post_decision_state="savings",
             ),
         )
@@ -230,7 +225,6 @@ def _get_model(variant: str) -> Model:
                 "utility": utility,
                 "labor_income": labor_income,
                 "is_working": is_working,
-                "resources": resources,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
@@ -238,7 +232,7 @@ def _get_model(variant: str) -> Model:
             liquid=LiquidMargin(
                 state="wealth",
                 action="consumption",
-                resources="resources",
+                resources="wealth",
                 post_decision_state="savings",
             ),
         )

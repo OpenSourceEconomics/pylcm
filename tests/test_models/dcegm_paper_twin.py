@@ -35,7 +35,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, EnvelopeConfig
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -147,12 +147,8 @@ def next_wealth(
     )
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth_from_savings(
@@ -243,7 +239,6 @@ def _working_life(
             "utility": utility_working,
             "is_working": is_working,
             "labor_income": labor_income,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -251,7 +246,7 @@ def _working_life(
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )
@@ -281,7 +276,6 @@ def _retirement(
         constraints={},
         functions={
             "utility": utility_retired,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -289,7 +283,7 @@ def _retirement(
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

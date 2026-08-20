@@ -24,7 +24,8 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -71,10 +72,6 @@ def utility(consumption: ContinuousAction, crra: float) -> FloatND:
 def bequest(estate: ContinuousState, crra: float) -> FloatND:
     """The terminal regime names the state it inherits `estate`."""
     return estate ** (1.0 - crra) / (1.0 - crra)
-
-
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
 
 
 def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
@@ -129,7 +126,7 @@ def _model(*, solver, n_consumption=14):
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={"utility": utility, "savings": savings},
         active=lambda age: age < _LAST_AGE,
         solver=solver,
         **(
@@ -137,7 +134,7 @@ def _model(*, solver, n_consumption=14):
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }

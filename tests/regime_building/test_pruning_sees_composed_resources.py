@@ -10,11 +10,9 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import (
-    DCEGM,
     AgeGrid,
     ConsumptionSavingsRegime,
     DiscreteGrid,
-    FUESEnvelope,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -22,6 +20,10 @@ from lcm import (
     Regime,
     categorical,
     fixed_transition,
+)
+from lcm.solvers import (
+    DCEGM,
+    FUESEnvelope,
 )
 from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 

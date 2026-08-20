@@ -33,8 +33,8 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -116,12 +116,8 @@ def utility_consumption_only(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -232,7 +228,6 @@ def _get_model(solver: str, shock_type: str) -> Model:
             state_transitions={"wealth": dcegm_next_wealth},
             functions={
                 **shared_functions,
-                "resources": resources,
                 "savings": savings,
                 "inverse_marginal_utility": inverse_marginal_utility,
             },
@@ -240,7 +235,7 @@ def _get_model(solver: str, shock_type: str) -> Model:
             liquid=LiquidMargin(
                 state="wealth",
                 action="consumption",
-                resources="resources",
+                resources="wealth",
                 post_decision_state="savings",
             ),
         )

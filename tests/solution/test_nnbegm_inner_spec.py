@@ -17,17 +17,16 @@ from _lcm.solution.nnbegm import (
     _BoundNNBEGM,
     _fail_if_inner_is_not_nbegm,
 )
-from lcm import (
+from lcm import LinSpacedGrid
+from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
-    FiniteOuterGrid,
-    GridSearch,
-    LinSpacedGrid,
     LiquidMargin,
     NestedConsumptionSavingsRegime,
     OuterContinuousMargin,
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import FiniteOuterGrid, GridSearch
 from lcm.typing import UserFunction
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)

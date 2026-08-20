@@ -11,8 +11,7 @@ import pytest
 
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import LinSpacedGrid
-from lcm.outer_search import FiniteOuterGrid
-from lcm.solvers import NBEGM
+from lcm.solvers import NBEGM, FiniteOuterGrid
 
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
 

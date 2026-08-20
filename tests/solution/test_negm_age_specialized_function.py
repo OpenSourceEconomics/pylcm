@@ -28,6 +28,7 @@ from lcm import (
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
+    outer_unchanged,
 )
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
@@ -39,7 +40,6 @@ from tests.test_models.negm_kinked_toy import (
     build_dead_regime,
     credited,
     inverse_marginal_utility,
-    keep_illiquid,
     liquid_savings,
     new_durable,
     next_regime,
@@ -80,8 +80,8 @@ def _make_penalised_credited(age: float):
 
 
 _HELPERS = {
-    "keep_illiquid": (_make_depreciating_keep, keep_illiquid),
-    "credited": (_make_penalised_credited, credited),
+    "keep_illiquid": _make_depreciating_keep,
+    "credited": _make_penalised_credited,
 }
 
 
@@ -97,12 +97,14 @@ def _build_model(*, helper_name: str, override) -> Model:
         "new_durable": new_durable,
         "resources_before_outer_cost": resources_before_outer_cost,
         "liquid_savings": liquid_savings,
-        "keep_illiquid": keep_illiquid,
         "credited": credited,
         "inverse_marginal_utility": inverse_marginal_utility,
     }
+    no_adjustment = outer_unchanged
     if override is not None:
         functions[helper_name] = override
+        if helper_name == "keep_illiquid":
+            no_adjustment = "keep_illiquid"
     alive = NestedConsumptionSavingsRegime(
         active=lambda age: age <= _FINAL_AGE_ALIVE,
         states={
@@ -134,7 +136,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=no_adjustment,
         ),
     )
     return Model(
@@ -150,7 +152,7 @@ def _build_model(*, helper_name: str, override) -> Model:
 
 
 def _specialized(helper_name: str) -> AgeSpecializedFunction:
-    build, _ = _HELPERS[helper_name]
+    build = _HELPERS[helper_name]
     return AgeSpecializedFunction(build=build, signature=lambda age: age)
 
 
@@ -163,7 +165,7 @@ def test_the_last_active_age_uses_that_ages_own_outer_helper(helper_name):
     the age-specialized solve must reproduce, *exactly*, a plain solve whose helper
     is the concrete function `build(age)` returns at that age.
     """
-    build, _ = _HELPERS[helper_name]
+    build = _HELPERS[helper_name]
     specialized = _build_model(
         helper_name=helper_name, override=_specialized(helper_name)
     ).solve(params=_PARAMS, log_level="debug")
@@ -225,7 +227,7 @@ def test_ages_sharing_one_signature_resolve_to_one_concrete_helper(helper_name):
     distinct signatures are *not* collapsed; this one pins that equal signatures *are*
     shared rather than silently re-resolved per period.
     """
-    build, _ = _HELPERS[helper_name]
+    build = _HELPERS[helper_name]
     constant_signature = _build_model(
         helper_name=helper_name,
         override=AgeSpecializedFunction(build=build, signature=lambda _age: 0),

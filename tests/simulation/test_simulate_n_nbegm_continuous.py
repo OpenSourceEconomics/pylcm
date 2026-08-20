@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from jax import config as jax_config
 
-from lcm import AdaptiveOuterMesh
+from lcm.solvers import AdaptiveOuterMesh
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}

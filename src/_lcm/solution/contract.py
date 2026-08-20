@@ -32,9 +32,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.constraints.processed import ProcessedConstraintsMapping
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+    StructuralProof,
+)
 from _lcm.continuation import (
     ContinuationPayload,
     EGMContinuationLayout,
@@ -42,7 +49,7 @@ from _lcm.continuation import (
 )
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.engine import ParamCheck, StateActionSpace
+from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
@@ -124,6 +131,47 @@ class SolverModelContext:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ConstraintRouteContext:
+    """What a solver may read to declare the routes it walks in one phase.
+
+    Deliberately smaller than the build context: a route is a statement about
+    the solver's own candidate production, so declaring one must not need the
+    compiled kernels it will later be checked against. Built once per phase,
+    against that phase's own function pool.
+    """
+
+    regime_name: RegimeName
+    """Name of the regime whose routes are being declared."""
+
+    phase: Literal["solve", "simulate"]
+    """Phase whose candidates these routes produce."""
+
+    functions: EconFunctionsMapping
+    """The phase's processed functions, before any solver-specific rewrite.
+
+    A solver that rewrites its pool going into a branch rewrites *this* and
+    hands the result to the site, so a constraint's leaves are resolved through
+    the scope the site actually has.
+    """
+
+    variables: Variables
+    """The phase's states and actions, with kind and topology tags."""
+
+    flat_param_names: frozenset[str]
+    """Names supplied as parameters rather than computed."""
+
+    active_periods: tuple[int, ...]
+    """The regime's active periods, in ascending order.
+
+    Not a partition. A solver whose build resolves the pool differently per age
+    partitions this itself and declares one route per group of its own; one
+    that does not declares a single route whose `period_group` is `None`.
+    Handing over a partition the engine chose would make every solver look
+    grouped whether or not it rebuilds.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
 class SolverBuildContext:
     """Everything a solver may read to build one regime's kernels.
 
@@ -179,6 +227,13 @@ class SolverBuildContext:
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of the regime's constraint names to functions."""
+
+    processed_constraints: ProcessedConstraintsMapping
+    """The same constraints in the form a solver can reason about.
+
+    Read this to ask what a constraint *says* — whether it bounds a state, which
+    names it reads — and `constraints` to evaluate one. The callables are built
+    from these, so the two cannot disagree about what was declared."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
@@ -462,6 +517,64 @@ class SolutionKernels:
         )
 
 
+def simulation_route(
+    *,
+    context: ConstraintRouteContext,
+    solver_path: tuple[str, ...],
+    structural_proofs: tuple[StructuralProof, ...] = (),
+) -> ConstraintRoute:
+    """Build the simulate-phase route a solver walks over whole candidates.
+
+    Simulation is not a solver's pipeline. It walks the regime's DAG on each
+    subject's realized states and its realized action, so every name is
+    computable and the feasibility check sees a complete candidate — which is
+    true of every solver shipped today, whatever it does when solving. One
+    unrestricted site, at the simulation stage.
+
+    Built here rather than spelled out by each solver on purpose. Six copies of
+    one declaration agree by convention until one of them does not, and the
+    disagreement would be a field nobody compared. A solver whose simulate
+    phase genuinely differs writes its own route instead of calling this, which
+    then reads as the deliberate departure it would be.
+
+    Args:
+        context: What the solver may read about the regime and the phase.
+        solver_path: The nest of solvers, so the route still says whose it is.
+        structural_proofs: Proofs consulted at the site — an endogenous-grid
+            family passes the one its savings grid's lowest node establishes,
+            which the simulate-phase mask is built from.
+
+    Returns:
+        The route.
+
+    """
+    from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+        resolve_periodized_nodes,
+    )
+
+    functions = cast(
+        "EconFunctionsMapping",
+        (
+            resolve_periodized_nodes(context.functions, context.active_periods[0])
+            if context.active_periods
+            else context.functions
+        ),
+    )
+    return ConstraintRoute(
+        key=ConstraintRouteKey(
+            phase="simulate", period_group=None, solver_path=solver_path
+        ),
+        sites=(
+            ConstraintSite(
+                stage="simulation",
+                function_pool=functions,
+                available_names=None,
+                structural_proofs=structural_proofs,
+            ),
+        ),
+    )
+
+
 class Solver(ABC):
     """Base class for regime solvers — the polymorphic dispatch target.
 
@@ -517,6 +630,35 @@ class Solver(ABC):
 
     def validate_build(self, *, context: SolverBuildContext) -> None:  # noqa: B027
         """Validate processed period/build context. Default: no-op."""
+
+    def build_constraint_routes(
+        self,
+        *,
+        context: ConstraintRouteContext,  # noqa: ARG002
+    ) -> tuple[ConstraintRoute, ...] | None:
+        """Declare the candidate-production routes this solver walks in one phase.
+
+        `None` — the default — says the solver has not declared its routes, and
+        nothing is planned for it. That is not the same as declaring an
+        unrestricted route: a permissive default would claim, of every solver
+        nobody has written down, the opposite of the truth for any that in fact
+        evaluates no constraint at all. Undeclared also leaves the attributed
+        refusal a custom solver already gets exactly where it is, rather than
+        replacing it with a generic failure.
+
+        Not abstract, for the same reason. Making it abstract would turn every
+        existing custom solver into a construction-time `TypeError` naming a
+        method its author has never heard of.
+
+        Args:
+            context: What the solver may read about the regime and the phase.
+
+        Returns:
+            One route per pipeline the solver walks in this phase, or `None`
+            when it has not declared them.
+
+        """
+        return None
 
     @property
     def requires_continuation(self) -> bool:

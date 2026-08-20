@@ -80,7 +80,7 @@ def build_model(
         alive_functions=alive_functions,
         liquid_law=next_liquid_from_savings,
         alive_solver=alive_solver,
-        constraints={"feasible": feasible},
+        constraints={} if variant == "nbegm" else {"feasible": feasible},
     )
 
 

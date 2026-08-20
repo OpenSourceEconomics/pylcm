@@ -19,15 +19,11 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     CESAggregator,
-    ConsumptionSavingsRegime,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     Phased,
     PowerMean,
     QuasiArithmeticMean,
@@ -37,6 +33,12 @@ from lcm import (
     fixed_transition,
     piecewise_affine,
 )
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+)
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
@@ -44,8 +46,7 @@ from lcm.exceptions import (
     RegimeInitializationError,
     ScaledLotteryDifferentiationError,
 )
-from lcm.outer_search import FiniteOuterGrid
-from lcm.solvers import DCEGM, NBEGM, NNBEGM
+from lcm.solvers import DCEGM, NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -261,6 +262,11 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
             "resources": _resources,
             "savings": _savings,
         }
+    if isinstance(solver, NBEGM | NNBEGM):
+        # The case-piece kernels evaluate no user constraint, so the budget
+        # predicate belongs to the grid-search arm; the savings grid's first
+        # node carries the borrowing limit here.
+        base_alive["constraints"] = {}
     merged_alive = base_alive | alive_kwargs
     merged_dead = base_dead | dead_kwargs
     liquid = LiquidMargin(

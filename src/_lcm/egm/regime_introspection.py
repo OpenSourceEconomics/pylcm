@@ -220,6 +220,7 @@ def _concatenate_child_resources(
     for name, value in user_regime.states.items():
         if isinstance(value, Phased) and name not in resolved:
             resolved[name] = cast("UserFunction", value.solve)
+    resolved = user_regime._augment_phase_functions(resolved)  # noqa: SLF001
     if isinstance(user_regime.solver, NEGM):
         negm = cast("_BoundNEGM", user_regime.solver)
         no_adjustment_name = negm.outer_no_adjustment_candidate

@@ -32,8 +32,8 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
+from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import NetOfAdjustmentCost
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import UserFunction
@@ -416,8 +416,16 @@ def _needed_names(
     functions = _resolved_at_representative_age(
         phase_slice.functions, ages=ages, active_periods=active_periods
     )
+    # The walk needs each constraint's argument names, which its declaration
+    # carries directly — a condition stamps a signature like any other
+    # predicate — so there is nothing to materialize here.
     constraints = _resolved_at_representative_age(
-        phase_slice.constraints, ages=ages, active_periods=active_periods
+        {
+            name: constraint.declaration
+            for name, constraint in phase_slice.constraints.items()
+        },
+        ages=ages,
+        active_periods=active_periods,
     )
 
     pool: dict[str, UserFunction] = dict(functions)

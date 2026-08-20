@@ -14,8 +14,8 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
-from lcm import AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:

@@ -11,16 +11,16 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from lcm import (
+from lcm import LinSpacedGrid
+from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import (
     NBEGM,
     NNBEGM,
     AdaptiveOuterMesh,
     FiniteOuterGrid,
     LegacyGoldenSection,
-    LinSpacedGrid,
     OuterSearch,
 )
-from lcm.exceptions import RegimeInitializationError
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import OUTER_GRID, SAVINGS_GRID

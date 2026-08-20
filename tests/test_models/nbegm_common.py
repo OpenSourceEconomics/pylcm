@@ -27,15 +27,14 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
     categorical,
     liquid_law_from_resources,
     liquid_law_from_savings,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
