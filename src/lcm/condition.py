@@ -39,7 +39,7 @@ def ref(name: str) -> Ref:
     return Ref(name)
 
 
-def implies(premise: Condition, consequent: Condition) -> Condition:
+def implies(*, premise: Condition, consequent: Condition) -> Condition:
     """Require the consequent wherever the premise holds.
 
     True wherever the premise fails, so it constrains only the region the
