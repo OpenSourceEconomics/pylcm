@@ -29,6 +29,7 @@ from _lcm.constraints.dispositions import (
     Reject,
 )
 from _lcm.constraints.ir import Compare, Condition, Const
+from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
 from _lcm.constraints.routes import (
     BoundConstraint,
@@ -479,3 +480,46 @@ def test_a_dependency_free_constraint_is_not_evaluated_where_nothing_is() -> Non
     )
 
     assert isinstance(plan.entries[0].disposition, Reject)
+
+
+def test_the_dependency_free_witness_really_reads_nothing() -> None:
+    """The witness above is only a witness if it needs no name at all.
+
+    A constraint that turned out to have a dependency would be refused at an
+    empty allow-list for the ordinary reason, and the test above would pass
+    without touching the case it is named for.
+    """
+    constraints = normalize_constraints(
+        constraints={
+            "always": Condition(
+                expression=Compare(left=Const(1.0), op=">=", right=Const(0.0))
+            )
+        }
+    )
+
+    site = _site()
+
+    assert (
+        transitive_arg_names(
+            constraint=constraints["always"],
+            pool=site.function_pool,
+        )
+        == frozenset()
+    )
+
+
+def test_the_transitive_walk_reports_the_names_a_constraint_does_read() -> None:
+    """The empty answer above is evidence only if the walk can return a full one.
+
+    The pool that makes the control necessary is specifically a small one. With
+    a rich pool a broken walk returning `frozenset()` would show up somewhere
+    else; here it is indistinguishable from correct behaviour on every input,
+    so an empty answer carries no information unless something in the same run
+    comes back non-empty.
+    """
+    site = _site()
+
+    assert transitive_arg_names(
+        constraint=_borrowing()["borrowing"],
+        pool=site.function_pool,
+    ) == frozenset({"wealth", "consumption"})
