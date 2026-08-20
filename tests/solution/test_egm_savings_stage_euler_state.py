@@ -32,8 +32,8 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -157,12 +157,8 @@ def utility_with_skill(
     return jnp.log(consumption) + SKILL_WEIGHT * skill
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -222,7 +218,6 @@ DCEGM_SOLVER = DCEGM(
 def _dcegm_functions() -> dict:
     return {
         "utility": utility,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     }
@@ -275,7 +270,7 @@ def _survival_prob_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -338,7 +333,7 @@ def _markov_health_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -410,7 +405,7 @@ def _passive_skill_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -489,7 +484,7 @@ def _build_model_with_survival_cells(stay, die) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

@@ -33,7 +33,7 @@ from lcm import (
     RouwenhorstAR1Process,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -102,12 +102,8 @@ def utility_with_health(
     )
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -172,7 +168,6 @@ DCEGM_SOLVER = DCEGM(
 def _dcegm_functions() -> dict:
     return {
         "utility": utility_with_health,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     }
@@ -229,7 +224,7 @@ def _same_grid_markov_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -346,7 +341,6 @@ def _cross_grid_markov_model(solver: str) -> Model:
         functions={
             **(
                 {
-                    "resources": resources,
                     "savings": savings,
                     "inverse_marginal_utility": inverse_marginal_utility,
                 }
@@ -361,7 +355,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -392,7 +386,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -498,7 +492,6 @@ def _joint_process_markov_model(solver: str) -> Model:
         functions={
             **(
                 {
-                    "resources": resources,
                     "savings": savings,
                     "inverse_marginal_utility": inverse_marginal_utility,
                 }
@@ -513,7 +506,7 @@ def _joint_process_markov_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }
@@ -631,7 +624,7 @@ def _point_mass_floor_model(solver: str) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }

@@ -26,7 +26,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -86,12 +86,8 @@ def utility_retirement(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings_post(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings_post(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth_from_savings(
@@ -161,7 +157,6 @@ def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
         functions=(
             {
                 "utility": utility_retirement,
-                "resources": resources,
                 "savings_post": savings_post,
                 "inverse_marginal_utility": inverse_marginal_utility,
             }
@@ -181,7 +176,7 @@ def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings_post",
                 )
             }

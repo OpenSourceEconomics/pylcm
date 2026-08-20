@@ -14,6 +14,7 @@ uses the `NBEGM` solver over the decorated case pieces.
 """
 
 import functools
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 
@@ -86,6 +87,7 @@ def build_model(
     n_savings: int = 100,
     savings_max: float = 20.0,
     liquid_grid: Grid | None = None,
+    constraints: Mapping[str, Callable[..., object]] | None = None,
 ) -> Model:
     """Create the two-regime (alive, dead) Medicaid one-asset toy.
 
@@ -124,7 +126,11 @@ def build_model(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         ),
-        constraints={"feasible": feasible},
+        constraints=(
+            constraints
+            if constraints is not None
+            else ({} if variant == "nbegm" else {"feasible": feasible})
+        ),
         liquid_grid=liquid_grid,
     )
 

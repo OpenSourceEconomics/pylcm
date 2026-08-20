@@ -47,7 +47,12 @@ only the *outer*/nesting contract. The rules, in the order they are checked:
   a common cash-on-hand axis exists and the stacked lift would be wrong,
 - the no-adjustment candidate is a unary function of the durable state — it is
   evaluated as `keep(durable)` in the credited-cost lift and the
-  child-resources query map.
+  child-resources query map,
+- a declared post-decision lower bound agrees with the inner savings grid: the
+  nested solve inverts on that grid, so its lowest node is the limit a NEGM
+  regime enforces and the one the simulate-phase mask is built from. The engine
+  discharges such a declaration through an explicit structural proof, so a
+  number the grid does not carry has to be refused before that proof applies.
 
 The coupled-2-Euler detector is structural and deliberately over-rejects:
 catching the DS pension coupling (the outer post-decision feeding the inner
@@ -78,6 +83,8 @@ from _lcm.egm.validation import (
     _solve_grids,
     _transition_variants,
     _without,
+    fail_if_declared_lower_bound_disagrees_with_the_grid,
+    fail_if_grid_withholds_its_points,
 )
 from _lcm.grids import ContinuousGrid
 from _lcm.solution.dcegm import _BoundDCEGM
@@ -156,6 +163,45 @@ def validate_negm_regime(
     _fail_if_no_adjustment_candidate_not_unary(
         regime_name=regime_name, functions=functions, solver=solver
     )
+    _fail_if_required_grid_withholds_its_points(
+        regime_name=regime_name, user_regime=user_regime, solver=solver
+    )
+    # Against the inner solver's grid: the nested solve inverts on it, so its
+    # lowest node is the limit a NEGM regime enforces. Without this the engine
+    # would still discharge a declared bound as one the grid guarantees, on
+    # the strength of its shape, with nothing having compared the two numbers.
+    fail_if_declared_lower_bound_disagrees_with_the_grid(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        solver=inner,
+        solver_name="NEGM",
+    )
+
+
+def _fail_if_required_grid_withholds_its_points(
+    *, regime_name: RegimeName, user_regime: UserRegime, solver: _BoundNEGM
+) -> None:
+    """Require construction-time nodes only for grids the NEGM build reads.
+
+    The outer state nodes lay out the continuation, the inner savings nodes
+    define the inversion, and the outer search nodes define the adjuster
+    candidates. Other state and action grids can still receive their points
+    through params because the nested build does not lift their nodes into one
+    of those three constructions.
+    """
+    outer_state_grid = _solve_grids(slot=user_regime.states)[solver.outer_state]
+    required = (
+        (f"outer state grid '{solver.outer_state}'", outer_state_grid),
+        ("inner savings grid", solver.inner.savings_grid),
+        ("outer search grid", solver.outer_grid),
+    )
+    for role, grid in required:
+        fail_if_grid_withholds_its_points(
+            grid=grid,
+            role=role,
+            regime_name=regime_name,
+            solver_name="NEGM",
+        )
 
 
 def _fail_if_outer_margin_absent(

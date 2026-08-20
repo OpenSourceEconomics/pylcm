@@ -67,7 +67,7 @@ def test_simulated_consumption_stays_inside_the_inner_budget() -> None:
             new_illiquid=illiquid + df["illiquid_investment"].to_numpy(),
         )
     )
-    borrowing_limit = float(toy.SAVINGS_GRID.to_jax()[0])
+    borrowing_limit = toy.SAVINGS_FLOOR
     consumption = df["consumption"].to_numpy()
     assert np.all(consumption <= resources - borrowing_limit + 1e-9)
 

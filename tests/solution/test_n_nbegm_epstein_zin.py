@@ -21,22 +21,22 @@ import jax.numpy as jnp
 import numpy as np
 
 from lcm import (
-    NBEGM,
-    NNBEGM,
     AgeGrid,
     CESAggregator,
-    GridSearch,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     PowerMean,
     Regime,
     categorical,
 )
-from lcm.solvers import TwoMarginSolver
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import NBEGM, NNBEGM, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -97,10 +97,6 @@ def _durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
-def _keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    return illiquid
-
-
 def _utility(consumption: ContinuousAction, new_illiquid: ContinuousState) -> FloatND:
     """Cobb-Douglas composite of consumption and the chosen durable service."""
     return consumption**_PHI * new_illiquid ** (1.0 - _PHI)
@@ -145,11 +141,15 @@ def _build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
 
 def _build_model(*, variant: str) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
-    constraints: dict[str, Callable[..., FloatND]] = {
-        "consumption_feasible": _consumption_feasible
-    }
+    # The nested kernels evaluate no user constraint: the inner solve inverts
+    # the Euler equation on a savings grid whose first node is the borrowing
+    # limit, so `consumption <= resources` holds on every candidate it
+    # generates. The grid search ranks a dense product grid and needs all
+    # three stated.
+    constraints: dict[str, Callable[..., FloatND]] = {}
     if variant == "brute":
         constraints |= {
+            "consumption_feasible": _consumption_feasible,
             "illiquid_feasible": _illiquid_feasible,
             "budget_feasible": _budget_feasible,
         }
@@ -172,7 +172,6 @@ def _build_model(*, variant: str) -> Model:
         "new_illiquid": _new_illiquid,
         "resources": _resources,
         "liquid_savings": _liquid_savings,
-        "keep_illiquid": _keep_illiquid,
         "credited": _credited,
     }
     solver = _build_solver(variant=variant)
@@ -214,7 +213,7 @@ def _build_model(*, variant: str) -> Model:
                 state="illiquid",
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             ),
         )
     dead = Regime(

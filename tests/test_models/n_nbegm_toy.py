@@ -19,27 +19,26 @@ declares no breakpoints, so the inner NB-EGM partition is a single interval —
 the degenerate plain-EGM case.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
 from lcm import (
-    DCEGM,
-    NEGM,
-    NNBEGM,
     AgeGrid,
-    GridSearch,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    NetOfAdjustmentCost,
-    OuterContinuousMargin,
     Regime,
     categorical,
 )
-from lcm.solvers import NBEGM, TwoMarginSolver
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, GridSearch, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -119,11 +118,6 @@ def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
-def keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `s' = Z`."""
-    return illiquid
-
-
 def utility(consumption: ContinuousAction) -> FloatND:
     """Pure CRRA over consumption."""
     return consumption ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
@@ -159,7 +153,8 @@ CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
 # see `build_model`.
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
-SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=35.0, n_points=60)
+SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
+SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -202,6 +197,7 @@ def build_model(
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
+    constraints: Mapping[str, Callable[..., object]] | None = None,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -219,6 +215,9 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `constraints` overrides the constraint pool, which otherwise carries the
+    budget predicate on the grid-search arm and is empty on the endogenous-grid
+    arms, whose kernels enforce the budget identity intrinsically.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -226,7 +225,6 @@ def build_model(
         "new_illiquid": new_illiquid,
         "resources": resources,
         "liquid_savings": liquid_savings,
-        "keep_illiquid": keep_illiquid,
         "credited": credited,
     }
     if variant == "negm":
@@ -236,7 +234,8 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
+    if constraints is None:
+        constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
     state_transitions = {
@@ -308,7 +307,7 @@ def build_model(
                 state="illiquid",
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             ),
         )
     dead = Regime(

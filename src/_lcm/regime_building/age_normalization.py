@@ -34,6 +34,11 @@ from typing import Any, TypeVar, cast
 
 from jax import numpy as jnp
 
+from _lcm.constraints.processed import (
+    ConstraintLike,
+    ProcessedConstraintsMapping,
+    normalize_constraints,
+)
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -49,7 +54,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import EconFunction, RegimeName, StateName
+from _lcm.typing import EconFunction, FunctionName, RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -172,15 +177,15 @@ class AgeNormalizationResult:
 
 
 def resolve_periodized_node(node: object, period: int) -> object:
-    """Return a `PeriodizedEconFunction`'s processed function for `period`; else it."""
-    if isinstance(node, PeriodizedEconFunction):
+    """Return a periodized function's concrete callable for `period`; else it."""
+    if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.resolve(period)
     return node
 
 
 def periodized_node_signature(node: object, period: int) -> Hashable:
     """`node`'s period signature: its explicit signature, or `INVARIANT`."""
-    if isinstance(node, PeriodizedEconFunction):
+    if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.signature(period)
     return INVARIANT
 
@@ -188,12 +193,15 @@ def periodized_node_signature(node: object, period: int) -> Hashable:
 def resolve_periodized_nodes(
     mapping: Mapping[str, object], period: int
 ) -> Mapping[str, object]:
-    """Resolve every `PeriodizedEconFunction` in a flat mapping at `period`.
+    """Resolve every periodized function in a flat mapping at `period`.
 
     Returns the input unchanged when it holds no periodized node, so an
     age-invariant model builds byte-identically to one with no per-age wiring.
     """
-    if not any(isinstance(node, PeriodizedEconFunction) for node in mapping.values()):
+    if not any(
+        isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction))
+        for node in mapping.values()
+    ):
         return mapping
     return MappingProxyType(
         {name: resolve_periodized_node(node, period) for name, node in mapping.items()}
@@ -642,6 +650,27 @@ def _periodize_functions(
     )
 
 
+def _periodize_constraints(
+    constraints: ProcessedConstraintsMapping,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+) -> ProcessedConstraintsMapping:
+    """Replace every age-function marker declared as a constraint.
+
+    Periodizes the declarations and normalizes the result, rather than
+    periodizing and patching each condition. A constraint holds two objects
+    saying the same thing — what was declared and what it says — and rebuilding
+    the second from the first is what keeps them in step. Patching would leave
+    a periodized declaration beside a condition still closed over the marker.
+    """
+    periodized = _periodize_functions(
+        {name: constraint.declaration for name, constraint in constraints.items()},
+        function_cache,
+    )
+    return normalize_constraints(
+        constraints=cast("Mapping[FunctionName, ConstraintLike]", periodized)
+    )
+
+
 def _periodized_from_marker(
     resolved: _ResolvedFunctionMarker,
 ) -> PeriodizedUserFunction:
@@ -673,10 +702,7 @@ def _rewrite_phase_slice(
             "MappingProxyType",
             _periodize_functions(phase_slice.functions, function_cache),
         ),
-        constraints=cast(
-            "MappingProxyType",
-            _periodize_functions(phase_slice.constraints, function_cache),
-        ),
+        constraints=_periodize_constraints(phase_slice.constraints, function_cache),
         grid_states=MappingProxyType(grid_states),
     )
 

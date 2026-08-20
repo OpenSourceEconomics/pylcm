@@ -24,7 +24,7 @@ import pytest
 
 from _lcm.egm.upper_envelope.fues import refine_envelope
 from lcm import AgeGrid, IrregSpacedGrid, LinSpacedGrid, Model
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
