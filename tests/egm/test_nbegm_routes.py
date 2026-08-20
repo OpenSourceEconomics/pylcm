@@ -24,6 +24,7 @@ from _lcm.constraints.dispositions import (
     ProvedByConstruction,
     Reject,
 )
+from _lcm.constraints.materialize import transitive_arg_names
 from _lcm.constraints.processed import normalize_constraints
 from _lcm.constraints.routes import ConstraintRoute, plan_constraints
 from _lcm.egm.nbegm_routes import case_piece_routes
@@ -191,16 +192,29 @@ def test_the_refusal_names_the_constraint_the_kernel_cannot_evaluate():
 
 
 def test_the_dependency_free_witness_really_reads_nothing():
-    """`always` depends on no name, which is what gives the refusal meaning.
+    """`always` needs no name at the site, which is what gives the refusal meaning.
 
-    A constraint with a dependency is refused for the ordinary reason — the name
-    is not in the allow-list — so it could not tell an empty allow-list read as a
-    statement from one read as a subset test. Only a witness whose dependencies
-    are genuinely empty separates the two.
+    A constraint that needs a name is refused for the ordinary reason — it is not
+    in the allow-list — so it could not tell an empty allow-list read as a
+    statement from one read as a subset test. Only a witness that needs nothing
+    separates the two.
+
+    Asserted over the names resolved through the site's own pool, which is what
+    the planner consults. What the constraint spells is a different question, and
+    the two agree only where the pool produces none of the names it spells.
     """
+    site = case_piece_routes(
+        context=_route_context(),
+        savings_grid=_SAVINGS_GRID,
+        post_decision_function="savings",
+        solver_path=("nbegm",),
+    )[0].sites[0]
     normalized = normalize_constraints(constraints={"always": always})
 
-    assert normalized["always"].dependencies == frozenset()
+    assert (
+        transitive_arg_names(constraint=normalized["always"], pool=site.function_pool)
+        == frozenset()
+    )
 
 
 def test_a_constraint_reading_nothing_is_refused_like_any_other():
