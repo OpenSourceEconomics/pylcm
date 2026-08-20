@@ -40,7 +40,7 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
-from _lcm.solution.nbegm import NBEGM, _BoundNBEGM
+from _lcm.solution.nbegm import NBEGM, _BoundNBEGM, proved_post_decision_of
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
@@ -184,7 +184,7 @@ class NNBEGM(TwoMarginSolver):
                     "Mapping[FunctionName, UserFunction]", user_regime.constraints
                 )
             ),
-            proved_post_decision=getattr(self.inner, "post_decision_function", None),
+            proved_post_decision=proved_post_decision_of(solver=self.inner),
         )
         if unenforceable:
             constraint_names = sorted(unenforceable)

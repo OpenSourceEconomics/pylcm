@@ -360,7 +360,7 @@ class NBEGM(OneMarginSolver):
 
         return case_piece_capabilities(
             savings_grid=self.savings_grid,
-            post_decision_function=getattr(self, "post_decision_function", None),
+            post_decision_function=proved_post_decision_of(solver=self),
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
@@ -406,7 +406,7 @@ class NBEGM(OneMarginSolver):
                     "Mapping[FunctionName, UserFunction]", user_regime.constraints
                 )
             ),
-            proved_post_decision=getattr(self, "post_decision_function", None),
+            proved_post_decision=proved_post_decision_of(solver=self),
         )
         if unenforceable:
             constraint_names = sorted(unenforceable)
@@ -965,6 +965,27 @@ class _BoundNBEGM(NBEGM):
     continuous_action: ActionName
     budget_target: FunctionName
     post_decision_function: FunctionName
+
+
+def proved_post_decision_of(*, solver: NBEGM) -> FunctionName | None:
+    """Name the post-decision state a case-piece solver's savings grid spans.
+
+    `None` before the solver is bound to a regime's liquid margin: the grid
+    exists, but the state it spans is not yet named, so nothing can be proved
+    against it. Deciding that on the solver's type rather than on whether an
+    attribute happens to be there keeps a rename a failure at this read — a
+    defaulted lookup would answer `None` for a bound solver too, and the caller
+    cannot tell that apart from an honestly unbound one.
+
+    Args:
+        solver: The solver a regime declared.
+
+    Returns:
+        The post-decision state's name, or `None` if the solver is not a bound
+        case-piece kernel.
+
+    """
+    return solver.post_decision_function if isinstance(solver, _BoundNBEGM) else None
 
 
 @dataclass(frozen=True, kw_only=True)
