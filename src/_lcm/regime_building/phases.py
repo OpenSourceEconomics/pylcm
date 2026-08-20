@@ -158,12 +158,15 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             functions=MappingProxyType(functions),
             # Constraints are phase-invariant by the slot grammar (phase-variant
             # containers were rejected above), so both slices normalize the same
-            # declarations.
+            # declarations. `None` is a model-level broadcast mask rather than a
+            # declaration; the model merge validates and removes it before this
+            # phase spec becomes part of the prepared model structure.
             constraints=normalize_constraints(
-                constraints=cast(
-                    "dict[FunctionName, ConstraintLike]",
-                    dict(user_regime.constraints),
-                )
+                constraints={
+                    name: cast("ConstraintLike", declaration)
+                    for name, declaration in user_regime.constraints.items()
+                    if declaration is not None
+                }
             ),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),

@@ -25,7 +25,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import BoolND, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
@@ -169,6 +169,30 @@ def test_none_masks_the_model_entry() -> None:
     )
     assert "bonus" in model.user_regimes["work"].functions
     assert "bonus" not in model.user_regimes["retired"].functions
+
+
+def test_none_masks_a_model_constraint_for_the_terminal_regime() -> None:
+    """A terminal regime may mask a constraint broadcast to living regimes."""
+
+    def _positive_consumption(consumption: FloatND) -> BoolND:
+        return consumption > 0.0
+
+    model = _build_model(
+        regimes={
+            "work": _work_regime(),
+            "retired": _retired_regime(),
+            "dead": UserRegime(
+                transition=None,
+                functions={"utility": lambda: 0.0},
+                constraints={"positive_consumption": None},
+            ),
+        },
+        constraints={"positive_consumption": _positive_consumption},
+    )
+
+    assert "positive_consumption" in model.user_regimes["work"].constraints
+    assert "positive_consumption" in model.user_regimes["retired"].constraints
+    assert "positive_consumption" not in model.user_regimes["dead"].constraints
 
 
 def test_mask_without_model_entry_raises() -> None:
