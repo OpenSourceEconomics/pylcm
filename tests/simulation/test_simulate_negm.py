@@ -22,7 +22,18 @@ from tests.test_models.negm_kinked_toy import RegimeId
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skip(reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"),
+    pytest.mark.gpu(
+        reason=(
+            "NEGM/DC-EGM solve OOMs a CPU-only box, so this runs on the GPU legs "
+            "rather than nowhere. These are the only assertions anywhere that "
+            "NEGM's synthesized simulate-phase budget mask holds -- that "
+            "consumption stays at or below inner resources minus the borrowing "
+            "limit. Nothing else substitutes: the NEGM simulate test that does "
+            "run on CPU checks a frozen expectation minted by a run in which no "
+            "limit was declared, so it passes whether the limit is honoured or "
+            "ignored."
+        )
+    ),
 ]
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
