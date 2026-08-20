@@ -33,6 +33,7 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.constraints.capabilities import ConstraintCapabilities
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
@@ -342,6 +343,24 @@ class NBEGM(OneMarginSolver):
     def publishes_one_sided_jump_reads(self) -> bool:
         """One-sided jump resolution duplicates abscissae across each jump."""
         return self.jump_read == "one_sided"
+
+    @property
+    def constraint_capabilities(self) -> ConstraintCapabilities:
+        """What this kernel can do with a declared constraint.
+
+        Declared rather than inherited. The permissive default would say the
+        solver reads every name where it evaluates a constraint, which is the
+        opposite of true here and would not raise: a constraint the kernel
+        never evaluates would be reported as evaluated.
+        """
+        from _lcm.egm.nbegm_capabilities import (  # noqa: PLC0415
+            case_piece_capabilities,
+        )
+
+        return case_piece_capabilities(
+            savings_grid=self.savings_grid,
+            post_decision_function=getattr(self, "post_decision_function", None),
+        )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Refuse a declared feasibility constraint the kernel cannot enforce.

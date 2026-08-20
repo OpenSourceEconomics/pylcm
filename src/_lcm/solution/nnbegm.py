@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.capabilities import ConstraintCapabilities
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
@@ -129,6 +130,16 @@ class NNBEGM(TwoMarginSolver):
     def egm_continuation_layout(self) -> EGMContinuationLayout:
         """The bridged outer envelope republishes the inner solver's rows."""
         return self.inner.egm_continuation_layout
+
+    @property
+    def constraint_capabilities(self) -> ConstraintCapabilities:
+        """What this kernel can do with a declared constraint.
+
+        The inner case-piece solve is where a liquid constraint would have to be
+        evaluated, and it evaluates none, so the nested solver inherits the
+        inner declaration rather than restating it.
+        """
+        return self.inner.constraint_capabilities
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level nested NB-EGM contract for this regime.
