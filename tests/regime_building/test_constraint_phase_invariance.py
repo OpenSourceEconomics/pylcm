@@ -5,7 +5,9 @@ constraint is rejected at regime init. But a bare constraint can reach a `Phased
 `next_<state>` or a `Phased` helper transitively; the solve and simulate
 feasibility DAGs then resolve that dependency from different phase pools, so the
 feasible set is phase-specific -- silently, exactly what the direct ban forbids.
-Model build must reject it.
+Model build must reject it. The supported exception is a structural lower bound
+on an EGM-family post-decision state: the solve grid proves that declaration, and
+simulation evaluates it against the phase-resolved function pool.
 
 A carried state is deliberately NOT phase-varying: its imputation resolves to the
 same `solve` variant in both phases, so a constraint reading its CURRENT value has

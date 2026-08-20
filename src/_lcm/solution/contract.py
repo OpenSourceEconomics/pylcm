@@ -540,9 +540,9 @@ def simulation_route(
     Args:
         context: What the solver may read about the regime and the phase.
         solver_path: The nest of solvers, so the route still says whose it is.
-        structural_proofs: Proofs consulted at the site — an endogenous-grid
-            family passes the one its savings grid's lowest node establishes,
-            which the simulate-phase mask is built from.
+        structural_proofs: Route-specific proofs consulted at the site. Most
+            simulation routes need none because their complete candidates can
+            be evaluated directly.
 
     Returns:
         The route.
