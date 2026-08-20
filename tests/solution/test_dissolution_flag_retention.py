@@ -314,8 +314,15 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     return model, params
 
 
-def _solve_internal(model: Model, params: dict, **kwargs):
-    """Run the engine solve behind `Model.solve` and return its full result."""
+def _solve_internal(
+    model: Model, params: dict, *, collect_simulation_policies: bool = False, **kwargs
+):
+    """Run the engine solve behind `Model.solve` and return its full result.
+
+    Policy collection is off by default: these tests ask which dissolution flags
+    survive backward induction, and `collect_simulation_policies` retains arrays
+    for an unrelated reason, so leaving it on would blur what is being measured.
+    """
     return model._solve_compiled(
         flat_params=model._process_params(params),
         params=params,
@@ -323,6 +330,7 @@ def _solve_internal(model: Model, params: dict, **kwargs):
         log_path=None,
         log_keep_n_latest=3,
         max_compilation_workers=None,
+        collect_simulation_policies=collect_simulation_policies,
         **kwargs,
     )
 
