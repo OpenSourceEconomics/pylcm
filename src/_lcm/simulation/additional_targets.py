@@ -69,27 +69,34 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     """Get available target names for a single regime.
 
-    Internal machinery is excluded: the stochastic weight functions and the
-    budget mask synthesized for DC-EGM
-    regimes (an implementation detail of the simulate-phase argmax, not a
-    user-declared constraint). A regime that solves from a continuation also
-    excludes `inverse_marginal_utility` — its `marginal_continuation` argument
-    exists only inside the Euler inversion, so it is not computable from
-    simulation data; the exclusion is gated on the `solves_from_continuation`
-    capability, not the solver type.
+    Internal machinery is excluded: synthesized internal functions, stochastic
+    weight functions, and the budget mask synthesized for DC-EGM regimes (an
+    implementation detail of the simulate-phase argmax, not a user-declared
+    constraint). A regime that solves from a continuation also excludes
+    `inverse_marginal_utility` — its `marginal_continuation` argument exists only
+    inside the Euler inversion, so it is not computable from simulation data;
+    the exclusion is gated on the `solves_from_continuation` capability, not the
+    solver type.
 
     The two names (`DCEGM_BUDGET_CONSTRAINT_NAME`, `"inverse_marginal_utility"`)
     are name-based couplings to the EGM step's internal functions — the one spot
-    the generic simulation layer must know them. A new continuation solver that
-    reuses those internal names inherits the exemption; one that introduces
-    differently-named internal machinery extends this exclusion set here.
+    the generic simulation layer must know them. Synthesized functions instead
+    carry the internal marker, so a new adapter inherits the exclusion without
+    adding another name coupling here.
     """
-    excluded = {DCEGM_BUDGET_CONSTRAINT_NAME} | (
-        _get_stochastic_weight_function_names(regime)
+    sim = regime.simulation
+    excluded = (
+        {DCEGM_BUDGET_CONSTRAINT_NAME}
+        | _get_stochastic_weight_function_names(regime)
+        | {
+            name
+            for pool in (sim.functions, sim.constraints)
+            for name, func in pool.items()
+            if getattr(func, "_lcm_internal_no_params", False)
+        }
     )
     if regime.solution.solves_from_continuation:
         excluded.add("inverse_marginal_utility")
-    sim = regime.simulation
     candidates = {name for name in sim.functions if name not in excluded} | {
         name for name in sim.constraints if name not in excluded
     }
