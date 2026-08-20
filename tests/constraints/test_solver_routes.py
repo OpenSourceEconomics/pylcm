@@ -345,13 +345,32 @@ def test_negm_evaluates_housing_bounds_on_all_three_candidate_routes() -> None:
     }
 
 
-def test_dcegm_proves_a_bound_on_the_state_its_savings_grid_spans() -> None:
-    """The grid the solve inverts on is what enforces the limit, so it is not called.
+def test_negm_evaluates_an_inner_savings_bound_on_the_simulate_route() -> None:
+    """The inner grid proves its bound only on NEGM's two solve routes."""
+    solver = _NEGM_REGIME.solver
+    normalized = normalize_constraints(
+        constraints={"borrowing_limit": ref("liquid_savings") >= -5.0}
+    )
+    routes = solver.build_constraint_routes(
+        context=_negm_route_context(phase="simulate")
+    )
+    assert routes is not None
 
-    Its lowest node *is* the limit, and the simulate phase enforces the same
-    number through the mask built from it. The declaration is still a claim —
-    checked against the grid when the model is built — which is what makes
-    proving it different from ignoring it.
+    plan = plan_constraints(
+        constraints=normalized,
+        routes=routes,
+        context=_negm_constraint_context(phase="simulate"),
+    )
+
+    assert isinstance(plan.entries[0].disposition, Evaluate)
+
+
+def test_dcegm_proves_a_bound_on_the_state_its_savings_grid_spans() -> None:
+    """The grid the solve inverts on is what enforces the limit, so the solve does
+    not call the declaration. Its lowest node *is* the limit. The declaration
+    is still a claim — checked against the grid when the model is built — which
+    is what makes proving it different from ignoring it. Simulation evaluates
+    the declaration against its phase-resolved function pool.
     """
     disposition = _disposition(_dcegm(), constraint=ref("savings") >= 0.0)
 
@@ -376,13 +395,14 @@ def test_a_bound_on_another_name_is_not_proved_by_the_savings_grid() -> None:
     assert isinstance(disposition, Reject)
 
 
-def test_the_same_bound_is_proved_on_the_simulate_route_too() -> None:
-    """The simulate mask is synthesized from the same lowest node."""
-    disposition = _disposition(
-        _dcegm(), constraint=ref("savings") >= 0.0, phase="simulate"
-    )
+def test_egm_savings_bounds_are_evaluated_on_the_simulate_route() -> None:
+    """A solve-grid proof does not discharge a simulation-time predicate."""
+    dispositions = [
+        _disposition(solver, constraint=ref("savings") >= 0.0, phase="simulate")
+        for solver in (_egm(), _dcegm())
+    ]
 
-    assert isinstance(disposition, ProvedByConstruction)
+    assert all(isinstance(disposition, Evaluate) for disposition in dispositions)
 
 
 def test_plain_egm_proves_the_bound_its_savings_grid_enforces() -> None:

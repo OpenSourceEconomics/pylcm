@@ -223,13 +223,7 @@ class NEGM(TwoMarginSolver):
             ),
         )
         if context.phase == "simulate":
-            return (
-                simulation_route(
-                    context=context,
-                    solver_path=("negm",),
-                    structural_proofs=proofs,
-                ),
-            )
+            return (simulation_route(context=context, solver_path=("negm",)),)
 
         from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
             resolve_periodized_nodes,
