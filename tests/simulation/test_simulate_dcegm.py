@@ -222,17 +222,17 @@ def test_dcegm_full_model_simulates_end_to_end():
         seed=99,
     )
 
-    df = result.to_dataframe(additional_targets=["resources", "savings"])
+    df = result.to_dataframe(additional_targets=["savings"])
     alive = df.query("regime_name in ['working_life', 'retirement']")
     assert not alive.empty
     # The intrinsic budget the EGM solve enforces holds row by row in the
-    # simulated path: end-of-period savings is exactly resources minus
+    # simulated path: end-of-period savings is exactly wealth minus
     # consumption, never drops below the savings grid's lower bound (the
     # synthesized borrowing limit), and consumption stays strictly positive.
     consumption = alive["consumption"].to_numpy()
-    resources = alive["resources"].to_numpy()
+    wealth = alive["wealth"].to_numpy()
     savings = alive["savings"].to_numpy()
-    np.testing.assert_allclose(savings, resources - consumption, atol=1e-5)
+    np.testing.assert_allclose(savings, wealth - consumption, atol=1e-5)
     assert (savings >= savings_lower_bound - 1e-9).all()
     assert (consumption > 0.0).all()
     assert set(df.query("regime_name == 'working_life'")["labor_supply"]) <= {
@@ -323,9 +323,11 @@ def test_dcegm_solver_machinery_is_not_a_result_target():
 
     assert "dcegm_budget_constraint" not in result.available_targets
     assert "inverse_marginal_utility" not in result.available_targets
+    assert "_lcm_direct_liquid_resources" not in result.available_targets
     df = result.to_dataframe(additional_targets="all")
     assert "dcegm_budget_constraint" not in df.columns
     assert "inverse_marginal_utility" not in df.columns
+    assert "_lcm_direct_liquid_resources" not in df.columns
 
 
 def test_phase_variant_law_term_simulates_with_the_simulate_variant():
