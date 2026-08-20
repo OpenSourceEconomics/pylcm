@@ -73,6 +73,7 @@ def _bonus_model() -> Model:
     alive = dcegm_retirement.replace(
         active=lambda age: age < 50,
         solver=solver,
+        liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
             "take_bonus": DiscreteGrid(BonusChoice),

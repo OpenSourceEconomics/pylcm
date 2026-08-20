@@ -20,13 +20,14 @@ from lcm.solvers import (
     FUESEnvelope,
     MSSEnvelope,
 )
-from lcm.typing import ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.envelope_configs import EnvelopeName, envelope_config
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
+    LIQUID_MARGIN,
     dcegm_retirement,
     dead,
 )
@@ -120,6 +121,7 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
     model = _model_from_alive(
         _PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
+            liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
             states={
                 "wealth": WEALTH_GRID,
                 "wage_shock": NormalIIDProcess(
@@ -129,6 +131,7 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
             functions={
                 **dict(dcegm_retirement.functions),
                 "resources": _resources_with_shock,
+                "savings": _savings_from_resources,
             },
         )
     )
@@ -204,6 +207,12 @@ def _resources_with_shock(
     wealth: ContinuousState, wage_shock: ContinuousState
 ) -> FloatND:
     return wealth + wage_shock
+
+
+def _savings_from_resources(
+    resources: FloatND, consumption: ContinuousAction
+) -> FloatND:
+    return resources - consumption
 
 
 def _skill_alive_utility(consumption: FloatND, skill: ContinuousState) -> FloatND:
