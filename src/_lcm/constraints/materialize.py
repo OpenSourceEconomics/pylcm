@@ -11,11 +11,12 @@ condition over a discrete state can compose at all.
 from collections.abc import Mapping
 from typing import cast
 
-from dags import get_annotations, with_signature
+from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.typing import ConstraintFunction, FunctionName
+from _lcm.utils.functools import get_union_of_args
 from lcm.typing import BoolND, UserFunction, ValueND
 
 # Used when no function in the pool says anything about a name.
@@ -92,3 +93,38 @@ def annotation_of(*, pool: Mapping[FunctionName, UserFunction], name: str) -> st
         if annotation != "no_annotation_found":
             return annotation
     return FALLBACK_ANNOTATION
+
+
+def transitive_arg_names(
+    *,
+    constraint: ProcessedConstraint,
+    pool: Mapping[FunctionName, UserFunction],
+) -> frozenset[str]:
+    """Return the names a constraint needs once resolved through a pool.
+
+    What a constraint requires is not what it spells. `spendable >= 0` names a
+    helper; where that helper is in the pool the requirement is really the
+    helper's own leaves, and where it is not the name itself is the leaf. Both
+    spellings of one requirement therefore resolve alike, which is the point:
+    classifying them differently would make an equivalent declaration solvable
+    under one wording and refused under the other.
+
+    Args:
+        constraint: The normalized constraint.
+        pool: The functions in scope where the constraint is evaluated. A name
+            this pool produces is resolved through it rather than demanded.
+
+    Returns:
+        Frozenset of the leaf names that must be available.
+
+    """
+    composed = concatenate_functions(
+        functions={
+            **dict(pool),
+            constraint.name: as_constraint_function(constraint=constraint, pool=pool),
+        },
+        targets=constraint.name,
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    return frozenset(get_union_of_args([composed]))

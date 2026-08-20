@@ -1,0 +1,447 @@
+"""One terminal disposition per constraint, per route a solver actually walks.
+
+A *route* is one solver's ordered candidate-production pipeline for one phase:
+the sites at which it has candidates in hand, in the order it produces them. A
+*site* is one such point, and what distinguishes sites is which names are bound
+there and which function pool is in scope — a nesting solver rewrites its pool
+between sites, so the same declaration means different work at each.
+
+Disposition is a property of a route, not of a regime. The same borrowing limit
+is enforced by construction where an endogenous-grid solve inverts on its
+savings grid and evaluated in simulation, where no such grid exists. Asking for
+one verdict per `(constraint, regime, phase)` cannot express that, and a nesting
+solver has more than one route per phase, so the coarser unit has to drop one of
+them — silently, because a constraint that reaches no disposition is neither
+honoured nor refused and surfaces as a wrong policy rather than as an error.
+
+The invariant this module exists to hold is therefore:
+
+    for every phase-specialized solver route, every applicable constraint has
+    exactly one terminal disposition.
+
+What a constraint needs is read off the site's own pool rather than off the
+constraint's surface, so `spendable >= 0` and the same requirement spelled over
+`spendable`'s own leaves are disposed of alike.
+"""
+
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal, Protocol, runtime_checkable
+
+from _lcm.constraints.dispositions import (
+    CompileBoundary,
+    ConstraintContext,
+    ConstraintDisposition,
+    Evaluate,
+    EvaluationStage,
+    ProvedByConstruction,
+    Reject,
+)
+from _lcm.constraints.materialize import transitive_arg_names
+from _lcm.constraints.processed import ProcessedConstraint
+from _lcm.typing import EconFunctionsMapping, FunctionName
+
+
+@dataclass(frozen=True, kw_only=True)
+class ConstraintRouteKey:
+    """Which pipeline a disposition belongs to.
+
+    Hashable and compared by value: the key is what a plan's coverage is
+    counted over, so two descriptions of the same pipeline must be the same
+    key.
+    """
+
+    phase: Literal["solve", "simulate"]
+    """Phase whose candidates this route produces."""
+
+    period_group: tuple[int, ...]
+    """Periods sharing one build of this route, in ascending order.
+
+    Age specialization splits a regime's function pool by period, so periods in
+    different groups resolve to different concrete functions and a constraint's
+    leaves can differ between them. An age-invariant regime has one group.
+    """
+
+    solver_path: tuple[str, ...]
+    """The nest of solvers producing the candidates, outermost first.
+
+    `("grid_search",)` for a flat solve; `("negm", "adjuster")` and
+    `("negm", "keeper")` for the two branches a nested solve produces.
+    """
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class ConstraintSite:
+    """One point along a route at which a constraint could be met."""
+
+    stage: EvaluationStage
+    """What kind of candidate is in hand here."""
+
+    function_pool: EconFunctionsMapping
+    """The functions in scope at this site.
+
+    The pool a *nesting* solver rewrites going into a branch, not the regime's
+    declared pool: a constraint's leaves are resolved through this, so handing
+    over the unrewritten pool would classify against a scope the site does not
+    have.
+    """
+
+    bound_inputs: frozenset[str]
+    """Names supplied as bound values here rather than computed or searched."""
+
+    available_names: frozenset[str] | None
+    """Leaf names readable at this site, or `None` for no restriction.
+
+    `None` is grid search, where every name is in scope. An *empty* frozenset
+    is a different declaration: nothing is readable, so no constraint can be
+    evaluated here and every one falls through to the next site.
+    """
+
+    structural_proofs: tuple[StructuralProof, ...] = ()
+    """Proofs consulted here, in order."""
+
+    boundary_compilers: tuple[BoundaryCompiler, ...] = ()
+    """Boundary compilers consulted here, in order."""
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class ConstraintRoute:
+    """One solver's ordered candidate-production pipeline for one phase."""
+
+    key: ConstraintRouteKey
+    """Which pipeline this is."""
+
+    sites: tuple[ConstraintSite, ...]
+    """The sites, in the order the solver produces candidates.
+
+    An empty tuple is a solver that offers nowhere to meet a constraint — plain
+    EGM — and refuses every one it is handed. That is a declaration, not an
+    omission.
+    """
+
+
+@dataclass(frozen=True, eq=False)
+class BoundConstraint:
+    """A constraint resolved against the pool of one site."""
+
+    constraint: ProcessedConstraint
+    """The constraint being disposed of."""
+
+    site: ConstraintSite
+    """The site it was resolved against."""
+
+    transitive_inputs: frozenset[str]
+    """The leaf names it needs once resolved through the site's pool."""
+
+
+@runtime_checkable
+class StructuralProof(Protocol):
+    """Decides whether a solver's construction already enforces a constraint."""
+
+    def __call__(
+        self, *, bound: BoundConstraint, context: ConstraintContext
+    ) -> ProvedByConstruction | Reject | None:
+        """Discharge the constraint, refuse it, or decline to judge it.
+
+        Args:
+            bound: The constraint resolved against this site.
+            context: What the proof may read about the regime and the phase.
+
+        Returns:
+            The verdict, or `None` meaning "not mine" — the planner then tries
+            the next proof, then the site's compilers, then the next site.
+
+        """
+        ...
+
+
+@runtime_checkable
+class BoundaryCompiler(Protocol):
+    """Turns a constraint's boundary into a program a solver can act on."""
+
+    def __call__(
+        self, *, bound: BoundConstraint, context: ConstraintContext
+    ) -> CompileBoundary | Reject | None:
+        """Compile the constraint's boundary, refuse it, or decline to judge it.
+
+        Args:
+            bound: The constraint resolved against this site.
+            context: What the compiler may read about the regime and the phase.
+
+        Returns:
+            The verdict, or `None` meaning "not mine".
+
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class ConstraintPlanEntry:
+    """What one route decided about one constraint."""
+
+    constraint_name: FunctionName
+    """The name the constraint was declared under."""
+
+    route: ConstraintRouteKey
+    """The route that decided it."""
+
+    disposition: ConstraintDisposition
+    """The one terminal verdict."""
+
+
+@dataclass(frozen=True, eq=False)
+class ConstraintPlan:
+    """Every constraint's disposition on every route that applies to it."""
+
+    entries: tuple[ConstraintPlanEntry, ...]
+    """One entry per (constraint, route) pair."""
+
+    def merge(self, other: ConstraintPlan) -> ConstraintPlan:
+        """Return the plan holding both plans' entries.
+
+        Args:
+            other: The plan to merge in, over disjoint routes.
+
+        Returns:
+            The combined plan.
+
+        """
+        return ConstraintPlan(entries=(*self.entries, *other.entries))
+
+
+def plan_constraints(
+    *,
+    constraints: Mapping[FunctionName, ProcessedConstraint],
+    routes: tuple[ConstraintRoute, ...],
+    context: ConstraintContext,
+) -> ConstraintPlan:
+    """Assign every constraint one terminal disposition on every route.
+
+    Args:
+        constraints: The phase's normalized constraints.
+        routes: The routes the phase's solver walks, each belonging to the
+            phase named by `context`.
+        context: What a proof or a compiler may read about regime and phase.
+
+    Returns:
+        The plan, holding exactly one entry per (constraint, route) pair.
+
+    Raises:
+        ValueError: If a route belongs to another phase, or if two routes share
+            one key.
+        TypeError: If a proof or a compiler answers with a kind of verdict it
+            is not allowed to give.
+
+    """
+    _fail_if_a_route_is_out_of_phase(routes=routes, context=context)
+    _fail_if_two_routes_share_a_key(routes=routes)
+    entries = tuple(
+        ConstraintPlanEntry(
+            constraint_name=name,
+            route=route.key,
+            disposition=_disposition_along(
+                constraint=constraint, route=route, context=context
+            ),
+        )
+        for route in routes
+        for name, constraint in constraints.items()
+    )
+    _fail_if_coverage_is_incomplete(
+        entries=entries, constraints=constraints, routes=routes
+    )
+    return ConstraintPlan(entries=entries)
+
+
+def _disposition_along(
+    *,
+    constraint: ProcessedConstraint,
+    route: ConstraintRoute,
+    context: ConstraintContext,
+) -> ConstraintDisposition:
+    """Return the verdict the first site along the route to claim it gives.
+
+    A site is asked in turn to prove the constraint, to compile its boundary,
+    and finally to evaluate it; the first that can decides, and a site that can
+    do none of the three hands it to the next.
+
+    Evaluating at an earlier site therefore beats proving at a later one. That
+    ordering is deliberate: evaluating a constraint some later construction
+    also enforces costs a redundant predicate, while the opposite mistake —
+    treating a constraint as discharged by a construction that is not actually
+    reached — is silent.
+    """
+    shortfalls: list[tuple[EvaluationStage, tuple[str, ...]]] = []
+    for site in route.sites:
+        bound = BoundConstraint(
+            constraint=constraint,
+            site=site,
+            transitive_inputs=transitive_arg_names(
+                constraint=constraint, pool=site.function_pool
+            ),
+        )
+        for proof in site.structural_proofs:
+            verdict = proof(bound=bound, context=context)
+            if verdict is not None:
+                _fail_if_verdict_is_outside_the_contract(
+                    verdict=verdict,
+                    allowed=(ProvedByConstruction, Reject),
+                    source=proof,
+                    allowed_description="prove a constraint or refuse it",
+                )
+                return verdict
+        for boundary_compiler in site.boundary_compilers:
+            verdict = boundary_compiler(bound=bound, context=context)
+            if verdict is not None:
+                _fail_if_verdict_is_outside_the_contract(
+                    verdict=verdict,
+                    allowed=(CompileBoundary, Reject),
+                    source=boundary_compiler,
+                    allowed_description="compile a constraint's boundary or refuse it",
+                )
+                return verdict
+        if _site_can_read(bound=bound):
+            return Evaluate(constraint=constraint, stage=site.stage)
+        shortfalls.append(
+            (
+                site.stage,
+                tuple(sorted(bound.transitive_inputs - _readable_at(site=site))),
+            )
+        )
+    return Reject(
+        constraint=constraint,
+        reason=_unmet_message(
+            constraint=constraint, route=route, context=context, shortfalls=shortfalls
+        ),
+    )
+
+
+def _readable_at(*, site: ConstraintSite) -> frozenset[str]:
+    """Return the leaf names a site can supply.
+
+    Bound inputs are readable whether or not `available_names` lists them: a
+    value the site binds is a constant in scope there, and requiring a route
+    producer to list it twice would make forgetting it look like a scope
+    restriction rather than an oversight.
+    """
+    if site.available_names is None:
+        return frozenset()
+    return site.available_names | site.bound_inputs
+
+
+def _site_can_read(*, bound: BoundConstraint) -> bool:
+    """Whether the site supplies every leaf the constraint needs."""
+    if bound.site.available_names is None:
+        return True
+    return bound.transitive_inputs <= _readable_at(site=bound.site)
+
+
+def _unmet_message(
+    *,
+    constraint: ProcessedConstraint,
+    route: ConstraintRoute,
+    context: ConstraintContext,
+    shortfalls: list[tuple[EvaluationStage, tuple[str, ...]]],
+) -> str:
+    """Say why a route could meet the constraint at none of its sites."""
+    label = _route_label(key=route.key)
+    opening = (
+        f"The constraint '{constraint.name}' of regime "
+        f"'{context.regime_name}' cannot be met on the {label} route"
+    )
+    if not shortfalls:
+        return (
+            f"{opening}, which offers no site at which a constraint can be "
+            "evaluated. Encode the requirement in the solver's own "
+            "construction, or use a solver that evaluates constraints."
+        )
+    per_site = "; ".join(
+        f"at '{stage}' it still needs {list(missing)}" for stage, missing in shortfalls
+    )
+    return (
+        f"{opening}: {per_site}. Restate it over names one of those sites can "
+        "read, or use a solver that evaluates over the whole state-action "
+        "product."
+    )
+
+
+def _route_label(*, key: ConstraintRouteKey) -> str:
+    """Name a route the way an error message should quote it."""
+    return f"`{'/'.join(key.solver_path)} {key.phase}`"
+
+
+def _fail_if_a_route_is_out_of_phase(
+    *, routes: tuple[ConstraintRoute, ...], context: ConstraintContext
+) -> None:
+    """Refuse a route belonging to a phase other than the one being planned."""
+    out_of_phase = [
+        _route_label(key=route.key)
+        for route in routes
+        if route.key.phase != context.phase
+    ]
+    if not out_of_phase:
+        return
+    msg = (
+        f"Planning the '{context.phase}' phase of regime "
+        f"'{context.regime_name}' was handed {out_of_phase}, which belong to "
+        "another phase. A plan is built per phase against that phase's own "
+        "constraints and function pool, so a route from the other one would be "
+        "classified against a scope it does not have."
+    )
+    raise ValueError(msg)
+
+
+def _fail_if_two_routes_share_a_key(*, routes: tuple[ConstraintRoute, ...]) -> None:
+    """Refuse two routes claiming to be the same pipeline."""
+    counts = Counter(route.key for route in routes)
+    duplicated = [_route_label(key=key) for key, n in counts.items() if n > 1]
+    if not duplicated:
+        return
+    msg = (
+        f"Two routes share the key {duplicated}. A plan holds one entry per "
+        "(constraint, route) pair, so a repeated key would let one pipeline's "
+        "verdict overwrite another's with nothing to say which survived."
+    )
+    raise ValueError(msg)
+
+
+def _fail_if_coverage_is_incomplete(
+    *,
+    entries: tuple[ConstraintPlanEntry, ...],
+    constraints: Mapping[FunctionName, ProcessedConstraint],
+    routes: tuple[ConstraintRoute, ...],
+) -> None:
+    """Refuse a plan that does not decide every constraint on every route."""
+    expected = {(name, route.key) for name in constraints for route in routes}
+    observed = {(entry.constraint_name, entry.route) for entry in entries}
+    if observed == expected:
+        return
+    missing = sorted((name, _route_label(key=key)) for name, key in expected - observed)
+    unasked = sorted((name, _route_label(key=key)) for name, key in observed - expected)
+    msg = (
+        f"The constraint plan is not exhaustive: {missing} received no "
+        f"disposition and {unasked} were decided without being declared. A "
+        "constraint with no disposition is neither honoured nor refused, so it "
+        "surfaces as a wrong policy rather than as an error."
+    )
+    raise ValueError(msg)
+
+
+def _fail_if_verdict_is_outside_the_contract(
+    *,
+    verdict: object,
+    allowed: tuple[type, ...],
+    source: object,
+    allowed_description: str,
+) -> None:
+    """Refuse a capability that answered with a kind of verdict it may not give."""
+    if isinstance(verdict, allowed):
+        return
+    name = getattr(source, "__name__", repr(source))
+    msg = (
+        f"The capability '{name}' returned {verdict!r}, but it may only "
+        f"{allowed_description}, or return `None` to decline. Deciding where a "
+        "constraint is evaluated belongs to the planner, so that no constraint "
+        "reaches a site no capability vouched for."
+    )
+    raise TypeError(msg)

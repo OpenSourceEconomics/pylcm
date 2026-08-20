@@ -8,8 +8,8 @@ outcome with no symptom: a dropped constraint surfaces as a wrong policy rather
 than as an error.
 
 Pure data. A disposition records what was decided and why, and carries no
-policy of its own — which solver reaches which verdict is declared by that
-solver's capabilities and assigned by `_lcm.constraints.capabilities`.
+policy of its own — which verdict a constraint reaches is declared by the sites
+of the route it is being met on, and assigned by `_lcm.constraints.routes`.
 """
 
 from dataclasses import dataclass
@@ -21,7 +21,7 @@ from _lcm.constraints.processed import ProcessedConstraint
 from _lcm.grids import Grid
 from _lcm.typing import FunctionName, RegimeName, StateOrActionName
 
-# Where in a solve a constraint is evaluated. The stages differ in what is in
+# What kind of candidate a route site has in hand. The stages differ in what is in
 # scope, which is what decides whether a constraint can be evaluated at all:
 # - `"state_action"` — over the whole state-action product, as grid search does
 # - `"discrete_combo"` — per discrete combination, before a continuous inner stage
