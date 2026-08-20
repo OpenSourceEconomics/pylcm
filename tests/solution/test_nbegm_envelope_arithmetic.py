@@ -9,11 +9,13 @@ reproduce the certified value function wherever the candidates are well
 separated, which is the regime the setting is meant for.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.typing import PeriodToRegimeToVArr
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
@@ -75,17 +77,57 @@ def test_the_ordinary_envelope_reproduces_the_certified_value_function():
             )
 
 
-def test_a_step_carries_its_arithmetic_into_the_envelope_it_merges_with():
-    """A step asked for the ordinary read over a blocked envelope is refused.
+def _step_jaxpr(
+    *, arithmetic: ComparisonArithmetic, envelope_segment_block_size: int = 0
+) -> str:
+    """The program one per-interval step stages out, as text."""
+    inputs = _per_interval_inputs(n_intervals=6)
+    return str(
+        jax.make_jaxpr(
+            lambda: nbegm_per_interval_continuation_step_savings(
+                **inputs,
+                envelope_segment_block_size=envelope_segment_block_size,
+                arithmetic=arithmetic,
+            )
+        )()
+    )
 
-    The blocked scan carries the certified arithmetic only, and serving it for
-    an ordinary request would report the certified cost under the ordinary
-    label. The refusal therefore comes from the envelope itself, so a step that
-    raises it is one whose arithmetic reached the merge.
+
+def test_an_ordinary_step_stages_out_no_exact_kernel_call():
+    """Asking a step for the ordinary read keeps the exact kernel out of it.
+
+    The certified comparison is one call into the native exact-affine kernel.
+    A step whose declared arithmetic never reached the merge would emit that
+    call regardless, so its absence is what says the choice was honoured.
     """
-    with pytest.raises(ValueError, match="dense reduction only"):
-        nbegm_per_interval_continuation_step_savings(
-            **_per_interval_inputs(n_intervals=6),
-            envelope_segment_block_size=7,
-            arithmetic="ordinary",
-        )
+    assert "ffi_call" not in _step_jaxpr(arithmetic="ordinary")
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_a_certified_step_stages_out_the_exact_kernel_call():
+    """The same step asked for the certified read does emit that call.
+
+    Without this half the check above would pass on a program that staged out
+    nothing at all, and could not tell a honoured choice from a broken trace.
+    """
+    assert "ffi_call" in _step_jaxpr(arithmetic="certified")
+
+
+def test_blocking_the_ordinary_read_publishes_what_the_unblocked_read_does():
+    """How the candidates are partitioned does not move the ordinary answer.
+
+    The ordinary read takes a maximum over candidates, which no partition of
+    them can change: each block offers its own best and only a strictly better
+    one replaces the standing winner, so a tie stays with the earlier candidate
+    however the blocks fall.
+    """
+    inputs = _per_interval_inputs(n_intervals=6)
+    unblocked = nbegm_per_interval_continuation_step_savings(
+        **inputs, envelope_segment_block_size=0, arithmetic="ordinary"
+    )
+    blocked = nbegm_per_interval_continuation_step_savings(
+        **inputs, envelope_segment_block_size=7, arithmetic="ordinary"
+    )
+
+    for one, other in zip(unblocked, blocked, strict=True):
+        np.testing.assert_array_equal(np.asarray(one), np.asarray(other))
