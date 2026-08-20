@@ -14,7 +14,6 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    FUESEnvelope,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -27,7 +26,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import GridSearch
+from lcm.solvers import FUESEnvelope, GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

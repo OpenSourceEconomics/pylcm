@@ -20,7 +20,7 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution.test_egm_process_states import (
@@ -36,7 +36,6 @@ from tests.solution.test_egm_process_states import (
     inverse_marginal_utility,
     next_regime,
     next_wealth_from_savings_iid,
-    resources,
     savings,
     utility_consumption_only,
 )
@@ -62,7 +61,6 @@ def _model(stochastic_node_batch_size: int) -> Model:
         state_transitions={"wealth": next_wealth_from_savings_iid},
         functions={
             "utility": utility_consumption_only,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -74,7 +72,7 @@ def _model(stochastic_node_batch_size: int) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

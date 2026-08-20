@@ -69,6 +69,12 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     solve_functions, simulate_functions, function_errors = _split_functions(
         user_regime=user_regime
     )
+    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        solve_functions
+    )
+    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        simulate_functions
+    )
     solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
         _split_states(user_regime=user_regime)
     )

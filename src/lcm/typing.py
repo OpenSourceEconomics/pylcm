@@ -57,6 +57,11 @@ type ActionName = str
 type StateOrActionName = str
 type ProcessName = str
 type FunctionName = str
+type ParameterName = str
+type MarginRoleName = str
+type ReferenceName = (
+    StateName | ActionName | FunctionName | ParameterName | MarginRoleName
+)
 type TransitionFunctionName = str
 
 

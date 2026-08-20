@@ -32,6 +32,7 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    outer_unchanged,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
@@ -85,7 +86,6 @@ def _build_negm_model(alpha: float, *, durable_law=None) -> Model:
             "serviced_durable": toy.serviced_durable,
             "resources_before_outer_cost": toy.resources_before_outer_cost,
             "liquid_savings": toy.liquid_savings,
-            "keep_illiquid": toy.keep_illiquid,
             "credited": toy.credited,
             "inverse_marginal_utility": toy.inverse_marginal_utility,
         },
@@ -104,7 +104,7 @@ def _build_negm_model(alpha: float, *, durable_law=None) -> Model:
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
     return _model(alive)

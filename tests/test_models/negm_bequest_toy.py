@@ -18,8 +18,6 @@ the parity oracle.
 import jax.numpy as jnp
 
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
     LinSpacedGrid,
     LiquidMargin,
@@ -29,6 +27,11 @@ from lcm import (
     OuterContinuousMargin,
     Regime,
     categorical,
+    outer_unchanged,
+)
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
 )
 from lcm.typing import (
     BoolND,
@@ -104,11 +107,6 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
 def durable_transition(new_durable: ContinuousState) -> ContinuousState:
     """Durable law of motion: the stock chosen this period is next period's."""
     return new_durable
-
-
-def keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `s' = Z` (the withdrawal-penalty kink)."""
-    return illiquid
 
 
 def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
@@ -192,7 +190,6 @@ def build_negm_model() -> Model:
             "new_durable": new_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
-            "keep_illiquid": keep_illiquid,
             "credited": credited,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -211,7 +208,7 @@ def build_negm_model() -> Model:
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
     return Model(

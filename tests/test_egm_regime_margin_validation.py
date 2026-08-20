@@ -19,16 +19,26 @@ from types import MappingProxyType
 
 import pytest
 
-from lcm import DCEGM, NEGM, DiscreteGrid, LinSpacedGrid, categorical
-from lcm.exceptions import RegimeInitializationError
-from lcm.regime import (
+from lcm import (
+    DiscreteGrid,
+    LinSpacedGrid,
+    categorical,
+)
+from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
 )
-from lcm.solvers import GridSearch, OneMarginSolver, TwoMarginSolver
+from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
+    GridSearch,
+    OneMarginSolver,
+    TwoMarginSolver,
+)
 from lcm.typing import ScalarInt
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)

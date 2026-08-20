@@ -26,7 +26,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import (
@@ -98,12 +98,8 @@ def utility(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
     return jnp.log(consumption) - penalty
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
@@ -144,7 +140,6 @@ def _model(health_batch_size: int) -> Model:
         },
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -155,7 +150,7 @@ def _model(health_batch_size: int) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )
@@ -257,7 +252,6 @@ def _two_combo_model(batch_size: int) -> Model:
         },
         functions={
             "utility": utility_two_combos,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -268,7 +262,7 @@ def _two_combo_model(batch_size: int) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

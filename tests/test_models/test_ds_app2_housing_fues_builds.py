@@ -12,7 +12,15 @@ These checks build the model at a tiny grid and assert structure only.
 
 import pytest
 
-from lcm import DCEGM, ConsumptionSavingsRegime, DiscreteGrid, GridSearch, Model
+from lcm import (
+    ConsumptionSavingsRegime,
+    DiscreteGrid,
+    Model,
+)
+from lcm.solvers import (
+    DCEGM,
+    GridSearch,
+)
 from tests.test_models import ds_app2_housing_fues as fues
 
 

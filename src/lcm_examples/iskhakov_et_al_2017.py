@@ -28,7 +28,8 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, Regime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime
+from lcm.regime import Regime
 from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
@@ -87,14 +88,9 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    """Resources out of which consumption is paid; the classic case is wealth."""
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     """End-of-period savings (the post-decision state)."""
-    return resources - consumption
+    return wealth - consumption
 
 
 def next_wealth_from_savings(
@@ -188,7 +184,7 @@ SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in rang
 LIQUID_MARGIN = LiquidMargin(
     state="wealth",
     action="consumption",
-    resources="resources",
+    resources="wealth",
     post_decision_state="savings",
 )
 
@@ -204,8 +200,7 @@ DCEGM_SOLVER = DCEGM(
 # DC-EGM variants of the two non-terminal regimes. The economic content is
 # identical to `working_life` / `retirement`; the spec differs where the
 # algorithm requires it:
-# - `resources`, `savings`, and `inverse_marginal_utility` are declared
-#   regime functions,
+# - `savings` and `inverse_marginal_utility` are declared regime functions,
 # - the wealth transition consumes `savings` (the post-decision state)
 #   instead of wealth and consumption directly,
 # - the borrowing constraint is dropped — DC-EGM enforces the budget
@@ -222,7 +217,6 @@ dcegm_working_life = ConsumptionSavingsRegime(
         "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
@@ -238,7 +232,6 @@ dcegm_retirement = ConsumptionSavingsRegime(
     state_transitions={"wealth": next_wealth_from_savings},
     functions={
         "utility": utility_retirement,
-        "resources": resources,
         "savings": savings,
         "inverse_marginal_utility": inverse_marginal_utility,
     },
@@ -372,7 +365,6 @@ __all__ = [
     "next_regime_from_working",
     "next_wealth",
     "next_wealth_from_savings",
-    "resources",
     "retirement",
     "savings",
     "utility_retirement",

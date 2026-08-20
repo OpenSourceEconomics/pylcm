@@ -105,8 +105,8 @@ over regimes). Internal — `Model.solve` unpacks it into the public return shap
 ## Choosing the base class
 
 `Solver` is not the only base. The solver family has three members, all exported from
-`lcm` and `lcm.solvers`, and **which one a new solver subclasses is forced by the regime
-it is meant to attach to** — it is not a style choice.
+`lcm.solvers`, and **which one a new solver subclasses is forced by the regime it is
+meant to attach to** — it is not a style choice.
 
 | Regime class                     | Accepts                           | Base class to subclass |
 | -------------------------------- | --------------------------------- | ---------------------- |
@@ -287,8 +287,8 @@ or can set — a role the regime owns. Inside the kernels, recover the names by 
   `negm.py`, `egm.py` are the pattern). Shared lifecycle helpers live in
   `src/_lcm/solution/continuation_target.py`; heavy numerical machinery gets its own
   package (as EGM's does in `src/_lcm/egm/`).
-- Re-export the class from the `lcm.solvers` façade and add it to `__all__` and the
-  module docstring there. Keep numerical imports function-local inside
+- Re-export the class from the `lcm.solvers` façade and add it to that module's
+  `__all__` and module docstring. Keep numerical imports function-local inside
   `build_period_kernels` so the façade stays import-light.
 - The solver class itself is user-facing configuration: a frozen dataclass with inline
   field docstrings, `@beartype(conf=REGIME_CONF)` so invalid user input surfaces as a

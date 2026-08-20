@@ -26,10 +26,7 @@ from _lcm.solution.negm import (
 )
 from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
-    GridSearch,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -39,6 +36,11 @@ from lcm import (
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
+    GridSearch,
+)
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy

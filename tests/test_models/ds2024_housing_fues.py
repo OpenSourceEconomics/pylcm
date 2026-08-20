@@ -24,18 +24,20 @@ from typing import Literal
 import jax.numpy as jnp
 
 from lcm import (
-    DCEGM,
     AgeGrid,
     DiscreteGrid,
-    GridSearch,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import (
+    DCEGM,
+    GridSearch,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,

@@ -24,8 +24,9 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.regime import Regime
 from lcm.solvers import DCEGM, EGM, GridSearch, OneMarginSolver, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -48,12 +49,8 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth(savings: FloatND) -> FloatND:
@@ -105,7 +102,6 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
         },
         active=lambda age: age == 0,
@@ -113,7 +109,7 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

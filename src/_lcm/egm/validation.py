@@ -361,10 +361,9 @@ def _fail_if_required_functions_missing(
         ),
         solver.resources: "the resources function (`liquid.resources`)",
     }
+    functions = _resolve_solve_functions(user_regime=user_regime)
     missing = [
-        f"'{name}' — {role}"
-        for name, role in required.items()
-        if name not in user_regime.functions
+        f"'{name}' — {role}" for name, role in required.items() if name not in functions
     ]
     if missing:
         msg = (
@@ -1487,7 +1486,7 @@ def _resolve_solve_functions(
     for state_name, grid in user_regime.states.items():
         if isinstance(grid, Phased):
             resolved[state_name] = cast("UserFunction", grid.solve)
-    return resolved
+    return user_regime._augment_phase_functions(resolved)  # noqa: SLF001
 
 
 def _solve_grids(

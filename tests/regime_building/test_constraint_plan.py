@@ -21,8 +21,9 @@ from lcm import (
     post_decision_lower_bound,
     ref,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.regime import Regime
 from lcm.solvers import DCEGM, GridSearch, OneMarginSolver
 from lcm.typing import (
     ContinuousAction,
@@ -36,7 +37,7 @@ from lcm.typing import (
 _LIQUID = LiquidMargin(
     state="wealth",
     action="consumption",
-    resources="resources",
+    resources="wealth",
     post_decision_state="savings",
 )
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -63,12 +64,8 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(jnp.clip(wealth, 1e-8))
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
 
 
 def next_wealth(savings: FloatND) -> FloatND:
@@ -97,7 +94,7 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
         transition=next_regime,
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={"utility": utility, "savings": savings},
         active=lambda age: age == 0,
         solver=solver,
         liquid=_LIQUID,

@@ -11,12 +11,14 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    FUESEnvelope,
     LinSpacedGrid,
     Model,
-    MSSEnvelope,
     NormalIIDProcess,
     fixed_transition,
+)
+from lcm.solvers import (
+    FUESEnvelope,
+    MSSEnvelope,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings

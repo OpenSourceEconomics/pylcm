@@ -8,13 +8,8 @@ import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
-    DCEGM,
-    EGM,
-    NEGM,
     ConsumptionSavingsRegime,
     DiscreteGrid,
-    FUESEnvelope,
-    GridSearch,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -27,6 +22,13 @@ from lcm import (
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import (
+    DCEGM,
+    EGM,
+    NEGM,
+    FUESEnvelope,
+    GridSearch,
+)
 from lcm.typing import ScalarInt
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)

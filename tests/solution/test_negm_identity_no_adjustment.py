@@ -18,19 +18,28 @@ _PARAMS = {"discount_factor": 0.95, "alive": {}}
 _FINAL_AGE_ALIVE = 20 + (negm_kinked_toy.N_PERIODS - 2) * 5
 
 
+def keep_illiquid(illiquid):
+    """Named identity used only to test equivalence with the sentinel."""
+    return illiquid
+
+
 def _model(*, no_adjustment: str) -> Model:
     """The kinked toy with its outer no-adjustment map declared as given."""
     alive = negm_kinked_toy.build_alive_regime()
     outer = alive.outer_continuous
+    functions = dict(alive.functions)
+    if no_adjustment != outer_unchanged:
+        functions[no_adjustment] = keep_illiquid
     return Model(
         regimes={
             "alive": alive.replace(
+                functions=functions,
                 outer_continuous=OuterContinuousMargin(
                     state=outer.state,
                     action=outer.action,
                     post_decision_state=outer.post_decision_state,
                     no_adjustment=no_adjustment,
-                )
+                ),
             ),
             "dead": negm_kinked_toy.build_dead_regime(),
         },

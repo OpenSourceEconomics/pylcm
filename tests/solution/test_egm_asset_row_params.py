@@ -30,7 +30,7 @@ from lcm import (
     Phased,
     categorical,
 )
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -306,8 +306,16 @@ def death_prob_share(
     return 1.0 - stay_prob_share(share_of_income, age, final_age_alive)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
+def savings_from_wealth(
+    wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    return wealth - consumption
+
+
+def next_wealth_brute_from_wealth(
+    wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption + LABOR_INCOME
 
 
 def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
@@ -340,19 +348,18 @@ def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
-            "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute
+            "wealth": (next_wealth_dcegm if is_dcegm else next_wealth_brute_from_wealth)
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions=(
             {
                 "utility": utility,
-                "resources": resources,
-                "savings": savings,
+                "savings": savings_from_wealth,
                 "inverse_marginal_utility": inverse_marginal_utility,
                 **intermediates,
             }
             if is_dcegm
-            else {"utility": utility, "resources": resources, **intermediates}
+            else {"utility": utility, **intermediates}
         ),
         solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
         **(
@@ -360,7 +367,7 @@ def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }

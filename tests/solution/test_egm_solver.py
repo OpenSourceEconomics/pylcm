@@ -27,7 +27,8 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -64,10 +65,6 @@ def terminal_utility(wealth: ContinuousState, crra: float) -> FloatND:
     return wealth ** (1.0 - crra) / (1.0 - crra)
 
 
-def resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
 def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The end-of-period balance the law of motion is written through."""
     return wealth - consumption
@@ -97,11 +94,19 @@ def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
     """A pure consumption--saving lifecycle with no income and no kinks.
 
     `resources_func` and `liquid` let a caller vary the two declarations the
-    EGM contract constrains; both default to the ones it accepts.
+    EGM contract constrains. By default, the liquid state itself fills the
+    resources role.
     """
     wealth_grid = _WEALTH_GRID
     last_age = float(_N_PERIODS - 1)
     regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
+    functions = {
+        "utility": utility,
+        "savings": savings,
+    }
+    if resources_func is not None:
+        functions["resources"] = resources_func
+
     saving = regime_type(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=n_consumption)
@@ -115,11 +120,7 @@ def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={
-            "utility": utility,
-            "resources": resources if resources_func is None else resources_func,
-            "savings": savings,
-        },
+        functions=functions,
         active=lambda age, la=last_age: age < la,
         solver=solver,
         **(
@@ -129,7 +130,7 @@ def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
                 else LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources=("resources" if resources_func else "wealth"),
                     post_decision_state="savings",
                 )
             }
