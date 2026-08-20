@@ -22,13 +22,14 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.bounds import without_proved_lower_bounds
-from _lcm.constraints.capabilities import ConstraintCapabilities
 from _lcm.constraints.processed import normalize_constraints
+from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     PeriodKernel,
@@ -132,15 +133,64 @@ class NNBEGM(TwoMarginSolver):
         """The bridged outer envelope republishes the inner solver's rows."""
         return self.inner.egm_continuation_layout
 
-    @property
-    def constraint_capabilities(self) -> ConstraintCapabilities:
-        """What this kernel can do with a declared constraint.
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the two routes the nested solve walks in the solve phase.
 
-        The inner case-piece solve is where a liquid constraint would have to be
-        evaluated, and it evaluates none, so the nested solver inherits the
-        inner declaration rather than restating it.
+        The outer margin is selected by a finite search whose two branches reach
+        the inner solve through *different* function pools: the adjuster's has
+        the outer post-decision function removed and its name promoted to a
+        bound parameter, the keeper's has that function replaced by the
+        no-adjustment law. A site carries the pool it is entered with, so the
+        two branches are two routes rather than one described twice.
+
+        Both inherit the inner kernel's declaration of what can happen along
+        them, since the inner case-piece solve is the only place a liquid
+        constraint could be met and it evaluates none.
         """
-        return self.inner.constraint_capabilities
+        from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
+
+        if context.phase == "simulate":
+            return case_piece_routes(
+                context=context,
+                savings_grid=self.inner.savings_grid,
+                post_decision_function=proved_post_decision_of(solver=self.inner),
+                solver_path=("nnbegm",),
+            )
+        bound = cast("_BoundNNBEGM", self)
+        return tuple(
+            route
+            for branch, pool in (
+                (
+                    "adjuster",
+                    _without_outer_post_decision(
+                        functions=context.functions,
+                        outer_post_decision=bound.outer_post_decision,
+                    ),
+                ),
+                (
+                    "keeper",
+                    _with_no_adjustment_outer_function(
+                        functions=context.functions,
+                        durable_state=bound.outer_state,
+                        outer_post_decision=bound.outer_post_decision,
+                        no_adjustment_func=(
+                            context.functions[bound.outer_no_adjustment_candidate]
+                            if bound.outer_no_adjustment_candidate is not None
+                            else None
+                        ),
+                    ),
+                ),
+            )
+            for route in case_piece_routes(
+                context=context,
+                savings_grid=bound.inner.savings_grid,
+                post_decision_function=proved_post_decision_of(solver=bound.inner),
+                solver_path=("nnbegm", branch),
+                function_pool=pool,
+            )
+        )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level nested NB-EGM contract for this regime.

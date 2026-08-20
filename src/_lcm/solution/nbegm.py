@@ -34,8 +34,8 @@ import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.constraints.bounds import without_proved_lower_bounds
-from _lcm.constraints.capabilities import ConstraintCapabilities
 from _lcm.constraints.processed import normalize_constraints
+from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
@@ -63,6 +63,7 @@ from _lcm.solution.continuation_target import (
     target_period_grid,
 )
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     OneMarginSolver,
@@ -345,22 +346,24 @@ class NBEGM(OneMarginSolver):
         """One-sided jump resolution duplicates abscissae across each jump."""
         return self.jump_read == "one_sided"
 
-    @property
-    def constraint_capabilities(self) -> ConstraintCapabilities:
-        """What this kernel can do with a declared constraint.
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the one route the case-piece kernels walk in each phase.
 
-        Declared rather than inherited. The permissive default would say the
-        solver reads every name where it evaluates a constraint, which is the
-        opposite of true here and would not raise: a constraint the kernel
-        never evaluates would be reported as evaluated.
+        Declared rather than left undeclared. The default would say the solver
+        has not written its routes down, and nothing would be planned for it —
+        which is the right answer for a solver nobody has described and the
+        wrong one here, where the description is available and says that no
+        name is readable anywhere along the pipeline.
         """
-        from _lcm.egm.nbegm_capabilities import (  # noqa: PLC0415
-            case_piece_capabilities,
-        )
+        from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
 
-        return case_piece_capabilities(
+        return case_piece_routes(
+            context=context,
             savings_grid=self.savings_grid,
             post_decision_function=proved_post_decision_of(solver=self),
+            solver_path=("nbegm",),
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:

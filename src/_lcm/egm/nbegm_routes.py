@@ -1,4 +1,4 @@
-"""What the case-piece solvers can do with a declared constraint.
+"""The routes the case-piece solvers walk, and what can happen along them.
 
 The NBEGM kernels recover consumption by inverting the Euler equation at each
 node of a savings grid: the action is produced first and the liquid state falls
@@ -18,44 +18,92 @@ other while both describe the same feasible set.
 
 from dataclasses import dataclass
 
-from _lcm.constraints.capabilities import BoundaryCompiler, StructuralProof
 from _lcm.constraints.dispositions import (
     ConstraintContext,
-    EvaluationStage,
     Proof,
     ProvedByConstruction,
 )
 from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.processed import ProcessedConstraint
+from _lcm.constraints.routes import (
+    BoundConstraint,
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+)
 from _lcm.grids import ContinuousGrid
-from _lcm.typing import FunctionName
+from _lcm.solution.contract import ConstraintRouteContext, simulation_route
+from _lcm.typing import EconFunctionsMapping, FunctionName
 
 
-def case_piece_capabilities(
-    *, savings_grid: ContinuousGrid, post_decision_function: FunctionName | None
-) -> _CasePieceCapabilities:
-    """Declare what a case-piece kernel can do with a constraint.
+def case_piece_routes(
+    *,
+    context: ConstraintRouteContext,
+    savings_grid: ContinuousGrid,
+    post_decision_function: FunctionName | None,
+    solver_path: tuple[str, ...],
+    function_pool: EconFunctionsMapping | None = None,
+) -> tuple[ConstraintRoute, ...]:
+    """Declare the one route a case-piece kernel walks in one phase.
+
+    One site, at the savings stage. The kernels evaluate no user constraint
+    anywhere, so the only thing that can happen to one along this pipeline is
+    the savings grid's own proof, and a proof belongs to a site rather than
+    needing one of its own. Declaring the partition and envelope stages as
+    further sites would describe the program rather than where a constraint can
+    be met, and neither has a stage that names it.
+
+    One route, though NBEGM dispatches several mutually exclusive kernels — case
+    pieces, a piecewise-affine schedule, a discrete envelope, their composition,
+    and the ride-along co-state kernels. They differ in the program they compile
+    and in nothing a route carries: none evaluates a user constraint, all invert
+    on the same savings grid, none rewrites its pool. Emitting one route each
+    would put five entries in the plan where there is one fact.
 
     Args:
+        context: What the solver may read about the regime and the phase.
         savings_grid: The grid the kernel inverts on, whose lowest node is the
             borrowing limit it enforces.
         post_decision_function: Name of the post-decision state that grid
             spans, or `None` before the solver has been bound to a margin —
-            nothing can be proved against a grid whose state is not yet
-            named, but the empty allow-list holds either way.
+            nothing can be proved against a grid whose state is not yet named,
+            and the empty allow-list refuses every constraint either way.
+        solver_path: The nest of solvers producing the candidates.
+        function_pool: The pool in scope at the site, for a nesting solver that
+            rewrites it going into this branch. Defaults to the phase's own
+            pool, which is what a solver that rewrites nothing hands over.
 
     Returns:
-        The solver's constraint capabilities.
+        The route, as a one-tuple.
 
     """
-    return _CasePieceCapabilities(
+    if context.phase == "simulate":
+        return (simulation_route(context=context, solver_path=solver_path),)
+    proof = _BorrowingLimitProof(
         savings_grid=savings_grid, post_decision_function=post_decision_function
+    )
+    return (
+        ConstraintRoute(
+            key=ConstraintRouteKey(
+                phase="solve", period_group=None, solver_path=solver_path
+            ),
+            sites=(
+                ConstraintSite(
+                    stage="savings_stage",
+                    function_pool=(
+                        context.functions if function_pool is None else function_pool
+                    ),
+                    available_names=frozenset(),
+                    structural_proofs=(proof,),
+                ),
+            ),
+        ),
     )
 
 
 @dataclass(frozen=True)
-class _CasePieceCapabilities:
-    """The case-piece kernels' declaration, as `ConstraintCapabilities`."""
+class _BorrowingLimitProof:
+    """Discharges the lower bound a savings grid's lowest node already imposes."""
 
     savings_grid: ContinuousGrid
     """Grid the kernel inverts on."""
@@ -63,67 +111,49 @@ class _CasePieceCapabilities:
     post_decision_function: FunctionName | None
     """Post-decision state that grid spans, or `None` before margin binding."""
 
-    @property
-    def pre_inner_available_names(self) -> frozenset[str] | None:
-        """No name is readable where the kernel would call a constraint.
-
-        An empty allow-list, not `None`: `None` would say the kernel imposes no
-        restriction and reads everything, which is grid search's declaration and
-        the opposite of this one.
-        """
-        return frozenset()
-
-    @property
-    def evaluation_stage(self) -> EvaluationStage:
-        """Unreachable — the empty allow-list refuses before a stage is used."""
-        return "state_action"
-
-    @property
-    def structural_proofs(self) -> tuple[StructuralProof, ...]:
-        """The savings grid's own borrowing limit, and nothing else."""
-        return (self._prove_the_grids_borrowing_limit,)
-
-    @property
-    def boundary_compilers(self) -> tuple[BoundaryCompiler, ...]:
-        """None: a case boundary reaches the kernel as case metadata, not as a
-        constraint, so there is no constraint boundary for it to compile."""
-        return ()
-
-    def _prove_the_grids_borrowing_limit(
+    def __call__(
         self,
         *,
-        constraint: ProcessedConstraint,
+        bound: BoundConstraint,
         context: ConstraintContext,  # noqa: ARG002
     ) -> ProvedByConstruction | None:
         """Discharge a lower bound the savings grid's lowest node already imposes.
 
         Takes `context` because the protocol passes it, and reads none of it:
-        the grid and the state it spans are the solver's own configuration,
-        so the verdict does not vary with the regime or the phase.
+        the grid and the state it spans are the solver's own configuration, so
+        the verdict does not vary with the regime or the phase.
 
         Declines rather than refuses when the shape does not match, so a
         constraint this proof has nothing to say about falls through to the
-        allow-list and is refused there with a message about what it reads.
+        site's empty allow-list and is refused there instead.
+
+        Args:
+            bound: The constraint resolved against the site.
+            context: Unread, as above.
+
+        Returns:
+            The discharge, or `None` to decline.
+
         """
         if self.post_decision_function is None:
             return None
-        bound = _lower_bound(constraint=constraint)
-        if bound is None:
+        lower = _lower_bound(constraint=bound.constraint)
+        if lower is None:
             return None
-        if bound.name != self.post_decision_function:
+        if lower.name != self.post_decision_function:
             return None
-        if not _matches_grid_start(grid=self.savings_grid, value=bound.value):
+        if not _matches_grid_start(grid=self.savings_grid, value=lower.value):
             return None
         return ProvedByConstruction(
-            constraint=constraint,
+            constraint=bound.constraint,
             proof=Proof(
                 reason=(
                     f"The savings grid the kernel inverts on starts at "
-                    f"{bound.value}, so it enforces this bound on "
+                    f"{lower.value}, so it enforces this bound on "
                     f"'{self.post_decision_function}' at every node it "
                     f"publishes."
                 ),
-                surface=bound.surface,
+                surface=lower.surface,
             ),
         )
 
