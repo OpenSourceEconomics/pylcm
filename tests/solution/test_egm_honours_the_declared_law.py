@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousState, FloatND
 from tests.solution.test_egm_solver import (
@@ -32,7 +33,6 @@ from tests.solution.test_egm_solver import (
     feasible,
     prob_continue,
     prob_stop,
-    resources,
     savings,
     terminal_utility,
     utility,
@@ -67,7 +67,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={"utility": utility, "savings": savings},
         active=lambda age, la=last_age: age < la,
         solver=solver,
         **(
@@ -75,7 +75,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
                 "liquid": LiquidMargin(
                     state="wealth",
                     action="consumption",
-                    resources="resources",
+                    resources="wealth",
                     post_decision_state="savings",
                 )
             }

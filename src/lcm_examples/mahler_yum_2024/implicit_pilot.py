@@ -40,7 +40,8 @@ from _lcm.optimization.implicit_outer_derivative import (
     continuous_outer_optimum,
     implicit_optimum_diagnostics,
 )
-from lcm import AdaptiveOuterMesh, LinSpacedGrid
+from lcm import LinSpacedGrid
+from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import FloatND
 from lcm_examples.mahler_yum_2024 import START_PARAMS, create_inputs
 from lcm_examples.mahler_yum_2024.paper import (

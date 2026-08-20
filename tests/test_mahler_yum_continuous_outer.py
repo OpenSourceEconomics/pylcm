@@ -28,7 +28,8 @@ import numpy as np
 import pytest
 
 import _lcm.solution.nnbegm as _solvers
-from lcm import AdaptiveOuterMesh, LinSpacedGrid, UniformObservedFixedCost
+from lcm import LinSpacedGrid
+from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm_examples.mahler_yum_2024 import (
     START_PARAMS,
     create_inputs,

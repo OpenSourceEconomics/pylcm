@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
-from lcm import NNBEGM, FiniteOuterGrid, NormalIIDProcess
+from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import NBEGM
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}

@@ -124,7 +124,7 @@ def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
     n_periods = 4
     model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
     params = dcegm_variants.get_retirement_only_params(n_periods)
-    savings_lower_bound = float(dcegm_variants.SAVINGS_GRID.to_jax()[0])
+    savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
     initial_wealth = jnp.array([5.0, 10.0, 50.0])
     # The infeasible region exists by construction: the consumption grid
     # extends far above every subject's wealth.
@@ -206,7 +206,7 @@ def test_dcegm_full_model_simulates_end_to_end():
     model = dcegm_variants.get_full_model("dcegm", n_periods)
     params = dcegm_variants.get_full_params(n_periods)
     n_subjects = 3
-    savings_lower_bound = float(dcegm_variants.SAVINGS_GRID.to_jax()[0])
+    savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
 
     result = model.simulate(
         params=params,
@@ -287,7 +287,7 @@ def test_dcegm_simulate_consumes_the_provided_solution():
         consumption[label] = float(df["consumption"].iloc[0])
 
     consumption_grid = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
-    budget = initial_wealth - float(dcegm_variants.SAVINGS_GRID.to_jax()[0])
+    budget = initial_wealth - dcegm_variants.SAVINGS_FLOOR
     largest_feasible_node = consumption_grid[consumption_grid <= budget + 1e-9].max()
     assert consumption["zeroed"] == pytest.approx(largest_feasible_node)
     assert consumption["solved"] < consumption["zeroed"]

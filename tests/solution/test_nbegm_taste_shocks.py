@@ -12,16 +12,19 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     Regime,
     categorical,
+)
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+    outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import NBEGM
@@ -150,7 +153,6 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "new_illiquid": n_nbegm_toy.new_illiquid,
             "resources": n_nbegm_toy.resources,
             "liquid_savings": n_nbegm_toy.liquid_savings,
-            "keep_illiquid": n_nbegm_toy.keep_illiquid,
             "credited": n_nbegm_toy.credited,
             "labor_income": labor_income,
         },
@@ -165,7 +167,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_illiquid",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
     dead = Regime(

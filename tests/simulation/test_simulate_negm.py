@@ -7,9 +7,8 @@ inverse-Euler step that enforces it intrinsically during the solve. These
 tests drive the kinked two-asset toy (`tests/test_models/negm_kinked_toy.py`)
 end to end and assert simulated consumption stays inside that mask.
 
-The whole module is skipped: solving an NEGM model OOMs the local box (DC-EGM /
-NEGM solves are GPU-only, see `feedback_no_heavy_tests_local`). Run it on
-gpu-01.
+Solving an NEGM model exhausts a CPU-only box, so the module carries the `gpu`
+marker: it runs wherever a device is present and skips elsewhere.
 """
 
 import jax.numpy as jnp
@@ -22,7 +21,18 @@ from tests.test_models.negm_kinked_toy import RegimeId
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skip(reason="gpu-01 only: NEGM/DC-EGM solve OOMs the local box"),
+    pytest.mark.gpu(
+        reason=(
+            "NEGM/DC-EGM solve OOMs a CPU-only box, so this runs on the GPU legs "
+            "rather than nowhere. These are the only assertions anywhere that "
+            "NEGM's synthesized simulate-phase budget mask holds -- that "
+            "consumption stays at or below inner resources minus the borrowing "
+            "limit. Nothing else substitutes: the NEGM simulate test that does "
+            "run on CPU checks a frozen expectation minted by a run in which no "
+            "limit was declared, so it passes whether the limit is honoured or "
+            "ignored."
+        )
+    ),
 ]
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -53,15 +63,22 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     """
     n_subjects = 3
     initial_conditions = {
-        "wealth": jnp.array([1.0, 5.0, 50.0]),
+        "wealth": jnp.array([1.0, 5.0, 25.0]),
         "illiquid": jnp.full(n_subjects, 10.0),
         "age": jnp.full(n_subjects, 20.0),
         "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
     }
+    # Every subject starts on the tabulated wealth grid, so what is asserted
+    # below is the mask rather than the model's behaviour off the end of its
+    # own state space.
+    assert float(jnp.max(initial_conditions["wealth"])) <= float(
+        negm_kinked_toy.WEALTH_GRID.to_jax()[-1]
+    )
     # The infeasible region exists by construction: the consumption grid
-    # extends far above the low-wealth subject's liquid resources.
+    # reaches above the poorest subject's liquid resources, so an unmasked
+    # argmax has an infeasible choice available to pick.
     assert float(negm_kinked_toy.CONSUMPTION_GRID.to_jax()[-1]) > float(
-        jnp.max(initial_conditions["wealth"])
+        jnp.min(initial_conditions["wealth"])
     )
 
     df = _alive_dataframe(initial_conditions=initial_conditions)
@@ -73,7 +90,7 @@ def test_negm_simulate_enforces_inner_budget_constraint():
         negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
         - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
     )
-    borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])
+    borrowing_limit = negm_kinked_toy.SAVINGS_FLOOR
     budget = resources - borrowing_limit
     assert (df["consumption"].to_numpy() <= budget + 1e-9).all()
 
@@ -88,11 +105,19 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
     """
     n_subjects = 4
     initial_conditions = {
-        "wealth": jnp.array([2.0, 8.0, 15.0, 40.0]),
+        "wealth": jnp.array([2.0, 8.0, 15.0, 28.0]),
         "illiquid": jnp.array([0.0, 5.0, 12.0, 20.0]),
         "age": jnp.full(n_subjects, 20.0),
         "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
     }
+    # Both states start inside their own grids, so a violation of the budget
+    # assertion below is the mask failing rather than extrapolation.
+    assert float(jnp.max(initial_conditions["wealth"])) <= float(
+        negm_kinked_toy.WEALTH_GRID.to_jax()[-1]
+    )
+    assert float(jnp.max(initial_conditions["illiquid"])) <= float(
+        negm_kinked_toy.ILLIQUID_GRID.to_jax()[-1]
+    )
     df = _alive_dataframe(initial_conditions=initial_conditions)
     consumption = df["consumption"].to_numpy()
     assert np.all(consumption > 0.0)
@@ -107,5 +132,5 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
         negm_kinked_toy.resources_before_outer_cost(wealth=df["wealth"].to_numpy())
         - negm_kinked_toy.credited(illiquid=illiquid, new_durable=next_illiquid)
     )
-    borrowing_limit = float(negm_kinked_toy.SAVINGS_GRID.to_jax()[0])
+    borrowing_limit = negm_kinked_toy.SAVINGS_FLOOR
     assert (consumption <= resources - borrowing_limit + 1e-9).all()

@@ -25,8 +25,6 @@ import numpy as np
 import pytest
 
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
     LinSpacedGrid,
     LiquidMargin,
@@ -35,6 +33,11 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    outer_unchanged,
+)
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
 )
 from lcm.typing import (
     BoolND,
@@ -108,7 +111,6 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
             "new_durable": negm_kinked_toy.new_durable,
             "resources_before_outer_cost": negm_kinked_toy.resources_before_outer_cost,
             "liquid_savings": negm_kinked_toy.liquid_savings,
-            "keep_illiquid": negm_kinked_toy.keep_illiquid,
             "credited": negm_kinked_toy.credited,
             "inverse_marginal_utility": negm_kinked_toy.inverse_marginal_utility,
         },
@@ -127,7 +129,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
     dead = Regime(

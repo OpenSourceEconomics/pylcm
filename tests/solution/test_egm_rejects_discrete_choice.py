@@ -19,8 +19,9 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin, Regime
+from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousAction, DiscreteAction, FloatND, ScalarInt
 from tests.solution.test_egm_solver import (
@@ -32,7 +33,6 @@ from tests.solution.test_egm_solver import (
     next_wealth,
     prob_continue,
     prob_stop,
-    resources,
     savings,
     terminal_utility,
 )
@@ -67,13 +67,13 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
-        functions={"utility": utility, "resources": resources, "savings": savings},
+        functions={"utility": utility, "savings": savings},
         active=lambda age: age < _LAST_AGE,
         solver=EGM(savings_grid=_SAVINGS_GRID),
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )

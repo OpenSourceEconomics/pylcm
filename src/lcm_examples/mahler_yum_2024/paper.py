@@ -42,23 +42,22 @@ from functools import partial
 import jax.numpy as jnp
 
 from lcm import (
-    NBEGM,
-    NNBEGM,
-    AdaptiveOuterMesh,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     Regime,
-    UniformObservedFixedCost,
     affine_breakpoint,
     fixed_transition,
     piecewise_affine,
 )
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+)
+from lcm.solvers import NBEGM, NNBEGM, AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

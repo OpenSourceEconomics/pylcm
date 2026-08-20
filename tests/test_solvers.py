@@ -16,17 +16,19 @@ from numpy.testing import assert_array_equal
 
 from _lcm.solution.backward_induction import _func_dedup_key
 from lcm import (
-    DCEGM,
     AgeGrid,
-    ExactEnvelope,
-    FUESEnvelope,
-    GridSearch,
     LinSpacedGrid,
     Model,
-    MSSEnvelope,
     NormalIIDProcess,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import (
+    DCEGM,
+    ExactEnvelope,
+    FUESEnvelope,
+    GridSearch,
+    MSSEnvelope,
+)
 from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
     RegimeId,

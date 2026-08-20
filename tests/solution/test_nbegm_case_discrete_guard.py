@@ -20,7 +20,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.nbegm_common import (
-    feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
     resolve_solver,
@@ -94,7 +93,7 @@ def test_a_case_piece_regime_with_a_discrete_action_is_rejected():
                 "nbegm",
                 savings_grid=SAVINGS_GRID,
             ),
-            constraints={"feasible": feasible},
+            constraints={},
             extra_actions={"insurance_plan": DiscreteGrid(InsurancePlan)},
         )
 
@@ -133,7 +132,7 @@ def test_a_case_piece_regime_with_a_second_state_names_that_state() -> None:
                 "nbegm",
                 savings_grid=SAVINGS_GRID,
             ),
-            constraints={"feasible": feasible},
+            constraints={},
             extra_states={"health": DiscreteGrid(Health)},
             extra_state_transitions={
                 "health": {"alive": keep_health, "dead": keep_health},

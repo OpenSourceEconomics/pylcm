@@ -19,8 +19,8 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
