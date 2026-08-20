@@ -25,7 +25,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
-from lcm.typing import BoolND, FloatND, ScalarInt
+from lcm.typing import FloatND, ScalarInt
 
 
 @categorical(ordered=False)
@@ -174,7 +174,7 @@ def test_none_masks_the_model_entry() -> None:
 def test_none_masks_a_model_constraint_for_the_terminal_regime() -> None:
     """A terminal regime may mask a constraint broadcast to living regimes."""
 
-    def _positive_consumption(consumption: FloatND) -> BoolND:
+    def _positive_consumption(consumption: float) -> bool:
         return consumption > 0.0
 
     model = _build_model(
