@@ -428,6 +428,11 @@ def _simulate_subject_chunk(
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
                     own_stakeholder=own_stakeholder,
+                    gated_edge_fold_age=(
+                        ages.period_to_age(period + 1)
+                        if period + 1 < ages.n_periods
+                        else None
+                    ),
                     gated_edge_fold_cache=gated_edge_fold_cache,
                 )
             )
@@ -582,6 +587,7 @@ def _simulate_regime_in_period(
     subject_slice: slice,
     original_n_subjects: int | None = None,
     own_stakeholder: str | None = None,
+    gated_edge_fold_age: float | None = None,
     sim_policy: EGMSimPolicy | NestedEGMSimPolicy | None = None,
     gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
@@ -627,6 +633,8 @@ def _simulate_regime_in_period(
         subject_slice: Global-index slice of the subjects in this chunk.
         own_stakeholder: See `simulate()`'s docstring (ROW-SPLIT synthetic mode);
             threaded down to `route_gated_edges`.
+        gated_edge_fold_age: Age corresponding to `period + 1`; threaded to
+            gated-edge folds, gate evaluators, and fallback projectors.
         sim_policy: The regime's published off-grid simulation policy for this
             period, or `None`. Consumed only where the regime qualifies
             (`regime.simulation.egm_policy_read`).
@@ -698,6 +706,7 @@ def _simulate_regime_in_period(
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
             flat_params=flat_params,
+            fold_age=gated_edge_fold_age,
         )
         if cache is not None:
             cache[regime_name, period] = folds
@@ -908,6 +917,7 @@ def _simulate_regime_in_period(
             subjects_in_regime=subject_ids_in_regime,
             flat_params=flat_params,
             own_stakeholder=own_stakeholder,
+            fold_age=gated_edge_fold_age,
         )
         states = next_states
 

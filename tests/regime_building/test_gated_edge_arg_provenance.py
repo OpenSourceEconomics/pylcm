@@ -45,6 +45,7 @@ values for the contested name (`_SRC_SHIFT` != `_TARGET_SHIFT`, `_REF_POINTS`
 != `_SRC_POINTS`) and asserts the disagreement itself.
 """
 
+from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
 
@@ -1957,6 +1958,10 @@ def _gate_reads_params_engine_arg(
     return V_target > same_period_regime_to_params
 
 
+def _gate_reads_period_engine_arg(V_target: FloatND, period: ScalarInt) -> BoolND:
+    return V_target > period
+
+
 def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
     """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
     supplied in `flat_params['src']` -- so it is both a source param and the fold's
@@ -1994,6 +1999,17 @@ def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
         functions={"utility": _u_identity},
     )
     return {"src": src, "target": target, "fallback": fallback}
+
+
+def _make_source_param_aliases_period_context_regimes() -> dict[str, Regime]:
+    regimes = _make_source_param_aliases_engine_params_regimes()
+    source = regimes["src"]
+    edge = source.gated_edges["target"]
+    regimes["src"] = replace(
+        source,
+        gated_edges={"target": replace(edge, gate=_gate_reads_period_engine_arg)},
+    )
+    return regimes
 
 
 def _u_src_reads_v_arg_param(
@@ -2120,6 +2136,27 @@ def test_source_param_aliasing_the_engine_params_arg_is_rejected():
         match=r"(?i)engine|same_period_regime_to_params|reserved",
     ):
         _solve_fixture(_make_source_param_aliases_engine_params_regimes(), flat_params)
+
+
+def test_source_param_aliasing_edge_period_context_is_rejected():
+    """A source parameter cannot shadow the target fold's period context."""
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {
+                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
+                    "period": jnp.asarray(0),
+                }
+            ),
+            "target": MappingProxyType({}),
+            "fallback": MappingProxyType({}),
+        }
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"(?i)engine|period|reserved",
+    ):
+        _solve_fixture(_make_source_param_aliases_period_context_regimes(), flat_params)
 
 
 def test_source_param_aliasing_the_engine_v_arg_is_rejected():

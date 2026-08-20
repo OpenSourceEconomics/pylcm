@@ -84,11 +84,14 @@ class SamePeriodRef:
     """How the declaring regime's state cell maps to the reference coordinates.
 
     One entry per state of the *reference* regime: `state name -> function`
-    returning that coordinate. Each function resolves through the declaring
-    regime's DAG, so it may read the declaring regime's states, actions, and
-    functions (plus `period` / `age`); it may not introduce new free
-    parameters. The reference V is interpolated at the resulting coordinates
-    (linear on continuous axes, lookup on discrete axes).
+    returning that coordinate. On `Regime.same_period_refs`, each function
+    resolves through the declaring regime's DAG, receives that regime's
+    current `period` / `age`, and may not introduce new free parameters.
+    Inside `GatedEdge.gate_refs` or an `EdgeLeg.fallback`, the declaration
+    instead projects from the gated target's fold grid, receives that target
+    fold's `period` / `age`, and collects other free arguments as the source
+    regime's edge parameters. The reference V is interpolated at the resulting
+    coordinates (linear on continuous axes, lookup on discrete axes).
     """
 
     stakeholder: str | None = None
@@ -163,8 +166,8 @@ class GatedEdge:
       components under the names `V_target_<s>` (one per target stakeholder),
       the target's dissolution flag `D_target` (a collective target only), each
       key of `gate_refs` (a same-period reference value at its projection), and
-      ordinary target states / params. Mutual consent to marriage is the strict,
-      unanimous gate
+      ordinary target states / params, plus the target fold's engine context
+      (`period` / `age`). Mutual consent to marriage is the strict, unanimous gate
       `gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)`;
       "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
       a gate returning a probability in `(0, 1)` rather than a boolean — are
@@ -178,7 +181,7 @@ class GatedEdge:
     """
 
     gate: UserFunction
-    """Boolean gate function on the target grid (see the class docstring)."""
+    """Boolean gate on the target grid, evaluated in the target fold's context."""
 
     legs: Mapping[str, EdgeLeg]
     """One `EdgeLeg` per source stakeholder (single leg for a singleton source)."""

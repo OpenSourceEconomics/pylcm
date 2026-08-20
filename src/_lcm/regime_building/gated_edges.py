@@ -66,7 +66,14 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
 # in the same-period value mapping the fold consumes. Never a real regime name.
@@ -111,6 +118,37 @@ _SOURCE_PARAM_PREFIX = "__source_param__"
 # (`x__points`), and two edges of one source would otherwise collide on any
 # parameter name they happen to share.
 EDGE_GATE_ENTRY: FunctionName = "gate"
+
+_EDGE_PERIOD_ARG = "period"
+_EDGE_AGE_ARG = "age"
+EDGE_PERIOD_CONTEXT_ARGS = frozenset({_EDGE_PERIOD_ARG, _EDGE_AGE_ARG})
+
+
+def bind_edge_period_context(
+    func: Callable,
+    *,
+    fold_period: int,
+    fold_age: float | ScalarFloat | ScalarInt | None,
+) -> dict[str, object]:
+    """Bind the target-fold context an edge callable explicitly declares.
+
+    The accepted names and the binder share `EDGE_PERIOD_CONTEXT_ARGS`, so a
+    context name cannot be reserved during qualification without being handled
+    here by both solve and simulation.
+    """
+    accepted = EDGE_PERIOD_CONTEXT_ARGS & set(get_union_of_args([func]))
+    if _EDGE_AGE_ARG in accepted and fold_age is None:
+        msg = (
+            "A gated-edge callable reads 'age', but its caller supplied no age "
+            f"for fold period {fold_period}."
+        )
+        raise ValueError(msg)
+
+    values = {
+        _EDGE_PERIOD_ARG: jnp.int32(fold_period),
+        _EDGE_AGE_ARG: None if fold_age is None else jnp.asarray(fold_age),
+    }
+    return {name: values[name] for name in accepted}
 
 
 def edge_gate_ref_entry(*, ref_name: str, state_name: StateName) -> FunctionName:
@@ -624,7 +662,9 @@ def _with_qualified_params(
     mapper = {
         arg: edge_param_qname(target=target, entry=entry, param=arg)
         for arg in get_union_of_args([func])
-        if arg not in wired_names and not is_target_value_operand(arg)
+        if arg not in wired_names
+        and arg not in EDGE_PERIOD_CONTEXT_ARGS
+        and not is_target_value_operand(arg)
     }
     return rename_arguments(func, mapper=mapper) if mapper else func
 
@@ -1761,7 +1801,10 @@ def get_edge_simulate_gate_evaluator(
     # 3. The REFERENCE regimes' own interpolation grids — resolved inside
     #    `_build_same_period_ref_reader` against `SAME_PERIOD_PARAMS_ARG`,
     #    so they never reach this signature.
-    engine_args = {SAME_PERIOD_V_ARG}
+    context_args = EDGE_PERIOD_CONTEXT_ARGS & (
+        set(gate_arg_names) | {arg for args in gate_ref_args.values() for arg in args}
+    )
+    engine_args = {SAME_PERIOD_V_ARG, *context_args}
     if gate_ref_readers:
         engine_args.add(SAME_PERIOD_PARAMS_ARG)
     provenance_builder = _ProvenanceBuilder(states=frozenset(state_names))
@@ -2016,14 +2059,15 @@ def build_fallback_state_projector(
         sorted({arg for args in projection_args.values() for arg in args})
     )
 
+    context_args = EDGE_PERIOD_CONTEXT_ARGS & set(arg_names)
     provenance_builder = _ProvenanceBuilder(
         states=frozenset(arg for arg in arg_names if arg in target_state_names)
     )
     for arg in arg_names:
-        if arg not in target_state_names:
+        if arg not in target_state_names and arg not in context_args:
             provenance_builder.expose(qname=arg, namespace=SOURCE_PARAMS, qualify=False)
     arg_provenance = provenance_builder.build(
-        outer_arg_names=arg_names, engine_args=set()
+        outer_arg_names=arg_names, engine_args=set(context_args)
     )
 
     @with_signature(

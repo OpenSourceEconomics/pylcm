@@ -88,6 +88,7 @@ from _lcm.regime_building.gated_edges import (
     TARGET_PARAMS,
     EdgeArgProvenance,
     ResolvedEdgeLeg,
+    bind_edge_period_context,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
@@ -117,6 +118,7 @@ def substitute_gated_edge_continuations(
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
     period_to_regime_to_dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
     flat_params: FlatParams,
+    fold_age: float | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
@@ -171,6 +173,8 @@ def substitute_gated_edge_continuations(
         period_to_regime_to_dissolution_flags: Each collective regime's
             dissolution flag `D` per period.
         flat_params: Model parameters for all regimes.
+        fold_age: Age corresponding to `period + 1`, supplied only to edge
+            callables that declare `age`.
 
     Raises:
         ModelInitializationError: A declared edge's target is solved at
@@ -222,6 +226,8 @@ def substitute_gated_edge_continuations(
             # regimes' grids as of that period, which an `AgeSpecializedGrid`
             # moves without changing their shape.
             fold=edge.fold_at(period=period + 1),
+            fold_period=period + 1,
+            fold_age=fold_age,
             target_states=cast(
                 "Mapping[str, ContinuousState | DiscreteState]",
                 _states_for_period(
@@ -255,6 +261,7 @@ def route_gated_edges(
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
     own_stakeholder: str | None = None,
+    fold_age: float | None = None,
 ) -> tuple[StatesPerRegime, Int1D]:
     """Route each subject through its regime's declared gated edges.
 
@@ -305,6 +312,8 @@ def route_gated_edges(
             under an `AgeSpecializedGrid` those nodes move with age while
             their shape does not, so passing the source's own period reads
             every operand one period's nodes off with no shape error.
+        fold_age: Age corresponding to `fold_period`, supplied only to edge
+            callables that declare `age`.
         own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
             synthetic mode), e.g. "f"/"m" for an all-women/all-men
             population tracking synthetic partners. Required whenever the
@@ -378,6 +387,11 @@ def route_gated_edges(
                         source_name=regime.name,
                         target_name=target_name,
                     ),
+                    **bind_edge_period_context(
+                        simulate_gate_evaluator,
+                        fold_period=fold_period,
+                        fold_age=fold_age,
+                    ),
                     SAME_PERIOD_V_ARG: same_period_mappings[target_name],
                     SAME_PERIOD_PARAMS_ARG: reference_params,
                 },
@@ -441,12 +455,19 @@ def route_gated_edges(
                 _call_vmapped_with_accepted_kwargs(
                     projector,
                     batched_kwargs=candidate_target_states,
-                    static_kwargs=_bind_provenance_params(
-                        projector_provenance,
-                        flat_params=flat_params,
-                        source_name=regime.name,
-                        target_name=target_name,
-                    ),
+                    static_kwargs={
+                        **_bind_provenance_params(
+                            projector_provenance,
+                            flat_params=flat_params,
+                            source_name=regime.name,
+                            target_name=target_name,
+                        ),
+                        **bind_edge_period_context(
+                            projector,
+                            fold_period=fold_period,
+                            fold_age=fold_age,
+                        ),
+                    },
                     axis_size=int(subjects_in_regime.shape[0]),
                 ),
             )

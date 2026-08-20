@@ -14,6 +14,8 @@ import jax
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.regime_building.gated_edges import (
+    EDGE_PERIOD_CONTEXT_ARGS,
+    bind_edge_period_context,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
     edge_may_fold_at_period,
@@ -313,6 +315,7 @@ def solve(  # noqa: C901, PLR0915
         # existing next_regime_to_V_arr threading.
         next_edge_to_V_arr = _roll_gated_edges(
             regimes=regimes,
+            ages=ages,
             period=period,
             period_solution=period_solution,
             period_dissolution_flags=period_dissolution_flags,
@@ -627,6 +630,7 @@ type _EdgeKey = tuple[RegimeName, RegimeName]
 def _roll_gated_edges(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    ages: AgeGrid,
     period: int,
     period_solution: dict[RegimeName, FloatND],
     period_dissolution_flags: dict[RegimeName, BoolND],
@@ -685,6 +689,8 @@ def _roll_gated_edges(
             )
             wbar = _evaluate_edge_fold(
                 fold=fold,
+                fold_period=period,
+                fold_age=ages.period_to_age(period),
                 target_states=cast(
                     "Mapping[str, ContinuousState | DiscreteState]",
                     _states_for_period(
@@ -785,7 +791,11 @@ def _reject_edge_fold_state_param_collisions(
             # Reserve the engine names against
             # both source params and target states, restricted to the names actually
             # present in this fold's signature.
-            engine_args = {SAME_PERIOD_V_ARG, SAME_PERIOD_PARAMS_ARG}
+            engine_args = {
+                SAME_PERIOD_V_ARG,
+                SAME_PERIOD_PARAMS_ARG,
+                *EDGE_PERIOD_CONTEXT_ARGS,
+            }
             engine_collisions = sorted(
                 sig_params & engine_args & (source_param_names | target_state_names)
             )
@@ -808,6 +818,8 @@ def _reject_edge_fold_state_param_collisions(
 def _evaluate_edge_fold(
     *,
     fold: Callable,
+    fold_period: int,
+    fold_age: float | None,
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
@@ -839,9 +851,6 @@ def _evaluate_edge_fold(
     kwargs: dict[str, object] = {
         name: arr for name, arr in target_states.items() if name in sig_params
     }
-    kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
-    if SAME_PERIOD_PARAMS_ARG in sig_params:
-        kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
     kwargs.update(
         {
             name: value
@@ -849,6 +858,16 @@ def _evaluate_edge_fold(
             if name in sig_params
         }
     )
+    kwargs.update(
+        bind_edge_period_context(
+            fold,
+            fold_period=fold_period,
+            fold_age=fold_age,
+        )
+    )
+    kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
+    if SAME_PERIOD_PARAMS_ARG in sig_params:
+        kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
     return fold(**kwargs)
 
 
