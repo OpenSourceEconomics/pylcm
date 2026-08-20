@@ -204,7 +204,6 @@ def test_create_inputs_starts_subjects_in_working_regime():
         "pension_base",
         "pension_replacement_rate",
         "productivity_shock_scale",
-        "retirement_period",
         "tax_scale",
         "utility_constant",
         "wagep",

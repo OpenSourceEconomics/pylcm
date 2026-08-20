@@ -225,7 +225,6 @@ def utility(
 
 
 def retirement_utility(
-    *,
     adjustment_cost_penalty: FloatND,
     effort_cost: FloatND,
     consumption_utility: FloatND,
@@ -338,8 +337,8 @@ def effort_cost(
     )
 
 
-def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> FloatND:
-    return taxed_income + pension + benefits
+def net_income(benefits: FloatND, taxed_income: FloatND) -> FloatND:
+    return taxed_income + benefits
 
 
 def retirement_net_income(pension: FloatND) -> FloatND:
@@ -398,29 +397,25 @@ def taxed_income(
 
 
 def benefits(
-    period: Period,
     health: DiscreteState,
     labor_supply: DiscreteAction,
     benefit_rate: FloatND,
     avg_earnings: FloatND,
-    retirement_period: ScalarInt,
 ) -> FloatND:
+    """Return working-life welfare benefits for non-working agents in bad health."""
     eligible = jnp.logical_and(health == 0, labor_supply == 0)
-    return jnp.where(
-        jnp.logical_and(eligible, period < retirement_period),
-        benefit_rate * avg_earnings,
-        0,
-    )
+    return jnp.where(eligible, benefit_rate * avg_earnings, 0)
 
 
 def pension(
-    period: Period,
     education: DiscreteState,
     pension_base: FloatND,
     pension_replacement_rate: FloatND,
-    retirement_period: ScalarInt,
 ) -> FloatND:
     """Pension benefit `P(e)`: education-specific, scaled by `pension_replacement_rate`.
+
+    Paid in every period of the retirement regime, which begins at the
+    mandatory retirement age.
 
     `pension_base[e]` is what an agent of education `e` would have earned in the
     last working period, full time, in good health, at the median productivity
@@ -432,11 +427,7 @@ def pension(
     `sub_main.f90:487`), which the text does not license — "median productivity
     shock" pins down `z`, not `theta`. Here it is education-only.
     """
-    return jnp.where(
-        period >= retirement_period,
-        pension_base[education] * pension_replacement_rate,
-        0,
-    )
+    return pension_base[education] * pension_replacement_rate
 
 
 def next_wealth(saving: ContinuousAction) -> ContinuousState:
@@ -477,7 +468,6 @@ def next_lagged_effort(effort: DiscreteAction) -> DiscreteState:
 
 
 def working_to_working_probability(
-    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -488,7 +478,6 @@ def working_to_working_probability(
 
 
 def working_to_retirement_probability(
-    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -499,7 +488,6 @@ def working_to_retirement_probability(
 
 
 def working_to_dead_probability(
-    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -509,7 +497,6 @@ def working_to_dead_probability(
 
 
 def retirement_to_retirement_probability(
-    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -519,7 +506,6 @@ def retirement_to_retirement_probability(
 
 
 def retirement_to_dead_probability(
-    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -595,7 +581,6 @@ WORKING_REGIME = Regime(
         "adjustment_cost_penalty": adjustment_cost_penalty,
         "net_income": net_income,
         "taxed_income": taxed_income,
-        "pension": pension,
         "scaled_productivity_shock": scaled_productivity_shock,
         # Heterogeneous β: the scalar is produced by indexing
         # `discount_factor_by_type` by the `discount_type` state, and
@@ -993,7 +978,6 @@ def create_inputs(
         "labor_tax_rate": labor_tax_rate,
         "avg_earnings": avg_earnings,
         "benefit_rate": benefit_rate,
-        "retirement_period": retirement_period,
         "work_disutility_grid": create_work_disutility_grid(
             work_disutility=params["work_disutility"],
             education_disutility_adjustment=params["education_disutility_adjustment"],
