@@ -337,13 +337,7 @@ class DCEGM(OneMarginSolver):
             ),
         )
         if context.phase == "simulate":
-            return (
-                simulation_route(
-                    context=context,
-                    solver_path=("dcegm",),
-                    structural_proofs=proofs,
-                ),
-            )
+            return (simulation_route(context=context, solver_path=("dcegm",)),)
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(

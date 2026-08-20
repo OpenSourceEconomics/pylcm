@@ -5,11 +5,11 @@ regime-building code, so that the user-facing vocabulary module and the
 engine-internal validators can both import it without an import cycle.
 
 An endogenous-grid solve enforces its borrowing limit through the savings
-grid: the grid's lowest node *is* the limit, and the simulate phase receives a
-mask synthesized from it. A regime that states its own limit is therefore
-making a claim about that grid, and this declaration is what makes the claim
-checkable — the instance carries the number, so validation can compare it with
-the grid instead of taking an opaque predicate's word for it.
+grid: the grid's lowest node *is* the solve-time limit. A regime that states its
+own limit is therefore making a claim about that grid, and this declaration is
+what makes the claim checkable — the instance carries the number, so validation
+can compare it with the grid instead of taking an opaque predicate's word for
+it. The same instance remains an executable constraint in simulation.
 """
 
 import inspect

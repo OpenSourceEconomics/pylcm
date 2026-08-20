@@ -22,6 +22,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import AgeGrid, Model, Phased, post_decision_lower_bound
+from lcm.typing import ContinuousAction, ContinuousState, FloatND
+
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -291,6 +294,77 @@ def test_dcegm_simulate_consumes_the_provided_solution():
     largest_feasible_node = consumption_grid[consumption_grid <= budget + 1e-9].max()
     assert consumption["zeroed"] == pytest.approx(largest_feasible_node)
     assert consumption["solved"] < consumption["zeroed"]
+
+
+def _simulation_savings_with_double_consumption(
+    wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    return wealth - 2.0 * consumption
+
+
+def _phase_variant_savings_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    retirement = dcegm_variants.dcegm_retirement.replace(
+        active=lambda age, la=last_age: age < la,
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=dcegm_variants.LIQUID_MARGIN,
+                lower=dcegm_variants.SAVINGS_FLOOR,
+            )
+        },
+        functions={
+            **dict(dcegm_variants.dcegm_retirement.functions),
+            "savings": Phased(
+                solve=dcegm_variants.savings,
+                simulate=_simulation_savings_with_double_consumption,
+            ),
+        },
+    )
+    return Model(
+        regimes={"retirement": retirement, "dead": dcegm_variants.dead},
+        ages=ages,
+        regime_id_class=RetirementOnlyRegimeId,
+    )
+
+
+def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
+    """The simulation predicate reads the simulation post-decision function."""
+    n_periods = 4
+    initial_wealth = 10.0
+    model = _phase_variant_savings_model(n_periods)
+    params = dcegm_variants.get_retirement_only_params(n_periods)
+    solved = model.solve(params=params, log_level="off")
+    zeroed = MappingProxyType(
+        {
+            period: MappingProxyType(
+                {name: jnp.zeros_like(arr) for name, arr in regime_to_V.items()}
+            )
+            for period, regime_to_V in solved.items()
+        }
+    )
+
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([initial_wealth]),
+            "age": jnp.array([40.0]),
+            "regime_id": jnp.array(
+                [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
+            ),
+        },
+        period_to_regime_to_V_arr=zeroed,
+        log_level="off",
+        seed=1,
+    )
+
+    period_0 = result.to_dataframe().query(
+        "regime_name == 'retirement' and period == 0"
+    )
+    consumption = float(period_0["consumption"].iloc[0])
+    grid = np.asarray(dcegm_variants.CONSUMPTION_GRID.to_jax())
+    expected = grid[2.0 * grid <= initial_wealth].max()
+    assert consumption == pytest.approx(expected)
 
 
 def test_dcegm_solver_machinery_is_not_a_result_target():
