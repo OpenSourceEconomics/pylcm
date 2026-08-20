@@ -9,6 +9,7 @@ condition over a discrete state can compose at all.
 """
 
 from collections.abc import Mapping
+from typing import cast
 
 from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
@@ -37,6 +38,16 @@ def as_constraint_function(
         annotates each as the regime's own functions do.
 
     """
+    if constraint.is_opaque:
+        # An opaque constraint *is* a composable callable, carrying the
+        # annotations its author wrote. Rebuilding it from the pool would
+        # replace those with whatever the surrounding functions happen to say,
+        # and the DAG requires every consumer of a name to annotate it as its
+        # producer does — so a rewrite turns a composable predicate into an
+        # annotation conflict. Only a condition built from references needs
+        # annotations supplied, because it has none of its own.
+        return cast("ConstraintFunction", constraint.declaration)
+
     arg_names = constraint.condition.arg_names
 
     @with_signature(

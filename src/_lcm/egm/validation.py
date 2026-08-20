@@ -61,6 +61,8 @@ import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, get_ancestors
 
+from _lcm.constraints.bounds import lower_bound_declaration
+from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
@@ -434,10 +436,35 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             state other than the solver's, or disagrees with the grid.
 
     """
-    for constraint_name, value in user_regime.constraints.items():
-        if not getattr(value, "_is_post_decision_lower_bound", False):
+    # `Phased` is rejected in the constraints slot by the phase grammar and a
+    # `None` mask is resolved at finalization, so every value here is a
+    # declaration normalization accepts.
+    normalized = normalize_constraints(
+        constraints=cast(
+            "Mapping[FunctionName, ConstraintLike]", dict(user_regime.constraints)
+        )
+    )
+    for constraint_name, constraint in normalized.items():
+        bound = lower_bound_declaration(constraint=constraint)
+        if bound is None:
             continue
-        bound = cast("_PostDecisionLowerBound", value)
+        bounded_name, declared_bound = bound
+        if bounded_name != solver.post_decision_function:
+            # A comparison against some other name is an ordinary constraint,
+            # not a claim about the savings grid. Only the convenience
+            # constructor names a margin outright, so only it can be pointed at
+            # the wrong one.
+            if isinstance(constraint.declaration, _PostDecisionLowerBound):
+                msg = (
+                    f"The declaration '{constraint_name}' of regime "
+                    f"'{regime_name}' bounds '{bounded_name}', which is not "
+                    f"the {solver_name} post-decision state "
+                    f"'{solver.post_decision_function}'. A lower bound is "
+                    "proved against the savings grid, so it can only bound the "
+                    "state that grid spans."
+                )
+                raise ModelInitializationError(msg)
+            continue
         # Resolved only once a declaration is present: a runtime-supplied grid
         # has no nodes to read until params arrive, and a regime that declares
         # no bound must not be made to depend on them.
@@ -448,21 +475,11 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             if declared_start is not None
             else float(grid.to_jax()[0])
         )
-        if bound.post_decision != solver.post_decision_function:
+        if declared_bound != grid_low:
             msg = (
                 f"The declaration '{constraint_name}' of regime "
-                f"'{regime_name}' bounds '{bound.post_decision}', which is not "
-                f"the {solver_name} post-decision state "
-                f"'{solver.post_decision_function}'. A lower bound is proved "
-                "against the savings grid, so it can only bound the state that "
-                "grid spans."
-            )
-            raise ModelInitializationError(msg)
-        if bound.lower_bound != grid_low:
-            msg = (
-                f"The declaration '{constraint_name}' of regime "
-                f"'{regime_name}' states a lower bound of {bound.lower_bound} "
-                f"on '{bound.post_decision}', but the {solver_name} savings "
+                f"'{regime_name}' states a lower bound of {declared_bound} "
+                f"on '{bounded_name}', but the {solver_name} savings "
                 f"grid starts at {grid_low}. The grid's lowest node is the "
                 "limit both the solve and the simulation enforce, so the two "
                 "must agree: set the grid's start to the declared bound, or "
@@ -485,10 +502,21 @@ def _fail_if_constraint_touches_continuous_variables(
     supported.
     """
     forbidden = {solver.continuous_state, solver.continuous_action}
+    # `Phased` is rejected in the constraints slot by the phase grammar and a
+    # `None` mask is resolved at finalization, so every value here is a
+    # declaration normalization accepts.
+    normalized = normalize_constraints(
+        constraints=cast(
+            "Mapping[FunctionName, ConstraintLike]", dict(user_regime.constraints)
+        )
+    )
     for constraint_name, constraint_func in user_regime.constraints.items():
-        # A declared lower bound carries its own proof against the savings
-        # grid, so it is admitted where an opaque predicate is not.
-        if getattr(constraint_func, "_is_post_decision_lower_bound", False):
+        # A lower bound on the post-decision state is proved against the
+        # savings grid, so it is admitted where an opaque predicate is not.
+        # Read off what the constraint says, so that a hand-written comparison
+        # is admitted exactly where the convenience constructor is.
+        bound = lower_bound_declaration(constraint=normalized[constraint_name])
+        if bound is not None and bound[0] == solver.post_decision_function:
             continue
         # Constraints are phase-invariant by the slot grammar (`Phased` is
         # rejected there), so the value is always a bare callable.

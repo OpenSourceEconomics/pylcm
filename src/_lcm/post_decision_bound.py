@@ -13,11 +13,9 @@ the grid instead of taking an opaque predicate's word for it.
 """
 
 import inspect
-from collections.abc import Mapping
-from types import MappingProxyType
 
 from _lcm.typing import FunctionName
-from lcm.typing import BoolND, FloatND, UserFunction
+from lcm.typing import BoolND, FloatND
 
 
 class _PostDecisionLowerBound:
@@ -25,12 +23,13 @@ class _PostDecisionLowerBound:
 
     Instances are produced by `lcm.post_decision_lower_bound`. The instance is
     an ordinary constraint callable — it evaluates `post_decision >= bound`, so
-    it behaves like any other entry of `constraints` — and additionally exposes
-    the declared bound, which is what lets validation prove the declaration
-    against the solver's savings grid rather than infer it from a DAG.
+    it behaves like any other entry of `constraints`. Normalization turns it
+    into the comparison it stands for, which is what lets validation prove the
+    declaration against the solver's savings grid rather than infer it from a
+    DAG. Nothing downstream recognises the class itself: a hand-written
+    comparison of the same shape is proved and dropped identically, so the
+    constructor is a way to spell one, not a privileged kind of one.
     """
-
-    _is_post_decision_lower_bound: bool = True
 
     def __init__(self, *, post_decision: FunctionName, lower_bound: float) -> None:
         self.post_decision = post_decision
@@ -51,44 +50,3 @@ class _PostDecisionLowerBound:
 
     def __repr__(self) -> str:
         return f"<declared lower bound: {self.post_decision} >= {self.lower_bound!r}>"
-
-
-def without_proved_lower_bounds(
-    *,
-    constraints: Mapping[FunctionName, UserFunction],
-    grid_enforces_the_bound: bool,
-) -> MappingProxyType[FunctionName, UserFunction]:
-    """Drop declared lower bounds a savings grid already enforces.
-
-    A declared bound is a claim about the savings grid, checked when the model
-    is built. Once proved it carries no information the grid does not already
-    carry: the solve enforces it by inverting on that grid, and the simulate
-    phase enforces it through the mask synthesized from the same lowest node.
-    Leaving it in the engine's constraint set would have it evaluated a second
-    time — and the solve's feasibility predicate is built per discrete combo,
-    which is not a place a continuous post-decision state can be read.
-
-    A solver that does not invert on a savings grid — grid search is the case
-    — enforces nothing implicitly, so for it the declaration is an ordinary
-    constraint and must survive. The same declaration is therefore load-bearing
-    in one regime and redundant in another, which is the point: one spelling
-    that both arms of a model honour.
-
-    Args:
-        constraints: The regime's constraint mapping.
-        grid_enforces_the_bound: Whether the regime's solver enforces the bound
-            through its savings grid, making the declaration redundant.
-
-    Returns:
-        Immutable mapping of the constraints the engine evaluates.
-
-    """
-    if not grid_enforces_the_bound:
-        return MappingProxyType(dict(constraints))
-    return MappingProxyType(
-        {
-            name: value
-            for name, value in constraints.items()
-            if not getattr(value, "_is_post_decision_lower_bound", False)
-        }
-    )

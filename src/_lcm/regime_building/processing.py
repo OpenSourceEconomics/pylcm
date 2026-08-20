@@ -82,7 +82,9 @@ from _lcm.regime_building.phases import (
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
 
-from _lcm.post_decision_bound import without_proved_lower_bounds
+from _lcm.constraints.bounds import without_proved_lower_bounds
+from _lcm.constraints.materialize import as_constraint_function
+from _lcm.constraints.processed import ProcessedConstraint, ProcessedConstraintsMapping
 from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -147,6 +149,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.regime import _EGMFamilyRegime
 from lcm.solvers import DCEGM, EGM, NEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
@@ -895,8 +898,8 @@ def _build_solution_phase(
         functions=spec.solution.functions,
         constraints=without_proved_lower_bounds(
             constraints=spec.solution.constraints,
-            grid_enforces_the_bound=isinstance(
-                solver, OneMarginSolver | TwoMarginSolver
+            proved_post_decision=_proved_post_decision_name(
+                solver=solver, user_regime=user_regimes[regime_name]
             ),
         ),
         state_transitions=spec.solution.state_transitions,
@@ -1035,6 +1038,7 @@ def _build_solution_phase(
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,
         constraints=core.constraints,
+        processed_constraints=core.processed_constraints,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1477,8 +1481,8 @@ def _build_simulation_phase(
         functions=decision_functions,
         constraints=without_proved_lower_bounds(
             constraints=spec.simulation.constraints,
-            grid_enforces_the_bound=isinstance(
-                solver, OneMarginSolver | TwoMarginSolver
+            proved_post_decision=_proved_post_decision_name(
+                solver=solver, user_regime=user_regime
             ),
         ),
         state_transitions=spec.simulation.state_transitions,
@@ -1830,6 +1834,13 @@ class _CoreResult:
     constraints: ConstraintFunctionsMapping
     """Constraint functions with params renamed to qnames."""
 
+    processed_constraints: ProcessedConstraintsMapping
+    """The same constraints in normalized form, for a solver to reason about.
+
+    Not a second source of truth: `constraints` is built from this mapping at
+    one site, so what a solver proves and what the engine evaluates come from
+    the same declaration."""
+
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
 
@@ -1852,7 +1863,7 @@ class _CoreResult:
 def _process_regime_core(
     *,
     functions: Mapping[FunctionName, UserFunction],
-    constraints: Mapping[FunctionName, UserFunction],
+    constraints: Mapping[FunctionName, ProcessedConstraint],
     koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
@@ -1872,7 +1883,7 @@ def _process_regime_core(
 
     Args:
         functions: Phase-resolved regime functions for this build.
-        constraints: Phase-resolved constraint functions.
+        constraints: The regime's normalized constraints for this phase.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -1901,6 +1912,16 @@ def _process_regime_core(
     """
     flat_grids = flatten_regime_namespace(all_grids)
 
+    # A constraint cannot annotate itself: the DAG requires every consumer of a
+    # value to annotate it as its producer returns it, and only the regime's own
+    # functions know whether a name is continuous or an integer-coded state.
+    # Everything below this point sees ordinary annotated callables.
+    normalized_constraints = MappingProxyType(dict(constraints))
+    constraint_functions = {
+        name: as_constraint_function(constraint=constraint, pool=functions)
+        for name, constraint in normalized_constraints.items()
+    }
+
     # The canonical regime transition rides in the bundles as each target's
     # `"next_regime"` cell. Cells are not state laws: split them off before
     # the flat-namespace processing, dropping bundles that held nothing else
@@ -1926,7 +1947,7 @@ def _process_regime_core(
 
     all_functions: dict[str, UserFunction] = {
         **functions,
-        **constraints,
+        **constraint_functions,
         **flat_nested_transitions,
     }
 
@@ -2170,6 +2191,7 @@ def _process_regime_core(
     return _CoreResult(
         functions=phase_functions,
         constraints=processed_constraints,
+        processed_constraints=normalized_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
         next_regime_func=next_regime_func,
@@ -3809,3 +3831,19 @@ def _fail_if_action_has_batch_size(
                     f"action '{action_name}' in regime '{regime_name}'."
                 )
                 raise ValueError(msg)
+
+
+def _proved_post_decision_name(
+    *, solver: Solver, user_regime: UserRegime
+) -> FunctionName | None:
+    """The post-decision state whose lower bound the solver's grid enforces.
+
+    `None` where nothing is enforced implicitly — grid search, and any regime
+    without a liquid margin — so a declared bound stays an ordinary constraint
+    there.
+    """
+    if not isinstance(solver, OneMarginSolver | TwoMarginSolver):
+        return None
+    if not isinstance(user_regime, _EGMFamilyRegime):
+        return None
+    return user_regime.liquid.post_decision_state

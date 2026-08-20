@@ -33,6 +33,11 @@ from lcm.typing import BoolND, UserFunction, ValueND
 # What a regime's `constraints` slot accepts, before normalization.
 type ConstraintLike = Condition | UserFunction
 
+# The form every consumer downstream of normalization reads. Lives here rather
+# than in `_lcm.typing` because that module is imported from here, and naming
+# the alias where the class is defined is what keeps the two out of a cycle.
+type ProcessedConstraintsMapping = MappingProxyType[FunctionName, ProcessedConstraint]
+
 
 @dataclass(frozen=True, eq=False)
 class ProcessedConstraint:
