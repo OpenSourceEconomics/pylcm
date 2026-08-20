@@ -445,9 +445,28 @@ def create_params_template(
                             f"to a bare leaf."
                         )
                     function_names.add(func_key)
-                    arg_names |= _validated_arg_names(
-                        func_name=func_key, params=func_val, regime_name=name
-                    )
+                    nested_roles = {
+                        role
+                        for role, role_val in func_val.items()
+                        if isinstance(role_val, Mapping)
+                    }
+                    if nested_roles:
+                        if set(func_val) != {"support", "probabilities"}:
+                            raise InvalidNameError(
+                                f"Joint transition kernel {func_key!r} in regime "
+                                f"{name!r} must contain exactly 'support' and "
+                                "'probabilities' role mappings."
+                            )
+                        for role, role_params in func_val.items():
+                            arg_names |= _validated_arg_names(
+                                func_name=f"{func_key}.{role}",
+                                params=cast("Mapping", role_params),
+                                regime_name=name,
+                            )
+                    else:
+                        arg_names |= _validated_arg_names(
+                            func_name=func_key, params=func_val, regime_name=name
+                        )
             else:
                 function_names.add(key)
                 arg_names |= _validated_arg_names(
@@ -542,16 +561,15 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     `retired__next_wealth__exit_tax`.
 
     """
-    result = set()
+    result: set[str] = set()
+
+    def collect(prefix: tuple[str, ...], node: object) -> None:
+        if isinstance(node, Mapping):
+            for name, child in node.items():
+                collect((*prefix, name), child)
+        else:
+            result.add(qname_from_tree_path(prefix))
+
     for key, value in regime_params_template.items():
-        if not isinstance(value, Mapping):
-            continue
-        for inner_name, inner_value in value.items():
-            if isinstance(inner_value, Mapping):
-                result.update(
-                    qname_from_tree_path((key, inner_name, param_name))
-                    for param_name in inner_value
-                )
-            else:
-                result.add(qname_from_tree_path((key, inner_name)))
+        collect((key,), value)
     return result

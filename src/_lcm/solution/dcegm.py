@@ -386,7 +386,7 @@ class DCEGM(OneMarginSolver):
             constraints=context.constraints,
             processed_constraints=context.processed_constraints,
             transitions=context.transitions,
-            transition_laws=context.transition_laws,
+            transition_plans=context.transition_plans,
             compute_regime_transition_probs=context.compute_regime_transition_probs,
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
             period_to_regime_v_interp=context.period_to_regime_v_interp,

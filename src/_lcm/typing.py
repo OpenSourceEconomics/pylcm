@@ -90,12 +90,13 @@ type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally. Within a regime, a key is either:
 # - a function name ⇒ that function's params (`{param: type-string}`)
-# - a target regime's name ⇒ per-target transition params nested one level
-#   deeper (`{transition_func: {param: type-string}}`)
+# - a target regime's name ⇒ target-local transition params. Ordinary output
+#   laws nest one level deeper (`{next_state: {param: type-string}}`); a joint
+#   kernel additionally owns role branches for its support and probabilities
+#   (`{kernel: {support: {...}, probabilities: {...}}}`).
+type RegimeParamsTemplateNode = str | MappingProxyType[str, RegimeParamsTemplateNode]
 type RegimeParamsTemplate = MappingProxyType[
-    FunctionName | RegimeName,
-    MappingProxyType[str, str]
-    | MappingProxyType[TransitionFunctionName, MappingProxyType[str, str]],
+    FunctionName | RegimeName, MappingProxyType[str, RegimeParamsTemplateNode]
 ]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 

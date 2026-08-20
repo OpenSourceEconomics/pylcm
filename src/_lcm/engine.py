@@ -12,7 +12,7 @@ from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -351,7 +351,7 @@ class SolutionPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
@@ -611,7 +611,7 @@ class SimulationPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability

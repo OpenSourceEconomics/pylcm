@@ -41,7 +41,7 @@ from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedFunction
+from lcm.transition import AgeSpecializedFunction, JointTransition
 from lcm.typing import UserFunction
 
 # Which `Phased` side each `PhasedRegimeSpec` slice is built from.
@@ -356,16 +356,28 @@ def _valuation_roots(
 def _transition_roots(
     *, regime: UserRegime, phase: Literal["solve", "simulate"]
 ) -> dict[str, UserFunction]:
-    """Key the regime transition: every cell of a per-target dict, or the coarse one."""
+    """Key regime routing plus every edge-local joint probability and output law."""
+    roots: dict[str, UserFunction] = {}
     transition = _for_phase(regime.transition, phase=phase)
     if isinstance(transition, Mapping):
-        return {
+        roots |= {
             f"__next_regime__{target_regime_name}": cast("UserFunction", cell)
             for target_regime_name, cell in transition.items()
         }
-    if transition is not None:
-        return {"__next_regime": cast("UserFunction", transition)}
-    return {}
+    elif transition is not None:
+        roots["__next_regime"] = cast("UserFunction", transition)
+
+    for target_name, kernels in regime.joint_transitions.items():
+        for kernel_name, raw in kernels.items():
+            kernel = cast("JointTransition", _for_phase(raw, phase=phase))
+            roots[f"__joint_probability__{target_name}__{kernel_name}"] = cast(
+                "UserFunction", kernel.probabilities
+            )
+            roots |= {
+                f"__joint_output__{target_name}__{state_name}": output
+                for state_name, output in kernel.outputs.items()
+            }
+    return roots
 
 
 def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:

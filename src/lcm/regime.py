@@ -35,7 +35,7 @@ from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.transition import AgeSpecializedGrid, MarkovTransition
+from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
 from lcm.typing import UserFunction
 
 
@@ -276,12 +276,25 @@ class Regime:
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions or per-target dicts.
 
-    Every non-process state must have an entry — omitting a state raises an error.
-    `fixed_transition(state_name)` marks a fixed state (identity law). Wrap in
+    Every non-process target-state cell must have exactly one producer: an ordinary
+    entry here or an output of `joint_transitions`. `fixed_transition(state_name)`
+    marks a fixed state (identity law). Wrap in
     `MarkovTransition` for stochastic transitions. Per-target dicts map target
     regime names to transition functions — every reachable target must be listed.
     `Phased` gives each phase its own law of motion; it wraps the whole entry
     (outermost only, never inside a per-target dict).
+    """
+
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition | Phased]] = (
+        field(default_factory=lambda: MappingProxyType({}))
+    )
+    """Correlated finite-support transitions owned by explicit target edges.
+
+    The outer key names the target regime and the inner key names the sampled
+    transition node supplied to every output law of that kernel. A
+    ``JointTransition`` shares one probability draw across all of its output
+    states. ``Phased`` may wrap the whole joint transition to provide matching
+    solve and simulation declarations.
     """
 
     actions: Mapping[ActionName, Grid | None] = field(
@@ -550,6 +563,7 @@ class Regime:
         make_immutable("functions")
         make_immutable("states")
         make_immutable("state_transitions")
+        make_immutable("joint_transitions")
         make_immutable("actions")
         make_immutable("constraints")
         make_immutable("derived_categoricals")
@@ -609,10 +623,11 @@ class Regime:
         """Get all regime functions including utility, constraints, and transitions.
 
         Collect functions from four sources:
+
         - `self.functions` (utility and helpers)
         - `self.constraints`
-        - State transitions from `self.state_transitions`
-        - The regime transition (`self.transition`, keyed as `"next_regime"`)
+        - state transitions from `self.state_transitions`
+        - the regime transition (`self.transition`, keyed as `"next_regime"`)
 
         For `Phased` entries, the variant matching `phase` is used. A
         carried-state declaration in `states` (`Phased(solve=...,
@@ -644,7 +659,22 @@ class Regime:
                 result[name] = cast("UserFunction", spec.solve)
         result |= cast("Mapping[str, UserFunction]", self.constraints)
         if self.transition is not None:
-            collected = collect_state_transitions(self.states, self.state_transitions)
+            joint_output_names = {
+                state_name
+                for kernels in self.joint_transitions.values()
+                for raw in kernels.values()
+                for joint in (
+                    (raw.solve if phase == "solve" else raw.simulate)
+                    if isinstance(raw, Phased)
+                    else raw,
+                )
+                for state_name in cast("JointTransition", joint).outputs
+            }
+            collected = collect_state_transitions(
+                self.states,
+                self.state_transitions,
+                joint_output_names=joint_output_names,
+            )
             result |= {name: resolve(func) for name, func in collected.items()}
             transition = self.transition
             if isinstance(transition, Phased):

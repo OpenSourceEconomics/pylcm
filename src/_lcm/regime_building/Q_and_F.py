@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
+import jax
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
@@ -32,10 +33,9 @@ from _lcm.regime_building.w_dag import _get_build_W_kwargs
 # one inside `zero_safe_average` itself -- so one implementation carries the
 # scale and subnormal rules for the whole engine.
 from _lcm.regime_building.zero_safe import zero_safe_average
-from _lcm.transition_laws import (
-    TransitionLaws,
-    is_interpolation_basis,
-    is_stochastic,
+from _lcm.transition_plans import (
+    LotteryLifetime,
+    TargetTransitionPlans,
 )
 from _lcm.typing import (
     ConstraintFunction,
@@ -213,7 +213,7 @@ def get_Q_and_F(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -257,7 +257,7 @@ def get_Q_and_F(
             degenerate lottery node weighted only by the regime transition
             probability.
         transitions: Immutable mapping of transition names to transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
@@ -302,7 +302,7 @@ def get_Q_and_F(
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -371,7 +371,7 @@ def get_compute_intermediates(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
@@ -399,7 +399,7 @@ def get_compute_intermediates(
             diagnostics disagree with the solve they explain.
         transitions: Immutable mapping of target regime names to state transition
             functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
@@ -424,7 +424,7 @@ def get_compute_intermediates(
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
@@ -914,7 +914,7 @@ def get_Q_and_F_collective(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     same_period_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -968,7 +968,7 @@ def get_Q_and_F_collective(
             degenerate node weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition
             functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve (stakeholder-independent — per-stakeholder gating is
@@ -1051,7 +1051,7 @@ def get_Q_and_F_collective(
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=None,
@@ -1380,7 +1380,7 @@ def _get_compute_CE(
     period_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...] = (),
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
@@ -1421,7 +1421,7 @@ def _get_compute_CE(
         scalar_targets: Targets carrying no state, whose rank-zero value enters
             as one degenerate lottery node.
         transitions: Immutable mapping of transition names to transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
@@ -1450,7 +1450,7 @@ def _get_compute_CE(
             target_regime_name=target_regime_name,
             functions=functions,
             bundle=transitions.get(target_regime_name, MappingProxyType({})),
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
@@ -1717,7 +1717,12 @@ def _get_compute_CE(
         *(c.next_states for c in continuations.values()),
         *(c.lottery_weights for c in continuations.values()),
     )
-    return compute_CE, deps, frozenset()
+    continuation_arg_names = frozenset(
+        name
+        for continuation in continuations.values()
+        for name in continuation.extra_param_names
+    )
+    return compute_CE, deps, continuation_arg_names
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1743,8 +1748,8 @@ class _TargetContinuation:
     extra_param_names: frozenset[str]
     """Arguments `next_V` needs beyond the next states and the value array.
 
-    A grid whose points arrive at runtime is the case — `wealth__points` for an
-    `IrregSpacedGrid`.
+    Examples are a grid whose points arrive at runtime (`wealth__points` for an
+    `IrregSpacedGrid`) and a source action read by an output of a joint transition.
     """
 
     has_lottery_axes: bool
@@ -1883,6 +1888,10 @@ def _fail_if_a_read_draw_has_no_nodes_yet(
 
     for next_state_name in sorted(readers_by_draw):
         state_name = next_state_name.removeprefix("next_")
+        if state_name not in v_interpolation_info.discrete_states:
+            # A transition-local joint node carries its own explicit support,
+            # not a target-state grid axis.
+            continue
         grid = v_interpolation_info.discrete_states[state_name]
         if getattr(grid, "is_fully_specified", True):
             continue
@@ -1904,7 +1913,8 @@ def _get_interpolator_resolving_draws(
     functions: EconFunctionsMapping,
     stochastic_names: tuple[TransitionFunctionName, ...],
     draw_dependent_names: tuple[TransitionFunctionName, ...],
-    node_values: MappingProxyType[TransitionFunctionName, FloatND],
+    node_values: MappingProxyType[TransitionFunctionName, Any],
+    support_provider_names: MappingProxyType[TransitionFunctionName, str],
 ) -> Callable[..., FloatND]:
     """Wrap the interpolator so draw-dependent laws resolve on the node axis.
 
@@ -1942,14 +1952,28 @@ def _get_interpolator_resolving_draws(
     resolver_args = get_union_of_args([resolve])
     interpolator_args = get_union_of_args([next_V_interpolator])
     read_as_a_draw = tuple(name for name in stochastic_names if name in resolver_args)
-    arg_names = sorted((interpolator_args - set(draw_dependent_names)) | resolver_args)
+    support_args = {
+        support_provider_names[name]
+        for name in read_as_a_draw
+        if name in support_provider_names
+    }
+    arg_names = sorted(
+        (interpolator_args - set(draw_dependent_names)) | resolver_args | support_args
+    )
 
     @with_signature(args=arg_names)
-    def interpolate_at_this_node(**kwargs: FloatND) -> FloatND:
-        drawn = {
-            name: node_values[name][kwargs[name].astype(jnp.int32)]
-            for name in read_as_a_draw
-        }
+    def interpolate_at_this_node(**kwargs: Any) -> FloatND:  # noqa: ANN401
+        drawn: dict[str, Any] = {}
+        for name in read_as_a_draw:
+            index = kwargs[name].astype(jnp.int32)
+            if name in support_provider_names:
+                support = kwargs[support_provider_names[name]]
+                drawn[name] = jax.tree_util.tree_map(
+                    lambda leaf, node_index=index: leaf[node_index],
+                    support,
+                )
+            else:
+                drawn[name] = node_values[name][index]
         resolved = resolve(
             **{
                 k: v for k, v in kwargs.items() if k in resolver_args and k not in drawn
@@ -1969,7 +1993,7 @@ def _build_target_continuation(
     target_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
@@ -1987,7 +2011,7 @@ def _build_target_continuation(
         target_regime_name: Regime the continuation leads into.
         functions: Immutable mapping of function names to internal user functions.
         bundle: This target's unqualified `next_<state>` transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
@@ -2003,12 +2027,12 @@ def _build_target_continuation(
 
     """
     lottery_variables = tuple(
-        key for key in bundle if is_stochastic(transition_laws, target_regime_name, key)
+        key for key in bundle if transition_plans[target_regime_name].is_lottery(key)
     )
     basis_variables = tuple(
         key
         for key in bundle
-        if is_interpolation_basis(transition_laws, target_regime_name, key)
+        if transition_plans[target_regime_name].has_interpolation_basis(key)
     )
     # A declared entry names one value on the target's node axis, so it is
     # interpolated there rather than enumerated: only a genuine draw gets an axis
@@ -2035,7 +2059,7 @@ def _build_target_continuation(
     lottery_weights = get_next_stochastic_weights_function(
         functions=functions,
         transitions=bundle,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         regime_name=target_regime_name,
     )
     _fail_if_a_draw_reads_a_sibling_draw(
@@ -2056,6 +2080,23 @@ def _build_target_continuation(
                 name.removeprefix("next_")
             ].to_jax()
             for name in lottery_variables
+            if transition_plans[target_regime_name].lotteries[name].lifetime
+            is not LotteryLifetime.TRANSITION_LOCAL
+        }
+    )
+    support_provider_names = MappingProxyType(
+        {
+            name: cast(
+                "str",
+                transition_plans[target_regime_name]
+                .lotteries[name]
+                .support_provider_name,
+            )
+            for name in lottery_variables
+            if transition_plans[target_regime_name]
+            .lotteries[name]
+            .support_provider_name
+            is not None
         }
     )
     if dependencies_by_law:
@@ -2072,6 +2113,7 @@ def _build_target_continuation(
             stochastic_names=lottery_variables,
             draw_dependent_names=dependent_coordinate_names,
             node_values=node_values,
+            support_provider_names=support_provider_names,
         )
 
     # The stakeholder axis is put on last, after every coordinate question has

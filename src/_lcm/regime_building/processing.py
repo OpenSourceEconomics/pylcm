@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import jax
 import numpy as np
 from dags import concatenate_functions, get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
 from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import numpy as jnp
@@ -136,10 +137,19 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
-from _lcm.transition_laws import (
-    TransitionLawInfo,
-    TransitionLaws,
-    is_stochastic,
+from _lcm.transition_plans import (
+    InterpolationBasisInfo,
+    LotteryIndexCoordinate,
+    LotteryLifetime,
+    OutputProducerRef,
+    ParameterBinding,
+    PhysicalCoordinate,
+    SupportOrigin,
+    SupportSignature,
+    TargetTransitionPlan,
+    TargetTransitionPlans,
+    TransitionLotteryInfo,
+    TransitionOutputInfo,
 )
 from _lcm.typing import (
     ArgmaxQOverAFunction,
@@ -181,7 +191,7 @@ from lcm.phased import Phased
 from lcm.regime import GatedEdge, SamePeriodRef
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, Solver
-from lcm.transition import MarkovTransition
+from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
@@ -661,7 +671,7 @@ def process_regimes(
             # age frozen into `solution.functions`.
             solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
-            solve_transition_laws=solution.transition_laws,
+            solve_transition_plans=solution.transition_plans,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=user_regime.solver,
@@ -770,7 +780,7 @@ def _attach_gated_edge_folds(
             target_solution = canonical_regimes[target_name].solution
             target_deterministic_transitions = _merge_deterministic_transitions(
                 transitions=target_solution.transitions,
-                transition_laws=target_solution.transition_laws,
+                transition_plans=target_solution.transition_plans,
             )
             # The simulate-side
             # router needs its own gate re-evaluated at a REALIZED (candidate
@@ -974,7 +984,7 @@ def _edge_grid_group_key(
 def _merge_deterministic_transitions(
     *,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
 ) -> Mapping[TransitionFunctionName, TransitionFunction]:
     """Merge a target's deterministic `next_<state>` laws across its bundles.
 
@@ -996,7 +1006,7 @@ def _merge_deterministic_transitions(
     merged: dict[TransitionFunctionName, TransitionFunction] = {}
     for target_regime_name, bundle in transitions.items():
         for name, func in bundle.items():
-            if is_stochastic(transition_laws, target_regime_name, name):
+            if transition_plans[target_regime_name].is_lottery(name):
                 continue
             merged.setdefault(name, func)
     return MappingProxyType(merged)
@@ -2041,6 +2051,14 @@ def _has_valid_state_handoff(
     if state_name in source_slice.grid_states:
         return True
 
+    if any(
+        state_name in kernel.outputs
+        for kernel in source_slice.joint_transitions.get(
+            target, MappingProxyType({})
+        ).values()
+    ):
+        return True
+
     law = source_slice.state_transitions.get(state_name)
     return law is not None and (not isinstance(law, Mapping) or target in law)
 
@@ -2163,6 +2181,7 @@ def _build_solution_phase(
             grids=all_grids[regime_name],
         ),
         state_transitions=spec.solution.state_transitions,
+        joint_transitions=spec.solution.joint_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
         state_grids=state_grids,
@@ -2271,7 +2290,7 @@ def _build_solution_phase(
             functions=core.functions,
             constraints=core.constraints,
             transitions=core.transitions,
-            transition_laws=core.transition_laws,
+            transition_plans=core.transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             flat_param_names=flat_param_names,
@@ -2299,7 +2318,7 @@ def _build_solution_phase(
                 functions=core.functions,
                 constraints=core.constraints,
                 transitions=core.transitions,
-                transition_laws=core.transition_laws,
+                transition_plans=core.transition_plans,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 # The same stripped info the solve kernel reads. Both partition
                 # the graph targets into stateful and scalar ones off this
@@ -2340,7 +2359,7 @@ def _build_solution_phase(
         constraints=core.constraints,
         processed_constraints=core.processed_constraints,
         transitions=core.transitions,
-        transition_laws=core.transition_laws,
+        transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -2427,7 +2446,7 @@ def _build_solution_phase(
         _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
-        transition_laws=core.transition_laws,
+        transition_plans=core.transition_plans,
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
@@ -2757,7 +2776,7 @@ def _build_simulation_phase(
     enable_jit: bool,
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,
-    solve_transition_laws: TransitionLaws,
+    solve_transition_plans: TargetTransitionPlans,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     has_taste_shocks: bool,
     solver: Solver,
@@ -2814,7 +2833,7 @@ def _build_simulation_phase(
             not build, since a declared entry law into a process is split into
             node indices plus weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
-        solve_transition_laws: Immutable mapping of target regime names to their
+        solve_transition_plans: Immutable mapping of target regime names to their
             transition laws, built in the solve phase and reused here.
         solve_compute_regime_transition_probs: Solve-phase regime transition prob
             function, used for Q_and_F in both phases.
@@ -2865,6 +2884,7 @@ def _build_simulation_phase(
             grids=all_grids[regime_name],
         ),
         state_transitions=spec.simulation.state_transitions,
+        joint_transitions=spec.simulation.joint_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
         state_grids=state_grids,
@@ -3025,7 +3045,7 @@ def _build_simulation_phase(
             functions=decision_functions_pool,
             constraints=constraints,
             transitions=solve_transitions,
-            transition_laws=solve_transition_laws,
+            transition_plans=solve_transition_plans,
             compute_regime_transition_probs=solve_compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             flat_param_names=flat_param_names,
@@ -3060,7 +3080,7 @@ def _build_simulation_phase(
         source_regime_name=regime_name,
         functions=simulate_functions,
         transitions=core.transitions,
-        transition_laws=core.transition_laws,
+        transition_plans=core.transition_plans,
         all_grids=all_grids,
         flat_param_names=flat_param_names,
         enable_jit=enable_jit,
@@ -3153,7 +3173,7 @@ def _build_simulation_phase(
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         reachability=simulation_reachability,
-        transition_laws=core.transition_laws,
+        transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         Q_and_F=pointwise_Q_and_F,
@@ -3276,7 +3296,7 @@ class _CoreResult:
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     next_regime_func: TransitionFunction | None
@@ -3416,6 +3436,7 @@ def _process_regime_core(
     constraints: ProcessedConstraintsMapping,
     koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
@@ -3721,6 +3742,12 @@ def _process_regime_core(
         }
     )
 
+    joint_transition_keys = _process_joint_transitions(
+        joint_transitions=joint_transitions,
+        processed_functions=processed_functions,
+        regime_params_template=regime_params_template,
+    )
+
     process_transition_keys = {
         f"{user_regime}__next_{process}"
         for user_regime, process in (*target_process_grids, *split_entry_process_grids)
@@ -3728,13 +3755,19 @@ def _process_regime_core(
     internal_transition = {
         func_name: processed_functions[func_name]
         for func_name in flat_nested_transitions
-    } | {key: processed_functions[key] for key in process_transition_keys}
+    } | {
+        key: processed_functions[key]
+        for key in (*process_transition_keys, *joint_transition_keys)
+    }
 
     processed_constraints: ConstraintFunctionsMapping = MappingProxyType(
         {func_name: processed_functions[func_name] for func_name in constraints}
     )
     excluded_from_functions = (
-        set(flat_nested_transitions) | set(constraints) | process_transition_keys
+        set(flat_nested_transitions)
+        | set(constraints)
+        | process_transition_keys
+        | joint_transition_keys
     )
     phase_functions = MappingProxyType(
         {
@@ -3762,7 +3795,8 @@ def _process_regime_core(
             nested_transitions_by_target[target] = {}
     transitions = _wrap_transitions(nested_transitions_by_target)
 
-    transition_laws = _build_transition_laws(
+    transition_plans = _build_transition_plans(
+        source_regime_name=source_regime_name,
         transitions=transitions,
         processed_functions=processed_functions,
         all_grids=all_grids,
@@ -3771,13 +3805,14 @@ def _process_regime_core(
         support_index_processes=frozenset(
             (*carried_process_grids, *entered_process_grids)
         ),
+        joint_transitions=joint_transitions,
         phase_name=phase_name,
     )
 
     fail_if_transition_namespaces_are_mixed(
         source_regime_name=source_regime_name,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         processed_functions=MappingProxyType(processed_functions),
         all_grids=all_grids,
     )
@@ -3802,65 +3837,167 @@ def _process_regime_core(
         constraints=processed_constraints,
         processed_constraints=normalized_constraints,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         next_regime_func=next_regime_func,
         next_regime_cells=next_regime_cells,
         koopmans_aggregator=processed_koopmans_aggregator,
     )
 
 
-def _build_transition_laws(
+def _process_joint_transitions(
     *,
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
+    processed_functions: dict[str, EconFunction],
+    regime_params_template: RegimeParamsTemplate,
+) -> set[str]:
+    """Compile joint kernels into target-local DAG nodes and output laws."""
+    transition_keys: set[str] = set()
+    for target, kernels in joint_transitions.items():
+        for kernel_name, kernel in kernels.items():
+            axis_name = qname_from_tree_path((target, kernel_name))
+            support_name = qname_from_tree_path((target, f"support_{kernel_name}"))
+            processed_functions[axis_name] = _joint_support_indices(kernel.support_size)
+            node_annotation = _joint_node_annotation(
+                kernel_name=kernel_name, kernel=kernel
+            )
+
+            support_provider = (
+                cast("UserFunction", kernel.support)
+                if callable(kernel.support)
+                else _literal_joint_support(
+                    kernel.support, node_annotation=node_annotation
+                )
+            )
+            processed_functions[support_name] = _rename_params_to_qnames(
+                func=support_provider,
+                regime_params_template=regime_params_template,
+                param_key=qname_from_tree_path((target, kernel_name, "support")),
+            )
+            processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
+                func=kernel.probabilities,
+                regime_params_template=regime_params_template,
+                param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
+            )
+            transition_keys.update((axis_name, support_name))
+
+            for state_name, output in kernel.outputs.items():
+                output_name = qname_from_tree_path((target, f"next_{state_name}"))
+                processed_functions[output_name] = _rename_params_to_qnames(
+                    func=output,
+                    regime_params_template=regime_params_template,
+                    param_key=output_name,
+                )
+                transition_keys.add(output_name)
+    return transition_keys
+
+
+def _joint_support_indices(support_size: int) -> EconFunction:
+    """Return the internal node-index axis of one finite joint support."""
+
+    @with_signature(args={}, return_annotation="Int1D")
+    def indices() -> Int1D:
+        return jnp.arange(support_size, dtype=jnp.int32)
+
+    return cast("EconFunction", indices)
+
+
+def _joint_node_annotation(*, kernel_name: str, kernel: JointTransition) -> str:
+    """Return the common DAG annotation under which outputs read a joint node."""
+    annotations = {
+        annotation
+        for output in kernel.outputs.values()
+        if (
+            annotation := ensure_annotations_are_strings(get_annotations(output)).get(
+                kernel_name
+            )
+        )
+        is not None
+    }
+    if len(annotations) > 1:
+        raise ModelInitializationError(
+            f"Joint transition node '{kernel_name}' has inconsistent output-law "
+            f"annotations: {sorted(map(repr, annotations))}."
+        )
+    return next(iter(annotations), "Any")
+
+
+def _literal_joint_support(
+    support: object,
+    *,
+    node_annotation: str,
+) -> EconFunction:
+    """Lift an immutable literal support pytree into the target-local DAG."""
+
+    @with_signature(args={}, return_annotation=node_annotation)
+    def provide() -> object:
+        return support
+
+    return cast("EconFunction", provide)
+
+
+def _build_transition_plans(
+    *,
+    source_regime_name: RegimeName,
     transitions: TransitionFunctionsMapping,
     processed_functions: Mapping[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     entered_processes: frozenset[tuple[RegimeName, ProcessName]],
     explicit_entry_processes: frozenset[tuple[RegimeName, ProcessName]],
     support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
+    joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     phase_name: PhaseName,
-) -> TransitionLaws:
-    """Describe every target's transition laws, after synthesis has built them.
-
-    Whether a law carries weights is read off the synthesized functions rather
-    than re-derived from the user's declarations, which keeps the description in
-    step with what the DAG actually contains. What those weights *mean* comes
-    from how the law was synthesized: a declared entry into a target's process
-    was split into a node axis plus interpolation coefficients, and every other
-    weighted law prices a genuine draw. Building the description here -- once
-    both explicit and intrinsic laws are in `processed_functions` -- is what lets
-    a process the source does not carry be described at all.
-
-    Args:
-        transitions: Immutable mapping of target regime names to their bundles of
-            unqualified `next_<state>` transition functions.
-        processed_functions: Mapping of qualified function names to functions,
-            carrying the synthesized `weight_<target>__next_<state>` laws.
-        all_grids: Immutable mapping of regime names to Grid spec objects.
-        entered_processes: Frozenset of `(target, process)` pairs entered at the
-            process's own unconditional law.
-        explicit_entry_processes: Frozenset of `(target, process)` pairs whose
-            declared entry law was split into a node axis and the interpolation
-            coefficients placing the declared value on it.
-        support_index_processes: Frozenset of `(target, process)` pairs whose
-            synthesized law emits node indices in this phase.
-        phase_name: Phase being described. The solution phase indexes a target's
-            value function, so every process law it holds must emit node
-            indices; simulation stores physical process values instead.
-
-    Returns:
-        Immutable mapping of target regime names to their transition laws.
-
-    Raises:
-        ModelInitializationError: If a law leads into a continuous stochastic
-            process without emitting node indices, which no value-function axis
-            can be indexed by.
-
-    """
-    laws: dict[RegimeName, MappingProxyType[TransitionFunctionName, TransitionLawInfo]]
-    laws = {}
+) -> TargetTransitionPlans:
+    """Lower ordinary and joint declarations into complete target-edge plans."""
+    plans: dict[RegimeName, TargetTransitionPlan] = {}
     for target, bundle in transitions.items():
-        target_laws: dict[TransitionFunctionName, TransitionLawInfo] = {}
+        lotteries: dict[str, TransitionLotteryInfo] = {}
+        outputs: dict[StateName, TransitionOutputInfo] = {}
+        joint_kernels = joint_transitions.get(target, MappingProxyType({}))
+
         for next_state_name in bundle:
+            joint_kernel = joint_kernels.get(next_state_name)
+            if joint_kernel is not None:
+                qualified_name = qname_from_tree_path((target, next_state_name))
+                support_provider_name = f"support_{next_state_name}"
+                weight_name = f"weight_{qualified_name}"
+                lotteries[next_state_name] = TransitionLotteryInfo(
+                    name=next_state_name,
+                    qualified_name=qualified_name,
+                    support_provider=bundle[support_provider_name],
+                    support_signature=SupportSignature(size=joint_kernel.support_size),
+                    probabilities=processed_functions[weight_name],
+                    support_origin=SupportOrigin.DECLARED,
+                    lifetime=LotteryLifetime.TRANSITION_LOCAL,
+                    persisted_state=None,
+                    support_params=ParameterBinding(
+                        public_path=(
+                            source_regime_name,
+                            target,
+                            next_state_name,
+                            "support",
+                        )
+                    ),
+                    probability_params=ParameterBinding(
+                        public_path=(
+                            source_regime_name,
+                            target,
+                            next_state_name,
+                            "probabilities",
+                        )
+                    ),
+                    weight_name=weight_name,
+                    support_provider_name=support_provider_name,
+                    node_annotation=_joint_node_annotation(
+                        kernel_name=next_state_name, kernel=joint_kernel
+                    ),
+                )
+                continue
+            if (
+                next_state_name.startswith("support_")
+                and next_state_name.removeprefix("support_") in joint_kernels
+            ):
+                continue
+
             state_name = next_state_name.removeprefix("next_")
             qualified_name = qname_from_tree_path((target, next_state_name))
             weight_name = f"weight_{qualified_name}"
@@ -3870,40 +4007,122 @@ def _build_transition_laws(
             )
             emits_support_index = (target, state_name) in support_index_processes
             interpolation_basis = (target, state_name) in explicit_entry_processes
-            # A process's value function is stored on its nodes, so a law
-            # reaching one must say where on those nodes it lands. There are
-            # exactly two ways: emit node indices directly, or publish a physical
-            # value plus the basis weights placing it on the private node axis.
             if (
                 phase_name == "solution"
                 and continuous_process
                 and not (emits_support_index or interpolation_basis)
             ):
                 msg = (
-                    f"The law '{qualified_name}' leads into stochastic process "
-                    f"'{state_name}' of regime '{target}', whose value function "
-                    f"is stored on that process's nodes, but it was not "
-                    f"synthesized to emit node indices. A law reaching a process "
-                    f"must be placed on its support before it can index one."
+                    f"The law {qualified_name} leads into stochastic process "
+                    f"{state_name} of regime {target}, whose value function is "
+                    "stored on process nodes, but it was not synthesized to emit "
+                    "node indices or interpolation-basis weights."
                 )
                 raise ModelInitializationError(msg)
+
             has_weights = weight_name in processed_functions
-            target_laws[next_state_name] = TransitionLawInfo(
-                target=target,
+            joint_owner = next(
+                (
+                    kernel_name
+                    for kernel_name, kernel in joint_kernels.items()
+                    if state_name in kernel.outputs
+                ),
+                None,
+            )
+            lottery_dependencies = (
+                frozenset({joint_owner})
+                if joint_owner is not None
+                else frozenset({next_state_name})
+                if has_weights and not interpolation_basis
+                else frozenset()
+            )
+            if has_weights and not interpolation_basis and joint_owner is None:
+                lotteries[next_state_name] = TransitionLotteryInfo(
+                    name=next_state_name,
+                    qualified_name=qualified_name,
+                    support_provider=None,
+                    support_signature=SupportSignature(size=0),
+                    probabilities=processed_functions[weight_name],
+                    support_origin=SupportOrigin.TARGET_GRID,
+                    lifetime=LotteryLifetime.PERSISTED_STATE,
+                    persisted_state=state_name,
+                    support_params=ParameterBinding(),
+                    probability_params=ParameterBinding(
+                        public_path=(source_regime_name, target, next_state_name)
+                    ),
+                    weight_name=weight_name,
+                )
+
+            continuation_coordinate = (
+                InterpolationBasisInfo(
+                    axis_name=f"support_{qualified_name}",
+                    support_provider=None,
+                    support_signature=SupportSignature(size=0),
+                    weight_function=processed_functions[weight_name],
+                    params=ParameterBinding(
+                        public_path=(source_regime_name, target, next_state_name)
+                    ),
+                    weight_name=weight_name,
+                )
+                if interpolation_basis
+                else LotteryIndexCoordinate(lottery_name=next_state_name)
+                if has_weights and joint_owner is None
+                else PhysicalCoordinate()
+            )
+            resolver = bundle[next_state_name]
+            outputs[state_name] = TransitionOutputInfo(
+                state=state_name,
                 next_state_name=next_state_name,
                 qualified_name=qualified_name,
-                stochastic=has_weights and not interpolation_basis,
-                interpolation_basis=interpolation_basis,
+                producer=OutputProducerRef(
+                    kind=(
+                        "joint"
+                        if joint_owner is not None
+                        else "intrinsic"
+                        if (target, state_name) in entered_processes
+                        else "entry"
+                        if interpolation_basis
+                        else "ordinary"
+                    ),
+                    public_name=joint_owner or next_state_name,
+                ),
+                physical_resolver=resolver,
+                continuation_coordinate=continuation_coordinate,
+                lottery_dependencies=lottery_dependencies,
+                output_dependencies=frozenset(
+                    arg.removeprefix("next_")
+                    for arg in get_annotations(resolver)
+                    if arg.startswith("next_")
+                ),
+                params=ParameterBinding(
+                    public_path=(source_regime_name, target, next_state_name)
+                ),
                 continuous_process=continuous_process,
                 intrinsic_entry=(target, state_name) in entered_processes,
                 emits_support_index=emits_support_index,
-                support_axis_name=(
-                    f"support_{qualified_name}" if interpolation_basis else None
-                ),
-                weight_name=weight_name if has_weights else None,
             )
-        laws[target] = MappingProxyType(target_laws)
-    return MappingProxyType(laws)
+
+        declared_joint_output_order = tuple(
+            state_name
+            for kernel in joint_kernels.values()
+            for state_name in kernel.outputs
+        )
+        output_order = declared_joint_output_order + tuple(
+            state_name
+            for state_name in outputs
+            if state_name not in declared_joint_output_order
+        )
+        plans[target] = TargetTransitionPlan(
+            source=source_regime_name,
+            target=target,
+            phase="solve" if phase_name == "solution" else "simulate",
+            lotteries=MappingProxyType(lotteries),
+            outputs=MappingProxyType(
+                {state_name: outputs[state_name] for state_name in output_order}
+            ),
+            output_order=output_order,
+        )
+    return MappingProxyType(plans)
 
 
 def _process_next_regime_cells(
@@ -5647,7 +5866,7 @@ def _build_Q_and_F_per_period(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     flat_param_names: frozenset[str],
@@ -5687,7 +5906,7 @@ def _build_Q_and_F_per_period(
         functions: Immutable mapping of internal (possibly periodized) functions.
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability function.
         regime_to_v_interpolation_info: Mapping of regime names to representative
@@ -5792,7 +6011,7 @@ def _build_Q_and_F_per_period(
                 period_targets=stateful_targets,
                 scalar_targets=scalar_targets,
                 transitions=transitions,
-                transition_laws=transition_laws,
+                transition_plans=transition_plans,
                 compute_regime_transition_probs=compute_regime_transition_probs,
                 regime_to_v_interpolation_info=continuation_info(representative_period),
                 # A same-period reference reads a regime's value at THIS period,
@@ -5837,7 +6056,7 @@ def _build_Q_and_F_per_period(
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             co_map_state_names=co_map_state_names,
@@ -5958,7 +6177,7 @@ def _build_next_state_vmapped(
     source_regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_param_names: frozenset[str],
     enable_jit: bool,
@@ -6004,7 +6223,7 @@ def _build_next_state_vmapped(
                 resolve_periodized_nodes(functions, representative_period),
             ),
             transitions=period_transitions,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             all_grids=all_grids,
         )
         sig_args = tuple(inspect.signature(next_state).parameters)

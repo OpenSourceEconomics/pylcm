@@ -18,7 +18,11 @@ from dags import get_annotations
 from dags.tree.tree_utils import QNAME_DELIMITER
 
 from _lcm.grids import Grid
-from _lcm.transition_laws import TransitionLawInfo, TransitionLaws
+from _lcm.transition_plans import (
+    InterpolationBasisInfo,
+    TargetTransitionPlan,
+    TargetTransitionPlans,
+)
 from _lcm.typing import (
     RegimeName,
     StateOrActionName,
@@ -33,7 +37,7 @@ def fail_if_transition_namespaces_are_mixed(
     *,
     source_regime_name: RegimeName,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     processed_functions: MappingProxyType[str, UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
 ) -> None:
@@ -52,7 +56,7 @@ def fail_if_transition_namespaces_are_mixed(
             messages.
         transitions: Immutable mapping of target regime names to their bundles of
             unqualified `next_<state>` transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         processed_functions: Immutable mapping of qualified function names to
             functions, carrying the synthesized weight laws.
@@ -63,21 +67,21 @@ def fail_if_transition_namespaces_are_mixed(
 
     """
     for target, bundle in transitions.items():
-        laws = transition_laws.get(target, MappingProxyType({}))
+        plan = transition_plans[target]
         _fail_if_a_stochastic_law_carries_a_basis(
-            source_regime_name=source_regime_name, target=target, laws=laws
+            source_regime_name=source_regime_name, target=target, plan=plan
         )
         _fail_if_a_basis_law_is_incomplete(
             source_regime_name=source_regime_name,
             target=target,
             bundle=bundle,
-            laws=laws,
+            plan=plan,
         )
         _fail_if_a_read_next_state_has_no_value(
             source_regime_name=source_regime_name,
             target=target,
             bundle=bundle,
-            laws=laws,
+            plan=plan,
             processed_functions=processed_functions,
             target_state_names=set(all_grids.get(target, MappingProxyType({}))),
         )
@@ -118,7 +122,7 @@ def _fail_if_a_stochastic_law_carries_a_basis(
     *,
     source_regime_name: RegimeName,
     target: RegimeName,
-    laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
+    plan: TargetTransitionPlan,
 ) -> None:
     """Check that no law is both a draw and a declared entry.
 
@@ -129,10 +133,11 @@ def _fail_if_a_stochastic_law_carries_a_basis(
     object and would otherwise do so silently — the coefficients of an entry, run
     through a certainty equivalent, give a mean over nodes the entry never took.
     """
-    for next_state_name, law in laws.items():
-        if not law.stochastic:
+    for law in plan.outputs.values():
+        next_state_name = law.next_state_name
+        if not isinstance(law.continuation_coordinate, InterpolationBasisInfo):
             continue
-        if law.support_axis_name is None and not law.interpolation_basis:
+        if not law.lottery_dependencies:
             continue
         msg = (
             f"The law '{next_state_name}' of regime '{source_regime_name}' into "
@@ -150,16 +155,18 @@ def _fail_if_a_basis_law_is_incomplete(
     source_regime_name: RegimeName,
     target: RegimeName,
     bundle: MappingProxyType[TransitionFunctionName, UserFunction],
-    laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
+    plan: TargetTransitionPlan,
 ) -> None:
     """Check that each declared entry has all three of its parts, and only those."""
-    for next_state_name, law in laws.items():
-        if not law.interpolation_basis:
+    for law in plan.outputs.values():
+        next_state_name = law.next_state_name
+        if not isinstance(law.continuation_coordinate, InterpolationBasisInfo):
             continue
+        basis = law.continuation_coordinate
         missing = (
             ("a physical producer under its public name", next_state_name in bundle),
-            ("a private support axis", law.support_axis_name is not None),
-            ("a node-basis weight function", law.weight_name is not None),
+            ("a private support axis", basis.axis_name is not None),
+            ("a node-basis weight function", basis.weight_name is not None),
             (
                 (
                     "a public name free of node indices — it is marked as "
@@ -188,16 +195,21 @@ def _fail_if_a_read_next_state_has_no_value(
     source_regime_name: RegimeName,
     target: RegimeName,
     bundle: MappingProxyType[TransitionFunctionName, UserFunction],
-    laws: MappingProxyType[TransitionFunctionName, TransitionLawInfo],
+    plan: TargetTransitionPlan,
     processed_functions: MappingProxyType[str, UserFunction],
     target_state_names: set[StateOrActionName],
 ) -> None:
     """Check that every `next_<state>` a law reads is produced and not a draw."""
     consumers: dict[str, UserFunction] = dict(bundle)
+    weight_names = {lottery.weight_name for lottery in plan.lotteries.values()} | {
+        output.continuation_coordinate.weight_name
+        for output in plan.outputs.values()
+        if isinstance(output.continuation_coordinate, InterpolationBasisInfo)
+    }
     consumers |= {
-        law.weight_name: processed_functions[law.weight_name]
-        for law in laws.values()
-        if law.weight_name is not None and law.weight_name in processed_functions
+        name: processed_functions[name]
+        for name in weight_names
+        if name in processed_functions
     }
     # A helper reads the draw just as a law does, and reaches the same place by
     # feeding one -- but only if it feeds one. `next_<state>` on a function no

@@ -3734,7 +3734,7 @@ def _build_nbegm_continuation_plan(
         user_regimes=context.user_regimes,
         functions=context.functions,
         transitions=context.transitions,
-        transition_laws=context.transition_laws,
+        transition_plans=context.transition_plans,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,

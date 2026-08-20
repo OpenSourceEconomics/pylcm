@@ -29,7 +29,9 @@ inspect grids, signatures, and Python source) are a separate concern.
 
 import inspect
 import logging
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -37,6 +39,8 @@ import pandas as pd
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
+from _lcm.regime_building.next_state import get_next_stochastic_weights_function
+from _lcm.transition_plans import LotteryLifetime
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -44,6 +48,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     InvalidStateTransitionProbabilitiesError,
+    RegimeInitializationError,
 )
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -72,6 +77,9 @@ def validate_transitions(
         regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
     )
     validate_state_transitions_all_periods(
+        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
+    )
+    validate_joint_transitions_all_periods(
         regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
     )
 
@@ -489,6 +497,238 @@ def validate_state_transitions_all_periods(  # noqa: C901
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
                     raise_or_warn(logger=logger, error=error)
+
+
+def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+) -> None:
+    """Validate every transition-local lottery before solve or simulation."""
+    if not validation_enabled(logger):
+        return
+
+    for period in range(ages.n_periods - 1):
+        period_int32 = jnp.int32(period)
+        age = ages.values[period]  # noqa: PD011
+        for regime_name, regime in regimes.items():
+            if regime.terminal or period not in regime.active_periods:
+                continue
+            state_action_space = regime.solution.state_action_space(
+                regime_params=flat_params[regime_name]
+            )
+            for phase_name, phase in (
+                ("solve", regime.solution),
+                ("simulate", regime.simulation),
+            ):
+                targets = phase.reachability.targets(period=period, source=regime_name)
+                functions = (
+                    regime.solution.continuation_functions
+                    if phase_name == "solve"
+                    else regime.simulation.functions
+                )
+                for target in targets:
+                    plan = phase.transition_plans.get(target)
+                    if plan is None:
+                        continue
+                    joint_laws = {
+                        name: lottery
+                        for name, lottery in plan.lotteries.items()
+                        if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+                    }
+                    if not joint_laws:
+                        continue
+                    compute_weights = get_next_stochastic_weights_function(
+                        regime_name=target,
+                        functions=functions,
+                        transitions=phase.transitions[target],
+                        transition_plans=phase.transition_plans,
+                    )
+                    weights = _evaluate_joint_weights(
+                        func=compute_weights,
+                        state_action_space=state_action_space,
+                        regime_params=flat_params[regime_name],
+                        period=period_int32,
+                        age=age,
+                        regime_name=regime_name,
+                        phase_name=phase_name,
+                        logger=logger,
+                    )
+                    if weights is None:
+                        continue
+                    for kernel_name, law in joint_laws.items():
+                        support_provider_name = law.support_provider_name
+                        if support_provider_name is None:
+                            raise RegimeInitializationError(
+                                f"Joint transition {kernel_name!r} has no "
+                                "support provider in its canonical plan."
+                            )
+                        _evaluate_joint_support(
+                            func=phase.transitions[target][support_provider_name],
+                            regime_params=flat_params[regime_name],
+                            period=period_int32,
+                            age=age,
+                            kernel_name=kernel_name,
+                            support_size=law.support_signature.size,
+                            regime_name=regime_name,
+                            phase_name=phase_name,
+                            target=target,
+                            logger=logger,
+                        )
+                        probs = weights[f"weight_{target}__{kernel_name}"]
+                        if (
+                            probs.ndim == 0
+                            or probs.shape[-1] != law.support_signature.size
+                        ):
+                            length = 1 if probs.ndim == 0 else probs.shape[-1]
+                            raise_or_warn(
+                                logger=logger,
+                                error=InvalidStateTransitionProbabilitiesError(
+                                    f"Joint transition {kernel_name}.probabilities "
+                                    f"returned length {length}; support_size is "
+                                    f"{law.support_signature.size} "
+                                    f"({phase_name} phase of regime {regime_name}, "
+                                    f"target {target}, age {age})."
+                                ),
+                            )
+                        invalid_values = (
+                            jnp.any(~jnp.isfinite(probs))
+                            or jnp.any(probs < 0)
+                            or jnp.any(probs > 1)
+                            or jnp.any(_unit_mass_violations(jnp.sum(probs, axis=-1)))
+                        )
+                        if invalid_values:
+                            raise_or_warn(
+                                logger=logger,
+                                error=InvalidStateTransitionProbabilitiesError(
+                                    f"Joint transition {kernel_name}.probabilities "
+                                    "contains nonfinite or out-of-range values, "
+                                    "or rows that do not sum to one "
+                                    f"({phase_name} phase of regime {regime_name}, "
+                                    f"target {target}, age {age})."
+                                ),
+                            )
+
+
+def _evaluate_joint_support(
+    *,
+    func: Callable[..., Any],
+    regime_params: FlatRegimeParams,
+    period: ScalarInt,
+    age: ScalarInt | ScalarFloat,
+    kernel_name: str,
+    support_size: int,
+    regime_name: RegimeName,
+    phase_name: str,
+    target: RegimeName,
+    logger: logging.Logger,
+) -> Any:  # noqa: ANN401
+    """Evaluate and validate one parameter-bound joint-support provider."""
+    kwargs: dict[str, object] = {}
+    for name in inspect.signature(func).parameters:
+        if name == "period":
+            kwargs[name] = period
+        elif name == "age":
+            kwargs[name] = age
+        elif name in regime_params:
+            kwargs[name] = regime_params[name]
+        else:
+            raise_or_warn(
+                logger=logger,
+                error=RegimeInitializationError(
+                    f"Joint transition {kernel_name}.support may read only period, "
+                    f"age, and parameters; unbound argument {name} appears in the "
+                    f"{phase_name} phase of regime {regime_name}, target {target}."
+                ),
+            )
+            return None
+
+    support = func(**kwargs)
+    leaves, _ = jax.tree_util.tree_flatten(support)
+    invalid_shapes = [
+        getattr(leaf, "shape", None)
+        for leaf in leaves
+        if not hasattr(leaf, "shape") or not leaf.shape or leaf.shape[0] != support_size
+    ]
+    if not leaves or invalid_shapes:
+        raise_or_warn(
+            logger=logger,
+            error=RegimeInitializationError(
+                f"Joint transition {kernel_name}.support must be a nonempty pytree "
+                f"whose every leaf has leading axis support_size={support_size}; "
+                f"invalid leaf shape(s): {invalid_shapes}."
+            ),
+        )
+        return support
+
+    try:
+        has_nonfinite = any(
+            not bool(jax.numpy.all(jax.numpy.isfinite(leaf))) for leaf in leaves
+        )
+    except TypeError:
+        has_nonfinite = True
+    if has_nonfinite:
+        raise_or_warn(
+            logger=logger,
+            error=RegimeInitializationError(
+                f"Joint transition {kernel_name}.support contains nonfinite or "
+                f"unsupported leaf values ({phase_name} phase of regime "
+                f"{regime_name}, target {target}, age {age})."
+            ),
+        )
+    return support
+
+
+def _evaluate_joint_weights(
+    *,
+    func: Callable[..., Mapping[str, FloatND | IntND]],
+    state_action_space: StateActionSpace,
+    regime_params: FlatRegimeParams,
+    period: ScalarInt,
+    age: ScalarInt | ScalarFloat,
+    regime_name: RegimeName,
+    phase_name: str,
+    logger: logging.Logger,
+) -> Mapping[str, FloatND | IntND] | None:
+    """Evaluate one compiled probability DAG on its accepted source grid."""
+    grid_args: dict[StateOrActionName, FloatND | IntND] = {}
+    scalar_kwargs: dict[str, object] = {}
+    for name in inspect.signature(func).parameters:
+        if name == "period":
+            scalar_kwargs[name] = period
+        elif name == "age":
+            scalar_kwargs[name] = age
+        elif name in state_action_space.states:
+            grid_args[name] = state_action_space.states[name]
+        elif name in state_action_space.actions:
+            grid_args[name] = state_action_space.actions[name]
+        elif name in regime_params:
+            scalar_kwargs[name] = regime_params[name]
+        else:
+            logger.warning(
+                "Joint transitions in regime %s (%s phase) not numerically "
+                "validated: argument %s is not a recognized grid or model "
+                "parameter.",
+                regime_name,
+                phase_name,
+                name,
+            )
+            return None
+
+    if not grid_args:
+        return func(**scalar_kwargs)
+
+    grid_var_names = list(grid_args)
+    mesh = jnp.meshgrid(*grid_args.values(), indexing="ij")
+    flat_arrays = [array.ravel() for array in mesh]
+
+    def _call(*args: FloatND | IntND) -> Mapping[str, FloatND | IntND]:
+        kwargs = dict(zip(grid_var_names, args, strict=True))
+        return func(**kwargs, **scalar_kwargs)
+
+    return jax.vmap(_call)(*flat_arrays)
 
 
 def _state_transition_unused_in_period(

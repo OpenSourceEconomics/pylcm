@@ -11,7 +11,7 @@ separate lets this module stay free of any dependency on the user-facing
 `Regime`.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
@@ -38,6 +38,8 @@ def collect_state_transitions(
         | Mapping[RegimeName, UserFunction | Callable | Phased]
         | None,
     ],
+    *,
+    joint_output_names: Collection[StateName] = (),
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
 
@@ -64,6 +66,8 @@ def collect_state_transitions(
             continue
 
         if name not in state_transitions:
+            if name in joint_output_names:
+                continue
             msg = (
                 f"State '{name}' has no entry in state_transitions. "
                 "Use `fixed_transition(state_name)` for fixed states."

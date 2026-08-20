@@ -36,7 +36,6 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
 )
-from _lcm.transition_laws import is_stochastic
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
 from _lcm.utils.logging import format_duration
 from lcm.ages import AgeGrid
@@ -466,12 +465,12 @@ def _build_next_state_args(
         sharding=subject_sharding,
     )
 
-    transition_laws = regime.simulation.transition_laws
+    transition_plans = regime.simulation.transition_plans
     stoch_next_func_names = sorted(
         qname_from_tree_path((target_regime_name, transition_name))
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if is_stochastic(transition_laws, target_regime_name, transition_name)
+        if transition_plans[target_regime_name].is_lottery(transition_name)
     )
     _, stoch_keys = generate_simulation_keys(
         key=jax.random.key(0),

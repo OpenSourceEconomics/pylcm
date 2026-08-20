@@ -53,7 +53,7 @@ from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -239,7 +239,7 @@ class SolverBuildContext:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None

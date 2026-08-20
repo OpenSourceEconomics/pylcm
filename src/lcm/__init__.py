@@ -165,6 +165,7 @@ from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    JointTransition,
     MarkovTransition,
     fixed_transition,
 )
@@ -197,6 +198,7 @@ __all__ = [
     "ExtremeValueTasteShocks",
     "GatedEdge",
     "IrregSpacedGrid",
+    "JointTransition",
     "LinSpacedGrid",
     "LinearAggregator",
     "LinearExpectation",

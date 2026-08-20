@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
@@ -24,7 +24,7 @@ from _lcm.typing import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import MarkovTransition
+from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
 
 
@@ -139,7 +139,7 @@ def create_regime_params_template(
         )
     }
     function_params: dict[FunctionName, dict[str, str]] = {}
-    per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
+    per_target_params: dict[RegimeName, dict[str, Any]] = {}
 
     # A gated edge's callables run on the target regime's grid, so they are
     # collected one per callable and filed under the template entry that names
@@ -183,6 +183,13 @@ def create_regime_params_template(
             per_target_params=per_target_params,
         )
 
+    _add_joint_transition_params(
+        per_target_params=per_target_params,
+        user_regime=user_regime,
+        variables=variables,
+        other_regime_state_names=other_regime_state_names,
+    )
+
     _validate_no_shadowing(
         {**function_params, **{k: {} for k in per_target_params}}, user_regime
     )
@@ -214,7 +221,7 @@ def create_regime_params_template(
             **{k: MappingProxyType(v) for k, v in function_params.items()},
             **{
                 target_regime_name: MappingProxyType(
-                    {k: MappingProxyType(v) for k, v in target_params.items()}
+                    {k: _freeze_template_node(v) for k, v in target_params.items()}
                 )
                 for target_regime_name, target_params in per_target_params.items()
             },
@@ -227,7 +234,7 @@ def _record_params(
     name: FunctionName | TransitionFunctionName,
     params: dict[str, str],
     function_params: dict[FunctionName, dict[str, str]],
-    per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]],
+    per_target_params: dict[RegimeName, dict[str, Any]],
 ) -> None:
     """File one entry's parameters under the branch its key names, in place.
 
@@ -251,6 +258,96 @@ def _record_params(
         target_branch[func_name] = target_branch.get(func_name, {}) | params
     else:
         function_params[name] = function_params.get(name, {}) | params
+
+
+def _freeze_template_node(value: Any) -> Any:  # noqa: ANN401
+    """Recursively freeze a parameter-template branch."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {name: _freeze_template_node(member) for name, member in value.items()}
+        )
+    return value
+
+
+def _add_joint_transition_params(
+    *,
+    per_target_params: dict[RegimeName, dict[str, Any]],
+    user_regime: UserRegime,
+    variables: set[str],
+    other_regime_state_names: frozenset[StateName],
+) -> None:
+    """File joint support, probability, and output params under their owners."""
+    joint_transitions = getattr(user_regime, "joint_transitions", {})
+    joint_node_names = {
+        kernel_name for kernels in joint_transitions.values() for kernel_name in kernels
+    }
+    next_state_names = {
+        f"next_{name}"
+        for name in (
+            *user_regime.states,
+            *user_regime.state_transitions,
+            *other_regime_state_names,
+            *(
+                output
+                for kernels in joint_transitions.values()
+                for raw in kernels.values()
+                for kernel in _joint_variants(raw)
+                for output in kernel.outputs
+            ),
+        )
+    }
+    output_non_params = variables | joint_node_names | next_state_names
+    probability_non_params = variables | next_state_names
+    support_non_params = {"period", "age"}
+
+    for target_name, kernels in joint_transitions.items():
+        target_branch = per_target_params.setdefault(target_name, {})
+        for kernel_name, raw in kernels.items():
+            variants = _joint_variants(raw)
+            support_functions = [
+                kernel.support for kernel in variants if callable(kernel.support)
+            ]
+            probability_functions = [kernel.probabilities for kernel in variants]
+            kernel_branch = target_branch.setdefault(kernel_name, {})
+            kernel_branch["support"] = _union_callable_params(
+                support_functions, non_params=support_non_params
+            )
+            kernel_branch["probabilities"] = _union_callable_params(
+                probability_functions, non_params=probability_non_params
+            )
+
+            for output_name in variants[0].outputs:
+                params = _union_callable_params(
+                    [kernel.outputs[output_name] for kernel in variants],
+                    non_params=output_non_params,
+                )
+                transition_name = f"next_{output_name}"
+                target_branch[transition_name] = (
+                    target_branch.get(transition_name, {}) | params
+                )
+
+
+def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...]:
+    """Return one or both phase variants of a joint declaration."""
+    if isinstance(raw, Phased):
+        return cast(
+            "tuple[JointTransition, JointTransition]", (raw.solve, raw.simulate)
+        )
+    return (raw,)
+
+
+def _union_callable_params(
+    functions: list[UserFunction], *, non_params: set[str]
+) -> dict[str, str]:
+    """Union signature-derived parameters over one role's phase variants."""
+    tree: dict[str, str] = {}
+    for index, func in enumerate(functions):
+        tree |= dict(dt.create_tree_with_input_types({f"role_{index}": func}))
+    return {
+        arg_name: annotation
+        for arg_name, annotation in sorted(tree.items())
+        if arg_name not in non_params
+    }
 
 
 def _discovered_params(
@@ -689,8 +786,17 @@ def _collect_all_functions_for_template(
         if isinstance(spec, Phased):
             result[name] = cast("UserFunction", spec.solve)
     if user_regime.transition is not None:
+        joint_output_names = {
+            output_name
+            for kernels in user_regime.joint_transitions.values()
+            for raw in kernels.values()
+            for joint in _joint_variants(raw)
+            for output_name in joint.outputs
+        }
         result |= collect_state_transitions(
-            user_regime.states, user_regime.state_transitions
+            user_regime.states,
+            user_regime.state_transitions,
+            joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(user_regime.transition)
     result |= {

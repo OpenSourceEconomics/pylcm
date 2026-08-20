@@ -32,6 +32,7 @@ from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    JointTransition,
     MarkovTransition,
 )
 
@@ -467,6 +468,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
+    error_messages.extend(_joint_transition_grammar_errors(regime))
     error_messages.extend(_regime_transition_grammar_errors(regime.transition))
     error_messages.extend(
         _age_specialized_scope_errors(
@@ -1113,8 +1115,88 @@ def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
+    regime: lcm.regime.Regime,
+) -> list[str]:
+    """Validate locally knowable joint-kernel grammar and edge scope."""
+    if not regime.joint_transitions:
+        return []
+    if regime.terminal:
+        return ["Terminal regimes must have empty joint_transitions."]
+
+    error_messages: list[str] = []
+    reachable = _regime_transition_target_names(regime.transition)
+    declared_names = (
+        set(regime.states)
+        | set(regime.actions)
+        | set(regime.functions)
+        | set(regime.constraints)
+        | set(regime.derived_categoricals)
+    )
+    reserved_prefixes = ("next_", "support_", "weight_", "key_")
+    for target_name, kernels in regime.joint_transitions.items():
+        if not isinstance(target_name, str):
+            error_messages.append(
+                f"joint_transitions target key {target_name!r} must be a string."
+            )
+            continue
+        if reachable is not None and target_name not in reachable:
+            error_messages.append(
+                "Joint-transition targets must be reachable under the declared "
+                f"regime transition {sorted(reachable)}; got '{target_name}'."
+            )
+        if not isinstance(kernels, Mapping) or not kernels:
+            error_messages.append(
+                f"joint_transitions['{target_name}'] must be a nonempty mapping "
+                "from node names to `JointTransition` declarations."
+            )
+            continue
+        for kernel_name, raw in kernels.items():
+            prefix = f"joint_transitions['{target_name}'][{kernel_name!r}]"
+            if not isinstance(kernel_name, str):
+                error_messages.append(f"{prefix}: the node name must be a string.")
+            elif QNAME_DELIMITER in kernel_name:
+                error_messages.append(
+                    f"{prefix}: node names cannot contain the reserved separator "
+                    f"'{QNAME_DELIMITER}'."
+                )
+            elif (
+                reserved_prefix := next(
+                    (
+                        candidate
+                        for candidate in reserved_prefixes
+                        if kernel_name.startswith(candidate)
+                    ),
+                    None,
+                )
+            ) is not None:
+                error_messages.append(
+                    f"{prefix}: the joint node name {kernel_name!r} uses reserved "
+                    f"transition prefix {reserved_prefix!r}."
+                )
+            else:
+                colliding = sorted(
+                    {kernel_name, f"support_{kernel_name}"} & declared_names
+                )
+                if colliding:
+                    error_messages.append(
+                        f"{prefix}: the joint node name {kernel_name!r} collides "
+                        "with source state, action, function, constraint, derived "
+                        f"categorical, or synthesized support name(s): {colliding}."
+                    )
+            variants = (raw.solve, raw.simulate) if isinstance(raw, Phased) else (raw,)
+            for variant in variants:
+                if not isinstance(variant, JointTransition):
+                    error_messages.append(
+                        f"{prefix}: each value must be a `JointTransition`, or "
+                        "`Phased` wrapping one for each phase."
+                    )
+                    break
+    return error_messages
+
+
 def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
-    """Validate that `state_transitions` covers exactly the regime's states."""
+    """Validate that ordinary or joint laws cover the regime's states."""
     error_messages: list[str] = []
 
     process_names: set[ProcessName] = {
@@ -1151,7 +1233,15 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
             )
         return error_messages
 
-    missing = non_process_names - set(regime.state_transitions)
+    joint_output_names = {
+        output_name
+        for kernels in regime.joint_transitions.values()
+        for raw in kernels.values()
+        for joint in ((raw.solve, raw.simulate) if isinstance(raw, Phased) else (raw,))
+        if isinstance(joint, JointTransition)
+        for output_name in joint.outputs
+    }
+    missing = non_process_names - set(regime.state_transitions) - joint_output_names
     if missing:
         error_messages.append(
             f"Every non-process state must have an entry in state_transitions. "

@@ -112,28 +112,23 @@ type _UserParamsLeaf = (
     | UserMappingLeaf
     | UserSequenceLeaf
 )
-# Values may be supplied at up to four nesting levels:
-# - model level: `{param: value}`
-# - regime level: `{regime: {param: value}}`
-# - function level: `{regime: {func: {param: value}}}`
-# - target level: `{regime: {target_regime: {transition_func: {param: value}}}}`
-#   — target-specific params for a per-target transition
-type UserParams = Mapping[
-    str,
-    _UserParamsLeaf
-    | Mapping[
-        str,
-        _UserParamsLeaf | Mapping[str, _UserParamsLeaf | Mapping[str, _UserParamsLeaf]],
-    ],
-]
+# Parameter namespaces are recursively nested. Ordinary functions stop after
+# `{regime: {function: {parameter: value}}}`; target-owned laws add a target
+# level, and a `JointTransition` kernel adds its `support`/`probabilities` role
+# before reaching parameter leaves.
+type _UserParamsNode = _UserParamsLeaf | Mapping[str, _UserParamsNode]
+type UserParams = Mapping[str, _UserParamsNode]
 
 
-# User-facing template; types rendered as strings. Keys are regime names, then
-# function names — or target regime names, whose params nest one level deeper
-# under the per-target transition function.
+# User-facing templates keep the first regime and function/target levels
+# structurally visible to type checkers. The final extra mapping admits a joint
+# kernel's `support`/`probabilities` role before rendered annotation leaves.
 type UserFacingParamsTemplate = dict[
     RegimeName,
-    dict[FunctionName | RegimeName, dict[str, str | dict[str, str]]],
+    dict[
+        FunctionName | RegimeName,
+        dict[str, str | dict[str, str | dict[str, str]]],
+    ],
 ]
 
 

@@ -16,7 +16,6 @@ from jax import vmap
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.state_action_space import _validate_all_states_present
-from _lcm.transition_laws import is_stochastic
 from _lcm.typing import (
     ActionName,
     FlatRegimeParams,
@@ -105,14 +104,14 @@ def calculate_next_states(
         entries for other subjects are left untouched.
 
     """
-    transition_laws = regime.simulation.transition_laws
+    transition_plans = regime.simulation.transition_plans
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
         qname_from_tree_path((target_regime_name, transition_name))
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if is_stochastic(transition_laws, target_regime_name, transition_name)
+        if transition_plans[target_regime_name].is_lottery(transition_name)
     )
 
     key, stochastic_variables_keys = generate_simulation_keys(
