@@ -315,7 +315,11 @@ def _make_dissolution_model() -> tuple[Model, dict]:
 
 
 def _solve_internal(
-    model: Model, params: dict, *, collect_simulation_policies: bool = False, **kwargs
+    model: Model,
+    params: dict,
+    *,
+    collect_simulation_policies: bool = False,
+    retain_dissolution_flags: bool = False,
 ):
     """Run the engine solve behind `Model.solve` and return its full result.
 
@@ -331,7 +335,7 @@ def _solve_internal(
         log_keep_n_latest=3,
         max_compilation_workers=None,
         collect_simulation_policies=collect_simulation_policies,
-        **kwargs,
+        retain_dissolution_flags=retain_dissolution_flags,
     )
 
 
