@@ -8,10 +8,10 @@ publish are never masked by one. The declaration is therefore that no name is
 readable where a constraint would be called, which sends every constraint to
 `Reject` unless a proof claims it first.
 
-One proof claims anything: the borrowing limit the savings grid already
-enforces, which the whole endogenous-grid family shares. Whether the number the
-declaration names is the grid's own lowest node is a different question, asked
-once when the model is built rather than again here — proving the bound and
+On the solve route, one proof claims anything: the borrowing limit the savings
+grid already enforces, which the whole endogenous-grid family shares. Whether
+the declared number is the lowest grid node is a different question, asked once
+when the model is built rather than again here — proving the bound and
 checking the claim are separate jobs, and doing the second one twice is how two
 answers to it come to disagree.
 """
@@ -35,12 +35,14 @@ def case_piece_routes(
 ) -> tuple[ConstraintRoute, ...]:
     """Declare the one route a case-piece kernel walks in one phase.
 
-    One site, at the savings stage. The kernels evaluate no user constraint
-    anywhere, so the only thing that can happen to one along this pipeline is
-    the savings grid's own proof, and a proof belongs to a site rather than
-    needing one of its own. Declaring the partition and envelope stages as
-    further sites would describe the program rather than where a constraint can
-    be met, and neither has a stage that names it.
+    The solve route has one site, at the savings stage. The kernels evaluate no
+    user constraint anywhere, so the only thing that can happen to one along
+    that pipeline is the proof supplied by the savings grid, and a proof belongs
+    to a site rather than needing one of its own. Simulation instead takes the
+    shared whole-candidate route and evaluates the phase-resolved declaration.
+    Declaring the partition and envelope stages as further sites would describe
+    the program rather than where a constraint can be met, and neither has a
+    stage that names it.
 
     One route, though NBEGM dispatches several mutually exclusive kernels — case
     pieces, a piecewise-affine schedule, a discrete envelope, their composition,
@@ -72,11 +74,7 @@ def case_piece_routes(
         )
     )
     if context.phase == "simulate":
-        return (
-            simulation_route(
-                context=context, solver_path=solver_path, structural_proofs=proofs
-            ),
-        )
+        return (simulation_route(context=context, solver_path=solver_path),)
     return (
         ConstraintRoute(
             key=ConstraintRouteKey(

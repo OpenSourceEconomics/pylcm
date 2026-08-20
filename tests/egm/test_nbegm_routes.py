@@ -19,7 +19,6 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.dispositions import (
     ConstraintContext,
     Evaluate,
@@ -354,33 +353,17 @@ def test_the_simulate_route_is_the_shared_one_and_not_a_local_spelling(
     got = solver.build_constraint_routes(context=context)
 
     assert [_route_shape(route) for route in got] == [
-        _route_shape(
-            simulation_route(
-                context=context,
-                solver_path=solver_path,
-                structural_proofs=(
-                    proves_the_savings_grids_lower_bound(post_decision="savings"),
-                ),
-            )
-        )
+        _route_shape(simulation_route(context=context, solver_path=solver_path))
     ]
 
 
-def test_the_bound_is_proved_on_the_simulate_route_too():
-    """Simulation enforces the same limit through the mask built from that node.
-
-    This is the phase where the proof fires for these solvers: the solve route
-    evaluates nothing and every accepted model reaches it with no constraint,
-    while the simulate route carries the injected budget predicate and whatever
-    else the regime declares. Attaching the proof and firing it are different
-    claims, and only the second one keeps the bound from being evaluated a
-    second time against a mask that already imposes it.
-    """
+def test_the_bound_is_evaluated_on_the_simulate_route():
+    """A solve-grid proof does not discharge a simulation-time predicate."""
     got = _simulate_dispositions(
         {"borrowing_limit": post_decision_lower_bound(margin=_MARGIN, lower=0.0)}
     )
 
-    assert isinstance(got["borrowing_limit"], ProvedByConstruction)
+    assert isinstance(got["borrowing_limit"], Evaluate)
 
 
 def test_the_simulate_route_still_evaluates_what_it_can_read():

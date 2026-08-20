@@ -342,11 +342,7 @@ class EGM(OneMarginSolver):
             ),
         )
         if context.phase == "simulate":
-            return (
-                simulation_route(
-                    context=context, solver_path=("egm",), structural_proofs=proofs
-                ),
-            )
+            return (simulation_route(context=context, solver_path=("egm",)),)
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(

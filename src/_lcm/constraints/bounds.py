@@ -51,12 +51,12 @@ def proves_the_savings_grids_lower_bound(
     """Build the proof that a savings grid already enforces a declared bound.
 
     An endogenous-grid solve inverts on its savings grid, so that grid's lowest
-    node *is* the limit the solve enforces, and the simulate phase enforces the
-    same number through the mask synthesized from it. A declared bound on the
+    node *is* the limit the solve enforces. A declared bound on the
     post-decision state the grid spans therefore carries no information the
-    grid does not already carry — but it carries it as a *claim*, checked
+    solve grid does not already carry — but it carries it as a *claim*, checked
     against the grid when the model is built, which is what makes proving it
-    different from ignoring it.
+    different from ignoring it. The declaration remains executable in
+    simulation, where the phase-resolved post-decision function can differ.
 
     Only a bound on that state is proved. A lower bound on any other name says
     nothing about the grid, so nothing has proved it and it stays an ordinary
