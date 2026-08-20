@@ -21,9 +21,15 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+)
 from _lcm.continuation import EGMContinuationLayout
 from _lcm.engine import StateActionSpace
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     PeriodKernel,
@@ -53,6 +59,40 @@ class GridSearch(Solver):
         return EGMContinuationLayout(
             retains_discrete_action_rows=False,
             rows_share_state_grid=True,
+        )
+
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the one route grid search walks: whole candidates, nothing hidden.
+
+        The search enumerates the entire state-action product, so every name a
+        constraint could read is bound where it evaluates. There is no inner
+        stage to fall through to and nothing its construction enforces on a
+        constraint's behalf, which is why the route is one unrestricted site
+        carrying neither a proof nor a compiler.
+
+        One route, not one per period: the search does not resolve its pool
+        differently at any age, so a per-period key would put an entry per
+        period in the plan where there is a single fact.
+        """
+        return (
+            ConstraintRoute(
+                key=ConstraintRouteKey(
+                    phase=context.phase,
+                    period_group=None,
+                    solver_path=("grid_search",),
+                ),
+                sites=(
+                    ConstraintSite(
+                        stage=(
+                            "state_action" if context.phase == "solve" else "simulation"
+                        ),
+                        function_pool=context.functions,
+                        available_names=None,
+                    ),
+                ),
+            ),
         )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:

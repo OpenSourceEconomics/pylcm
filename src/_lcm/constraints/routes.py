@@ -55,12 +55,19 @@ class ConstraintRouteKey:
     phase: Literal["solve", "simulate"]
     """Phase whose candidates this route produces."""
 
-    period_group: tuple[int, ...]
-    """Periods sharing one build of this route, in ascending order.
+    period_group: tuple[int, ...] | None
+    """Periods sharing one build of this route, or `None` when it does not vary.
 
-    Age specialization splits a regime's function pool by period, so periods in
-    different groups resolve to different concrete functions and a constraint's
-    leaves can differ between them. An age-invariant regime has one group.
+    `None` says the route is the same in every period the regime is active, and
+    is what a solver whose pool no period resolves differently declares. A
+    tuple says the opposite — that this route was built for these periods while
+    a sibling route was built for others — and only a solver that genuinely
+    rebuilds per group emits one.
+
+    Keeping the two distinguishable is the point. Emitting one route per group
+    from a solver that does not vary would put N entries in the plan where
+    there is one fact, and a coverage count over those pairs would read a
+    constant as evidence of grouping.
     """
 
     solver_path: tuple[str, ...]

@@ -73,7 +73,7 @@ def _key(
 ) -> ConstraintRouteKey:
     return ConstraintRouteKey(
         phase=phase,  # ty: ignore[invalid-argument-type]
-        period_group=(0, 1),
+        period_group=None,
         solver_path=solver_path,
     )
 

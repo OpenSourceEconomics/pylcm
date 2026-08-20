@@ -19,6 +19,12 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.dispositions import EvaluationStage
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+)
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
@@ -30,6 +36,7 @@ from _lcm.solution.continuation_target import (
     target_period_grid,
 )
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     OneMarginSolver,
@@ -308,6 +315,44 @@ class EGM(OneMarginSolver):
                         f"{float(actual)} rather than {float(expected)}."
                     )
                     raise ModelInitializationError(msg)
+
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the one route plain EGM walks in each phase.
+
+        The envelope-free kernel calls no user predicate anywhere. It builds
+        its endogenous grid by inverting the Euler equation on the savings
+        grid, and the only requirement it honours is the borrowing limit that
+        grid's lowest node already is. Its solve route is therefore a single
+        site that evaluates nothing — a place a constraint can be discharged,
+        never one where it can be called — and anything that site cannot
+        discharge is refused rather than quietly dropped.
+
+        Simulation is a different pipeline with a different answer. There the
+        subject's own realized action is in hand, so the feasibility check runs
+        over a whole candidate, including the budget constraint the phase
+        synthesizes for an endogenous-grid regime.
+        """
+        stage: EvaluationStage = (
+            "simulation" if context.phase == "simulate" else "savings_stage"
+        )
+        return (
+            ConstraintRoute(
+                key=ConstraintRouteKey(
+                    phase=context.phase, period_group=None, solver_path=("egm",)
+                ),
+                sites=(
+                    ConstraintSite(
+                        stage=stage,
+                        function_pool=context.functions,
+                        available_names=(
+                            None if context.phase == "simulate" else frozenset()
+                        ),
+                    ),
+                ),
+            ),
+        )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check the regime and its targets are 1-D consumption--saving problems.
