@@ -28,6 +28,7 @@ from _lcm.constraints.dispositions import (
     ProvedByConstruction,
     Reject,
 )
+from _lcm.constraints.ir import Compare, Condition, Const
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
 from _lcm.constraints.routes import (
     BoundConstraint,
@@ -61,7 +62,6 @@ def _site(
     return ConstraintSite(
         stage=stage,  # ty: ignore[invalid-argument-type]
         function_pool=_pool() if pool is None else pool,  # ty: ignore[invalid-argument-type]
-        bound_inputs=frozenset(),
         available_names=available_names,
         structural_proofs=structural_proofs,  # ty: ignore[invalid-argument-type]
         boundary_compilers=boundary_compilers,  # ty: ignore[invalid-argument-type]
@@ -317,38 +317,18 @@ def test_a_site_restricting_nothing_evaluates_whatever_it_is_handed() -> None:
 
 
 def test_an_empty_allow_list_is_not_read_as_no_restriction() -> None:
-    """Allowing nothing and restricting nothing are different declarations.
+    """An empty allow-list is the declaration that a site evaluates nothing.
 
-    A site that can read no name evaluates no constraint; a site that restricts
-    nothing evaluates every one. Spelling the second as an empty set would make
-    the two indistinguishable.
+    Restricting nothing and evaluating nothing are opposite statements, and a
+    site makes exactly one of them: `None` evaluates every constraint handed to
+    it, an empty frozenset evaluates none. Spelling the first as an empty set
+    would make the two indistinguishable.
     """
     route = _route(_site(available_names=frozenset()))
 
     plan = _plan(route)
 
     assert isinstance(plan.entries[0].disposition, Reject)
-
-
-def test_a_bound_input_is_readable_even_when_the_allow_list_omits_it() -> None:
-    """A value the site binds is a constant in scope there.
-
-    Requiring a route producer to list a name it already binds would make
-    forgetting it look like a scope restriction rather than an oversight, and
-    the constraint would be refused for a reason that is not true.
-    """
-    site = ConstraintSite(
-        stage="discrete_combo",
-        function_pool=_pool(),  # ty: ignore[invalid-argument-type]
-        bound_inputs=frozenset({"consumption"}),
-        available_names=frozenset({"wealth"}),
-    )
-
-    plan = plan_constraints(
-        constraints=_borrowing(), routes=(_route(site),), context=_context()
-    )
-
-    assert isinstance(plan.entries[0].disposition, Evaluate)
 
 
 def test_a_proof_that_declines_hands_the_constraint_to_the_next_one() -> None:
@@ -455,3 +435,47 @@ def test_two_routes_claiming_to_be_the_same_pipeline_are_refused() -> None:
         plan_constraints(
             constraints=_borrowing(), routes=(route, route), context=_context()
         )
+
+
+def test_a_site_that_evaluates_nothing_still_runs_its_proofs() -> None:
+    """Evaluating nothing bars calling a constraint, not discharging one.
+
+    An endogenous-grid branch enforces its borrowing limit through the savings
+    grid it inverts on while calling no predicate at all, so a site that
+    evaluates nothing is still where that proof belongs.
+    """
+    route = _route(
+        _site(
+            available_names=frozenset(),
+            structural_proofs=(_RecordingProof("the grid starts there"),),
+        )
+    )
+
+    plan = _plan(route)
+
+    assert isinstance(plan.entries[0].disposition, ProvedByConstruction)
+
+
+def test_a_dependency_free_constraint_is_not_evaluated_where_nothing_is() -> None:
+    """Needing no name is not the same as a site being able to call it.
+
+    A site that evaluates nothing supplies no leaf, and a constraint that asks
+    for no leaf is trivially within that. Deriving evaluability from the subset
+    test alone would hand such a constraint to a kernel that calls no
+    predicate, which is the silent outcome the plan exists to prevent.
+    """
+    constraints = normalize_constraints(
+        constraints={
+            "always": Condition(
+                expression=Compare(left=Const(1.0), op=">=", right=Const(0.0))
+            )
+        }
+    )
+
+    plan = plan_constraints(
+        constraints=constraints,
+        routes=(_route(_site(available_names=frozenset())),),
+        context=_context(),
+    )
+
+    assert isinstance(plan.entries[0].disposition, Reject)

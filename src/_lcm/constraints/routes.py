@@ -87,15 +87,23 @@ class ConstraintSite:
     have.
     """
 
-    bound_inputs: frozenset[str]
-    """Names supplied as bound values here rather than computed or searched."""
-
     available_names: frozenset[str] | None
-    """Leaf names readable at this site, or `None` for no restriction.
+    """Leaf names a constraint may be evaluated over here. Three declarations:
 
-    `None` is grid search, where every name is in scope. An *empty* frozenset
-    is a different declaration: nothing is readable, so no constraint can be
-    evaluated here and every one falls through to the next site.
+    - `None` — no restriction, which is grid search: every name is in scope.
+    - an *empty* frozenset — this site evaluates nothing. Every constraint
+      falls through to the next site, while the site's proofs and compilers
+      still run, so it stays a place a constraint can be discharged.
+    - a non-empty frozenset — the allow-list a constraint's leaves must be a
+      subset of.
+
+    This is the site's only statement about evaluation, deliberately. A second
+    field saying the same thing in another form — a name the site binds, a flag
+    — would agree with this one until it did not, and nothing observable would
+    say which had rotted. So a name the site binds is listed here or it is not
+    readable: forgetting it costs a refusal that names the missing name at
+    model build, which is loud, where the other way round the site would claim
+    a constraint nothing there evaluates.
     """
 
     structural_proofs: tuple[StructuralProof, ...] = ()
@@ -271,7 +279,7 @@ def _disposition_along(
     treating a constraint as discharged by a construction that is not actually
     reached — is silent.
     """
-    shortfalls: list[tuple[EvaluationStage, tuple[str, ...]]] = []
+    shortfalls: list[str] = []
     for site in route.sites:
         bound = BoundConstraint(
             constraint=constraint,
@@ -300,14 +308,9 @@ def _disposition_along(
                     allowed_description="compile a constraint's boundary or refuse it",
                 )
                 return verdict
-        if _site_can_read(bound=bound):
+        if _site_can_evaluate(bound=bound):
             return Evaluate(constraint=constraint, stage=site.stage)
-        shortfalls.append(
-            (
-                site.stage,
-                tuple(sorted(bound.transitive_inputs - _readable_at(site=site))),
-            )
-        )
+        shortfalls.append(_shortfall_at(bound=bound))
     return Reject(
         constraint=constraint,
         reason=_unmet_message(
@@ -316,24 +319,31 @@ def _disposition_along(
     )
 
 
-def _readable_at(*, site: ConstraintSite) -> frozenset[str]:
-    """Return the leaf names a site can supply.
+def _site_can_evaluate(*, bound: BoundConstraint) -> bool:
+    """Whether the site evaluates constraints, and every leaf this one needs.
 
-    Bound inputs are readable whether or not `available_names` lists them: a
-    value the site binds is a constant in scope there, and requiring a route
-    producer to list it twice would make forgetting it look like a scope
-    restriction rather than an oversight.
+    That a site evaluates nothing is a rule here rather than a consequence of
+    the subset test, because the subset test gets that case wrong: a constraint
+    needing no name at all is trivially within an empty allow-list, so deriving
+    the answer would hand it to a kernel that calls no predicate. Degenerate to
+    write and perfectly declarable — two literals compared, or a zero-argument
+    callable — and silent when it happens.
     """
-    if site.available_names is None:
-        return frozenset()
-    return site.available_names | site.bound_inputs
-
-
-def _site_can_read(*, bound: BoundConstraint) -> bool:
-    """Whether the site supplies every leaf the constraint needs."""
-    if bound.site.available_names is None:
+    available = bound.site.available_names
+    if available is None:
         return True
-    return bound.transitive_inputs <= _readable_at(site=bound.site)
+    if not available:
+        return False
+    return bound.transitive_inputs <= available
+
+
+def _shortfall_at(*, bound: BoundConstraint) -> str:
+    """Say why one site could not claim the constraint."""
+    site = bound.site
+    if site.available_names is not None and not site.available_names:
+        return f"at '{site.stage}' nothing is evaluated"
+    missing = sorted(bound.transitive_inputs - (site.available_names or frozenset()))
+    return f"at '{site.stage}' it still needs {missing}"
 
 
 def _unmet_message(
@@ -341,7 +351,7 @@ def _unmet_message(
     constraint: ProcessedConstraint,
     route: ConstraintRoute,
     context: ConstraintContext,
-    shortfalls: list[tuple[EvaluationStage, tuple[str, ...]]],
+    shortfalls: list[str],
 ) -> str:
     """Say why a route could meet the constraint at none of its sites."""
     label = _route_label(key=route.key)
@@ -355,9 +365,7 @@ def _unmet_message(
             "evaluated. Encode the requirement in the solver's own "
             "construction, or use a solver that evaluates constraints."
         )
-    per_site = "; ".join(
-        f"at '{stage}' it still needs {list(missing)}" for stage, missing in shortfalls
-    )
+    per_site = "; ".join(shortfalls)
     return (
         f"{opening}: {per_site}. Restate it over names one of those sites can "
         "read, or use a solver that evaluates over the whole state-action "
