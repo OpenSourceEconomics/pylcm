@@ -1,12 +1,13 @@
 """A declared lower bound on a post-decision state is checked, not guessed.
 
 An endogenous-grid solve enforces its borrowing limit through the savings grid:
-the lowest node of that grid *is* the limit, and the simulate phase gets a
-synthesized mask built from it. A regime that states its own limit is therefore
-making a claim about the grid, and `post_decision_lower_bound` is how it states
-one that can be checked. Where the two disagree, the model is refused and both
-numbers are named, so a limit can never be quietly replaced by whichever value
-the grid happens to start at.
+the lowest node of that grid *is* the solve-time limit. A regime that states its
+own limit is therefore making a claim about the grid, and
+`post_decision_lower_bound` is how it states one that can be checked. The same
+declaration remains executable against phase-resolved values in simulation.
+Where the declaration and grid disagree, the model is refused and both numbers
+are named, so a limit can never be quietly replaced by whichever value the
+grid happens to start at.
 """
 
 import jax.numpy as jnp
