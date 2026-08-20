@@ -13,9 +13,11 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.grids import ContinuousGrid
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     categorical,
@@ -84,9 +86,10 @@ def next_regime(_age: float) -> ScalarInt:
 
 def _model(
     *,
-    savings_grid_start: float,
+    savings_grid_start: float = -2.0,
     declared_lower_bound: float | None,
     opaque_constraint: UserFunction | None = None,
+    savings_grid: ContinuousGrid | None = None,
 ) -> Model:
     """Build a one-period DC-EGM model, optionally declaring its own limit."""
     constraints: dict[str, UserFunction] = {}
@@ -109,7 +112,9 @@ def _model(
         },
         active=lambda age: age == 0,
         solver=DCEGM(
-            savings_grid=LinSpacedGrid(start=savings_grid_start, stop=4.0, n_points=12)
+            savings_grid=savings_grid
+            if savings_grid is not None
+            else LinSpacedGrid(start=savings_grid_start, stop=4.0, n_points=12)
         ),
         liquid=_LIQUID,
     )
@@ -133,6 +138,33 @@ def test_a_declared_lower_bound_matching_the_grid_is_accepted() -> None:
     model = _model(savings_grid_start=-2.0, declared_lower_bound=-2.0)
 
     assert "saving" in model.user_regimes
+
+
+def test_a_declared_lower_bound_the_grid_dtype_rounds_is_accepted() -> None:
+    """A limit whose decimal the grid's dtype cannot hold exactly still matches.
+
+    The regime declares the same number the grid was built from, so the two
+    agree by construction whatever the grid's floating-point format does to
+    that decimal on the way in.
+    """
+    model = _model(savings_grid_start=-0.1, declared_lower_bound=-0.1)
+
+    assert "saving" in model.user_regimes
+
+
+def test_a_runtime_supplied_savings_grid_is_refused_for_supplying_no_points() -> None:
+    """A savings grid whose points arrive with the params is refused as a grid.
+
+    The declared bound is checked against the grid's lowest node, and such a
+    grid has no node to check against at model construction. What the regime
+    gets back names the grid to supply points for, rather than reporting a
+    failure to read them.
+    """
+    with pytest.raises(ModelInitializationError, match="only at runtime"):
+        _model(
+            savings_grid=IrregSpacedGrid(n_points=12),
+            declared_lower_bound=-2.0,
+        )
 
 
 def test_a_declared_lower_bound_below_the_grid_is_refused() -> None:

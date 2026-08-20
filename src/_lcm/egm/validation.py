@@ -420,10 +420,11 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
 
     The savings grid's lowest node is the limit the solve enforces and the one
     the simulate-phase mask is built from, so a declaration that names a
-    different number would be overridden without trace. Comparing the declared
-    bound with the grid's *declared* start keeps both sides in user space: the
-    materialized node carries the grid's floating-point representation, which
-    would reject a faithful declaration at reduced precision.
+    different number would be overridden without trace. The comparison happens
+    in the grid's own float dtype, which is what makes it exact: a grid holds
+    its lowest node at the active precision, so a declaration read back as a
+    Python float is a different representation of the same decimal and would
+    disagree with the grid it was copied from.
 
     Args:
         regime_name: Name of the regime being validated.
@@ -467,25 +468,69 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             continue
         # Resolved only once a declaration is present: a runtime-supplied grid
         # has no nodes to read until params arrive, and a regime that declares
-        # no bound must not be made to depend on them.
+        # no bound must not be made to depend on them. Where one does, the grid
+        # is refused here rather than left to raise on the read, so the message
+        # names the grid to supply points for whatever else has run by then.
         grid = solver.savings_grid
-        declared_start = getattr(grid, "start", None)
-        grid_low = (
-            float(declared_start)
-            if declared_start is not None
-            else float(grid.to_jax()[0])
+        fail_if_grid_withholds_its_points(
+            grid=grid,
+            role="savings grid",
+            regime_name=regime_name,
+            solver_name=solver_name,
         )
-        if declared_bound != grid_low:
+        declared_start = getattr(grid, "start", None)
+        grid_low = declared_start if declared_start is not None else grid.to_jax()[0]
+        # Put the declaration through the grid's own dtype before comparing.
+        # Both numbers are decimals the user wrote, but the grid holds its
+        # lowest node at the active precision, so widening that node to a
+        # Python float compares two representations of one decimal and refuses
+        # a faithful declaration for every decimal the dtype cannot hold —
+        # which at reduced precision is most of them.
+        if bool(jnp.asarray(declared_bound, dtype=grid_low.dtype) != grid_low):
             msg = (
                 f"The declaration '{constraint_name}' of regime "
                 f"'{regime_name}' states a lower bound of {declared_bound} "
                 f"on '{bounded_name}', but the {solver_name} savings "
-                f"grid starts at {grid_low}. The grid's lowest node is the "
+                f"grid starts at {float(grid_low)}. The grid's lowest node is the "
                 "limit both the solve and the simulation enforce, so the two "
                 "must agree: set the grid's start to the declared bound, or "
                 "declare the bound the grid already implies."
             )
             raise ModelInitializationError(msg)
+
+
+def fail_if_grid_withholds_its_points(
+    *,
+    grid: Grid,
+    role: str,
+    regime_name: RegimeName,
+    solver_name: str,
+) -> None:
+    """Refuse a grid that supplies its points only once params arrive.
+
+    An endogenous-grid solve reads its grids while the model is built — to lay
+    out savings nodes and carry shapes, to run the numeric spot checks, and to
+    check a declared lower bound against the grid's lowest node. A grid holding
+    its points back until runtime has nothing to offer any of them, so it is
+    named here rather than left to raise wherever it is first read.
+
+    Args:
+        grid: The grid to check.
+        role: What the grid is to the solver, for the message.
+        regime_name: Name of the regime the grid belongs to.
+        solver_name: Name of the solver, for the message.
+
+    Raises:
+        ModelInitializationError: If the grid supplies its points at runtime.
+
+    """
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+        msg = (
+            f"The {role} in regime '{regime_name}' supplies its points only at "
+            f"runtime via params; a {solver_name} regime needs the points at "
+            "model construction. Supply them via `points=...`."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_constraint_touches_continuous_variables(
@@ -903,20 +948,17 @@ def _fail_if_grid_hygiene_violated(
     # checks) at model-construction time, so these grids must carry their
     # points then — runtime-supplied points cannot work.
     kernel_grids = {
-        "DCEGM savings grid": solver.savings_grid,
+        "savings grid": solver.savings_grid,
         f"grid of the Euler state '{solver.continuous_state}'": euler_grid,
-        f"grid of the continuous action '{solver.continuous_action}'": (
-            user_regime.actions[solver.continuous_action]
+        # Rule 1 also established that the continuous action carries a grid.
+        f"grid of the continuous action '{solver.continuous_action}'": cast(
+            "Grid", user_regime.actions[solver.continuous_action]
         ),
     }
     for role, grid in kernel_grids.items():
-        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
-            msg = (
-                f"The {role} in regime '{regime_name}' supplies its points "
-                "only at runtime via params; a DCEGM regime needs the points "
-                "at model construction. Supply them via `points=...`."
-            )
-            raise ModelInitializationError(msg)
+        fail_if_grid_withholds_its_points(
+            grid=grid, role=role, regime_name=regime_name, solver_name="DCEGM"
+        )
     # `batch_size` on a discrete state splays its combo axis: the per-combo
     # solve runs in `productmap` blocks (per-axis `lax.map`) reassembled into
     # the whole combo product before the carry is built, so carry rows still
