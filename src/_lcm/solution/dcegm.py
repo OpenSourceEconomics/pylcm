@@ -24,6 +24,11 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+)
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
@@ -31,6 +36,7 @@ from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     OneMarginSolver,
@@ -39,6 +45,7 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
     bind_roles,
+    simulation_route,
 )
 from _lcm.typing import (
     EGMStepFunction,
@@ -298,6 +305,49 @@ class DCEGM(OneMarginSolver):
                 "when its documented approximation contract is acceptable."
             )
             raise ExactAffineKernelUnavailableError(msg)
+
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the one route DC-EGM walks in each phase.
+
+        The solve pipeline builds its feasibility predicate once per discrete
+        combination, before the continuous inner stage runs. What is bound
+        there is every discrete state, every passive continuous state, every
+        discrete action, and the regime's params — but not the Euler state,
+        whose nodes the inversion produces, and not the continuous action,
+        which the inversion solves for. A constraint reading either of those is
+        refused rather than evaluated against whichever value happens to be in
+        scope.
+
+        One site, not two. The kernel evaluates constraints per discrete
+        combination and nowhere else, so declaring a savings-stage site as well
+        would promise a place of evaluation that does not exist; what the
+        savings stage offers is a proof, and a proof belongs to a site rather
+        than needing one of its own.
+
+        One route, not one per period: DC-EGM reuses a single core across every
+        period whose pool resolves alike, and does not rebuild per age group.
+        """
+        if context.phase == "simulate":
+            return (simulation_route(context=context, solver_path=("dcegm",)),)
+        bound = cast("_BoundDCEGM", self)
+        return (
+            ConstraintRoute(
+                key=ConstraintRouteKey(
+                    phase="solve", period_group=None, solver_path=("dcegm",)
+                ),
+                sites=(
+                    ConstraintSite(
+                        stage="discrete_combo",
+                        function_pool=context.functions,
+                        available_names=_combination_inputs(
+                            context=context, euler_state=bound.continuous_state
+                        ),
+                    ),
+                ),
+            ),
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.
@@ -648,3 +698,22 @@ def _fail_if_stochastic_node_batch_size_negative(
             "fused vmap."
         )
         raise RegimeInitializationError(msg)
+
+
+def _combination_inputs(
+    *, context: ConstraintRouteContext, euler_state: StateName
+) -> frozenset[str]:
+    """Names bound per discrete combination, which a constraint may read there.
+
+    Every discrete state, every continuous state other than the Euler state
+    (those are passive, so one node each per combination), every discrete
+    action, the regime's params, and the lifecycle clock. The Euler state and
+    the continuous action are absent because the inversion produces them.
+    """
+    return (
+        frozenset(context.variables.discrete_state_names)
+        | (frozenset(context.variables.continuous_state_names) - {euler_state})
+        | frozenset(context.variables.discrete_action_names)
+        | context.flat_param_names
+        | {"age", "period"}
+    )
