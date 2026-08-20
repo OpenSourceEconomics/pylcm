@@ -36,6 +36,7 @@ from lcm import (
     NetOfAdjustmentCost,
     Phased,
     categorical,
+    post_decision_lower_bound,
 )
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -572,3 +573,53 @@ def test_outer_law_chained_through_an_independent_law_is_accepted():
         },
     )
     _validate(regime)
+
+
+def test_a_declared_lower_bound_matching_the_savings_grid_is_accepted():
+    """Stating the limit the nested solve already enforces passes validation."""
+    regime = _VALID.replace(
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=_VALID.liquid,
+                lower=float(negm_kinked_toy.SAVINGS_GRID.start),
+            )
+        },
+    )
+    _validate(regime)
+
+
+def test_a_declared_lower_bound_disagreeing_with_the_savings_grid_is_refused():
+    """A NEGM regime's declared limit is checked against its own savings grid.
+
+    The lowest node of the inner savings grid is the limit the nested solve
+    enforces, so a declaration naming a different number is refused rather than
+    dropped as something the grid already guarantees.
+    """
+    declared = float(negm_kinked_toy.SAVINGS_GRID.start) - 100.0
+    regime = _VALID.replace(
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=_VALID.liquid, lower=declared
+            )
+        },
+    )
+
+    with pytest.raises(ModelInitializationError, match="lower bound"):
+        _validate(regime)
+
+
+def test_the_refusal_names_the_nested_savings_grids_lowest_node():
+    """The message carries the number the NEGM savings grid actually enforces."""
+    grid_start = float(negm_kinked_toy.SAVINGS_GRID.start)
+    regime = _VALID.replace(
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=_VALID.liquid, lower=grid_start - 100.0
+            )
+        },
+    )
+
+    with pytest.raises(ModelInitializationError) as excinfo:
+        _validate(regime)
+
+    assert str(grid_start) in str(excinfo.value)
