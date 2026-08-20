@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
+from _lcm.egm.validation import _grid_sample
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -90,6 +91,7 @@ def _model(
     post_decision=savings,
     discrete_state: bool = False,
     terminal_action: bool = False,
+    resources_func=None,
 ) -> Model:
     states = {"wealth": _WEALTH_GRID}
     state_transitions = {"wealth": {"done": next_wealth}}
@@ -113,7 +115,7 @@ def _model(
         transition=next_regime,
         functions={
             "utility": utility,
-            "resources": resources,
+            "resources": resources_func or resources,
             "savings": post_decision,
         },
         active=lambda age: age == 0,
@@ -171,3 +173,38 @@ def test_egm_rejects_a_terminal_target_with_an_action() -> None:
         ModelInitializationError, match=r"terminal regime 'done'.*actions"
     ):
         _model(terminal_action=True)
+
+
+def _sampled_wealth_nodes() -> list[float]:
+    """The state nodes the post-decision spot check actually visits."""
+    return [float(v) for v in _grid_sample(grid=_WEALTH_GRID)]
+
+
+def test_resources_is_checked_at_every_represented_state_node() -> None:
+    """A resources bump at an unvisited node is caught, not admitted.
+
+    The spot check evaluates resources at every tabulated state, so a map that
+    equals the state wherever a five-point sample would look and departs from
+    it elsewhere is still rejected. It remains a diagnostic — nothing here
+    establishes the identity between nodes — but a mistake at a represented
+    state can no longer slip through on sampling alone.
+    """
+    nodes = jnp.asarray(_WEALTH_GRID.to_jax())
+    unvisited = jnp.asarray(
+        [n for n in nodes.tolist() if n not in _sampled_wealth_nodes()]
+    )
+    assert unvisited.size > 0, "grid too small to have an unvisited node"
+
+    def bumped_resources(wealth: ContinuousState) -> FloatND:
+        at_unvisited = jnp.any(jnp.abs(wealth[..., None] - unvisited) < 1e-9, axis=-1)
+        return wealth + 0.25 * at_unvisited
+
+    with pytest.raises(ModelInitializationError, match="must equal the liquid state"):
+        _model(resources_func=bumped_resources)
+
+
+def test_the_identity_resources_map_still_builds() -> None:
+    """The control: an unperturbed model is unaffected by the wider check."""
+    model = _model()
+
+    assert "saving" in model.user_regimes
