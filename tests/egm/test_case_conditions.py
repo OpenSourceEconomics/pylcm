@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.constraints.ir import Compare
 from _lcm.egm.case_conditions import (
     condition_of_boundary_surface,
     condition_of_breakpoint,
@@ -160,3 +161,27 @@ def test_the_comparison_grid_actually_lands_on_the_threshold():
     would hold for either operator, which is the one case it is meant to decide.
     """
     assert np.any(np.asarray(jnp.asarray([0.0, 7.999, 8.0, 8.001, 20.0])) == 8.0)
+
+
+@pytest.mark.parametrize(
+    ("equality_owner", "admits_equality"), [("when", True), ("otherwise", False)]
+)
+def test_the_lowered_operator_carries_the_declared_equality_ownership(
+    equality_owner, admits_equality
+):
+    """The operator's structural claim matches the side the surface declares.
+
+    Separate from the evaluation check above, and deliberately so: that one
+    asks what the condition answers at the threshold, this one asks what the
+    operator says about the threshold. A solver proves ownership from the
+    operator without evaluating anything, so the two can drift apart — a
+    lowering that evaluated correctly while reporting the wrong structural
+    claim would satisfy every evaluation assertion in this file.
+    """
+    condition = condition_of_boundary_surface(
+        surface=_surface(equality_owner=equality_owner)
+    )
+    expression = condition.expression
+    assert isinstance(expression, Compare)
+
+    assert expression.admits_equality is admits_equality
