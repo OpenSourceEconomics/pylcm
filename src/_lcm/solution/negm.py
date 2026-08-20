@@ -22,12 +22,19 @@ from dags import concatenate_functions, get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+)
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     PeriodKernel,
@@ -38,8 +45,9 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
     bind_roles,
+    simulation_route,
 )
-from _lcm.solution.dcegm import DCEGM, _BoundDCEGM
+from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -187,6 +195,116 @@ class NEGM(TwoMarginSolver):
         being re-pointed at the nest's axes.
         """
         self.inner.validate_build(context=context)
+
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the adjuster, keeper, and simulation routes NEGM walks.
+
+        The solve has two branches whose inner DC-EGM kernels receive different
+        function pools:
+
+        - the adjuster removes the outer post-decision function and binds its
+          value to one outer-grid node;
+        - the keeper replaces that function by the no-adjustment map of the
+          durable state.
+
+        A constraint is therefore rebound against each branch's own pool. The
+        routes carry the same period groups the keeper build uses, because an
+        age-specialized no-adjustment map changes which concrete function is in
+        scope. Simulation sees a complete subject-level candidate and uses the
+        shared unrestricted route.
+        """
+        bound = cast("_BoundNEGM", self)
+        proofs = (
+            proves_the_savings_grids_lower_bound(
+                post_decision=bound.inner.post_decision_function
+            ),
+        )
+        if context.phase == "simulate":
+            return (
+                simulation_route(
+                    context=context,
+                    solver_path=("negm",),
+                    structural_proofs=proofs,
+                ),
+            )
+
+        from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            resolve_periodized_nodes,
+        )
+
+        routes: list[ConstraintRoute] = []
+        for period_group in _periodized_function_groups(
+            periods=context.active_periods, functions=context.functions
+        ):
+            group_functions = cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(context.functions, period_group[0]),
+            )
+            adjuster_context = replace(
+                context,
+                functions=_without_outer_post_decision(
+                    functions=group_functions,
+                    outer_post_decision=bound.outer_post_decision,
+                ),
+                flat_param_names=context.flat_param_names | {bound.outer_post_decision},
+            )
+            no_adjustment_func = (
+                group_functions[bound.outer_no_adjustment_candidate]
+                if bound.outer_no_adjustment_candidate is not None
+                else None
+            )
+            keeper_context = replace(
+                context,
+                functions=_with_no_adjustment_outer_function(
+                    functions=group_functions,
+                    durable_state=bound.outer_state,
+                    outer_post_decision=bound.outer_post_decision,
+                    no_adjustment_func=no_adjustment_func,
+                ),
+            )
+            routes.extend(
+                (
+                    ConstraintRoute(
+                        key=ConstraintRouteKey(
+                            phase="solve",
+                            period_group=period_group,
+                            solver_path=("negm", "adjuster"),
+                        ),
+                        sites=(
+                            ConstraintSite(
+                                stage="outer_candidate",
+                                function_pool=adjuster_context.functions,
+                                available_names=_combination_inputs(
+                                    context=adjuster_context,
+                                    euler_state=bound.inner.continuous_state,
+                                ),
+                                structural_proofs=proofs,
+                            ),
+                        ),
+                    ),
+                    ConstraintRoute(
+                        key=ConstraintRouteKey(
+                            phase="solve",
+                            period_group=period_group,
+                            solver_path=("negm", "keeper"),
+                        ),
+                        sites=(
+                            ConstraintSite(
+                                stage="keeper_candidate",
+                                function_pool=keeper_context.functions,
+                                available_names=_combination_inputs(
+                                    context=keeper_context,
+                                    euler_state=bound.inner.continuous_state,
+                                ),
+                                structural_proofs=proofs,
+                            ),
+                        ),
+                    ),
+                )
+            )
+        return tuple(routes)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.

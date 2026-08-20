@@ -82,7 +82,6 @@ from _lcm.regime_building.phases import (
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
 
-from _lcm.constraints.bounds import without_proved_lower_bounds
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
 from _lcm.constraints.processed import (
@@ -107,11 +106,9 @@ from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
-    OneMarginSolver,
     PeriodKernel,
     SolverBuildContext,
     SolverModelContext,
-    TwoMarginSolver,
 )
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
@@ -156,7 +153,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _EGMFamilyRegime
 from lcm.solvers import DCEGM, EGM, NEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
@@ -911,7 +907,6 @@ def _build_solution_phase(
         constraints=_constraints_the_solver_evaluates(
             constraints=spec.solution.constraints,
             solver=solver,
-            user_regime=user_regimes[regime_name],
             regime_name=regime_name,
             phase="solve",
             functions=spec.solution.functions,
@@ -1500,7 +1495,6 @@ def _build_simulation_phase(
         constraints=_constraints_the_solver_evaluates(
             constraints=spec.simulation.constraints,
             solver=solver,
-            user_regime=user_regime,
             regime_name=regime_name,
             phase="simulate",
             functions=MappingProxyType(decision_functions),
@@ -3864,27 +3858,10 @@ def _fail_if_action_has_batch_size(
                 raise ValueError(msg)
 
 
-def _proved_post_decision_name(
-    *, solver: Solver, user_regime: UserRegime
-) -> FunctionName | None:
-    """The post-decision state whose lower bound the solver's grid enforces.
-
-    `None` where nothing is enforced implicitly — grid search, and any regime
-    without a liquid margin — so a declared bound stays an ordinary constraint
-    there.
-    """
-    if not isinstance(solver, OneMarginSolver | TwoMarginSolver):
-        return None
-    if not isinstance(user_regime, _EGMFamilyRegime):
-        return None
-    return user_regime.liquid.post_decision_state
-
-
 def _constraints_the_solver_evaluates(
     *,
     constraints: ProcessedConstraintsMapping,
     solver: Solver,
-    user_regime: UserRegime,
     regime_name: RegimeName,
     phase: Literal["solve", "simulate"],
     functions: EconFunctionsMapping,
@@ -3901,15 +3878,13 @@ def _constraints_the_solver_evaluates(
     dropped: the difference is that the ledger holds a reason for it, so a
     constraint can no longer leave the set without one.
 
-    A solver that declares no routes keeps the behaviour it has today. `None`
-    is a declaration that nobody has written its pipeline down, not a claim
-    that its pipeline is unrestricted, so nothing is planned for it and the
-    savings-grid drop still applies.
+    A solver that declares no routes keeps its constraint set unchanged. `None`
+    says nobody has written its pipeline down, not that its pipeline is
+    unrestricted, so no constraint is discharged on its behalf.
 
     Args:
         constraints: The phase's normalized constraints, before any narrowing.
         solver: The regime's bound solver.
-        user_regime: The finalized user regime, for the undeclared-solver path.
         regime_name: Name of the regime being built.
         phase: Phase whose constraints these are.
         functions: The phase's declared function pool, through which a
@@ -3939,12 +3914,7 @@ def _constraints_the_solver_evaluates(
         )
     )
     if routes is None:
-        return without_proved_lower_bounds(
-            constraints=constraints,
-            proved_post_decision=_proved_post_decision_name(
-                solver=solver, user_regime=user_regime
-            ),
-        )
+        return constraints
     plan = plan_constraints(
         constraints=constraints,
         routes=routes,
