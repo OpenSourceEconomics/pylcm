@@ -215,7 +215,7 @@ def _load_survival_probs() -> pd.Series:
     return df.set_index(["age", "education", "health"])["survival_probability"]
 
 
-def utility(
+def working_utility(
     adjustment_cost_penalty: FloatND,
     effort_cost: FloatND,
     work_disutility: FloatND,
@@ -337,7 +337,7 @@ def effort_cost(
     )
 
 
-def net_income(benefits: FloatND, taxed_income: FloatND) -> FloatND:
+def working_net_income(benefits: FloatND, taxed_income: FloatND) -> FloatND:
     return taxed_income + benefits
 
 
@@ -568,7 +568,7 @@ WORKING_REGIME = Regime(
         "effort": DiscreteGrid(Effort),
     },
     functions={
-        "utility": utility,
+        "utility": working_utility,
         "effort_value": effort_value,
         "lagged_effort_value": lagged_effort_value,
         "work_disutility": work_disutility,
@@ -579,7 +579,7 @@ WORKING_REGIME = Regime(
         "income": income,
         "benefits": benefits,
         "adjustment_cost_penalty": adjustment_cost_penalty,
-        "net_income": net_income,
+        "net_income": working_net_income,
         "taxed_income": taxed_income,
         "scaled_productivity_shock": scaled_productivity_shock,
         # Heterogeneous β: the scalar is produced by indexing
