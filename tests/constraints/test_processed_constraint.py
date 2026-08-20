@@ -15,10 +15,12 @@ can prove, and refuse it rather than accepting it and ignoring what it says.
 import inspect
 
 import jax.numpy as jnp
+import pytest
 from numpy.testing import assert_array_equal
 
+from _lcm.constraints.ir import describe
 from _lcm.constraints.processed import normalize_constraints
-from lcm import ref
+from lcm import implies, ref
 from lcm.condition import Condition
 from lcm.regime import LiquidMargin, post_decision_lower_bound
 from lcm.typing import FloatND
@@ -151,3 +153,114 @@ def test_an_opaque_condition_keeps_the_wrapped_annotations() -> None:
     condition = Condition.from_callable(_affordable)
 
     assert inspect.signature(condition).parameters["wealth"].annotation is FloatND
+
+
+def test_a_single_comparison_is_one_boundary_surface() -> None:
+    """The comparison a solver splits its grid on is the one that was written."""
+    processed = normalize_constraints(constraints={"borrowing": ref("savings") >= 0.0})
+
+    surfaces = processed["borrowing"].boundary_surfaces
+
+    assert [describe(surface) for surface in surfaces or ()] == ["savings >= 0.0"]
+
+
+def test_a_conjunction_decomposes_into_one_surface_per_comparison() -> None:
+    """Both halves of an `and` bound the admitted region, so both survive."""
+    processed = normalize_constraints(
+        constraints={"band": (ref("savings") >= 0.0) & (ref("savings") <= 4.0)},
+    )
+
+    surfaces = processed["band"].boundary_surfaces
+
+    assert [describe(surface) for surface in surfaces or ()] == [
+        "savings >= 0.0",
+        "savings <= 4.0",
+    ]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        (ref("savings") >= 0.0) | (ref("wealth") >= 0.0),
+        ~(ref("savings") >= 0.0),
+        implies(premise=ref("working") == 1, consequent=ref("savings") >= 0.0),
+    ],
+)
+def test_a_condition_that_is_not_a_conjunction_offers_no_surfaces(
+    condition: Condition,
+) -> None:
+    """Only a conjunction of comparisons decomposes into boundaries.
+
+    Under an `or` the admitted region is a union, and under a negation the
+    admitted side of each comparison flips, so neither hands a solver a set of
+    surfaces it could split a grid on. Answering `None` says the condition does
+    not decompose, which a solver must not read as 'there are no boundaries'.
+    """
+    processed = normalize_constraints(constraints={"c": condition})
+
+    assert processed["c"].boundary_surfaces is None
+
+
+def test_an_opaque_predicate_offers_no_surfaces() -> None:
+    """A bare callable carries no structure, so there is nothing to decompose."""
+    processed = normalize_constraints(constraints={"affordable": _affordable})
+
+    assert processed["affordable"].boundary_surfaces is None
+
+
+def test_a_declared_bound_arrives_as_the_surface_it_stands_for() -> None:
+    """The convenience constructor decomposes exactly as the comparison does.
+
+    A solver proves a declared bound by reading the surface it bounds; were the
+    sugar to arrive as something other than the comparison an author could have
+    written by hand, the two spellings would need two proofs.
+    """
+    processed = normalize_constraints(
+        constraints={
+            "borrowing": post_decision_lower_bound(margin=_LIQUID, lower=-2.0)
+        },
+    )
+
+    surfaces = processed["borrowing"].boundary_surfaces
+
+    assert [describe(surface) for surface in surfaces or ()] == ["savings >= -2.0"]
+
+
+def test_the_declaration_the_user_wrote_is_kept() -> None:
+    """Normalization adds a reading of the declaration without replacing it.
+
+    Age specialization and the pruning walk both recognise a declaration by its
+    own type, so the object the user handed over has to remain reachable.
+    """
+    declaration = post_decision_lower_bound(margin=_LIQUID, lower=-2.0)
+
+    processed = normalize_constraints(constraints={"borrowing": declaration})
+
+    assert processed["borrowing"].declaration is declaration
+
+
+def test_a_constraint_reports_the_argument_names_it_is_called_with() -> None:
+    """Its argument names are what a caller must supply, in a stable order."""
+    processed = normalize_constraints(
+        constraints={"solvent": ref("wealth") >= ref("floor")},
+    )
+
+    assert processed["solvent"].arg_names == ("floor", "wealth")
+
+
+def test_a_constraint_materializes_into_a_callable_that_evaluates_it() -> None:
+    """The function handed to the DAG admits exactly what the constraint says."""
+    processed = normalize_constraints(constraints={"borrowing": ref("savings") >= 0.0})
+
+    built = processed["borrowing"].as_function()
+
+    assert_array_equal(built(savings=jnp.array([-1.0, 1.0])), jnp.array([False, True]))
+
+
+def test_a_materialized_constraint_keeps_the_name_it_was_declared_under() -> None:
+    """The DAG identifies a constraint by name, so the name has to travel."""
+    processed = normalize_constraints(constraints={"borrowing": ref("savings") >= 0.0})
+
+    built = processed["borrowing"].as_function()
+
+    assert getattr(built, "__name__", None) == "borrowing"

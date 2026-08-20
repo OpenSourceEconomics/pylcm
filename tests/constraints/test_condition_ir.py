@@ -63,7 +63,9 @@ def test_dependencies_of_a_boolean_combination_are_the_union() -> None:
 
 def test_implies_depends_on_both_sides() -> None:
     """`p implies q` reads everything either side reads."""
-    condition = implies(ref("insurance") == 1, ref("cash") >= ref("premium"))
+    condition = implies(
+        premise=ref("insurance") == 1, consequent=ref("cash") >= ref("premium")
+    )
 
     assert condition.dependencies == frozenset({"insurance", "cash", "premium"})
 
@@ -99,7 +101,7 @@ def test_and_evaluates_as_conjunction() -> None:
 
 def test_implies_is_vacuously_true_where_the_premise_fails() -> None:
     """`p implies q` constrains only the points where `p` holds."""
-    condition = implies(ref("insured") == 1, ref("cash") >= 10.0)
+    condition = implies(premise=ref("insured") == 1, consequent=ref("cash") >= 10.0)
 
     got = condition.evaluate(
         insured=jnp.array([1, 1, 0]),
@@ -155,3 +157,31 @@ def test_evaluating_with_a_missing_dependency_names_it() -> None:
 
     with pytest.raises(TypeError, match="savings"):
         condition.evaluate(wealth=jnp.array([1.0]))
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [ref("savings") >= 0.0, ref("savings") <= 0.0, ref("savings") == 0.0],
+)
+def test_an_inclusive_comparison_admits_the_boundary_point(
+    condition: Condition,
+) -> None:
+    """Equality ownership is read off the comparison, not agreed separately.
+
+    A solver splitting a grid at a boundary has to know which side owns the
+    boundary point, and the operator the user wrote is the whole answer. Keeping
+    the question next to the operator that decides it is what stops a second,
+    divergent convention appearing wherever a boundary is consumed.
+    """
+    assert condition.expression.admits_equality  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [ref("savings") > 0.0, ref("savings") < 0.0, ref("savings") != 0.0],
+)
+def test_a_strict_comparison_leaves_the_boundary_point_out(
+    condition: Condition,
+) -> None:
+    """A strict operator puts the boundary point outside the admitted region."""
+    assert not condition.expression.admits_equality  # ty: ignore[unresolved-attribute]

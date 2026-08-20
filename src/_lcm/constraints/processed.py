@@ -23,10 +23,11 @@ from _lcm.constraints.ir import (
     Condition,
     Const,
     Ref,
+    conjuncts,
     dependencies_of,
 )
 from _lcm.post_decision_bound import _PostDecisionLowerBound
-from _lcm.typing import FunctionName
+from _lcm.typing import ConstraintFunction, FunctionName
 from lcm.typing import BoolND, UserFunction, ValueND
 
 # What a regime's `constraints` slot accepts, before normalization.
@@ -48,10 +49,54 @@ class ProcessedConstraint:
     condition: Condition
     """What the constraint says, as an inspectable expression."""
 
+    declaration: ConstraintLike
+    """The object the user handed over, kept as written.
+
+    Age specialization and the pruning walk both recognise a declaration by its
+    own type, so reading a constraint must not cost the caller access to what
+    was declared.
+    """
+
     @property
     def dependencies(self) -> frozenset[str]:
         """Frozenset of names that must be available to evaluate the constraint."""
         return dependencies_of(self.condition.expression)
+
+    @property
+    def arg_names(self) -> tuple[str, ...]:
+        """Tuple of the names the constraint is called with, in a stable order."""
+        return self.condition.arg_names
+
+    @property
+    def boundary_surfaces(self) -> tuple[Compare, ...] | None:
+        """Tuple of comparisons bounding the admitted region, or `None`.
+
+        `None` says the condition does not decompose into surfaces — it is an
+        `or`, a negation, an implication, or an opaque predicate — and must
+        never be read as "this constraint has no boundaries".
+        """
+        return conjuncts(self.condition.expression)
+
+    def as_function(
+        self, *, pool: Mapping[FunctionName, UserFunction] | None = None
+    ) -> ConstraintFunction:
+        """Build the DAG-composable predicate this constraint is evaluated through.
+
+        Args:
+            pool: The regime's functions, whose annotations the result adopts.
+                Without one every argument is annotated as a continuous value,
+                which is enough wherever the result is only walked for its
+                dependencies rather than composed.
+
+        Returns:
+            A callable whose signature names the constraint's dependencies.
+
+        """
+        from _lcm.constraints.materialize import (  # noqa: PLC0415
+            as_constraint_function,
+        )
+
+        return as_constraint_function(constraint=self, pool=pool or {})
 
     @property
     def is_opaque(self) -> bool:
@@ -86,7 +131,11 @@ def normalize_constraints(
     """
     return MappingProxyType(
         {
-            name: ProcessedConstraint(name=name, condition=_as_condition(declaration))
+            name: ProcessedConstraint(
+                name=name,
+                condition=_as_condition(declaration),
+                declaration=declaration,
+            )
             for name, declaration in constraints.items()
         }
     )

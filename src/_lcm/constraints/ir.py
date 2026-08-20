@@ -106,6 +106,11 @@ class Compare(BoolExpr):
     right: Operand
     """Right operand."""
 
+    @property
+    def admits_equality(self) -> bool:
+        """Whether the boundary point itself lies inside the admitted region."""
+        return self.op in {"<=", ">=", "=="}
+
 
 @dataclass(frozen=True, eq=False)
 class And(BoolExpr):
@@ -282,6 +287,40 @@ def dependencies_of(expression: BoolExpr) -> frozenset[str]:
             return dependencies_of(premise) | dependencies_of(consequent)
         case Opaque(func=func):
             return frozenset(signature_names(func))
+    raise TypeError(f"Not a condition expression: {expression!r}")
+
+
+def conjuncts(expression: BoolExpr) -> tuple[Compare, ...] | None:
+    """Split an expression into the comparisons that bound the admitted region.
+
+    A solver can only split a candidate grid on a set of surfaces when every
+    comparison must hold, which is what a conjunction says. Under an `or` the
+    admitted region is a union of regions, and under a negation each
+    comparison's admitted side flips, so neither yields surfaces a grid can be
+    split on.
+
+    Args:
+        expression: The expression tree to decompose.
+
+    Returns:
+        Tuple of comparisons, in the order they were declared, or `None` when
+        the expression is not a conjunction of comparisons. `None` says the
+        expression does not decompose and must never be read as "there are no
+        boundaries" — an expression always has at least one node, so an empty
+        tuple cannot occur.
+
+    """
+    match expression:
+        case Compare():
+            return (expression,)
+        case And(left=left, right=right):
+            left_parts = conjuncts(left)
+            right_parts = conjuncts(right)
+            if left_parts is None or right_parts is None:
+                return None
+            return left_parts + right_parts
+        case Or() | Not() | Implies() | Opaque():
+            return None
     raise TypeError(f"Not a condition expression: {expression!r}")
 
 
