@@ -120,10 +120,9 @@ class LiquidMargin:
 def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunction:
     """Declare a lower bound on a margin's post-decision state, checkably.
 
-    An endogenous-grid solver enforces its borrowing limit through the savings
-    grid, whose lowest node is the limit that the solve and the simulation both
-    obey. Declaring the bound states that number explicitly, so a disagreement
-    with the grid is refused when the model is built instead of the grid's
+    An endogenous-grid solver enforces its solve-time borrowing limit through the
+    savings grid. Declaring the bound states the grid's lowest node explicitly,
+    so a disagreement is refused when the model is built instead of the grid's
     value quietly taking precedence.
 
         liquid = LiquidMargin(
@@ -141,9 +140,9 @@ def post_decision_lower_bound(*, margin: LiquidMargin, lower: float) -> UserFunc
     keep in step.
 
     The result is an ordinary constraint callable evaluating
-    `post_decision_state >= lower`, so it is legal wherever a constraint is. A
-    solver whose savings grid already enforces the bound proves it and drops
-    it; grid search, which enforces nothing implicitly, evaluates it.
+    `post_decision_state >= lower`, so it is legal wherever a constraint is. An
+    endogenous-grid solve route proves it against the matching savings grid;
+    simulation and grid search evaluate it as an ordinary constraint.
 
     Args:
         margin: The Euler margin whose post-decision state is bounded below.

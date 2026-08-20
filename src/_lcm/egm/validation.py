@@ -411,11 +411,11 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
 ) -> None:
     """Prove every declared post-decision lower bound against the savings grid.
 
-    The savings grid's lowest node is the limit the solve enforces and the one
-    the simulate-phase mask is built from, so a declaration that names a
-    different number would be overridden without trace. The comparison happens
-    in the grid's own float dtype, which is what makes it exact: a grid holds
-    its lowest node at the active precision, so a declaration read back as a
+    The lowest savings-grid node is the limit the solve enforces and the input
+    to the separate intrinsic simulation budget safeguard. A declaration that
+    names a different number would contradict the solver contract. Comparison
+    happens in the grid dtype, which is what makes it exact: a grid holds its
+    lowest node at the active precision, so a declaration read back as a
     Python float is a different representation of the same decimal and would
     disagree with the grid it was copied from.
 
