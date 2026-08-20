@@ -36,6 +36,7 @@ from _lcm.solution.contract import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    simulation_route,
 )
 from _lcm.typing import (
     FlatParams,
@@ -76,18 +77,18 @@ class GridSearch(Solver):
         differently at any age, so a per-period key would put an entry per
         period in the plan where there is a single fact.
         """
+        if context.phase == "simulate":
+            return (simulation_route(context=context, solver_path=("grid_search",)),)
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(
-                    phase=context.phase,
+                    phase="solve",
                     period_group=None,
                     solver_path=("grid_search",),
                 ),
                 sites=(
                     ConstraintSite(
-                        stage=(
-                            "state_action" if context.phase == "solve" else "simulation"
-                        ),
+                        stage="state_action",
                         function_pool=context.functions,
                         available_names=None,
                     ),

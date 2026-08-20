@@ -68,6 +68,11 @@ class ConstraintRouteKey:
     from a solver that does not vary would put N entries in the plan where
     there is one fact, and a coverage count over those pairs would read a
     constant as evidence of grouping.
+
+    Caching compiled cores by a period-dependent key is a different axis and
+    not a reason to emit tuples: what varies there is the program, while a
+    route's identity is which names a site can read. A solver may keep one core
+    per age signature and still walk one route.
     """
 
     solver_path: tuple[str, ...]

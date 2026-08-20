@@ -19,7 +19,6 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
-from _lcm.constraints.dispositions import EvaluationStage
 from _lcm.constraints.routes import (
     ConstraintRoute,
     ConstraintRouteKey,
@@ -46,6 +45,7 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
     bind_roles,
+    simulation_route,
 )
 from _lcm.typing import (
     EconFunction,
@@ -334,21 +334,18 @@ class EGM(OneMarginSolver):
         over a whole candidate, including the budget constraint the phase
         synthesizes for an endogenous-grid regime.
         """
-        stage: EvaluationStage = (
-            "simulation" if context.phase == "simulate" else "savings_stage"
-        )
+        if context.phase == "simulate":
+            return (simulation_route(context=context, solver_path=("egm",)),)
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(
-                    phase=context.phase, period_group=None, solver_path=("egm",)
+                    phase="solve", period_group=None, solver_path=("egm",)
                 ),
                 sites=(
                     ConstraintSite(
-                        stage=stage,
+                        stage="savings_stage",
                         function_pool=context.functions,
-                        available_names=(
-                            None if context.phase == "simulate" else frozenset()
-                        ),
+                        available_names=frozenset(),
                     ),
                 ),
             ),

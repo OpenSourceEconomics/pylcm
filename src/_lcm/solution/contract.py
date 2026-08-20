@@ -36,7 +36,12 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkabl
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
-from _lcm.constraints.routes import ConstraintRoute
+from _lcm.constraints.routes import (
+    ConstraintRoute,
+    ConstraintRouteKey,
+    ConstraintSite,
+    StructuralProof,
+)
 from _lcm.continuation import (
     ContinuationPayload,
     EGMContinuationLayout,
@@ -481,6 +486,52 @@ class SolutionKernels:
         return (
             None if self.continuation_spec is None else self.continuation_spec.template
         )
+
+
+def simulation_route(
+    *,
+    context: ConstraintRouteContext,
+    solver_path: tuple[str, ...],
+    structural_proofs: tuple[StructuralProof, ...] = (),
+) -> ConstraintRoute:
+    """Build the simulate-phase route a solver walks over whole candidates.
+
+    Simulation is not a solver's pipeline. It walks the regime's DAG on each
+    subject's realized states and its realized action, so every name is
+    computable and the feasibility check sees a complete candidate — which is
+    true of every solver shipped today, whatever it does when solving. One
+    unrestricted site, at the simulation stage.
+
+    Built here rather than spelled out by each solver on purpose. Six copies of
+    one declaration agree by convention until one of them does not, and the
+    disagreement would be a field nobody compared. A solver whose simulate
+    phase genuinely differs writes its own route instead of calling this, which
+    then reads as the deliberate departure it would be.
+
+    Args:
+        context: What the solver may read about the regime and the phase.
+        solver_path: The nest of solvers, so the route still says whose it is.
+        structural_proofs: Proofs consulted at the site — an endogenous-grid
+            family passes the one its savings grid's lowest node establishes,
+            which the simulate-phase mask is built from.
+
+    Returns:
+        The route.
+
+    """
+    return ConstraintRoute(
+        key=ConstraintRouteKey(
+            phase="simulate", period_group=None, solver_path=solver_path
+        ),
+        sites=(
+            ConstraintSite(
+                stage="simulation",
+                function_pool=context.functions,
+                available_names=None,
+                structural_proofs=structural_proofs,
+            ),
+        ),
+    )
 
 
 class Solver(ABC):

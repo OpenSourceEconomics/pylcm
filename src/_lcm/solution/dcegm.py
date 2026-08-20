@@ -45,6 +45,7 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
     bind_roles,
+    simulation_route,
 )
 from _lcm.typing import (
     EGMStepFunction,
@@ -319,28 +320,17 @@ class DCEGM(OneMarginSolver):
         refused rather than evaluated against whichever value happens to be in
         scope.
 
-        Simulation is a different pipeline with a different answer: the
-        subject's own realized action is in hand, so the feasibility check runs
-        over a whole candidate.
+        One site, not two. The kernel evaluates constraints per discrete
+        combination and nowhere else, so declaring a savings-stage site as well
+        would promise a place of evaluation that does not exist; what the
+        savings stage offers is a proof, and a proof belongs to a site rather
+        than needing one of its own.
 
         One route, not one per period: DC-EGM reuses a single core across every
         period whose pool resolves alike, and does not rebuild per age group.
         """
         if context.phase == "simulate":
-            return (
-                ConstraintRoute(
-                    key=ConstraintRouteKey(
-                        phase="simulate", period_group=None, solver_path=("dcegm",)
-                    ),
-                    sites=(
-                        ConstraintSite(
-                            stage="simulation",
-                            function_pool=context.functions,
-                            available_names=None,
-                        ),
-                    ),
-                ),
-            )
+            return (simulation_route(context=context, solver_path=("dcegm",)),)
         bound = cast("_BoundDCEGM", self)
         return (
             ConstraintRoute(

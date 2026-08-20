@@ -211,3 +211,29 @@ def test_a_solver_that_has_not_declared_its_routes_declares_nothing() -> None:
             raise NotImplementedError
 
     assert _Undeclared().build_constraint_routes(context=_route_context()) is None
+
+
+def test_every_solver_declares_the_same_simulate_route() -> None:
+    """Simulation is the phase's pipeline, not the solver's.
+
+    It walks the regime's DAG on realized states and the realized action, so a
+    whole candidate is in hand whatever the solver did when solving. Six
+    separate spellings of that one fact would agree by convention until one
+    did not, and the disagreement would be a field nobody compared.
+    """
+    solvers = (
+        GridSearch(),
+        EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID),
+        _dcegm(),
+    )
+
+    sites = [
+        solver.build_constraint_routes(context=_route_context(phase="simulate"))[
+            0
+        ].sites
+        for solver in solvers
+    ]
+
+    assert [(site.stage, site.available_names) for (site,) in sites] == [
+        ("simulation", None)
+    ] * 3
