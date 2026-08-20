@@ -361,7 +361,6 @@ class NBEGM(OneMarginSolver):
 
         return case_piece_routes(
             context=context,
-            savings_grid=self.savings_grid,
             post_decision_function=proved_post_decision_of(solver=self),
             solver_path=("nbegm",),
         )

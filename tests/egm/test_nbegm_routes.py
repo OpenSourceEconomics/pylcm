@@ -19,8 +19,10 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.dispositions import (
     ConstraintContext,
+    Evaluate,
     ProvedByConstruction,
     Reject,
 )
@@ -72,11 +74,11 @@ def _route_context(*, phase: str = "solve") -> ConstraintRouteContext:
     )
 
 
-def _constraint_context() -> ConstraintContext:
+def _constraint_context(*, phase: str = "solve") -> ConstraintContext:
     """A minimal disposition context for the same regime."""
     return ConstraintContext(
         regime_name="alive",
-        phase="solve",
+        phase=phase,  # ty: ignore[invalid-argument-type]
         grids=MappingProxyType({"liquid": _SAVINGS_GRID}),
         function_names=frozenset({"resources", "savings", "utility"}),
         param_names=frozenset({"crra"}),
@@ -121,11 +123,24 @@ def _dispositions(constraints):
         constraints=normalize_constraints(constraints=constraints),
         routes=case_piece_routes(
             context=_route_context(),
-            savings_grid=_SAVINGS_GRID,
             post_decision_function="savings",
             solver_path=("nbegm",),
         ),
         context=_constraint_context(),
+    )
+    return {entry.constraint_name: entry.disposition for entry in plan.entries}
+
+
+def _simulate_dispositions(constraints):
+    """Plan a constraint pool against the simulate-phase route, keyed by name."""
+    plan = plan_constraints(
+        constraints=normalize_constraints(constraints=constraints),
+        routes=case_piece_routes(
+            context=_route_context(phase="simulate"),
+            post_decision_function="savings",
+            solver_path=("nbegm",),
+        ),
+        context=_constraint_context(phase="simulate"),
     )
     return {entry.constraint_name: entry.disposition for entry in plan.entries}
 
@@ -170,9 +185,16 @@ def test_a_hand_written_bound_is_proved_exactly_as_the_constructor_is():
     assert isinstance(got["borrowing_limit"], ProvedByConstruction)
 
 
-def test_a_bound_the_grid_contradicts_is_not_proved():
-    """A limit the grid does not impose is refused rather than quietly proved."""
-    got = _dispositions({"borrowing_limit": lcm.ref("savings") >= 5.0})
+def test_a_bound_on_a_name_the_grid_does_not_span_is_not_proved():
+    """Only a bound on the post-decision state the savings grid spans is proved.
+
+    A lower bound on any other name says nothing about that grid, so nothing has
+    discharged it and it falls through to be refused. Whether the *number* a
+    bound names is the grid's own lowest node is a separate question, asked once
+    when the model is built — see
+    `test_nbegm_refuses_a_lower_bound_that_disagrees_with_its_savings_grid`.
+    """
+    got = _dispositions({"borrowing_limit": lcm.ref("wealth") >= 0.0})
 
     assert isinstance(got["borrowing_limit"], Reject)
 
@@ -205,7 +227,6 @@ def test_the_dependency_free_witness_really_reads_nothing():
     """
     site = case_piece_routes(
         context=_route_context(),
-        savings_grid=_SAVINGS_GRID,
         post_decision_function="savings",
         solver_path=("nbegm",),
     )[0].sites[0]
@@ -292,10 +313,24 @@ def _route_shape(route: ConstraintRoute) -> tuple:
     return (
         route.key,
         tuple(
-            tuple(getattr(site, field.name) for field in fields(site))
+            tuple(_comparable(getattr(site, field.name)) for field in fields(site))
             for site in route.sites
         ),
     )
+
+
+def _comparable(value: object) -> object:
+    """A value that compares by what it is, not by identity.
+
+    A proof is built fresh per call, so two routes carrying the same proof hold
+    different objects. Comparing the callable's qualified name says they were
+    built by the same factory, which is the claim.
+    """
+    if isinstance(value, tuple):
+        return tuple(_comparable(entry) for entry in value)
+    if callable(value):
+        return getattr(value, "__qualname__", value)
+    return value
 
 
 @pytest.mark.parametrize(
@@ -315,5 +350,42 @@ def test_the_simulate_route_is_the_shared_one_and_not_a_local_spelling(
     got = solver.build_constraint_routes(context=context)
 
     assert [_route_shape(route) for route in got] == [
-        _route_shape(simulation_route(context=context, solver_path=solver_path))
+        _route_shape(
+            simulation_route(
+                context=context,
+                solver_path=solver_path,
+                structural_proofs=(
+                    proves_the_savings_grids_lower_bound(post_decision="savings"),
+                ),
+            )
+        )
     ]
+
+
+def test_the_bound_is_proved_on_the_simulate_route_too():
+    """Simulation enforces the same limit through the mask built from that node.
+
+    This is the phase where the proof fires for these solvers: the solve route
+    evaluates nothing and every accepted model reaches it with no constraint,
+    while the simulate route carries the injected budget predicate and whatever
+    else the regime declares. Attaching the proof and firing it are different
+    claims, and only the second one keeps the bound from being evaluated a
+    second time against a mask that already imposes it.
+    """
+    got = _simulate_dispositions(
+        {"borrowing_limit": post_decision_lower_bound(margin=_MARGIN, lower=0.0)}
+    )
+
+    assert isinstance(got["borrowing_limit"], ProvedByConstruction)
+
+
+def test_the_simulate_route_still_evaluates_what_it_can_read():
+    """The unrestricted simulate site is not a second refusal in disguise.
+
+    Without this the test above would pass on a route that discharged the bound
+    and refused everything else, which is the solve route's behaviour rather
+    than simulation's.
+    """
+    got = _simulate_dispositions({"rationing": rationing})
+
+    assert isinstance(got["rationing"], Evaluate)

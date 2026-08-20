@@ -154,7 +154,6 @@ class NNBEGM(TwoMarginSolver):
         if context.phase == "simulate":
             return case_piece_routes(
                 context=context,
-                savings_grid=self.inner.savings_grid,
                 post_decision_function=proved_post_decision_of(solver=self.inner),
                 solver_path=("nnbegm",),
             )
@@ -185,7 +184,6 @@ class NNBEGM(TwoMarginSolver):
             )
             for route in case_piece_routes(
                 context=context,
-                savings_grid=bound.inner.savings_grid,
                 post_decision_function=proved_post_decision_of(solver=bound.inner),
                 solver_path=("nnbegm", branch),
                 function_pool=pool,
