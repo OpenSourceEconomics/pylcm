@@ -501,6 +501,37 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
             raise ModelInitializationError(msg)
 
 
+def fail_if_kernel_grids_withhold_their_points(
+    *,
+    grids: Mapping[str, Grid],
+    regime_name: RegimeName,
+    solver_name: str,
+) -> None:
+    """Refuse every grid a kernel reads at model construction but cannot.
+
+    Which grids those are is the solver's to name — the case-piece kernels lay
+    out savings nodes, carry shapes, and interval geometry from them while the
+    model is built, and a continuous action grid is not among them. Naming them
+    at one call site keeps the refusal a statement about the solver rather than
+    a property of whichever `to_jax()` happens to run first, which is what a
+    reader gets otherwise: an error naming neither the regime nor the slot.
+
+    Args:
+        grids: Mapping of each grid's role, as the message should read, to the
+            grid itself.
+        regime_name: Name of the regime the grids belong to.
+        solver_name: Name of the solver, for the message.
+
+    Raises:
+        ModelInitializationError: If any of them supplies its points at runtime.
+
+    """
+    for role, grid in grids.items():
+        fail_if_grid_withholds_its_points(
+            grid=grid, role=role, regime_name=regime_name, solver_name=solver_name
+        )
+
+
 def fail_if_grid_withholds_its_points(
     *,
     grid: Grid,

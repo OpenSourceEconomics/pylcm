@@ -389,13 +389,26 @@ class NBEGM(OneMarginSolver):
         """
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_declared_lower_bound_disagrees_with_the_grid,
+            fail_if_kernel_grids_withhold_their_points,
         )
 
         user_regime = context.user_regimes[context.regime_name]
+        bound = cast("_BoundNBEGM", self)
+        liquid = bound.continuous_state
+        fail_if_kernel_grids_withhold_their_points(
+            grids={
+                "savings grid": bound.savings_grid,
+                f"grid of the liquid state '{liquid}'": cast(
+                    "Grid", user_regime.states[liquid]
+                ),
+            },
+            regime_name=context.regime_name,
+            solver_name="NBEGM",
+        )
         fail_if_declared_lower_bound_disagrees_with_the_grid(
             regime_name=context.regime_name,
             user_regime=user_regime,
-            solver=cast("_BoundNBEGM", self),
+            solver=bound,
             solver_name="NBEGM",
         )
         unenforceable = without_proved_lower_bounds(

@@ -27,7 +27,7 @@ from _lcm.constraints.processed import normalize_constraints
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
-from _lcm.grids import ContinuousGrid
+from _lcm.grids import ContinuousGrid, Grid
 from _lcm.solution.contract import (
     ContinuationPayload,
     KernelResult,
@@ -163,6 +163,7 @@ class NNBEGM(TwoMarginSolver):
         )
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_declared_lower_bound_disagrees_with_the_grid,
+            fail_if_kernel_grids_withhold_their_points,
         )
 
         user_regime = context.user_regimes[context.regime_name]
@@ -170,10 +171,27 @@ class NNBEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             user_regime=user_regime,
         )
+        bound = cast("_BoundNNBEGM", self)
+        outer_state = bound.outer_state
+        liquid = bound.inner.continuous_state
+        fail_if_kernel_grids_withhold_their_points(
+            grids={
+                "outer grid": bound.outer_grid,
+                "inner savings grid": bound.inner.savings_grid,
+                f"grid of the outer state '{outer_state}'": cast(
+                    "Grid", user_regime.states[outer_state]
+                ),
+                f"grid of the liquid state '{liquid}'": cast(
+                    "Grid", user_regime.states[liquid]
+                ),
+            },
+            regime_name=context.regime_name,
+            solver_name="NNBEGM",
+        )
         fail_if_declared_lower_bound_disagrees_with_the_grid(
             regime_name=context.regime_name,
             user_regime=user_regime,
-            solver=cast("_BoundNNBEGM", self).inner,
+            solver=bound.inner,
             solver_name="NNBEGM",
         )
         unenforceable = without_proved_lower_bounds(
