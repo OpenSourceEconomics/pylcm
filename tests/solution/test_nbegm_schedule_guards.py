@@ -25,7 +25,6 @@ from lcm import LinSpacedGrid, Model
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
-    feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
     resolve_solver,
@@ -104,7 +103,7 @@ def _build(*, alive_functions: Mapping[str, Callable[..., object]]) -> Model:
             savings_grid=SAVINGS_GRID,
             envelope_arithmetic="ordinary",
         ),
-        constraints={"feasible": feasible},
+        constraints={},
     )
 
 

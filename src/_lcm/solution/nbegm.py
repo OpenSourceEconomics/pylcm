@@ -33,6 +33,7 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
@@ -60,6 +61,7 @@ from _lcm.solution.continuation_target import (
     target_period_grid,
 )
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
     OneMarginSolver,
@@ -67,6 +69,7 @@ from _lcm.solution.contract import (
     PeriodKernel,
     SolutionKernels,
     SolverBuildContext,
+    SolverModelContext,
     _BoundLiquidMargin,
 )
 from _lcm.solution.dcegm import _carry_subset
@@ -339,6 +342,52 @@ class NBEGM(OneMarginSolver):
     def publishes_one_sided_jump_reads(self) -> bool:
         """One-sided jump resolution duplicates abscissae across each jump."""
         return self.jump_read == "one_sided"
+
+    def build_constraint_routes(
+        self, *, context: ConstraintRouteContext
+    ) -> tuple[ConstraintRoute, ...]:
+        """Declare the one route the case-piece kernels walk in each phase.
+
+        Declared rather than left undeclared. The default would say the solver
+        has not written its routes down, and nothing would be planned for it —
+        which is the right answer for a solver nobody has described and the
+        wrong one here, where the description is available and says that no
+        name is readable anywhere along the pipeline.
+        """
+        from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
+
+        return case_piece_routes(
+            context=context,
+            post_decision_function=proved_post_decision_of(solver=self),
+            solver_path=("nbegm",),
+        )
+
+    def validate_model(self, *, context: SolverModelContext) -> None:
+        """Validate grids the kernel reads and the declared borrowing limit."""
+        from _lcm.egm.validation import (  # noqa: PLC0415
+            fail_if_declared_lower_bound_disagrees_with_the_grid,
+            fail_if_kernel_grids_withhold_their_points,
+        )
+
+        user_regime = context.user_regimes[context.regime_name]
+        bound = cast("_BoundNBEGM", self)
+        liquid = bound.continuous_state
+        fail_if_kernel_grids_withhold_their_points(
+            grids={
+                "savings grid": bound.savings_grid,
+                f"grid of the liquid state '{liquid}'": cast(
+                    "Grid", user_regime.states[liquid]
+                ),
+            },
+            regime_name=context.regime_name,
+            solver_name="NBEGM",
+        )
+        fail_if_declared_lower_bound_disagrees_with_the_grid(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+            solver=bound,
+            solver_name="NBEGM",
+        )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.
@@ -886,6 +935,27 @@ class _BoundNBEGM(NBEGM):
     continuous_action: ActionName
     budget_target: FunctionName
     post_decision_function: FunctionName
+
+
+def proved_post_decision_of(*, solver: NBEGM) -> FunctionName | None:
+    """Name the post-decision state a case-piece solver's savings grid spans.
+
+    `None` before the solver is bound to a regime's liquid margin: the grid
+    exists, but the state it spans is not yet named, so nothing can be proved
+    against it. Deciding that on the solver's type rather than on whether an
+    attribute happens to be there keeps a rename a failure at this read — a
+    defaulted lookup would answer `None` for a bound solver too, and the caller
+    cannot tell that apart from an honestly unbound one.
+
+    Args:
+        solver: The solver a regime declared.
+
+    Returns:
+        The post-decision state's name, or `None` if the solver is not a bound
+        case-piece kernel.
+
+    """
+    return solver.post_decision_function if isinstance(solver, _BoundNBEGM) else None
 
 
 @dataclass(frozen=True, kw_only=True)

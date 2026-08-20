@@ -23,16 +23,14 @@ from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.phased import Phased
-from lcm.regime import (
+from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
     _EGMFamilyRegime,
 )
-from lcm.regime import (
-    Regime as UserRegime,
-)
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.phased import Phased
+from lcm.regime import Regime as UserRegime
 from lcm.transition import _AgeSpecialized
 from lcm.typing import FloatND, UserFunction
 

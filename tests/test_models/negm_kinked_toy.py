@@ -25,18 +25,20 @@ from dataclasses import replace
 import jax.numpy as jnp
 
 from lcm import (
-    DCEGM,
-    NEGM,
     AgeGrid,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    NetOfAdjustmentCost,
-    OuterContinuousMargin,
     Regime,
     categorical,
 )
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+    outer_unchanged,
+)
+from lcm.solvers import DCEGM, NEGM
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -54,6 +56,7 @@ ILLIQUID_FLOW = 0.05  # iota
 WITHDRAWAL_PENALTY = 0.10  # kappa on a withdrawal (new_durable < illiquid)
 BORROW_RATE = 0.12  # credit-card rate on liquid_savings < 0
 SAVE_RATE = 0.03  # rate on liquid_savings >= 0
+SAVINGS_FLOOR = -5.0  # borrowing limit on the post-decision savings
 RISK_AVERSION = 2.0
 LABOUR_INCOME = 5.0
 
@@ -122,11 +125,6 @@ def durable_transition(new_durable: ContinuousState) -> ContinuousState:
     return new_durable
 
 
-def keep_illiquid(illiquid: ContinuousState) -> FloatND:
-    """The no-adjustment candidate `s' = Z` (the withdrawal-penalty kink)."""
-    return illiquid
-
-
 def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
     """CRRA over `consumption + iota * illiquid` — additively separable in `s'`."""
     flow = consumption + ILLIQUID_FLOW * illiquid
@@ -162,7 +160,7 @@ ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_Z)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_C)
 ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-8.0, stop=8.0, n_points=N_AZ)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_AZ)
-SAVINGS_GRID = LinSpacedGrid(start=-5.0, stop=35.0, n_points=80)
+SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=80)
 
 
 NEGM_SOLVER = NEGM(
@@ -194,7 +192,6 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavings
             "new_durable": new_durable,
             "resources_before_outer_cost": resources_before_outer_cost,
             "liquid_savings": liquid_savings,
-            "keep_illiquid": keep_illiquid,
             "credited": credited,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -213,7 +210,7 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavings
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_durable",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
     )
 

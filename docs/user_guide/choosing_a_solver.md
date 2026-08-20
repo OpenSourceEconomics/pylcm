@@ -107,6 +107,94 @@ Two cross-cutting factors:
 | `NNBEGM`     | The `NEGM` nest with **declared** breakpoints on the inner liquid margin.                                                                             | `inner`, `outer_grid`       |
 | `NBEGM`      | One liquid asset with **declared** institutional kinks and cliffs. See [the NB-EGM solver](nbegm.md).                                                 | `savings_grid`, `jump_read` |
 
+## Writing a constraint: callable or `Condition`?
+
+Start from the shape of the economic restriction, not from the solver. An ordinary
+callable is enough when the restriction is simply executable Boolean logic:
+
+```python
+import jax.numpy as jnp
+
+from lcm.typing import BoolND, ContinuousAction, FloatND
+
+
+def consumption_is_feasible(
+    consumption: ContinuousAction,
+    resources: FloatND,
+) -> BoolND:
+    """Consumption is positive and does not exceed available resources."""
+    return (consumption > 0.0) & jnp.isfinite(consumption) & (consumption <= resources)
+```
+
+Use a `Condition` when pylcm must retain the restriction as named comparisons, or when
+that declarative form is clearer for the model. Build conditions with `lcm.ref`:
+
+```python
+import lcm
+
+# One named value compared with a literal.
+nonnegative_savings = lcm.ref("savings") >= 0.0
+
+# One named value compared with another named value. The second name may be a
+# computed function or a parameter.
+within_borrowing_limit = lcm.ref("assets") < lcm.ref("borrowing_limit")
+
+# Intersection and union.
+max_hours = 40.0
+liquid_and_available = (lcm.ref("cash") >= 0.0) & (lcm.ref("hours") <= max_hours)
+insured_or_eligible = (lcm.ref("insured") == 1) | (
+    lcm.ref("income") <= lcm.ref("eligibility_limit")
+)
+
+# Complement.
+not_retired = ~(lcm.ref("retired") == 1)
+
+# Conditional requirement.
+working_respects_hours = lcm.implies(
+    premise=lcm.ref("working") == 1,
+    consequent=lcm.ref("hours") <= max_hours,
+)
+```
+
+An ordinary callable can compute the same Boolean result in general. `Condition` is
+**needed** only when pylcm must retain the named comparison structure — for example so a
+solver can prove that its construction already enforces `savings >= 0`, compile a
+declared boundary, or give a precise early refusal. A `Condition` does not make an
+otherwise unsupported restriction supported: the selected solver still needs a route
+where all required names are available, or a proof/compiler that understands its exact
+shape.
+
+Prefer a specialized declaration when pylcm provides one. A post-decision lower bound
+can be written directly as `lcm.ref("savings") >= 0.0`, but the specialized form ties
+the name to the regime's declared liquid margin and therefore cannot drift away from it:
+
+```python
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
+    post_decision_lower_bound,
+)
+
+liquid = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="wealth",
+    post_decision_state="savings",
+)
+borrowing_limit = post_decision_lower_bound(margin=liquid, lower=0.0)
+```
+
+Both spell the same comparison. The specialized form is preferred when the declaration
+belongs to that margin.
+
+### When do I need retained structure?
+
+| Constraint shape                                       | Declaration                                            | `GridSearch`                                                             | EGM-family / `NBEGM` routes                                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Arbitrary executable logic                             | Ordinary callable                                      | Evaluates it on complete state-action candidates.                        | Evaluates it only where the route has every required name; otherwise refuses it as opaque.         |
+| Named comparisons whose structure matters              | `Condition` built with `lcm.ref` and Boolean operators | Evaluates the condition like any other constraint.                       | May evaluate, prove, compile, or precisely refuse it, depending on the route and available names.  |
+| Exact lower bound on a declared post-decision state    | `post_decision_lower_bound`                            | Evaluates the resulting comparison.                                      | Can prove it from the matching savings grid; a role or numeric mismatch is refused at model build. |
+| Restriction requiring names no candidate stage exposes | Callable or `Condition`                                | Usually the broad fallback when its full candidate contains those names. | Refuses it unless an exact structural proof or boundary compiler covers it.                        |
+
 A solver takes numerical configuration only. Which state, action, and function play the
 liquid and outer roles is declared on the regime — `LiquidMargin` on a
 `ConsumptionSavingsRegime`, plus `OuterContinuousMargin` on a

@@ -90,7 +90,9 @@ def _callable_mapping_errors(
                     f"computed for."
                 )
         elif not callable(v):
-            error_messages.append(f"{attr_name} value {v!r} must be a callable.")
+            error_messages.append(
+                f"{attr_name} value {v!r} must be a Condition or a callable."
+            )
     return error_messages
 
 

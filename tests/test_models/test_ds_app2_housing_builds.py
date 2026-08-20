@@ -23,14 +23,15 @@ import numpy as np
 import pytest
 
 from lcm import (
-    NEGM,
     LinSpacedGrid,
     Model,
+)
+from lcm.consumption_savings_regime import (
     NestedConsumptionSavingsRegime,
     outer_unchanged,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, NEGM
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import ds_app2_housing
 
@@ -115,7 +116,7 @@ def test_keeper_and_adjuster_are_solver_internal_not_user_actions():
     assert "adjust" not in working.actions
     solver = working.solver
     assert isinstance(solver, NEGM)
-    assert working.outer_continuous.no_adjustment != outer_unchanged
+    assert working.outer_continuous.no_adjustment == outer_unchanged
 
 
 def test_build_params_threads_the_transaction_cost():
@@ -196,7 +197,7 @@ def test_round_trip_cost_creates_an_inaction_wedge():
 
 
 @pytest.mark.slow
-@pytest.mark.skip(reason="gpu-01 only: 2-D+AR1 NEGM solve OOMs locally")
+@pytest.mark.gpu(reason="2-D+AR1 NEGM solve OOMs a CPU-only box")
 def test_housing_model_solves_on_gpu():
     """The DS App.2 housing model solves to a finite value function.
 

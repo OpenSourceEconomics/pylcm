@@ -11,13 +11,14 @@ import pytest
 
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from lcm import AgeGrid, Model
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.regime import (
+from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
     OuterContinuousMargin,
-    Regime,
+    outer_unchanged,
 )
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.regime import Regime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy
 
@@ -43,7 +44,6 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "new_illiquid": n_nbegm_toy.new_illiquid,
             "resources": n_nbegm_toy.resources,
             "liquid_savings": n_nbegm_toy.liquid_savings,
-            "keep_illiquid": n_nbegm_toy.keep_illiquid,
             "credited": n_nbegm_toy.credited,
         },
         liquid=LiquidMargin(
@@ -56,7 +56,7 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             state="illiquid",
             action="illiquid_investment",
             post_decision_state="new_illiquid",
-            no_adjustment="keep_illiquid",
+            no_adjustment=outer_unchanged,
         ),
         solver=n_nbegm_toy.build_solver(variant="n_nbegm"),
     )
@@ -83,7 +83,7 @@ def test_margin_collision_is_rejected_before_solver_validation() -> None:
                 state="illiquid",
                 action="consumption",
                 post_decision_state="new_illiquid",
-                no_adjustment="keep_illiquid",
+                no_adjustment=outer_unchanged,
             )
         )
 

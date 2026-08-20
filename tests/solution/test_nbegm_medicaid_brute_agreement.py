@@ -15,13 +15,12 @@ import pytest
 import lcm
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
 )
 from lcm.case_piece import BoundaryKind, EqualityOwner
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
@@ -158,7 +157,7 @@ def _build_model(*, predicate, subsidy_when, subsidy_otherwise) -> Model:
                 "dead": toy.next_liquid_from_savings,
             }
         },
-        constraints={"feasible": toy.feasible},
+        constraints={},
         transition={
             "alive": MarkovTransition(toy.prob_stay_alive),
             "dead": MarkovTransition(toy.prob_die),

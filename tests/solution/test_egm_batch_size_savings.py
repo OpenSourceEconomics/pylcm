@@ -16,7 +16,7 @@ import pytest
 
 from _lcm.typing import PeriodToRegimeToVArr
 from lcm import LinSpacedGrid, MarkovTransition, Model
-from lcm.regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
@@ -30,7 +30,6 @@ from tests.solution.test_egm_batch_size_euler import (
     death_prob,
     inverse_marginal_utility,
     next_wealth,
-    resources,
     savings,
     stay_prob,
     utility,
@@ -60,7 +59,6 @@ def _model(savings_batch_size: int) -> Model:
         state_transitions={"wealth": next_wealth},
         functions={
             "utility": utility,
-            "resources": resources,
             "savings": savings,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
@@ -76,7 +74,7 @@ def _model(savings_batch_size: int) -> Model:
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
-            resources="resources",
+            resources="wealth",
             post_decision_state="savings",
         ),
     )
