@@ -33,8 +33,6 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from _lcm.constraints.bounds import without_proved_lower_bounds
-from _lcm.constraints.processed import normalize_constraints
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
@@ -87,7 +85,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import (
     FIXED_FORM_ATTRIBUTE,
     cash_on_hand_with_subsidy,
@@ -103,7 +101,6 @@ from lcm.typing import (
     ScalarFloat,
     StateName,
     StateOrActionName,
-    UserFunction,
 )
 
 # Key under which ride-along periods share one compiled core: the continuation
@@ -366,29 +363,7 @@ class NBEGM(OneMarginSolver):
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
-        """Refuse a declared feasibility constraint the kernel cannot enforce.
-
-        The case-piece kernel inverts the Euler equation at each node of the
-        savings grid, so consumption is produced first and the liquid state
-        falls out of the budget identity afterwards. A predicate over
-        `(state, action)` is evaluable at no point in that step, and the
-        candidates the kernel publishes are never masked by one. Declaring one
-        and solving anyway answers a different problem than the one written
-        down, with no diagnostic.
-
-        A declared lower bound on the post-decision state is the exception: it
-        states the number the savings grid already enforces, so it is proved
-        against that grid and then carries no predicate for the kernel to
-        evaluate. Which declarations qualify is asked of the same function that
-        drops them from the engine's constraint set, so the exemption here and
-        the drop there cannot come to disagree.
-
-        Keep it that way: a local test for the bound's shape here would be a
-        second spelling of a question that already has an answer, and the two
-        would drift without a symptom. A bound exempted here but not dropped
-        there reaches the engine's constraint set, which is built per discrete
-        combo — no place a continuous post-decision state can be read.
-        """
+        """Validate grids the kernel reads and the declared borrowing limit."""
         from _lcm.egm.validation import (  # noqa: PLC0415
             fail_if_declared_lower_bound_disagrees_with_the_grid,
             fail_if_kernel_grids_withhold_their_points,
@@ -413,26 +388,6 @@ class NBEGM(OneMarginSolver):
             solver=bound,
             solver_name="NBEGM",
         )
-        unenforceable = without_proved_lower_bounds(
-            # `Phased` is rejected in the constraints slot by the phase
-            # grammar, so every value here is a bare declaration.
-            constraints=normalize_constraints(
-                constraints=cast(
-                    "Mapping[FunctionName, UserFunction]", user_regime.constraints
-                )
-            ),
-            proved_post_decision=proved_post_decision_of(solver=self),
-        )
-        if unenforceable:
-            constraint_names = sorted(unenforceable)
-            msg = (
-                f"NBEGM regime '{context.regime_name}' declares constraints "
-                f"{constraint_names}. The case-piece kernel evaluates no user "
-                "constraint; encode the borrowing limit in the first node of "
-                "`savings_grid` and the budget identity in the post-decision "
-                "function, or use GridSearch."
-            )
-            raise ModelInitializationError(msg)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Check case coverage and reject hidden branching in user pieces.

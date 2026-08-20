@@ -26,9 +26,16 @@ from _lcm.typing import FunctionName, RegimeName, StateOrActionName
 # - `"state_action"` — over the whole state-action product, as grid search does
 # - `"discrete_combo"` — per discrete combination, before a continuous inner stage
 # - `"savings_stage"` — inside an endogenous-grid inversion
+# - `"outer_candidate"` — at one NEGM adjuster outer-grid node
+# - `"keeper_candidate"` — at NEGM's no-adjustment outer candidate
 # - `"simulation"` — against the simulate-phase feasibility array
 type EvaluationStage = Literal[
-    "state_action", "discrete_combo", "savings_stage", "simulation"
+    "state_action",
+    "discrete_combo",
+    "savings_stage",
+    "outer_candidate",
+    "keeper_candidate",
+    "simulation",
 ]
 
 

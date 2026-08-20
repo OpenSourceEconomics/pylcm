@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
@@ -531,6 +531,18 @@ def simulation_route(
         The route.
 
     """
+    from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+        resolve_periodized_nodes,
+    )
+
+    functions = cast(
+        "EconFunctionsMapping",
+        (
+            resolve_periodized_nodes(context.functions, context.active_periods[0])
+            if context.active_periods
+            else context.functions
+        ),
+    )
     return ConstraintRoute(
         key=ConstraintRouteKey(
             phase="simulate", period_group=None, solver_path=solver_path
@@ -538,7 +550,7 @@ def simulation_route(
         sites=(
             ConstraintSite(
                 stage="simulation",
-                function_pool=context.functions,
+                function_pool=functions,
                 available_names=None,
                 structural_proofs=structural_proofs,
             ),

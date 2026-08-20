@@ -75,8 +75,11 @@ def _build_model(
 
 
 def test_nbegm_refuses_a_constraint_its_kernel_cannot_evaluate():
-    """An NBEGM regime declaring a general feasibility predicate fails to build."""
-    with pytest.raises(ModelInitializationError, match="rationing"):
+    """The refusal identifies the NBEGM route that cannot meet the constraint."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"`nbegm solve` route.*nothing is evaluated",
+    ):
         _build_model(variant="nbegm", constraints={"rationing": rationing})
 
 

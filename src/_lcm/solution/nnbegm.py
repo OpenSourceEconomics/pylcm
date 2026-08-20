@@ -21,8 +21,6 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
-from _lcm.constraints.bounds import without_proved_lower_bounds
-from _lcm.constraints.processed import normalize_constraints
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
@@ -51,8 +49,8 @@ from _lcm.solution.negm import (
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.typing import ActionName, FloatND, FunctionName, StateName, UserFunction
+from lcm.exceptions import RegimeInitializationError
+from lcm.typing import ActionName, FloatND, FunctionName, StateName
 
 
 @beartype(conf=REGIME_CONF)
@@ -191,21 +189,7 @@ class NNBEGM(TwoMarginSolver):
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
-        """Validate the user-level nested NB-EGM contract for this regime.
-
-        A declared lower bound on the inner post-decision state is admitted:
-        it states the number the inner savings grid already enforces, so it is
-        proved against that grid and leaves no predicate for either margin to
-        evaluate. Which declarations qualify is asked of the same function that
-        drops them from the engine's constraint set, so the exemption here and
-        the drop there cannot come to disagree.
-
-        Keep it that way: a local test for the bound's shape here would be a
-        second spelling of a question that already has an answer, and the two
-        would drift without a symptom. A bound exempted here but not dropped
-        there reaches the engine's constraint set, which is built per discrete
-        combo — no place a continuous post-decision state can be read.
-        """
+        """Validate the nested contract, kernel grids, and borrowing limit."""
         from _lcm.egm.nnbegm_validation import (  # noqa: PLC0415
             validate_nnbegm_regime,
         )
@@ -242,28 +226,6 @@ class NNBEGM(TwoMarginSolver):
             solver=bound.inner,
             solver_name="NNBEGM",
         )
-        unenforceable = without_proved_lower_bounds(
-            # `Phased` is rejected in the constraints slot by the phase
-            # grammar, so every value here is a bare declaration.
-            constraints=normalize_constraints(
-                constraints=cast(
-                    "Mapping[FunctionName, UserFunction]", user_regime.constraints
-                )
-            ),
-            proved_post_decision=proved_post_decision_of(solver=self.inner),
-        )
-        if unenforceable:
-            constraint_names = sorted(unenforceable)
-            msg = (
-                f"NNBEGM regime '{context.regime_name}' declares constraints "
-                f"{constraint_names}. The inner NB-EGM solve inverts the Euler "
-                "equation and the outer sweep scores an exogenous grid, so no "
-                "user constraint is evaluated in either margin; encode the "
-                "borrowing limit in the first node of the inner `savings_grid` "
-                "and the budget identity in the post-decision function, or use "
-                "GridSearch."
-            )
-            raise ModelInitializationError(msg)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Apply the inner solver's build-time gates to the liquid margin.

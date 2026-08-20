@@ -13,6 +13,7 @@ solver already gets from turning into a generic failure.
 """
 
 from types import MappingProxyType
+from typing import cast
 
 from _lcm.constraints.dispositions import (
     ConstraintContext,
@@ -24,9 +25,11 @@ from _lcm.constraints.processed import normalize_constraints
 from _lcm.constraints.routes import ConstraintRoute, plan_constraints
 from _lcm.engine import VariableInfo, Variables
 from _lcm.solution.contract import ConstraintRouteContext, SolutionKernels
+from _lcm.typing import EconFunctionsMapping
 from lcm import ref
 from lcm.solvers import DCEGM, EGM, GridSearch, Solver
-from tests.test_models import dcegm_paper_twin
+from lcm.typing import BoolND, ContinuousState
+from tests.test_models import dcegm_paper_twin, negm_kinked_toy
 
 _VARIABLES = Variables(
     info=MappingProxyType(
@@ -50,6 +53,26 @@ _VARIABLES = Variables(
     )
 )
 
+_NEGM_VARIABLES = Variables(
+    info=MappingProxyType(
+        {
+            "wealth": VariableInfo(
+                kind="state", topology="continuous", is_process=False
+            ),
+            "illiquid": VariableInfo(
+                kind="state", topology="continuous", is_process=False
+            ),
+            "consumption": VariableInfo(
+                kind="action", topology="continuous", is_process=False
+            ),
+            "illiquid_investment": VariableInfo(
+                kind="action", topology="continuous", is_process=False
+            ),
+        }
+    )
+)
+_NEGM_REGIME = negm_kinked_toy.build_alive_regime()
+
 
 def _route_context(*, phase: str = "solve") -> ConstraintRouteContext:
     return ConstraintRouteContext(
@@ -70,6 +93,35 @@ def _constraint_context(*, phase: str = "solve") -> ConstraintContext:
         function_names=frozenset(),
         param_names=frozenset({"interest_rate"}),
     )
+
+
+def _negm_route_context(*, phase: str) -> ConstraintRouteContext:
+    return ConstraintRouteContext(
+        regime_name="alive",
+        phase=phase,  # ty: ignore[invalid-argument-type]
+        functions=cast(
+            "EconFunctionsMapping",
+            MappingProxyType(dict(_NEGM_REGIME.functions)),
+        ),
+        variables=_NEGM_VARIABLES,
+        flat_param_names=frozenset(),
+        active_periods=(0, 1, 2),
+    )
+
+
+def _negm_constraint_context(*, phase: str) -> ConstraintContext:
+    return ConstraintContext(
+        regime_name="alive",
+        phase=phase,  # ty: ignore[invalid-argument-type]
+        grids=MappingProxyType({}),
+        function_names=frozenset(_NEGM_REGIME.functions),
+        param_names=frozenset(),
+    )
+
+
+def housing_stays_in_bounds(new_durable: ContinuousState) -> BoolND:
+    """The outer candidate stays on the durable grid's represented domain."""
+    return (new_durable >= 0.0) & (new_durable <= 30.0)
 
 
 def _bound(solver: Solver) -> Solver:
@@ -260,6 +312,37 @@ def test_every_solver_declares_the_same_simulate_route() -> None:
     assert [(site.stage, site.available_names) for (site,) in sites] == [
         ("simulation", None)
     ] * 3
+
+
+def test_negm_evaluates_housing_bounds_on_all_three_candidate_routes() -> None:
+    """The adjuster, keeper, and simulation each honour the outer-stock bound."""
+    solver = _NEGM_REGIME.solver
+    normalized = normalize_constraints(
+        constraints={"housing_stays_in_bounds": housing_stays_in_bounds}
+    )
+    observed = {}
+    for phase in ("solve", "simulate"):
+        routes = solver.build_constraint_routes(
+            context=_negm_route_context(phase=phase)
+        )
+        assert routes is not None
+        plan = plan_constraints(
+            constraints=normalized,
+            routes=routes,
+            context=_negm_constraint_context(phase=phase),
+        )
+        for entry in plan.entries:
+            assert isinstance(entry.disposition, Evaluate)
+            observed[(entry.route.phase, entry.route.solver_path)] = (
+                entry.route.period_group,
+                entry.disposition.stage,
+            )
+
+    assert observed == {
+        ("solve", ("negm", "adjuster")): ((0, 1, 2), "outer_candidate"),
+        ("solve", ("negm", "keeper")): ((0, 1, 2), "keeper_candidate"),
+        ("simulate", ("negm",)): (None, "simulation"),
+    }
 
 
 def test_dcegm_proves_a_bound_on_the_state_its_savings_grid_spans() -> None:

@@ -177,15 +177,15 @@ class AgeNormalizationResult:
 
 
 def resolve_periodized_node(node: object, period: int) -> object:
-    """Return a `PeriodizedEconFunction`'s processed function for `period`; else it."""
-    if isinstance(node, PeriodizedEconFunction):
+    """Return a periodized function's concrete callable for `period`; else it."""
+    if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.resolve(period)
     return node
 
 
 def periodized_node_signature(node: object, period: int) -> Hashable:
     """`node`'s period signature: its explicit signature, or `INVARIANT`."""
-    if isinstance(node, PeriodizedEconFunction):
+    if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.signature(period)
     return INVARIANT
 
@@ -193,12 +193,15 @@ def periodized_node_signature(node: object, period: int) -> Hashable:
 def resolve_periodized_nodes(
     mapping: Mapping[str, object], period: int
 ) -> Mapping[str, object]:
-    """Resolve every `PeriodizedEconFunction` in a flat mapping at `period`.
+    """Resolve every periodized function in a flat mapping at `period`.
 
     Returns the input unchanged when it holds no periodized node, so an
     age-invariant model builds byte-identically to one with no per-age wiring.
     """
-    if not any(isinstance(node, PeriodizedEconFunction) for node in mapping.values()):
+    if not any(
+        isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction))
+        for node in mapping.values()
+    ):
         return mapping
     return MappingProxyType(
         {name: resolve_periodized_node(node, period) for name, node in mapping.items()}

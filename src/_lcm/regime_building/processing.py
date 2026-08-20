@@ -83,9 +83,14 @@ from _lcm.regime_building.phases import (
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
 
-from _lcm.constraints.bounds import without_proved_lower_bounds
+from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
-from _lcm.constraints.processed import ProcessedConstraint, ProcessedConstraintsMapping
+from _lcm.constraints.processed import (
+    ProcessedConstraint,
+    ProcessedConstraintsMapping,
+    normalize_constraints,
+)
+from _lcm.constraints.routes import ConstraintPlan, plan_constraints
 from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
@@ -99,13 +104,12 @@ from _lcm.regime_building.transition_invariants import (
 )
 from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from _lcm.solution.contract import (
+    ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
-    OneMarginSolver,
     PeriodKernel,
     SolverBuildContext,
     SolverModelContext,
-    TwoMarginSolver,
 )
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
@@ -150,7 +154,6 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.regime import _EGMFamilyRegime
 from lcm.solvers import DCEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
@@ -895,14 +898,24 @@ def _build_solution_phase(
         Complete solve functions container.
 
     """
+    flat_param_names = _engine_flat_param_names(
+        regime_params_template=regime_params_template,
+        granular_param_expansions=granular_param_expansions,
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
-        constraints=without_proved_lower_bounds(
+        constraints=_constraints_the_solver_evaluates(
             constraints=spec.solution.constraints,
-            proved_post_decision=_proved_post_decision_name(
-                solver=solver, user_regime=user_regimes[regime_name]
-            ),
+            solver=solver,
+            regime_name=regime_name,
+            phase="solve",
+            functions=spec.solution.functions,
+            variables=variables,
+            flat_param_names=flat_param_names,
+            active_periods=regimes_to_active_periods[regime_name],
+            grids=all_grids[regime_name],
         ),
         state_transitions=spec.solution.state_transitions,
         nested_transitions=nested_transitions,
@@ -913,11 +926,6 @@ def _build_solution_phase(
         phase_reachability=phase_reachability,
         source_regime_name=regime_name,
         phase_name="solution",
-    )
-
-    flat_param_names = _engine_flat_param_names(
-        regime_params_template=regime_params_template,
-        granular_param_expansions=granular_param_expansions,
     )
 
     # Fixed, distributed states are co-mapped with the continuation V so the solve
@@ -1479,14 +1487,24 @@ def _build_simulation_phase(
     decision_functions = dict(spec.simulation.functions) | {
         name: spec.solution.functions[name] for name in carried_only
     }
+    flat_param_names = _engine_flat_param_names(
+        regime_params_template=regime_params_template,
+        granular_param_expansions=granular_param_expansions,
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
-        constraints=without_proved_lower_bounds(
+        constraints=_constraints_the_solver_evaluates(
             constraints=spec.simulation.constraints,
-            proved_post_decision=_proved_post_decision_name(
-                solver=solver, user_regime=user_regime
-            ),
+            solver=solver,
+            regime_name=regime_name,
+            phase="simulate",
+            functions=MappingProxyType(decision_functions),
+            variables=variables,
+            flat_param_names=flat_param_names,
+            active_periods=regimes_to_active_periods[regime_name],
+            grids=all_grids[regime_name],
         ),
         state_transitions=spec.simulation.state_transitions,
         nested_transitions=nested_transitions,
@@ -1512,12 +1530,24 @@ def _build_simulation_phase(
                 "synthesizes for endogenous-grid regimes; rename it."
             )
             raise ModelInitializationError(msg)
+        budget_constraint = get_intrinsic_budget_constraint(
+            solver=solver, functions=core.functions
+        )
+        _fail_if_a_synthesized_constraint_is_unmet(
+            constraint_name=DCEGM_BUDGET_CONSTRAINT_NAME,
+            constraint_func=budget_constraint,
+            solver=solver,
+            regime_name=regime_name,
+            functions=core.functions,
+            variables=variables,
+            flat_param_names=flat_param_names,
+            active_periods=regimes_to_active_periods[regime_name],
+            grids=all_grids[regime_name],
+        )
         constraints = MappingProxyType(
             {
                 **core.constraints,
-                DCEGM_BUDGET_CONSTRAINT_NAME: get_intrinsic_budget_constraint(
-                    solver=solver, functions=core.functions
-                ),
+                DCEGM_BUDGET_CONSTRAINT_NAME: budget_constraint,
             }
         )
 
@@ -1547,11 +1577,6 @@ def _build_simulation_phase(
         if name in carried_only and isinstance(grid, Grid)
     }
     simulate_grids = MappingProxyType({**all_grids[regime_name], **carried_grids})
-
-    flat_param_names = _engine_flat_param_names(
-        regime_params_template=regime_params_template,
-        granular_param_expansions=granular_param_expansions,
-    )
 
     if spec.terminal:
         compute_regime_transition_probs = None
@@ -3836,17 +3861,193 @@ def _fail_if_action_has_batch_size(
                 raise ValueError(msg)
 
 
-def _proved_post_decision_name(
-    *, solver: Solver, user_regime: UserRegime
-) -> FunctionName | None:
-    """The post-decision state whose lower bound the solver's grid enforces.
+def _constraints_the_solver_evaluates(
+    *,
+    constraints: ProcessedConstraintsMapping,
+    solver: Solver,
+    regime_name: RegimeName,
+    phase: Literal["solve", "simulate"],
+    functions: EconFunctionsMapping,
+    variables: Variables,
+    flat_param_names: frozenset[str],
+    active_periods: tuple[int, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+) -> ProcessedConstraintsMapping:
+    """Narrow a phase's constraints to those the solver's routes evaluate.
 
-    `None` where nothing is enforced implicitly — grid search, and any regime
-    without a liquid margin — so a declared bound stays an ordinary constraint
-    there.
+    Every constraint reaches a terminal disposition on every route the solver
+    walks in this phase, and only those a route evaluates are handed to the
+    kernel. One a route proves by construction is discharged rather than
+    dropped: the difference is that the ledger holds a reason for it, so a
+    constraint can no longer leave the set without one.
+
+    A solver that declares no routes keeps its constraint set unchanged. `None`
+    says nobody has written its pipeline down, not that its pipeline is
+    unrestricted, so no constraint is discharged on its behalf.
+
+    Args:
+        constraints: The phase's normalized constraints, before any narrowing.
+        solver: The regime's bound solver.
+        regime_name: Name of the regime being built.
+        phase: Phase whose constraints these are.
+        functions: The phase's declared function pool, through which a
+            constraint's leaves are resolved.
+        variables: The phase's states and actions.
+        flat_param_names: Names supplied as parameters rather than computed.
+        active_periods: The regime's active periods, ascending.
+        grids: Immutable mapping of the regime's state and action grids.
+
+    Returns:
+        Immutable mapping of the constraints the kernel evaluates.
+
+    Raises:
+        ModelInitializationError: If a route can meet a constraint at none of
+            its sites, or if two routes of one phase disagree about whether a
+            constraint is evaluated.
+
     """
-    if not isinstance(solver, OneMarginSolver | TwoMarginSolver):
-        return None
-    if not isinstance(user_regime, _EGMFamilyRegime):
-        return None
-    return user_regime.liquid.post_decision_state
+    routes = solver.build_constraint_routes(
+        context=ConstraintRouteContext(
+            regime_name=regime_name,
+            phase=phase,
+            functions=functions,
+            variables=variables,
+            flat_param_names=flat_param_names,
+            active_periods=active_periods,
+        )
+    )
+    if routes is None:
+        return constraints
+    plan = plan_constraints(
+        constraints=constraints,
+        routes=routes,
+        context=ConstraintContext(
+            regime_name=regime_name,
+            phase=phase,
+            grids=grids,
+            function_names=frozenset(functions),
+            param_names=flat_param_names,
+        ),
+    )
+    _fail_if_a_constraint_cannot_be_met(plan=plan)
+    evaluated = _names_every_route_evaluates(plan=plan, regime_name=regime_name)
+    return MappingProxyType(
+        {
+            name: constraint
+            for name, constraint in constraints.items()
+            if name in evaluated
+        }
+    )
+
+
+def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:
+    """Refuse a model whose solver can neither evaluate nor discharge a constraint.
+
+    The refusal is the planner's own sentence, which names the route and what
+    the constraint still needed there. Where several are unmet the first by
+    name is raised, so the message is the same on every run.
+    """
+    unmet = sorted(
+        (entry.constraint_name, entry.disposition.reason)
+        for entry in plan.entries
+        if isinstance(entry.disposition, Reject)
+    )
+    if not unmet:
+        return
+    raise ModelInitializationError(unmet[0][1])
+
+
+def _names_every_route_evaluates(
+    *, plan: ConstraintPlan, regime_name: RegimeName
+) -> frozenset[FunctionName]:
+    """The constraints handed to the kernel, checked to be one set for the phase.
+
+    A phase builds one constraint set, so two routes that disagree about a
+    constraint have no single answer to hand it. Today every solver declaring
+    routes declares one per phase, which cannot disagree; a nesting solver
+    whose branches evaluate different sets needs the kernel to take one set per
+    branch, and is refused here until it does rather than being served
+    whichever route was asked last.
+    """
+    per_route: dict[FunctionName, dict[bool, str]] = {}
+    for entry in plan.entries:
+        evaluated = isinstance(entry.disposition, Evaluate)
+        label = "/".join(entry.route.solver_path)
+        per_route.setdefault(entry.constraint_name, {}).setdefault(evaluated, label)
+    disputed = sorted(name for name, seen in per_route.items() if len(seen) > 1)
+    if disputed:
+        name = disputed[0]
+        evaluating = per_route[name][True]
+        discharging = per_route[name][False]
+        msg = (
+            f"The constraint '{name}' of regime '{regime_name}' is evaluated "
+            f"on the '{evaluating}' route and discharged on the "
+            f"'{discharging}' route. A phase builds one constraint set, so "
+            "there is no single set to hand the kernel; the branches need one "
+            "set each before this can be expressed."
+        )
+        raise ModelInitializationError(msg)
+    return frozenset(name for name, seen in per_route.items() if True in seen)
+
+
+def _fail_if_a_synthesized_constraint_is_unmet(
+    *,
+    constraint_name: FunctionName,
+    constraint_func: UserFunction,
+    solver: Solver,
+    regime_name: RegimeName,
+    functions: EconFunctionsMapping,
+    variables: Variables,
+    flat_param_names: frozenset[str],
+    active_periods: tuple[int, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+) -> None:
+    """Put a synthesized constraint through the same ledger as a declared one.
+
+    The simulate phase builds the endogenous-grid family's budget mask itself,
+    after the declared constraints have been narrowed. Injecting it downstream
+    of the plan would let one constraint reach the kernel with no disposition —
+    the single state the ledger exists to exclude — so it is planned here,
+    against the pool it will actually be evaluated over.
+
+    Args:
+        constraint_name: The reserved name the constraint is injected under.
+        constraint_func: The synthesized predicate.
+        solver: The regime's bound solver.
+        regime_name: Name of the regime being built.
+        functions: The processed pool the constraint is evaluated over.
+        variables: The phase's states and actions.
+        flat_param_names: Names supplied as parameters rather than computed.
+        active_periods: The regime's active periods, ascending.
+        grids: Immutable mapping of the regime's state and action grids.
+
+    Raises:
+        ModelInitializationError: If the simulate route cannot meet it.
+
+    """
+    routes = solver.build_constraint_routes(
+        context=ConstraintRouteContext(
+            regime_name=regime_name,
+            phase="simulate",
+            functions=functions,
+            variables=variables,
+            flat_param_names=flat_param_names,
+            active_periods=active_periods,
+        )
+    )
+    if routes is None:
+        return
+    plan = plan_constraints(
+        constraints=normalize_constraints(
+            constraints={constraint_name: constraint_func}
+        ),
+        routes=routes,
+        context=ConstraintContext(
+            regime_name=regime_name,
+            phase="simulate",
+            grids=grids,
+            function_names=frozenset(functions),
+            param_names=flat_param_names,
+        ),
+    )
+    _fail_if_a_constraint_cannot_be_met(plan=plan)
