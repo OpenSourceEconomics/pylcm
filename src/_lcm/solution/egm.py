@@ -19,6 +19,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.routes import (
     ConstraintRoute,
     ConstraintRouteKey,
@@ -334,8 +335,18 @@ class EGM(OneMarginSolver):
         over a whole candidate, including the budget constraint the phase
         synthesizes for an endogenous-grid regime.
         """
+        bound = cast("_BoundEGM", self)
+        proofs = (
+            proves_the_savings_grids_lower_bound(
+                post_decision=bound.post_decision_function
+            ),
+        )
         if context.phase == "simulate":
-            return (simulation_route(context=context, solver_path=("egm",)),)
+            return (
+                simulation_route(
+                    context=context, solver_path=("egm",), structural_proofs=proofs
+                ),
+            )
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(
@@ -346,6 +357,7 @@ class EGM(OneMarginSolver):
                         stage="savings_stage",
                         function_pool=context.functions,
                         available_names=frozenset(),
+                        structural_proofs=proofs,
                     ),
                 ),
             ),

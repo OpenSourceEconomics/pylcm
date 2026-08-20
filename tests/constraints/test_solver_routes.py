@@ -14,13 +14,18 @@ solver already gets from turning into a generic failure.
 
 from types import MappingProxyType
 
-from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
+from _lcm.constraints.dispositions import (
+    ConstraintContext,
+    Evaluate,
+    ProvedByConstruction,
+    Reject,
+)
 from _lcm.constraints.processed import normalize_constraints
-from _lcm.constraints.routes import plan_constraints
+from _lcm.constraints.routes import ConstraintRoute, plan_constraints
 from _lcm.engine import VariableInfo, Variables
 from _lcm.solution.contract import ConstraintRouteContext, SolutionKernels
 from lcm import ref
-from lcm.solvers import DCEGM, EGM, GridSearch
+from lcm.solvers import DCEGM, EGM, GridSearch, Solver
 from tests.test_models import dcegm_paper_twin
 
 _VARIABLES = Variables(
@@ -67,16 +72,39 @@ def _constraint_context(*, phase: str = "solve") -> ConstraintContext:
     )
 
 
-def _dcegm() -> DCEGM:
-    """The bound DC-EGM of an ordinary consumption-savings regime."""
+def _bound(solver: Solver) -> Solver:
+    """Bind `solver` onto an ordinary consumption-savings regime.
+
+    A solver reads its own margin roles to declare its routes — which state the
+    inversion produces, which post-decision state its grid spans — and those
+    exist only once a regime has bound them. The engine always calls
+    `build_constraint_routes` on the bound object, the same one it hands to
+    `build_period_kernels`.
+    """
     regime = dcegm_paper_twin._working_life(solver="dcegm")
-    return regime.solver  # ty: ignore[invalid-return-type]
+    return regime.replace(solver=solver).solver
+
+
+def _dcegm() -> Solver:
+    """The bound DC-EGM of an ordinary consumption-savings regime."""
+    return _bound(DCEGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID))
+
+
+def _egm() -> Solver:
+    """The bound plain EGM of the same regime."""
+    return _bound(EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID))
+
+
+def _routes_of(solver: Solver, *, phase: str = "solve") -> tuple[ConstraintRoute, ...]:
+    """The routes `solver` declares for one phase, asserted to be declared."""
+    routes = solver.build_constraint_routes(context=_route_context(phase=phase))
+    assert routes is not None
+    return routes
 
 
 def _disposition(solver, *, constraint, phase="solve"):
     """Plan one constraint over `solver`'s routes for one phase."""
-    routes = solver.build_constraint_routes(context=_route_context(phase=phase))
-    assert routes is not None
+    routes = _routes_of(solver, phase=phase)
     plan = plan_constraints(
         constraints=normalize_constraints(constraints={"c": constraint}),
         routes=routes,
@@ -111,7 +139,7 @@ def test_grid_search_evaluates_at_the_simulation_stage_when_simulating() -> None
 def test_plain_egm_evaluates_no_user_constraint_when_solving() -> None:
     """The envelope-free kernel calls no predicate, so it refuses rather than drops."""
     disposition = _disposition(
-        EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID),
+        _egm(),
         constraint=ref("consumption") <= 5.0,
     )
 
@@ -121,7 +149,7 @@ def test_plain_egm_evaluates_no_user_constraint_when_solving() -> None:
 def test_plain_egm_evaluates_the_simulate_phase_feasibility_check() -> None:
     """Its simulate phase has whole candidates, including a synthesized budget."""
     disposition = _disposition(
-        EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID),
+        _egm(),
         constraint=ref("consumption") <= 5.0,
         phase="simulate",
     )
@@ -223,17 +251,62 @@ def test_every_solver_declares_the_same_simulate_route() -> None:
     """
     solvers = (
         GridSearch(),
-        EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID),
+        _egm(),
         _dcegm(),
     )
 
-    sites = [
-        solver.build_constraint_routes(context=_route_context(phase="simulate"))[
-            0
-        ].sites
-        for solver in solvers
-    ]
+    sites = [_routes_of(solver, phase="simulate")[0].sites for solver in solvers]
 
     assert [(site.stage, site.available_names) for (site,) in sites] == [
         ("simulation", None)
     ] * 3
+
+
+def test_dcegm_proves_a_bound_on_the_state_its_savings_grid_spans() -> None:
+    """The grid the solve inverts on is what enforces the limit, so it is not called.
+
+    Its lowest node *is* the limit, and the simulate phase enforces the same
+    number through the mask built from it. The declaration is still a claim —
+    checked against the grid when the model is built — which is what makes
+    proving it different from ignoring it.
+    """
+    disposition = _disposition(_dcegm(), constraint=ref("savings") >= 0.0)
+
+    assert isinstance(disposition, ProvedByConstruction)
+
+
+def test_the_proof_names_the_savings_grid_as_what_enforces_the_bound() -> None:
+    """A diagnostic has to be able to quote what discharged a constraint."""
+    disposition = _disposition(_dcegm(), constraint=ref("savings") >= 0.0)
+
+    assert "savings grid" in disposition.proof.reason
+
+
+def test_a_bound_on_another_name_is_not_proved_by_the_savings_grid() -> None:
+    """A lower bound elsewhere says nothing about the grid, so nothing proved it.
+
+    Discharging it on the strength of its shape alone would silently drop a
+    constraint the model relies on.
+    """
+    disposition = _disposition(_dcegm(), constraint=ref("wealth") >= 0.0)
+
+    assert isinstance(disposition, Reject)
+
+
+def test_the_same_bound_is_proved_on_the_simulate_route_too() -> None:
+    """The simulate mask is synthesized from the same lowest node."""
+    disposition = _disposition(
+        _dcegm(), constraint=ref("savings") >= 0.0, phase="simulate"
+    )
+
+    assert isinstance(disposition, ProvedByConstruction)
+
+
+def test_plain_egm_proves_the_bound_its_savings_grid_enforces() -> None:
+    """The envelope-free kernel evaluates nothing, but its grid still enforces this."""
+    disposition = _disposition(
+        _egm(),
+        constraint=ref("savings") >= 0.0,
+    )
+
+    assert isinstance(disposition, ProvedByConstruction)

@@ -24,6 +24,7 @@ import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.routes import (
     ConstraintRoute,
     ConstraintRouteKey,
@@ -329,9 +330,20 @@ class DCEGM(OneMarginSolver):
         One route, not one per period: DC-EGM reuses a single core across every
         period whose pool resolves alike, and does not rebuild per age group.
         """
-        if context.phase == "simulate":
-            return (simulation_route(context=context, solver_path=("dcegm",)),)
         bound = cast("_BoundDCEGM", self)
+        proofs = (
+            proves_the_savings_grids_lower_bound(
+                post_decision=bound.post_decision_function
+            ),
+        )
+        if context.phase == "simulate":
+            return (
+                simulation_route(
+                    context=context,
+                    solver_path=("dcegm",),
+                    structural_proofs=proofs,
+                ),
+            )
         return (
             ConstraintRoute(
                 key=ConstraintRouteKey(
@@ -344,6 +356,7 @@ class DCEGM(OneMarginSolver):
                         available_names=_combination_inputs(
                             context=context, euler_state=bound.continuous_state
                         ),
+                        structural_proofs=proofs,
                     ),
                 ),
             ),
