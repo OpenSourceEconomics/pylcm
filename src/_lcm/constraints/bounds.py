@@ -11,11 +11,17 @@ a comparison, not a privileged kind of one.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from _lcm.constraints.dispositions import (
+    ConstraintContext,
+    Proof,
+    ProvedByConstruction,
+)
 from _lcm.constraints.ir import Const, Ref
 from _lcm.constraints.processed import (
     ProcessedConstraint,
     ProcessedConstraintsMapping,
 )
+from _lcm.constraints.routes import BoundConstraint, StructuralProof
 from _lcm.typing import FunctionName
 
 
@@ -99,3 +105,54 @@ def _bounds_the_proved_state(
 ) -> bool:
     declaration = lower_bound_declaration(constraint=constraint)
     return declaration is not None and declaration[0] == proved_post_decision
+
+
+def proves_the_savings_grids_lower_bound(
+    *, post_decision: FunctionName
+) -> StructuralProof:
+    """Build the proof that a savings grid already enforces a declared bound.
+
+    An endogenous-grid solve inverts on its savings grid, so that grid's lowest
+    node *is* the limit the solve enforces, and the simulate phase enforces the
+    same number through the mask synthesized from it. A declared bound on the
+    post-decision state the grid spans therefore carries no information the
+    grid does not already carry — but it carries it as a *claim*, checked
+    against the grid when the model is built, which is what makes proving it
+    different from ignoring it.
+
+    Only a bound on that state is proved. A lower bound on any other name says
+    nothing about the grid, so nothing has proved it and it stays an ordinary
+    constraint; discharging it on the strength of its shape alone would
+    silently drop a constraint the model relies on.
+
+    Args:
+        post_decision: Name of the post-decision state the savings grid spans.
+
+    Returns:
+        The proof, for a site to consult.
+
+    """
+
+    def prove(
+        *,
+        bound: BoundConstraint,
+        context: ConstraintContext,  # noqa: ARG001
+    ) -> ProvedByConstruction | None:
+        declaration = lower_bound_declaration(constraint=bound.constraint)
+        if declaration is None or declaration[0] != post_decision:
+            return None
+        surfaces = bound.constraint.boundary_surfaces
+        return ProvedByConstruction(
+            constraint=bound.constraint,
+            proof=Proof(
+                reason=(
+                    f"the savings grid the solve inverts on spans "
+                    f"'{post_decision}', and its lowest node is the limit "
+                    f"enforced — checked against this declaration when the "
+                    f"model was built"
+                ),
+                surface=surfaces[0] if surfaces else None,
+            ),
+        )
+
+    return prove

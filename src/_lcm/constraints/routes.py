@@ -133,11 +133,17 @@ class ConstraintRoute:
     """Which pipeline this is."""
 
     sites: tuple[ConstraintSite, ...]
-    """The sites, in the order the solver produces candidates.
+    """The points at which a constraint can be met, in the order they arise.
 
-    An empty tuple is a solver that offers nowhere to meet a constraint — plain
-    EGM — and refuses every one it is handed. That is a declaration, not an
-    omission.
+    Not a description of the pipeline. A solver's candidate production may have
+    any number of stages, and only those at which a constraint can be
+    evaluated, proved, or compiled belong here — a stage that can decide none
+    of the three cannot change a plan, so declaring it would put pipeline shape
+    into the field the ledger's decisions are counted over. `solver_path` and
+    `stage` are where the pipeline is named.
+
+    An empty tuple is a solver that offers nowhere to meet a constraint and
+    refuses every one it is handed. That is a declaration, not an omission.
     """
 
 
