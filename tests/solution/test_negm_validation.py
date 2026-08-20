@@ -31,6 +31,7 @@ from _lcm.solution.negm import _BoundNEGM
 from lcm import (
     DiscreteGrid,
     ExtremeValueTasteShocks,
+    IrregSpacedGrid,
     LinearAggregator,
     LinearExpectation,
     NetOfAdjustmentCost,
@@ -623,3 +624,46 @@ def test_the_refusal_names_the_nested_savings_grids_lowest_node():
         _validate(regime)
 
     assert str(grid_start) in str(excinfo.value)
+
+
+def test_runtime_outer_state_grid_is_refused_during_negm_validation() -> None:
+    """The outer state grid must expose the nodes the continuation layout reads."""
+    regime = _VALID.replace(
+        states={
+            **dict(_VALID.states),
+            "illiquid": IrregSpacedGrid(
+                n_points=int(negm_kinked_toy.ILLIQUID_GRID.n_points)
+            ),
+        }
+    )
+
+    with pytest.raises(ModelInitializationError, match=r"outer state grid.*runtime"):
+        _validate(regime)
+
+
+def test_runtime_inner_savings_grid_is_refused_during_negm_validation() -> None:
+    """The nested inversion must know its savings nodes when kernels are built."""
+    bound = cast("_BoundNEGM", _VALID.solver)
+    solver = dataclasses.replace(
+        bound,
+        inner=dataclasses.replace(
+            bound.inner,
+            savings_grid=IrregSpacedGrid(
+                n_points=int(negm_kinked_toy.SAVINGS_GRID.n_points)
+            ),
+        ),
+    )
+
+    with pytest.raises(ModelInitializationError, match=r"inner savings grid.*runtime"):
+        _validate(_VALID.replace(solver=solver))
+
+
+def test_runtime_outer_search_grid_is_refused_during_negm_validation() -> None:
+    """The outer search must know the candidate nodes when kernels are built."""
+    solver = dataclasses.replace(
+        cast("_BoundNEGM", _VALID.solver),
+        outer_grid=IrregSpacedGrid(n_points=int(negm_kinked_toy.OUTER_GRID.n_points)),
+    )
+
+    with pytest.raises(ModelInitializationError, match=r"outer search grid.*runtime"):
+        _validate(_VALID.replace(solver=solver))
