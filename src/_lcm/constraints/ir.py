@@ -16,6 +16,14 @@ than forming union aliases. The tree is recursive, and a recursive alias is not
 resolvable at runtime by the type checking this package runs under; a base
 class is, and it also makes "there is no other kind of node" a property of the
 class hierarchy instead of a convention.
+
+An operand is a name or a literal, and nothing else. A bound that has to be
+looked up — one that varies by age, or is read out of a table — is named by a
+`Ref` to whatever computes it, so the tree stays a statement about names
+rather than growing an indexing sublanguage of its own. The cost is that a
+solver cannot read such a bound's number off the tree: it has a surface and
+the name of a value, and turning that pair into something it can prove against
+its own grid is the boundary compiler's job, not the tree's.
 """
 
 import inspect

@@ -19,6 +19,11 @@ owns the boundary point: `<` leaves it outside the region, `<=` brings it in.
 An arbitrary predicate is still legal — `Condition.from_callable` carries it
 unchanged — but it exposes no structure, so a solver that must reason about a
 condition refuses it instead of accepting it and ignoring what it says.
+
+Both sides of a comparison are names or numbers. A limit that is itself
+computed — one that varies with age, or comes out of a table — is written as a
+reference to whatever computes it, `assets < ref("borrowing_limit")`, and the
+condition stays readable to a solver even though the number is not in it.
 """
 
 from _lcm.constraints.ir import Condition, Implies, Ref
