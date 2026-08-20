@@ -221,16 +221,7 @@ class _EGMFamilyRegime(Regime):
         resources_annotation = post_decision_annotations.get(
             state, "no_annotation_found"
         )
-        state_annotation = _annotation_of_arg(
-            functions=functions,
-            arg_name=state,
-            excluding=post_decision_name,
-            fallback=(
-                resources_annotation
-                if resources_annotation != "no_annotation_found"
-                else "FloatND"
-            ),
-        )
+        state_annotation = "ContinuousState"
         if resources_annotation == "no_annotation_found":
             resources_annotation = state_annotation
 
@@ -549,25 +540,6 @@ def _bound_liquid_margin(liquid: LiquidMargin) -> _BoundLiquidMargin:
         ),
         post_decision_state=liquid.post_decision_state,
     )
-
-
-def _annotation_of_arg(
-    *,
-    functions: dict[FunctionName, UserFunction],
-    arg_name: StateName,
-    excluding: FunctionName,
-    fallback: str,
-) -> str:
-    """Return how the assembled DAG's other functions annotate one state."""
-    for name, func in functions.items():
-        if name == excluding:
-            continue
-        annotation = ensure_annotations_are_strings(get_annotations(func)).get(
-            arg_name, "no_annotation_found"
-        )
-        if annotation != "no_annotation_found":
-            return annotation
-    return fallback
 
 
 def _repeated_names(names: list[str] | tuple[str, ...]) -> list[str]:
