@@ -201,7 +201,7 @@ def build_alive_regime(*, outer_batch_size: int = 0) -> NestedConsumptionSavings
             state="wealth",
             action="consumption",
             resources=NetOfAdjustmentCost(
-                name_in_dag="resources",
+                output="resources",
                 before_cost="resources_before_outer_cost",
                 cost="credited",
             ),

@@ -145,7 +145,7 @@ def test_an_out_of_package_subclass_accepts_the_right_solver_family() -> None:
 
 def test_net_of_adjustment_cost_guard_is_directly_exercised() -> None:
     declaration = object.__new__(NetOfAdjustmentCost)
-    object.__setattr__(declaration, "name_in_dag", "resources")
+    object.__setattr__(declaration, "output", "resources")
     object.__setattr__(declaration, "before_cost", "resources")
     object.__setattr__(declaration, "cost", "cost")
 
@@ -155,7 +155,7 @@ def test_net_of_adjustment_cost_guard_is_directly_exercised() -> None:
 
 def test_net_of_adjustment_cost_guard_accepts_distinct_names() -> None:
     NetOfAdjustmentCost(
-        name_in_dag="resources", before_cost="gross_resources", cost="cost"
+        output="resources", before_cost="gross_resources", cost="cost"
     )._fail_if_names_are_not_pairwise_distinct()
 
 
