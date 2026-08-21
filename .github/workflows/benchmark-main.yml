@@ -36,17 +36,37 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Install environment
-        run: pixi install -e benchmarks-cuda12
-      # The exact-affine kernel is a gitignored build artifact living in the
-      # source tree. `actions/checkout` cleans the work tree, which removes it,
-      # while `pixi install` re-runs the build hook only when it decides the
-      # editable package needs reinstalling. Whether the kernel survives a run
-      # is therefore leftover state from the previous one, and the DC-EGM
-      # benchmarks — the only ones that reach it — fail outright when it is
-      # gone. Build it explicitly so the job does not depend on that.
-      - name: Build the exact-affine kernel
-        run: pixi run -e benchmarks-cuda12 build-exact-affine
+      - name: Select the runner's actual CUDA architecture
+        shell: bash
+        run: |
+          capability=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader \
+            | head -n 1 | tr -d '.')
+          test -n "$capability"
+          echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
+      - name: Restore or install the benchmark environment
+        uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.76.1
+          cache: true
+          cache-write: true
+          environments: benchmarks-cuda12
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          set +e
+          pixi run -e benchmarks-cuda12 python -m tests.ci.probe_native \
+            --report=reports/native-benchmark.json
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e benchmarks-cuda12 --locked pylcm
+            pixi run -e benchmarks-cuda12 python -m tests.ci.probe_native \
+              --report=reports/native-benchmark.json
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"

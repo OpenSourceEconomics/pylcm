@@ -16,13 +16,15 @@ envelope:
   grouping and nothing else.
 
 The kernels live in shared objects built at install time from the C++ and CUDA
-sources beside this module. They are loaded when a verdict is first requested,
-not at import, so a platform that never asks for one needs no kernel; nothing
-here ever compiles.
+sources in the source tree. The installed payload lives outside that tree, so
+replacing an editable checkout does not remove the kernel. They are loaded when
+a verdict is first requested, not at import, so a platform that never asks for
+one needs no kernel; nothing here ever compiles.
 """
 
 import ctypes
 import sys
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import jax
@@ -45,7 +47,21 @@ _MIN_BATCHED_RANK: int = 2
 
 _TARGETS = EXACT_AFFINE_HANDLER_SYMBOLS
 
-_DIRECTORY = Path(__file__).resolve().parent
+
+def _installed_native_directory() -> Path:
+    """Return pylcm's checkout-independent installed native payload directory."""
+    try:
+        installed = distribution("pylcm")
+    except PackageNotFoundError:
+        # Importing an uninstalled source tree remains legal. The path is
+        # intentionally not the checkout: asking for a certified verdict then
+        # reports the missing installed capability instead of accepting a stale
+        # binary left by an unrelated build.
+        return Path(sys.prefix) / "_pylcm_native"
+    return Path(str(installed.locate_file("_pylcm_native")))
+
+
+_DIRECTORY = _installed_native_directory()
 _CPU_LIBRARY = _DIRECTORY / (
     "certified_affine_ffi_cpu.dll"
     if sys.platform == "win32"
@@ -162,8 +178,8 @@ def _ensure_registered() -> None:
         msg = (
             f"The exact-affine kernel is not built: {_CPU_LIBRARY} is missing. It "
             "is compiled when pylcm is installed; after editing its C++ sources, "
-            "or in a checkout installed before the kernel existed, rebuild it "
-            "with `pixi run build-exact-affine`."
+            "or in an environment installed before the kernel existed, reinstall "
+            "pylcm with `pixi reinstall pylcm`."
         )
         raise ExactAffineKernelUnavailableError(msg)
 
@@ -178,7 +194,7 @@ def _ensure_registered() -> None:
             "missing while JAX's default backend is a GPU, so every certified "
             "read would fail at its first device compile. The CUDA half is built "
             "only where `nvcc` is on PATH at install time; add it to this "
-            "environment and rebuild with `pixi run build-exact-affine`."
+            "environment and reinstall with `pixi reinstall pylcm`."
         )
         raise ExactAffineKernelUnavailableError(msg)
 
@@ -192,7 +208,7 @@ def _ensure_registered() -> None:
             f"loaded: {error}. Two builds commonly fail this way: one made by a "
             "different toolchain, which is missing that toolchain's runtime, and "
             "one made before a target existed, which loads but does not export "
-            "it. Rebuild in this environment with `pixi run build-exact-affine`."
+            "it. Reinstall in this environment with `pixi reinstall pylcm`."
         )
         raise ExactAffineKernelUnavailableError(msg) from error
 

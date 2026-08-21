@@ -74,7 +74,6 @@ def test_regression_test():
     )
 
 
-@pytest.mark.gpu
 def test_regression_precautionary_savings():
     """Test that precautionary savings benchmark model output does not change."""
     expected = pd.read_pickle(_PRECISION_DIR / "precautionary_savings_simulation.pkl")
@@ -111,7 +110,6 @@ def test_regression_precautionary_savings():
     )
 
 
-@pytest.mark.gpu
 def test_regression_mortality():
     """Test that mortality benchmark model output does not change."""
     expected = pd.read_pickle(_PRECISION_DIR / "mortality_simulation.pkl")

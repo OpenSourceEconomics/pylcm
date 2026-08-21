@@ -80,6 +80,7 @@ project:
       children:
         - file: development/setup.md
         - file: development/conventions.md
+        - file: development/continuous_integration.md
         - file: development/benchmarking.md
     - file: credits.md
       title: Credits & Acknowledgments

@@ -27,6 +27,7 @@ from _lcm.regime_building.processing import (
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
+from tests.ci import pytest_policy
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -134,6 +135,7 @@ def pytest_addoption(parser):
         metavar="N",
         help="Fail when the completed test session reports more than N skipped tests.",
     )
+    pytest_policy.add_options(parser)
 
 
 def pytest_configure(config):
@@ -156,6 +158,7 @@ def pytest_configure(config):
     config.stash[_EXACT_KERNEL_SKIPS_STASH_KEY] = []
     if getattr(config, "workerinput", None) is None:
         _CONTROLLER_EXACT_KERNEL_SKIPS.clear()
+    pytest_policy.configure(config)
 
 
 def assert_agrees_to_ulp(
@@ -209,7 +212,7 @@ def assert_agrees_to_ulp(
         raise AssertionError(msg)
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
     """Mark the whole `tests/solution/` battery `slow`.
 
     These tests AOT-compile heavy JAX models; four in parallel exhaust a small CI
@@ -231,6 +234,12 @@ def pytest_collection_modifyitems(items):
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
+    pytest_policy.apply(config, items)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Write the execution-policy reconciliation after collection."""
+    pytest_policy.write_report(session.config)
 
 
 def _validate_exact_kernel_markers(*, items: list[pytest.Item]) -> None:
@@ -581,7 +590,7 @@ def _fixture_x64_enabled() -> Iterator[None]:
 
 
 def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
-    """Apply the backend-keyed skip markers, both of which mean "not on CPU".
+    """Apply hard GPU eligibility before any module fixture can run.
 
     Which backend a run gets is never passed to the tests: CI picks a pixi
     environment (`tests-cpu` or `tests-cuda*`), that decides which jaxlib is
@@ -596,11 +605,12 @@ def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
     module-scoped fixture that solves a GPU-scale model would run — and exhaust
     the box — before a fixture-based skip could fire.
 
-    The two markers say different things and are kept apart on purpose:
+    The markers say different things and are kept apart on purpose:
 
+    - `requires(device="gpu")` — the canonical hard capability declaration;
     - `gpu` — the test *needs* a GPU. A permanent property of the test: it is
-      too large for a CPU-only box, or its expected values were generated on
-      one. Pass `reason=` for anything more specific than "requires GPU".
+      too large for a CPU-only box. It remains readable during migration but
+      new declarations use `requires`.
     - `skipif_cpu` — the test would run fine on CPU, but XLA:CPU's LLVM does
       not finish compiling the program. A defect in a dependency, not a
       property of the test, so it is expected to be retired: re-run the marked
@@ -611,6 +621,10 @@ def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
         return
 
     for item in items:
+        requires = item.get_closest_marker("requires")
+        if requires is not None and requires.kwargs.get("device") == "gpu":
+            item.add_marker(pytest.mark.skip(reason="requires GPU"))
+            continue
         requires_gpu = item.get_closest_marker("gpu")
         if requires_gpu:
             item.add_marker(

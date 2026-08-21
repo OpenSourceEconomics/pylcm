@@ -49,8 +49,11 @@ from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 # 64-bit replication; under 32-bit the simulation drifts past every band,
 # so the moments lose signal.
 _GPU_X64_MARKS = (
-    pytest.mark.slow,
-    pytest.mark.gpu,
+    pytest.mark.requires(device="gpu"),
+    pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="64"),
+    pytest.mark.resources(wall="l", wall_seconds=1800, gpu_mem_gb=16, compile="heavy"),
+    pytest.mark.isolation(process="fresh", gpu="exclusive", cache="isolated"),
+    pytest.mark.ci(tier="pr"),
     pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(
         not X64_ENABLED, reason="moments calibrated for 64-bit precision"
