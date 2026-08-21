@@ -311,7 +311,7 @@ def test_composed_resources_are_injected_only_at_model_finalization():
         return 0.1 * durable_after_choice
 
     composed = NetOfAdjustmentCost(
-        name_in_dag="resources",
+        output="resources",
         before_cost="gross_resources",
         cost="adjustment_cost",
     )
@@ -346,7 +346,7 @@ def test_composed_resources_are_injected_only_at_model_finalization():
 
 def test_composition_exclusion_reports_the_complete_rule():
     composed = NetOfAdjustmentCost(
-        name_in_dag="resources",
+        output="resources",
         before_cost="gross_resources",
         cost="adjustment_cost",
     )

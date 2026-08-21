@@ -117,6 +117,7 @@ def test_continuous_solve_publishes_the_nested_sim_policy(
         assert diagnostics is not None
         assert payload.adjuster.n_candidates == int(diagnostics.outer_nodes_used)
         assert payload.outer_action_name == "illiquid_investment"
+        assert payload.outer_state_name == "illiquid"
         assert payload.inner_action_name == "consumption"
         assert payload.resources_target_name == "resources"
         assert (

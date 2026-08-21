@@ -164,7 +164,7 @@ def _compose_margin_resources(
     if not isinstance(resources, NetOfAdjustmentCost):
         return
 
-    resources_name = resources.name_in_dag
+    resources_name = resources.output
     base_name = resources.before_cost
     cost_name = resources.cost
 

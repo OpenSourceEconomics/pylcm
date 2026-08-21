@@ -639,13 +639,13 @@ def _composed_resources_edge(
     asked, so only the edge matters.
     """
     resources = getattr(getattr(user_regime, "liquid", None), "resources", None)
-    if not isinstance(resources, NetOfAdjustmentCost) or resources.name_in_dag in pool:
+    if not isinstance(resources, NetOfAdjustmentCost) or resources.output in pool:
         return {}
 
     @with_signature(args=[resources.before_cost, resources.cost])
     def composed_resources(*args: object, **kwargs: object) -> None: ...
 
-    return {resources.name_in_dag: cast("UserFunction", composed_resources)}
+    return {resources.output: cast("UserFunction", composed_resources)}
 
 
 def _law_roots(

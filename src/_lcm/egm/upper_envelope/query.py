@@ -1795,7 +1795,7 @@ def _dd_div(
     return _dd_add_fp(qh, ql, q3)
 
 
-_INTERIOR_RADIUS_ULPS2 = 16.0
+_INTERIOR_RADIUS_ULPS = 16.0
 
 
 _SCREEN_SLACK = 4.0
@@ -2560,12 +2560,13 @@ class _CandidateTerms(NamedTuple):
 
     `value_hi/value_lo` is the certified double-double candidate value (stored
     floats with `value_lo == 0` at node events, compensated interpolation in the
-    interior) and `radius` its certified residual rounding radius (zero at node
-    events, O(eps^2) interior). `exact` records STRUCTURALLY — by how the value
-    was produced, not by inspecting it — whether the pair is the exact candidate
-    value; see `_exactly_maximal`. `policy`/`marginal` are the candidate's outputs
-    at the query, `slope` its value-slope, and `right_available` whether it
-    extends strictly right of the query — the right-continuous tie-break keys.
+    interior) and `radius` its certified residual rounding radius: zero at node
+    events and backend-conservative in the interior. `exact` records
+    STRUCTURALLY — by how the value was produced, not by inspecting it — whether
+    the pair is the exact candidate value; see `_exactly_maximal`.
+    `policy`/`marginal` are the candidate's outputs at the query, `slope` its
+    value-slope, and `right_available` whether it extends strictly right of the
+    query — the right-continuous tie-break keys.
     """
 
     brackets: BoolND
@@ -2591,8 +2592,8 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     Node events (query equal to a stored endpoint, or a zero-width segment) are
     published as the stored floats with zero certified radius — requirement (1)
     of the selection architecture. Interior lanes are evaluated compensated in
-    double-double with an eps^2-level certified radius — requirement (2). A
-    zero-width segment carrying a value jump publishes its higher end (its
+    double-double with a backend-conservative certified radius — requirement
+    (2). A zero-width segment carrying a value jump publishes its higher end (its
     lower end still competes through that endpoint's zero-width self-bracket),
     matching the host oracle's vertical-edge rule.
     """
@@ -2617,7 +2618,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
 
     # Interior: compensated interpolation `left + (t/w)*d` in double-double.
     # TwoDiff makes t, w, d exact dd representations; division and product are
-    # dd-accurate, so (hi, lo) carries the interpolant to O(eps^2) relative.
+    # dd-accurate in source, so (hi, lo) carries the interpolant to O(eps^2).
     #
     # SCALE AFTER DIFFERENCING, AND CARRY THE EXPONENT AS AN INTEGER.
     #
@@ -2756,9 +2757,13 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     vh, vl = value_affine.hi, value_affine.lo
 
     eps = jnp.finfo(block.dtype).eps
+
+    # XLA may contract or reassociate the error-free transforms that produce
+    # the double-double pair. The certificate therefore covers one
+    # working-precision rounding per framed addend on every backend; the low
+    # word still sharpens the published value where the backend preserves it.
     interior_radius = jnp.ldexp(
-        _INTERIOR_RADIUS_ULPS2
-        * eps
+        _INTERIOR_RADIUS_ULPS
         * eps
         * (jnp.abs(value_affine.framed_left) + jnp.abs(value_affine.framed_product)),
         value_affine.frame,
