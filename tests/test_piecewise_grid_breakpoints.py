@@ -221,7 +221,7 @@ def test_piecewise_grid_rejects_invalid_point_counts(
     points_per_segment: tuple[object, ...],
 ) -> None:
     """There is one integer count of at least two per nominal segment."""
-    with pytest.raises((GridInitializationError, TypeError)):
+    with pytest.raises(GridInitializationError):
         PiecewiseLinSpacedGrid(
             start=0.0,
             stop=2.0,

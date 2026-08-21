@@ -3,6 +3,7 @@
 import dataclasses
 import operator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -16,6 +17,14 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
+
+if TYPE_CHECKING:
+    PiecewisePointCounts: TypeAlias = tuple[int | ScalarInt, ...]  # noqa: UP040
+else:
+    # The constructor's validator owns element errors and maps them to the
+    # public GridInitializationError. The runtime alias keeps the package claw
+    # from sampling an invalid tuple element before that validator runs.
+    PiecewisePointCounts = tuple[Any, ...]
 
 
 @beartype(conf=GRID_CONF)
@@ -59,7 +68,7 @@ class _PiecewiseGrid(ContinuousGrid):
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
         breakpoints: tuple[GridBreakpoint, ...],
-        points_per_segment: tuple[int | ScalarInt, ...],
+        points_per_segment: PiecewisePointCounts,
         batch_size: int = 0,
         distributed: bool = False,
     ) -> None:
@@ -159,7 +168,7 @@ def _init_piecewise_grid(
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
     breakpoints: tuple[GridBreakpoint, ...],
-    points_per_segment: tuple[object, ...],
+    points_per_segment: PiecewisePointCounts,
     batch_size: int,
     distributed: bool,
     requires_positive_bounds: bool,
@@ -224,7 +233,9 @@ def _init_piecewise_grid(
     object.__setattr__(grid, "_cumulative_offsets", cumulative_offsets)
 
 
-def _integer_point_counts(*, points_per_segment: tuple[object, ...]) -> tuple[int, ...]:
+def _integer_point_counts(
+    *, points_per_segment: PiecewisePointCounts
+) -> tuple[int, ...]:
     """Return exact Python integer counts, refusing lossy numeric coercion."""
     counts: list[int] = []
     errors: list[str] = []
@@ -235,7 +246,7 @@ def _integer_point_counts(*, points_per_segment: tuple[object, ...]) -> tuple[in
             )
             continue
         try:
-            count = operator.index(value)  # ty: ignore[invalid-argument-type]
+            count = operator.index(value)
         except TypeError:
             errors.append(
                 f"points_per_segment[{index}] must be an integer >= 2, but is "
