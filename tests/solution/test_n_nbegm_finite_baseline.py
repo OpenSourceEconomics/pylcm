@@ -19,7 +19,6 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
-from _lcm.egm.outer_candidates import OuterCandidateBank
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
@@ -68,15 +67,15 @@ def _solve_recording_kernel_results(
 
 
 @pytest.mark.parametrize("outer_batch_size", [0, 1, 2, 4, 7])
-def test_candidate_bank_collapse_matches_frozen_prerefactor_baseline(
+def test_finite_streaming_fold_matches_frozen_prerefactor_baseline(
     outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The bank-based solve reproduces the frozen pre-refactor arrays.
+    """The streaming solve reproduces the frozen finite-search arrays.
 
     Batch sizes 0/1/4 compare against their own frozen capture; 2 and 7 (the
-    §24 acceptance set's remaining sizes) compare against the batch-0 capture,
+    remaining supported chunk shapes compare against the batch-0 capture,
     which is valid because the fold order is the node order regardless of
-    chunking — batching bounds solve dispatch, never the collapse.
+    chunking.
     """
     if not jax_config.read("jax_enable_x64"):
         pytest.skip("baseline frozen under x64")
@@ -117,51 +116,3 @@ def test_candidate_bank_collapse_matches_frozen_prerefactor_baseline(
                 atol=1e-12,
                 err_msg=f"solve V at period {period}, regime {regime}",
             )
-
-
-def test_candidate_bank_holds_one_entry_per_outer_node(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The bank stacks exactly one exact solve per outer node, keeper excluded.
-
-    Captures the bank the period kernel builds during a real solve and checks
-    the §24 structural criteria: one candidate per outer-grid node, in grid
-    order, all marked valid, with the keeper nowhere in the bank (its
-    state-dependent outer action cannot share the one-node-per-candidate
-    layout).
-    """
-    banks: list[OuterCandidateBank] = []
-    original_build = solvers_mod._NNBEGMPeriodKernel._build_candidate_bank
-
-    def recording_build(
-        self: solvers_mod._NNBEGMPeriodKernel,
-        **kwargs: object,
-    ) -> OuterCandidateBank:
-        bank = original_build(self, **kwargs)  # ty: ignore[invalid-argument-type]
-        banks.append(bank)
-        return bank
-
-    monkeypatch.setattr(
-        solvers_mod._NNBEGMPeriodKernel,
-        "_build_candidate_bank",
-        recording_build,
-    )
-    toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
-    )
-
-    assert banks, "the period kernel never built a candidate bank"
-    for bank in banks:
-        assert bank.n_candidates == toy.N_OUTER
-        np.testing.assert_array_equal(
-            np.asarray(bank.outer_nodes), np.asarray(toy.OUTER_GRID.to_jax())
-        )
-        assert bool(np.all(np.asarray(bank.candidate_valid)))
-        assert np.asarray(bank.V_arr).shape[0] == toy.N_OUTER
-        # Each candidate's carry slices back out with the leading axis removed.
-        first = bank.candidate_carry(0)
-        stacked_leaves = jax.tree_util.tree_leaves(bank.carry)
-        sliced_leaves = jax.tree_util.tree_leaves(first)
-        for stacked, sliced in zip(stacked_leaves, sliced_leaves, strict=True):
-            assert stacked.shape[0] == toy.N_OUTER
-            assert stacked.shape[1:] == sliced.shape

@@ -115,4 +115,4 @@ def test_paper_implementation_refuses_historical_switches() -> None:
     model = create_mahler_yum_model(
         implementation="paper", compatibility=legacy.CANONICAL
     )
-    assert "alive" in model.user_regimes
+    assert set(model.user_regimes) == {"working", "retirement", "dead"}

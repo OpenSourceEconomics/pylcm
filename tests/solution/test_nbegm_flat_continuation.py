@@ -82,6 +82,8 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
             "nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),
         ),
+        # The declared post-decision savings bound already enforces
+        # consumption <= resources; no duplicate opaque constraint is needed.
         constraints={},
         dead_functions={"utility": _flat_utility},
     )
