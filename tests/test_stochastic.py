@@ -24,7 +24,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import X64_ENABLED
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -33,6 +33,9 @@ from tests.test_models.stochastic import (
     retirement,
     working_life,
 )
+
+# Splayed and unsplayed solves agree to float eps at the active precision.
+_SPLAY_ATOL = 1e-10 if X64_ENABLED else 1e-5
 
 
 def test_model_simulate_with_stochastic_model():
@@ -171,9 +174,6 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     """Test that the deterministic and stochastic models produce the same results."""
     model_deterministic, model_stochastic, params = models_and_params
 
-    # ==================================================================================
-    # Compare value function arrays
-    # ==================================================================================
     solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
         model_deterministic.solve(log_level="debug", params=params)
     )
@@ -188,9 +188,6 @@ def test_compare_deterministic_and_stochastic_results_value_function(
             decimal=14,
         )
 
-    # ==================================================================================
-    # Compare simulation results
-    # ==================================================================================
     initial_conditions = {
         "health": jnp.array([1, 1, 0, 0], dtype=jnp.int32),
         "partner": jnp.array([0, 0, 0, 0], dtype=jnp.int32),
@@ -381,17 +378,18 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
         log_level="debug", params=params
     )
 
-    assert_array_almost_equal(
-        V_splayed[0]["working_life"],
-        V_unsplayed[0]["working_life"],
-        decimal=DECIMAL_PRECISION,
+    assert_allclose(
+        V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=_SPLAY_ATOL
     )
 
 
 def test_stochastic_regime_transition_active_at_last_period_raises():
     """Non-terminal regimes active at the last period must raise an error.
 
-    See https://github.com/OpenSourceEconomics/pylcm/issues/276.
+    A non-terminal regime has to place probability one on some target regime, but
+    at the last period there is no period left to transition into, so no set of
+    transition probabilities can be valid. `solve` reports that instead of
+    solving a model whose last period is silently inconsistent.
     """
     from lcm_examples import mortality  # noqa: PLC0415
 

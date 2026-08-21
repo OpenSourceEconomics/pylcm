@@ -171,6 +171,30 @@ def test_none_masks_the_model_entry() -> None:
     assert "bonus" not in model.user_regimes["retired"].functions
 
 
+def test_dead_regime_can_mask_a_model_level_constraint() -> None:
+    """A terminal regime can opt out of a constraint shared by living regimes."""
+
+    def _borrowing_constraint(wealth: float, consumption: float) -> bool:
+        return consumption <= wealth
+
+    model = _build_model(
+        regimes={
+            "work": _work_regime(),
+            "retired": _retired_regime(),
+            "dead": UserRegime(
+                transition=None,
+                functions={"utility": lambda: 0.0},
+                constraints={"borrowing_constraint": None},
+            ),
+        },
+        constraints={"borrowing_constraint": _borrowing_constraint},
+    )
+
+    assert "borrowing_constraint" in model.user_regimes["work"].constraints
+    assert "borrowing_constraint" in model.user_regimes["retired"].constraints
+    assert "borrowing_constraint" not in model.user_regimes["dead"].constraints
+
+
 def test_mask_without_model_entry_raises() -> None:
     """Masking a name no model-level slot provides is an error."""
     with pytest.raises(ModelInitializationError, match=r"nothing to mask|no model"):

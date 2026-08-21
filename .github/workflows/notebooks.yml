@@ -28,6 +28,17 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: docs
           frozen: false
+      - name: Build the exact-affine kernel
+        # `hatch_build.py` compiles against the XLA FFI headers of whichever jax
+        # it runs beside (`jax.ffi.include_dir()`), so the handler's API version is
+        # fixed when the library is built. The kernel is a gitignored build
+        # artifact, and `pixi install` rebuilds it only when it decides the
+        # editable package needs reinstalling -- so without this step the library
+        # and the jax that loads it are chosen at two independent moments, and a
+        # handler whose API version the running framework rejects fails the first
+        # notebook to ask for a certified verdict. Building here pins both to this
+        # environment.
+        run: pixi run -e docs build-exact-affine
       - name: Run explanation notebooks
         shell: bash {0}
         run: pixi run -e docs explanation-notebooks

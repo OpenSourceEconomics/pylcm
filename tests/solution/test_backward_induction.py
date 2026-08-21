@@ -10,6 +10,8 @@ from _lcm.grids import Grid
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import solve
+from _lcm.solution.contract import PeriodKernel
+from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
@@ -19,16 +21,27 @@ from lcm.ages import AgeGrid
 class MockSolutionPhase:
     """Mock SolutionPhase with only the attributes solve() reads."""
 
-    max_Q_over_a: dict[int, MaxQOverAFunction]
+    period_kernels: dict[int, PeriodKernel]
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    continuation_template: None = None
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
     ) = None
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
+
+
+def _grid_search_period_kernels(
+    *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: str
+) -> dict[int, PeriodKernel]:
+    """Wrap per-period grid-search cores in their uniform period adapters."""
+    return {
+        period: _GridSearchPeriodKernel(core=core, regime_name=regime_name)
+        for period, core in max_Q_over_a.items()
+    }
 
 
 class MockRegime(Regime):
@@ -60,14 +73,10 @@ def test_backward_induction():
     to produce.
 
     """
-    # ==================================================================================
     # create the params
-    # ==================================================================================
     flat_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
-    # ==================================================================================
     # create the list of state_action_spaces
-    # ==================================================================================
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType(
             {
@@ -90,9 +99,7 @@ def test_backward_induction():
         ),
         state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
-    # ==================================================================================
     # create the Q_and_F functions
-    # ==================================================================================
 
     def _Q_and_F(
         consumption,
@@ -127,13 +134,14 @@ def test_backward_induction():
         batch_sizes={"lazy": 0, "wealth": 0},
     )
 
-    # ==================================================================================
     # call solve function
-    # ==================================================================================
 
     regime = MockRegime(
         solution=MockSolutionPhase(
-            max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+            period_kernels=_grid_search_period_kernels(
+                max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+                regime_name="default",
+            ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
         ),
@@ -148,12 +156,12 @@ def test_backward_induction():
         enable_jit=False,
     )
 
-    # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-    assert isinstance(solution, MappingProxyType)
-    assert 0 in solution
-    assert 1 in solution
-    assert "default" in solution[0]
-    assert "default" in solution[1]
+    # The value functions are an immutable period -> regime -> array mapping.
+    assert isinstance(solution.value_functions, MappingProxyType)
+    assert 0 in solution.value_functions
+    assert 1 in solution.value_functions
+    assert "default" in solution.value_functions[0]
+    assert "default" in solution.value_functions[1]
 
 
 def test_backward_induction_single_period_Qc_arr():
@@ -194,7 +202,10 @@ def test_backward_induction_single_period_Qc_arr():
 
     regime = MockRegime(
         solution=MockSolutionPhase(
-            max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+            period_kernels=_grid_search_period_kernels(
+                max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+                regime_name="default",
+            ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
         ),
@@ -210,4 +221,4 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
-    aaae(got[0]["default"], expected)
+    aaae(got.value_functions[0]["default"], expected)

@@ -15,7 +15,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int32, Scalar
+from jaxtyping import Bool, Float, Int32, Scalar, Shaped
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 
@@ -28,9 +28,17 @@ type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
 
+# Any model value, whatever its dtype: a continuous state or action is float, a
+# discrete one an integer code, a flag a boolean. Use it only where a slot is
+# genuinely dtype-polymorphic -- a slot that means one of them takes that alias.
+type ValueND = Shaped[Array, "..."]
+
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
+
+type Float2D = Float[Array, "_ _"]
+type Int2D = Int32[Array, "_ _"]
 
 # Zero-dimensional JAX scalars — pylcm's canonical scalar form post boundary cast.
 type ScalarInt = Int32[Scalar, ""]
@@ -49,6 +57,11 @@ type ActionName = str
 type StateOrActionName = str
 type ProcessName = str
 type FunctionName = str
+type ParameterName = str
+type MarginRoleName = str
+type ReferenceName = (
+    StateName | ActionName | FunctionName | ParameterName | MarginRoleName
+)
 type TransitionFunctionName = str
 
 
@@ -123,3 +136,12 @@ class UserFunction(Protocol):
     """
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401
+
+
+outer_unchanged: FunctionName = "__outer_unchanged__"
+# Sentinel declaring that an outer state is unchanged without adjustment.
+# Use it as ``OuterContinuousMargin.no_adjustment`` when the no-adjustment map is
+# literally the identity. Any other value is a function name and must resolve in
+# the assembled regime DAG. A sentinel, rather than a generated callable, keeps
+# the public declaration serialisable and avoids callable-wrapper behaviour under
+# the project's beartype claw.

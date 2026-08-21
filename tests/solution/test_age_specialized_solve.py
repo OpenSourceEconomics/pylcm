@@ -12,6 +12,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
@@ -25,6 +26,7 @@ from lcm.exceptions import InvalidAdditionalTargetsError, InvalidInitialConditio
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt, UserFunction
+from tests.conftest import DECIMAL_PRECISION
 
 
 @categorical(ordered=True)
@@ -304,3 +306,99 @@ def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint
             period_to_regime_to_V_arr=None,
             log_level="debug",
         )
+
+
+def _cap_binding_at_age(age: float) -> Callable[..., bool]:
+    """Return the age's concrete consumption cap, chosen to bind on the grid.
+
+    The cap rises from the lowest action node at the first active age to the
+    highest at the last, so the feasible set genuinely differs period by period
+    rather than only being labelled per period.
+    """
+    cap = 1.0 + (age - 25.0) * 0.225
+
+    def wealth_cap(consumption: float) -> bool:
+        return consumption <= cap
+
+    return wealth_cap
+
+
+def _solve_with_cap(wealth_cap: UserFunction):
+    model = _make_specialized_constraint_model(wealth_cap)
+    return model.solve(params={"discount_factor": 0.95}, log_level="off")
+
+
+def _solve_specialized():
+    return _solve_with_cap(
+        AgeSpecializedFunction(build=_cap_binding_at_age, signature=lambda age: age)
+    )
+
+
+def _last_active_period(solution) -> int:
+    """The last period in which the working-life regime is solved."""
+    return max(
+        period
+        for period, regime_to_V in solution.items()
+        if "working_life" in regime_to_V
+    )
+
+
+def _age_of_period(period: int) -> float:
+    return 25.0 + 10.0 * period
+
+
+def _last_period_value(solution):
+    period = _last_active_period(solution)
+    return solution[period]["working_life"]
+
+
+def test_the_final_period_is_solved_under_its_own_ages_constraint() -> None:
+    """Each period is restricted by the constraint built for that period's age.
+
+    The regime's last active period is the one period whose value depends on no
+    other period's rule — its continuation is terminal — so it is where a
+    period can be attributed to an age at all. Solving it under a uniform cap
+    fixed at that same age must therefore reproduce the specialized solve
+    exactly there. Both a specialization frozen at the first active age and one
+    that permuted which period got which closure would put a different cap on
+    this period, and neither raises: the model still solves, and the only trace
+    is a value function restricted by the wrong rule.
+
+    The attribution reaches that one period only. An earlier period's value
+    also depends on every later period's cap, so no uniform-cap solve is a
+    reference for it, and a permutation confined to the earlier periods would
+    pass here.
+    """
+    specialized = _solve_specialized()
+    last_age = _age_of_period(_last_active_period(specialized))
+    uniform_at_that_age = _solve_with_cap(_cap_binding_at_age(last_age))
+
+    aaae(
+        _last_period_value(specialized),
+        _last_period_value(uniform_at_that_age),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_another_ages_constraint_would_have_given_that_period_a_different_value() -> (
+    None
+):
+    """The reference the previous test matches is not one every age produces.
+
+    Without this, an equality against a uniform-cap solve would hold for every
+    age whose cap happened to yield the same value function, and the
+    attribution it appears to make would be empty. The first active age's cap
+    admits only the lowest action node, so it is the reference that must *not*
+    match.
+    """
+    specialized = _solve_specialized()
+    uniform_at_the_first_age = _solve_with_cap(_cap_binding_at_age(25.0))
+
+    gap = jnp.max(
+        jnp.abs(
+            _last_period_value(specialized)
+            - _last_period_value(uniform_at_the_first_age)
+        )
+    )
+
+    assert float(gap) > 0.0

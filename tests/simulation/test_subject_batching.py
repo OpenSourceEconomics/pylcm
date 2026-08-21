@@ -155,3 +155,15 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     v_arr = result.raw_results["work"][0].V_arr
     assert isinstance(v_arr, jax.Array)
     assert v_arr.devices() == {jax.devices("cpu")[0]}
+
+
+def test_additional_target_column_has_a_numeric_dtype() -> None:
+    """An eagerly computed `additional_targets` column is float, not object.
+
+    A regime whose target evaluates to one constant for every row contributes a
+    scalar rather than a per-row array. It has to reach the frame as a numeric
+    value, so the column stays float and supports arithmetic, aggregation and
+    round-tripping through Arrow.
+    """
+    df = _simulate_df(subject_batch_size=0, additional_targets=["utility"])
+    assert pd.api.types.is_float_dtype(df["utility"])

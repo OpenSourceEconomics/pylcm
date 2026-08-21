@@ -327,10 +327,8 @@ def test_terminal_regime_value_unchanged_by_W():
     )
 
 
-# ---------------------------------------------------------------------------
 # DAG-output feeds `W`: `discount_factor` computed by a DAG function that
 # indexes a per-type Series by the `pref_type` state.
-# ---------------------------------------------------------------------------
 
 
 def test_model_constructs_when_state_reachable_only_via_w_dag():
@@ -338,9 +336,9 @@ def test_model_constructs_when_state_reachable_only_via_w_dag():
 
     `pref_type` is used by `discount_factor_from_type`, whose output
     feeds the default `W`. `utility` / `feasibility` / transitions do
-    not reference `pref_type`. Pre-fix, this failed with
-    "states defined but never used"; post-fix, the state-usage walk
-    treats aggregator-DAG targets as reachable.
+    not reference `pref_type`. The state-usage walk treats aggregator-DAG
+    targets as reachable, so this must not raise "states defined but never
+    used".
     """
     _make_model(with_pref_type=True)
 

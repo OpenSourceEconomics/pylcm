@@ -186,7 +186,7 @@ def test_discrete_grid_ordered_false():
     assert grid.ordered is False
 
 
-# --- @categorical: ScalarInt annotation contract ---
+# @categorical: ScalarInt annotation contract
 
 
 def test_categorical_rejects_int_annotation():

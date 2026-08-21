@@ -316,6 +316,29 @@ class SimulationResult:
         return target
 
     @classmethod
+    def load_solution(
+        cls, *, directory: Path
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+        """Read only the solution from a directory produced by `save`.
+
+        Restores `V_arr/` and nothing else. A consumer that compares or re-uses
+        value functions — a solver head-to-head, a warm start — therefore pays
+        neither the per-subject checkpoint nor the metadata pickle, and does not
+        need the device placement their leaves carry: the per-subject leaves are
+        written from wherever the simulate loop left them, which need not be a
+        device the reading process has.
+
+        Args:
+            directory: Directory `save` wrote to, holding the `V_arr/`
+                checkpoint.
+
+        Returns:
+            Immutable mapping of periods to regime value-function arrays.
+
+        """
+        return _load_period_to_regime_to_V_arr(input_dir=directory.resolve() / "V_arr")
+
+    @classmethod
     def load(cls, *, directory: Path) -> SimulationResult:
         """Read a result from a directory produced by `save`.
 

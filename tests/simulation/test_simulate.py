@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from types import MappingProxyType
 
@@ -92,7 +93,9 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                     "koopmans_aggregator__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
                     "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
-                    "next_regime__final_age_alive": jnp.asarray(0),
+                    # `simulate` consumes already-canonical params; an `int` leaf
+                    # is `int32` (a bare `jnp.asarray(0)` would be `int64` under x64).
+                    "next_regime__final_age_alive": jnp.asarray(0, dtype=jnp.int32),
                 }
             ),
             "dead": MappingProxyType({}),
@@ -104,10 +107,10 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         period_to_regime_to_V_arr=MappingProxyType(
             {
                 0: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
                 1: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
             }
         ),
@@ -181,7 +184,12 @@ def test_simulate_using_model_methods(
         additional_targets=["utility", "borrowing_constraint"]
     ).query('regime_name == "working_life"')
 
-    # Check expected columns
+    # Check expected columns. `nested_policy_fallback` is deliberately absent:
+    # this is a plain discrete-continuous model with no nested (continuous-outer)
+    # policy read, so there is no fallback that could ever fire. The column is
+    # published only by regimes that can actually take that path -- see
+    # `test_nested_policy_fallback_column_is_published` in
+    # `test_simulate_n_nbegm_continuous.py` for the other half of the contract.
     expected_cols = {
         "period",
         "age",
@@ -275,8 +283,6 @@ def test_effect_of_discount_factor_on_last_period():
         disutility_of_work=1.0,
     )
 
-    # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(
@@ -342,8 +348,6 @@ def test_effect_of_disutility_of_work():
         disutility_of_work=1.5,
     )
 
-    # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
     params_low = get_params(
@@ -461,9 +465,8 @@ def test_additional_targets_all(regression_simulation_result):
 def test_additional_targets_all_with_stochastic_transitions():
     """Test that additional_targets='all' works with stochastic transition models.
 
-    This is a regression test for issue #215: stochastic weight functions
-    (e.g., weight_next_health) were incorrectly included in available_targets,
-    causing additional_targets='all' to fail.
+    Stochastic weight functions (e.g. `weight_next_health`) must not appear in
+    `available_targets`, or `additional_targets='all'` fails.
     """
     from lcm_examples.mortality import RegimeId as StochasticRegimeId  # noqa: PLC0415
     from tests.test_models.stochastic import (  # noqa: PLC0415
@@ -548,6 +551,48 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
     assert loaded.available_targets == result.available_targets
 
     assert_frame_equal(loaded.to_dataframe(), expected_df)
+
+
+def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
+    tmp_path: Path,
+):
+    """`SimulationResult.load_solution` returns the saved value arrays alone.
+
+    A consumer that only compares or re-uses value functions reads `V_arr/` and
+    nothing else, so the per-subject checkpoint and the metadata pickle are not
+    needed — and neither is the device placement their leaves were saved under.
+    """
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+    # `save` releases the in-memory solution, so snapshot it beforehand.
+    expected = {
+        period: {name: jnp.asarray(V_arr) for name, V_arr in by_regime.items()}
+        for period, by_regime in result.period_to_regime_to_V_arr.items()
+    }
+
+    save_dir = tmp_path / "result"
+    result.save(directory=save_dir)
+    shutil.rmtree(save_dir / "arrays")
+    (save_dir / "metadata.pkl").unlink()
+
+    got = SimulationResult.load_solution(directory=save_dir)
+
+    assert {period: sorted(by_regime) for period, by_regime in got.items()} == {
+        period: sorted(by_regime) for period, by_regime in expected.items()
+    }
+    for period, by_regime in expected.items():
+        for name, V_arr in by_regime.items():
+            assert_array_equal(got[period][name], V_arr)
 
 
 def test_loaded_result_computes_additional_targets_matching_original(tmp_path: Path):

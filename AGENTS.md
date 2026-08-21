@@ -19,13 +19,45 @@ automation. Python 3.14+ is required.
 - `pixi run tests-with-cov` - Run tests with coverage reporting
 - `pytest tests/test_specific_module.py` - Run specific test file
 - `pytest tests/test_specific_module.py::test_function_name` - Run specific test
-- `pixi run ty` - Type checking with ty
-- `prek run --all-files` - Run all pre-commit hooks
+- `prek run ty --all-files` - Type checking with ty (a pre-commit hook; resolves
+  third-party imports from the pixi env named in `[tool.ty] environment.python`, so run
+  `pixi install` once)
+- `prek run --all-files` - Run all pre-commit hooks (includes the `ty` hook)
 - `pixi run -e docs build-docs` - Build documentation
 - `pixi run -e docs view-docs` - Live preview documentation
 - `pixi install` - Install dependencies
 - `pixi run explanation-notebooks` - Execute explanation notebooks
 - `prek install` - Install pre-commit hooks (after `pixi global install prek`)
+
+### Running tests
+
+Never run the test suite directly in this session — dispatch it to a subagent (the
+`Agent` tool: `subagent_type: "fork"` for a quick check, a fresh agent for a longer
+one). This keeps a battery's console output out of this session's context.
+
+Give the subagent the exact invocation:
+
+```
+pixi run -e <env> pytest <target> -v --junitxml=<abs-path>.xml
+```
+
+- Never `-q` — `--junitxml` is written only when the run finishes, so a run that gets
+  killed leaves no report at all, and `-q` leaves bare `F` markers with no way to
+  attribute them to a test. `-v` streams each test's line as it runs, so a killed run
+  still leaves evidence.
+- Never pipe into `head`/`tail` — it truncates the output *and* hands you the filter's
+  exit status instead of pytest's, so a run that failed and a run that passed both read
+  as success.
+- Have the subagent read the junit XML itself and report back the exact pass/fail/error
+  counts and each failing test's nodeid — not a console dump, not a paraphrase.
+
+A global `PreToolUse` hook (`enforce-observability.py`) already rejects `-q` and
+tail/head piping and requires `--junitxml` on any battery-shaped run, including one
+wrapped in `zsh -ic "cap pixi run … pytest …"` for a Marvin job. It does **not** enforce
+dispatch to a subagent — that was tried and reverted, because PreToolUse hooks apply
+identically inside a subagent's own Bash calls, so a hard "you must delegate" rule
+denies the subagent the moment it tries to run the very command it was told to run.
+Delegation is therefore a convention here, not a mechanically enforced one.
 
 ## Architecture
 
@@ -374,6 +406,84 @@ regime level, never both (ambiguity errors, also when the grids match). Function
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
+### Case-piece solver (NB-EGM)
+
+`NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
+regime whose budget is split by a binary case boundary on the liquid state (e.g. a
+Medicaid asset test). The model author exposes the split with metadata-only decorators
+(`lcm.case_boundary`, `lcm.piece`, `lcm.boundary`); the solver runs EGM per case,
+NaN-dead masks each case to the region where its predicate is consistent with the
+recovered state, and merges the cases on the liquid grid with the branch-aware upper
+envelope.
+
+```python
+import jax.numpy as jnp
+
+import lcm
+from lcm.typing import BoolND, ContinuousState, FloatND
+
+
+@lcm.case_boundary(
+    lcm.boundary(
+        variable="liquid",
+        threshold="medicaid_asset_limit",
+        equality="otherwise",
+        kind="jump",
+    )
+)
+def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
+    """Medicaid asset test: eligible while liquid wealth is below the limit."""
+    return liquid < medicaid_asset_limit
+
+
+@lcm.piece(output="subsidy", when=medicaid_eligible)
+def subsidy_medicaid(subsidy_high: float) -> FloatND:
+    """Subsidy into market resources for the Medicaid-eligible (low-asset) case."""
+    return jnp.asarray(subsidy_high)
+
+
+@lcm.piece(output="subsidy", otherwise=medicaid_eligible)
+def subsidy_private(subsidy_low: float) -> FloatND:
+    """Subsidy into market resources for the private (high-asset) case."""
+    return jnp.asarray(subsidy_low)
+
+
+# The kernels form cash-on-hand themselves, so the regime declares pylcm's own
+# node rather than a local spelling of the same arithmetic.
+resources = lcm.cash_on_hand_with_subsidy
+```
+
+- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
+  `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
+  `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
+  `(variable, threshold)` tuple is rejected.
+- `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
+  `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
+  output. The decorators only attach metadata and return the function unchanged, so the
+  model still solves identically under `GridSearch`.
+- The case-piece route is scoped narrowly, and everything outside it is refused at model
+  build. A case-piece regime must split exactly one output, named `subsidy`, on a
+  boundary that is `equality="otherwise"`, `kind="jump"`, and declared on the liquid
+  state; each piece reads only flat params, never a state or action; and the regime
+  declares no discrete action and no taste shocks. Kinks, floors, and every other
+  bracket shape go through `lcm.piecewise_affine` instead — see
+  `docs/user_guide/nbegm.md`.
+- The case-piece kernels form cash-on-hand themselves rather than calling the regime's
+  budget node, so the route accepts pylcm's own declaration of that form by identity:
+  `lcm.cash_on_hand_with_subsidy`. A budget they cannot form goes through a
+  `lcm.piecewise_affine` schedule with a `post_decision_function`, or `GridSearch`.
+- The liquid law is read, not assumed: NBEGM takes the landing points the declared law
+  reaches on the savings grid and their derivative, so any term the modeller writes is
+  solved. The law states them as a function of a post-decision savings node — named
+  `savings` by default, otherwise named to `NBEGM(post_decision_function=...)` — and a
+  law in displacement form (`next_liquid(resources, consumption, ...)`) is refused at
+  build. `lcm.liquid_law_from_savings` is the conventional form and stays an ordinary
+  executable function, so the same model solves identically under `GridSearch`.
+- The solver's `validate` runs an AST + JAXPR smoothness gate over the user economic
+  nodes reachable in each case (rejecting hidden `if`/`where`/`searchsorted` branching);
+  mark a reviewed numerical `clip`/`max`/`abs` helper with `@lcm.smooth_helper` to
+  exempt it.
+
 ### SimulationResult
 
 `simulate()` returns a `SimulationResult` object:
@@ -511,6 +621,74 @@ assert df["wealth"].notna().all()
 `not isnan` and `no exception raised` belong in CI smoke tests, not in the unit tests
 for the feature itself.
 
+### Precision-aware tolerances — take them from the policy, never hardcode
+
+The suite runs at both precisions: `pytest --precision=64` (the default) and
+`pytest --precision=32`. `tests/conftest.py` sets `jax_enable_x64` accordingly and
+publishes the matching tolerance as `DECIMAL_PRECISION` — **12** at float64, **5** at
+float32. Import it; do not write a numeric tolerance that only one precision can meet.
+
+```python
+# Good — one assertion, valid at both precisions
+from numpy.testing import assert_array_almost_equal as aaae
+
+from tests.conftest import DECIMAL_PRECISION
+
+aaae(got, expected, decimal=DECIMAL_PRECISION)
+
+
+# Bad — float32 cannot represent this at all
+np.testing.assert_allclose(got, expected, rtol=1e-12, atol=1e-12)
+```
+
+A hardcoded `1e-12` is roughly five orders of magnitude below float32 machine epsilon
+(`~1.19e-7`), so such a test fails at `--precision=32` for every implementation, correct
+or not — it reports the format, not the code. Since `jax_enable_x64` is **False** by
+default outside the suite, float32 is what users actually run, so a test that cannot
+pass there leaves the default configuration uncovered.
+
+Choose the instrument by what is being asserted:
+
+- **A reported quantity** (a value, a policy, a moment) carries rounding, so it takes a
+  tolerance — and the tolerance belongs to the precision, i.e. `DECIMAL_PRECISION`.
+- **A structural predicate** — which branch owns a state, whether a constraint binds,
+  which candidate is the argmax — is discrete, and no tolerance is the right instrument.
+  A tie broken the wrong way moves the answer by a finite amount, not by an ULP, so a
+  tolerance wide enough to absorb it is also wide enough to hide a real defect. Assert
+  the decision itself, and let the arithmetic that makes it fail loudly when it cannot
+  decide. See `.ai-instructions/modules/math.md`, "Floating-point decisions".
+- **Absolute vs relative** matters once magnitudes vary: `assert_array_almost_equal` is
+  an *absolute* check, so on large-valued arrays prefer `assert_allclose` with an `rtol`
+  derived from the same policy.
+
+Which invariances a structural predicate has to satisfy is not uniform, so assert only
+the ones that carry numerical content:
+
+- **Across batch size — required, but not bit for bit.** A `batch_size` or block-size
+  knob partitions a computation whose *result* does not depend on the partition: no
+  operation and no operand order changes. What does change is the vmap width each block
+  is compiled for, and XLA emits a differently vectorized kernel per width — so two
+  partitions can land on adjacent representable neighbours of the same real number.
+  (Turning the backend optimizer off collapses every width onto one bit pattern, which
+  is what identifies the effect as code generation rather than arithmetic.) Assert
+  accordingly: structural properties — which discrete choice is taken, which nodes carry
+  a feasible action — exactly; published values with
+  `tests.conftest.assert_agrees_to_ulp`, which bounds the gap in units of the working
+  format's spacing and so says the same thing at either precision. The defect this
+  guards against is a partition-dependent *reduction* — a sum or max evaluated over a
+  block instead of the whole axis, or padding cells left in it — which moves a value by
+  orders of magnitude more than a few ULP.
+- **Across precision — not required.** Two candidates separated at float64 can be
+  indistinguishable at float32, and the honest float32 answer is then a *deterministic*
+  tie-break, not agreement with float64. Requiring the two to match would forbid the
+  ordinary working pattern of a coarse float32 first pass followed by a float64 polish.
+  What float32 owes is that repeated runs agree with each other, and that the value it
+  publishes is within its own resolution of the optimum — not that it picks the same
+  leg.
+- **Across device — out of scope.** Reduction order and library kernels vary, and a
+  whole program has many places for that to surface. Do not write cross-device equality
+  tests.
+
 ### Mechanics
 
 - Use plain pytest functions, never test classes (`class TestFoo`)
@@ -599,7 +777,9 @@ prose hides cases.
 ### JAX Integration
 
 - All numerical computations use JAX arrays
-- GPU support available via jax[cuda13] (Linux) or jax-metal (macOS)
+- GPU support available via jax[cuda12] / jax[cuda13] (Linux). macOS runs on CPU: there
+  is no `metal` pixi environment, so Apple-Silicon GPU acceleration is not installable
+  from this project
 - Functions are JIT-compiled during Model initialization for performance
 - `MappingProxyType` is registered as a JAX pytree for use in JIT-compiled functions
 
@@ -613,7 +793,7 @@ prose hides cases.
 
 - Extensive use of typing with custom types: user-facing aliases in `src/lcm/typing.py`,
   engine-side aliases and protocols in `src/_lcm/typing.py`
-- Type checking with ty (pixi run ty)
+- Type checking with ty (`prek run ty --all-files`)
 - Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
@@ -649,6 +829,37 @@ far.
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
+
+### Keyword-Only Arguments
+
+**A function takes its arguments keyword-only as soon as there are two.** This binds
+everywhere — engine internals and model functions alike. Readability is not something
+only the public surface earns, and a call reading `f(a, b)` says nothing about which
+value is which.
+
+```python
+# Good
+def compute_regret(*, published: FloatND, reference: FloatND) -> FloatND: ...
+
+
+# Bad — the call site cannot say which is which
+def compute_regret(published: FloatND, reference: FloatND) -> FloatND: ...
+```
+
+There are exactly two exemptions:
+
+1. **A callback whose caller is a library that passes positionally** — `lax.scan` bodies
+   `(carry, x)`, `custom_jvp` rules `(primals, tangents)`, pytree
+   `unflatten(aux, children)`. Not a judgement call: Python raises otherwise. `dags` is
+   *not* in this class — it binds by parameter name and accepts keyword-only functions,
+   so a model function complies like anything else.
+1. **A module that implements an arithmetic and nothing else** — operator surrogates
+   keep the spelling their operation is known by (`two_sum(a, b)`,
+   `dd_mul(left, right)`). State it once in the module docstring; such a module may
+   contain *only* operators, so the exemption stays auditable rather than sprinkled per
+   function.
+
+Functions predating this rule are being converted separately; see issue #421.
 
 ### Module Layout
 

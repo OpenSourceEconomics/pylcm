@@ -24,16 +24,23 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
-from _lcm.regime_building.age_normalization import _regime_has_markers
+from _lcm.regime_building.age_normalization import (
+    _regime_has_markers,
+    normalize_age_specialization,
+)
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
+from _lcm.regime_building.phases import normalize_all_regime_phases
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
+    compute_active_periods_by_regime,
     process_regimes,
 )
 from _lcm.regime_building.w_dag import get_dag_targets_consumed_by_W
+from _lcm.solution.contract import SolverModelContext
+from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
     FlatParams,
     ParamsTemplate,
@@ -176,7 +183,7 @@ def _build_regimes_and_template_with_fixed_params(
     )
 
 
-def validate_model_inputs(
+def validate_model_inputs(  # noqa: C901
     *,
     n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -198,6 +205,31 @@ def validate_model_inputs(
     function still counts as used.
     """
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
+    # DC-EGM contract checks run before the generic checks below: a contract
+    # violation (e.g. a missing resources function) typically also leaves
+    # variables unused, and the contract-specific message is the actionable
+    # one.
+    #
+    # They read the *representative* regimes, in which every `AgeSpecializedGrid`
+    # state is already the concrete representative-age grid. The solver contract is
+    # about a state's kind and shape, both invariant across ages by the
+    # `AgeSpecializedGrid` contract, so the representative grid answers it exactly —
+    # whereas the raw marker is not a `Grid` at all and would be dropped from every
+    # type-filtered collection of continuous states, rejecting a valid model.
+    solver_validation_regimes = _representative_for_validation(
+        user_regimes=user_regimes, ages=ages
+    )
+    for regime_name, user_regime in solver_validation_regimes.items():
+        fail_if_solver_is_not_shipped(
+            solver=user_regime.solver, regime_name=regime_name
+        )
+        user_regime.solver.validate_model(
+            context=SolverModelContext(
+                regime_name=regime_name,
+                user_regimes=solver_validation_regimes,
+            )
+        )
 
     error_messages: list[str] = []
 
@@ -260,6 +292,37 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def _representative_for_validation(
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    ages: AgeGrid | None,
+) -> Mapping[RegimeName, UserRegime]:
+    """Resolve age markers to their representatives, for solver-contract validation.
+
+    Runs the same normalization boundary the build runs — phases first (local to one
+    regime), then age specialization (needs the model `AgeGrid` and each regime's
+    active periods) — and returns its representative regimes, which are the declared
+    input to age-invariant validation.
+
+    Returns the input unchanged when no regime carries a marker, so an age-invariant
+    model neither pays for the walk nor changes behaviour, and when `ages` is absent,
+    since age specialization cannot be resolved without it.
+    """
+    if ages is None or not any(
+        _regime_has_markers(regime) for regime in user_regimes.values()
+    ):
+        return user_regimes
+    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    return normalize_age_specialization(
+        user_regimes=user_regimes,
+        phased_specs=phased_specs,
+        ages=ages,
+        active_periods_by_regime=compute_active_periods_by_regime(
+            ages=ages, user_regimes=user_regimes
+        ),
+    ).representative_user_regimes
 
 
 def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
@@ -475,21 +538,42 @@ def _partial_fixed_params_into_regimes(
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
         regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
-        if not regime_fixed:
+        # A DC-EGM source carrying into a *different* target regime also binds
+        # that target's fixed params (it reads the target's resources /
+        # transition functions in its per-asset-node solve). Gate the rebuild on
+        # whether any fixed param reachable from this regime — its own or a
+        # transition target's — exists; the per-adapter `with_fixed_params`
+        # decides which of them actually reach each core.
+        reachable_fixed = bool(regime_fixed) or any(
+            fixed_flat_params.get(target_name, MappingProxyType({}))
+            for target_name in regime.solution.transitions
+        )
+        if not reachable_fixed:
             result[regime_name] = regime
             continue
 
         # Build new solution phase with partialled functions. The resolved
         # fixed params also land on the phase itself — its
         # `state_action_space` consults them for runtime grid substitution.
+        #
+        # Each period adapter owns its solver's binding rule: a grid-search
+        # adapter binds the regime's own fixed params into its core; a DC-EGM
+        # adapter binds the union of the regime's and its carry targets' fixed
+        # params (a source reads a different target's params in its per-asset
+        # solve); a terminal carry-producing adapter binds the regime's fixed
+        # params into both its base core and the carry producer. So the engine
+        # threads fixed params through `with_fixed_params` without a solver-type
+        # switch.
         solution = regime.solution
         new_solve = dataclasses.replace(
             solution,
             resolved_fixed_params=MappingProxyType(regime_fixed),
-            max_Q_over_a=MappingProxyType(
+            period_kernels=MappingProxyType(
                 {
-                    period: functools.partial(func, **regime_fixed)
-                    for period, func in solution.max_Q_over_a.items()
+                    period: kernel.with_fixed_params(
+                        fixed_flat_params=fixed_flat_params
+                    )
+                    for period, kernel in solution.period_kernels.items()
                 }
             ),
             compute_regime_transition_probs=(
@@ -524,6 +608,12 @@ def _partial_fixed_params_into_regimes(
                 {
                     period: functools.partial(func, **regime_fixed)
                     for period, func in simulation.argmax_and_max_Q_over_a.items()
+                }
+            ),
+            Q_and_F=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulation.Q_and_F.items()
                 }
             ),
             next_state=MappingProxyType(

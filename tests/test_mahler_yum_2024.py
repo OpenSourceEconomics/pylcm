@@ -5,10 +5,16 @@ factory. The GPU tests pin simulated lifecycle moments at
 `seed=32`, `n=10000`, so a change in the example's economics appears as a change
 in a readable quantity rather than an opaque pickle diff.
 
-The reference moments correspond to the explicit working, retirement, and dead
-regimes. Splitting the former living regime changes the fixed-seed random-number
-stream for regime transitions, even when the underlying transition probabilities
-stay the same. The values were reproduced exactly on both a Tesla T4 and V100.
+The pinned numbers are a joint property of the example's economics and the
+engine's numerics, so a change to either moves them and they have to be
+re-frozen against a run whose correctness has been argued separately. They are
+for the explicit working, retirement, and dead regimes and are reproducible
+across GPUs at float64 — a re-freeze needs a fresh run, not a matching device.
+
+The structural invariants at the bottom of the module are the stable half: they
+assert relations that hold for any correct solve, so they survive a re-freeze
+and are what catches an economics change that a shifted pin would merely
+absorb.
 """
 
 from collections.abc import Mapping
@@ -43,6 +49,7 @@ from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 # 64-bit replication; under 32-bit the simulation drifts past every band,
 # so the moments lose signal.
 _GPU_X64_MARKS = (
+    pytest.mark.slow,
     pytest.mark.gpu,
     pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(

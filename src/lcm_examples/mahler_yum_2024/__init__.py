@@ -60,8 +60,27 @@ simulation draws the cost continuously. (ii) The simulated moments' numerical
 derivative does not converge across finite-difference steps, which is why MSM
 inference is withheld in the replication. The instability is a property of this
 implementation, not of the paper's model — the authors searched continuously and
-estimated successfully — but the measurements do not isolate *which* numerical
-choice produces it; the grid is a consistent explanation, not an identified one.
+estimated successfully.
+
+The mechanism behind (ii) is identified: the discrete action grid makes the MSM
+criterion piecewise constant in the parameters, so the difference quotient is
+zero almost everywhere and undefined on the jump set, and which of the two a
+given column reports depends on the step size. What identifies it rather than
+merely fitting it is how the Jacobian responds to the number of simulated
+agents. Monte Carlo noise would shrink as `1/sqrt(n)` in *every* column;
+instead, raising the agent count leaves columns that reach the moments through
+an argmax flat while a column reaching them through a continuous channel
+smooths. That split follows the channel exactly, and it is a prediction that
+could have failed. It follows from the mechanism: an argmax flip at the action
+grid changes a mass share, and a share is invariant to `n`.
+
+What is *not* identified is exclusivity. Consequence (i) above could contribute
+a second source, and the measurements do not separate the two.
+
+Rank and conditioning do not detect any of this — the Jacobian is full rank at
+a condition number an ordinary guard passes without comment. The only diagnostic
+that catches it is recomputing the Jacobian at several finite-difference steps
+and reading the columnwise spread.
 """
 
 import dataclasses
@@ -74,7 +93,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from scipy.interpolate import interp1d as scipy_interp1d
+from scipy.interpolate import make_interp_spline
 
 from lcm import (
     AgeGrid,
@@ -777,25 +796,61 @@ def _interpolate_knots(
     period_range: np.ndarray,
     flat_after: int | None = None,
 ) -> np.ndarray:
-    """Cubic spline interpolation of age-keyed knots over a period range.
+    """Interpolate age-keyed knots over a period range with a cubic spline.
+
+    A period outside the knot range has no knot on one side, so the cubic
+    continues on its leading term alone and reports an artifact of the fit
+    rather than a calibrated number. Such a query is refused rather than
+    served, because the value would flow into the model's disutility and
+    change what it says without any sign that it had.
+
+    Periods the caller declares flat are not extrapolation: they take the last
+    knot's value by construction, so they are exempt from the check.
 
     Args:
         age_keyed_dict: Dict mapping age strings to values.
         period_range: Array of periods to interpolate over.
         flat_after: If set, extend the last knot value for periods beyond this.
 
+    Returns:
+        Array of interpolated values, one per period in `period_range`.
+
     """
     knot_periods, knot_values = _age_keys_to_periods(age_keyed_dict=age_keyed_dict)
-    spline = scipy_interp1d(knot_periods, knot_values, kind="cubic")
+    spline = make_interp_spline(knot_periods, knot_values, k=3)
     values = np.asarray(spline(period_range))
-    if flat_after is not None:
-        values[period_range >= flat_after] = knot_values[-1]
+    held_flat = (
+        np.zeros_like(period_range, dtype=bool)
+        if flat_after is None
+        else period_range >= flat_after
+    )
+    values[held_flat] = knot_values[-1]
+    _fail_if_periods_leave_the_knot_range(
+        period_range=period_range, knot_periods=knot_periods, exempt=held_flat
+    )
     # A cubic through non-negative knots is not itself non-negative: the feasible
     # knot vector [0.01, 2, 0.01, 2] dips below -0.3 in the interior. A negative
     # cost would make work or effort a *good*, so the whole sign of the choice
     # flips. The estimator bounds the knots, not the interpolated path, so it can
     # walk into that region; clamping the path is what keeps eqs (12)-(13) costs.
     return np.maximum(values, 0.0)
+
+
+def _fail_if_periods_leave_the_knot_range(
+    *, period_range: np.ndarray, knot_periods: np.ndarray, exempt: np.ndarray
+) -> None:
+    """Raise when a period the spline is read at lies outside the knot range."""
+    low, high = knot_periods[0], knot_periods[-1]
+    outside = ~exempt & ((period_range < low) | (period_range > high))
+    if outside.any():
+        offending = np.asarray(period_range)[outside]
+        msg = (
+            f"Periods {offending.tolist()} are outside the knot range "
+            f"[{low}, {high}], so the spline would extrapolate rather than "
+            f"interpolate. Add knots covering them, or declare them flat via "
+            f"`flat_after`."
+        )
+        raise ValueError(msg)
 
 
 def create_work_disutility_grid(
@@ -858,7 +913,12 @@ def create_adjustment_cost_envelope(*, adjustment_cost: Sequence[float]) -> pd.S
     return pd.Series(values, index=pd.Index(age_values, name="age"))
 
 
-EFFORT_FIELD_NAMES = np.array([f.name for f in dataclasses.fields(Effort)])  # ty: ignore[invalid-argument-type]
+def _category_names(category_class: type) -> list[str]:
+    """Return the category names of a `@categorical` class, in declaration order."""
+    return [f.name for f in dataclasses.fields(category_class)]  # ty: ignore[invalid-argument-type]
+
+
+EFFORT_FIELD_NAMES = np.array(_category_names(Effort))
 
 
 def _build_type_distribution() -> pd.DataFrame:
@@ -871,10 +931,10 @@ def _build_type_distribution() -> pd.DataFrame:
     raw = np.loadtxt(_DATA_DIR / "init_distr_2b2t2h.txt", skiprows=1)
     index = pd.MultiIndex.from_product(
         [
-            [f.name for f in dataclasses.fields(Education)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(DiscountType)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(ProductivityType)],  # ty: ignore[invalid-argument-type]
-            [f.name for f in dataclasses.fields(HealthType)],  # ty: ignore[invalid-argument-type]
+            _category_names(Education),
+            _category_names(DiscountType),
+            _category_names(ProductivityType),
+            _category_names(HealthType),
         ],
         names=["education", "discount_type", "productivity", "health_type"],
     )

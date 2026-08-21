@@ -3,20 +3,36 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
+from lcm._compilation_cache import compilation_cache_name
+
 # Use on-demand GPU memory allocation instead of JAX's default of pre-allocating
 # 75% of GPU memory. This plays nicely with other GPU processes, makes nvidia-smi
 # reflect actual usage, and enables meaningful GPU memory benchmarks. Users can
 # override by setting XLA_PYTHON_CLIENT_PREALLOCATE=true before importing lcm.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
+
 # Enable persistent JIT compilation cache. Large models (many regimes/states) can
-# take minutes to compile; the cache makes subsequent runs near-instant. Users can
-# override by setting JAX_COMPILATION_CACHE_DIR before importing lcm. Skip the
+# take minutes to compile; the cache makes subsequent runs near-instant. Skip the
 # default when no home directory is available (some HPC containers) rather than
 # crashing at import time.
+#
+# The cache is split per project rather than pooled in one directory. Entries are
+# keyed by a hash of the computation, so splitting costs no reuse — what it
+# separates is concurrent *writers*, and concurrent writers are what leave
+# unreadable entries behind, reported later as a decompression warning after which
+# the cache's work is silently lost.
+#
+# Two overrides, outermost first:
+# - `JAX_COMPILATION_CACHE_DIR` names the directory outright and is used as given.
+# - `LCM_COMPILATION_CACHE_NAME` names only the leaf under the shared root, for
+#   repositories holding several independent models that run concurrently (one
+#   package per paper, say), where the enclosing project is too coarse a split.
 if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
     try:
-        _default_cache_dir = str(Path.home() / ".cache" / "jax")
+        _default_cache_dir = str(
+            Path.home() / ".cache" / "jax" / compilation_cache_name()
+        )
     except RuntimeError:
         _default_cache_dir = None
     if _default_cache_dir is not None:
@@ -24,6 +40,18 @@ if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
     del _default_cache_dir
 
 import jax
+
+# The environment variable above only reaches JAX if `jax` has not been imported
+# yet: JAX reads it once, while defining its config options. Anything that
+# imports `jax` before `lcm` — a test suite's `conftest`, a notebook, another
+# library — therefore leaves the cache silently disabled and pays a full compile
+# in every process. Applying the same value through `jax.config` afterwards makes
+# the setting hold whichever order the two were imported in.
+if not jax.config.jax_compilation_cache_dir:
+    _cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR")
+    if _cache_dir:
+        jax.config.update("jax_compilation_cache_dir", _cache_dir)
+    del _cache_dir
 
 # JAX only writes an executable to the persistent cache when its compile time
 # exceeds `jax_persistent_cache_min_compile_time_secs` (default: 1 second). A
@@ -64,11 +92,34 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.case_piece import (  # noqa: E402
+    affine_breakpoint,
+    boundary,
+    case_boundary,
+    piece,
+    piecewise_affine,
+    smooth_helper,
+)
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
     LinearExpectation,
     PowerMean,
     QuasiArithmeticMean,
+)
+from lcm.condition import Condition, implies, ref  # noqa: E402
+from lcm.consumption_savings_regime import (  # noqa: E402
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    NetOfAdjustmentCost,
+    OuterContinuousMargin,
+    outer_unchanged,
+    post_decision_lower_bound,
+)
+from lcm.fixed_forms import (  # noqa: E402
+    cash_on_hand_with_subsidy,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
 )
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
@@ -102,16 +153,13 @@ from lcm.processes import (  # noqa: E402
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm.regime import (  # noqa: E402
-    MarkovTransition,
-    Regime,
-)
+from lcm.regime import Regime  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
-from lcm.solvers import DCEGM, GridSearch  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    MarkovTransition,
     fixed_transition,
 )
 
@@ -131,25 +179,29 @@ jax.tree_util.register_pytree_node(
 )
 
 __all__ = [
-    "DCEGM",
     "AgeGrid",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "Condition",
+    "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
-    "GridSearch",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LinearAggregator",
     "LinearExpectation",
+    "LiquidMargin",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
     "MarkovTransition",
     "Model",
+    "NestedConsumptionSavingsRegime",
+    "NetOfAdjustmentCost",
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
+    "OuterContinuousMargin",
     "Phased",
     "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
@@ -165,9 +217,22 @@ __all__ = [
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
     "__version__",
+    "affine_breakpoint",
+    "boundary",
+    "case_boundary",
+    "cash_on_hand_with_subsidy",
     "categorical",
     "fixed_transition",
+    "implies",
+    "liquid_law_from_resources",
+    "liquid_law_from_savings",
     "load_snapshot",
     "load_solution",
+    "outer_unchanged",
+    "piece",
+    "piecewise_affine",
+    "post_decision_lower_bound",
+    "ref",
     "save_solution",
+    "smooth_helper",
 ]

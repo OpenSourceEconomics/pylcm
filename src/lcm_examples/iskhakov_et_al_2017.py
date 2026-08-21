@@ -19,8 +19,18 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LiquidMargin,
+    Model,
+    categorical,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime
 from lcm.regime import Regime
+from lcm.solvers import DCEGM
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -76,6 +86,27 @@ def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
+
+
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    """End-of-period savings (the post-decision state)."""
+    return wealth - consumption
+
+
+def next_wealth_from_savings(
+    savings: FloatND, labor_income: FloatND, interest_rate: float
+) -> ContinuousState:
+    """Wealth transition written in terms of the post-decision state.
+
+    Algebraically identical to `next_wealth`'s
+    `(1 + interest_rate) * (wealth - consumption) + labor_income`.
+    """
+    return (1 + interest_rate) * savings + labor_income
+
+
+def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    """Inverse of `u'(c) = 1/c` for log utility (work disutility is additive)."""
+    return 1.0 / marginal_continuation
 
 
 def next_regime_from_working(
@@ -143,6 +174,73 @@ dead = Regime(
 )
 
 
+# Exogenous end-of-period savings grid for the DC-EGM solver; the lower bound
+# is the borrowing limit (savings >= 0 encodes `consumption <= wealth`). Nodes
+# are cubically clustered toward the limit: the value function curves hardest
+# where the constraint starts to bind, and the published V is interpolated
+# from endogenous points spaced like the savings nodes.
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+
+LIQUID_MARGIN = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="wealth",
+    post_decision_state="savings",
+)
+
+DCEGM_SOLVER = DCEGM(
+    savings_grid=SAVINGS_GRID,
+    # The final decision period consumes everything, so its carry in the
+    # queried resources range consists of constrained-segment points only;
+    # 64 of them keep the geometric spacing ratio (and hence the carry
+    # interpolation error) small.
+    n_constrained_points=64,
+)
+
+# DC-EGM variants of the two non-terminal regimes. The economic content is
+# identical to `working_life` / `retirement`; the spec differs where the
+# algorithm requires it:
+# - `savings` and `inverse_marginal_utility` are declared regime functions,
+# - the wealth transition consumes `savings` (the post-decision state)
+#   instead of wealth and consumption directly,
+# - the borrowing constraint is dropped — DC-EGM enforces the budget
+#   identity and the savings-grid lower bound intrinsically.
+dcegm_working_life = ConsumptionSavingsRegime(
+    actions={
+        "labor_supply": DiscreteGrid(LaborSupply),
+        "consumption": CONSUMPTION_GRID,
+    },
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth_from_savings},
+    transition=next_regime_from_working,
+    functions={
+        "utility": utility_working,
+        "labor_income": labor_income,
+        "is_working": is_working,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
+)
+
+dcegm_retirement = ConsumptionSavingsRegime(
+    transition=next_regime_from_retirement,
+    actions={"consumption": CONSUMPTION_GRID},
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth_from_savings},
+    functions={
+        "utility": utility_retirement,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
+)
+
+
 @functools.cache
 def get_model(n_periods: int) -> Model:
     """Create the three-regime retirement model.
@@ -164,6 +262,43 @@ def get_model(n_periods: int) -> Model:
                 active=lambda age, la=last_age: age < la
             ),
             "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+    )
+
+
+@functools.cache
+def get_dcegm_model(n_periods: int) -> Model:
+    """Create the retirement model with the DC-EGM solver on both regimes.
+
+    Mathematically equivalent to `get_model` (same utility, budget, and
+    transitions; `get_params` works unchanged), but solved by Euler-equation
+    inversion on the exogenous savings grid instead of grid search — no
+    consumption grid enters the solve. Forward simulation works; simulated
+    consumption is restricted to the consumption grid (the intrinsic budget
+    constraint is applied as a feasibility mask).
+
+    Args:
+        n_periods: Number of periods. The last period is spent in the terminal
+            `dead` regime; the paper's five-decision-period parametrization
+            corresponds to `n_periods=6`.
+
+    Returns:
+        A configured Model instance.
+
+    """
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    return Model(
+        regimes={
+            "working_life": dcegm_working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": dcegm_retirement.replace(
+                active=lambda age, la=last_age: age < la
+            ),
             "dead": dead,
         },
         ages=ages,
@@ -211,19 +346,27 @@ def get_params(
 
 __all__ = [
     "CONSUMPTION_GRID",
+    "DCEGM_SOLVER",
+    "SAVINGS_GRID",
     "WEALTH_GRID",
     "LaborSupply",
     "RegimeId",
     "borrowing_constraint",
+    "dcegm_retirement",
+    "dcegm_working_life",
     "dead",
+    "get_dcegm_model",
     "get_model",
     "get_params",
+    "inverse_marginal_utility",
     "is_working",
     "labor_income",
     "next_regime_from_retirement",
     "next_regime_from_working",
     "next_wealth",
+    "next_wealth_from_savings",
     "retirement",
+    "savings",
     "utility_retirement",
     "utility_working",
     "working_life",

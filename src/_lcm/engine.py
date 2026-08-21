@@ -2,12 +2,13 @@ import dataclasses
 from collections.abc import Callable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 import jax
 from jax import Array
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -19,8 +20,8 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatRegimeParams,
     FunctionName,
-    MaxQOverAFunction,
     NextStateSimulationFunction,
+    QAndFFunction,
     RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
@@ -44,6 +45,29 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+
+if TYPE_CHECKING:
+    from _lcm.solution.contract import PeriodKernel
+
+    # The contract module imports this one at runtime, so `PeriodKernel` is
+    # reachable only under `TYPE_CHECKING`. ty reads the precise element type;
+    # the beartype claw checks only the outer `Mapping` container at runtime
+    # (see the runtime alias below).
+    PeriodKernelsMapping: TypeAlias = Mapping[int, PeriodKernel]  # noqa: UP040
+else:
+    PeriodKernelsMapping = Mapping
+
+# A precondition a solver can only check once parameter *values* exist. Kernels
+# are built at `Model` construction, before any params are supplied, so a check
+# that must evaluate or differentiate the model's DAG on real schedules, tables,
+# and coefficients cannot run there. A solver publishes such a check with its
+# kernels; the engine calls it as `check(flat_params=...)` on the first solve
+# and never again, so an estimation loop pays for it once. The check reports by
+# raising; its return value is ignored. Defined here rather than in
+# `_lcm.solution.contract` — which re-exports it — for the same reason as
+# `ContinuationPayload`: the engine stays a leaf of the contract, not a peer in
+# a cycle.
+type ParamCheck = Callable[..., None]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -317,11 +341,28 @@ class SolutionPhase:
     compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
 
+    period_kernels: PeriodKernelsMapping
+    """Immutable mapping of period to the regime's uniform period adapter.
+
+    Every regime — grid search or DC-EGM — exposes one adapter per period; the
+    solve loop invokes them the same way and reads each `KernelResult` without
+    branching on solver type. A grid-search adapter for a terminal regime in a
+    model with a DC-EGM regime is wrapped by an engine-owned output decorator so
+    it additionally publishes the regime's closed-form continuation carry.
+    """
+
+    continuation_spec: EGMContinuationSpec | None = None
+    """Concrete EGM continuation template bundled with its static layout."""
+
+    @property
+    def continuation_template(self) -> ContinuationPayload | None:
+        """Return the opaque payload template used by generic engine code."""
+        return (
+            None if self.continuation_spec is None else self.continuation_spec.template
+        )
+
     validation_regime_transition_probs: RegimeTransitionFunction | None
     """Probability function retaining declared cells for runtime validation."""
-
-    max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
-    """Immutable mapping of period to max-Q-over-actions functions."""
 
     compute_intermediates: MappingProxyType[int, Callable]
     """Immutable mapping of period to intermediate-computation closures.
@@ -333,6 +374,13 @@ class SolutionPhase:
     `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
     scalar means — so full-shape U/F/CE/Q arrays never materialise in
     host-visible memory.
+    """
+
+    param_checks: tuple[ParamCheck, ...] = ()
+    """The regime solver's preconditions that need real parameter values.
+
+    Run once, on the first solve, by `check_solver_params`; empty for a solver
+    whose scope is decided by structure alone.
     """
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
@@ -351,6 +399,25 @@ class SolutionPhase:
     (representative) base axis so period `t`'s value function is tabulated on
     period `t`'s grid. `None` for age-invariant regimes (the base axis is used
     unchanged)."""
+
+    @property
+    def solves_from_continuation(self) -> bool:
+        """Whether this regime's V is built from interpolated continuations.
+
+        True exactly for a non-terminal regime that publishes a continuation
+        payload — such a regime's kernels solve by reading its targets'
+        continuations rather than by the compiled Q-and-F grid program. A
+        grid-search regime publishes no continuation, and a terminal
+        carry-producing regime publishes one without reading any (no
+        regime-transition probs). Downstream consumers ask this capability —
+        the brute U/F/E/Q breakdown cannot reproduce such a regime's failure
+        rows, and its inversion-internal functions are not simulate-readable
+        targets — instead of asking which solver produced the regime.
+        """
+        return (
+            self.compute_regime_transition_probs is not None
+            and self.continuation_template is not None
+        )
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -459,6 +526,26 @@ class SolutionPhase:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class EGMPolicyRead:
+    """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
+
+    The stored policy maps the endogenous resources value to the optimal
+    continuous action; simulation interpolates it at each subject's resources
+    instead of argmaxing over the action grid.
+    """
+
+    action_name: ActionName
+    """The EGM continuous action the interpolated policy value replaces."""
+
+    resources_target: FunctionName
+    """DAG function computing the endogenous resources the policy is read at."""
+
+    savings_lower_bound: float
+    """Lower bound of the solver's savings grid — the borrowing limit the
+    post-read feasibility check enforces (`action <= resources - bound`)."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -507,6 +594,16 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
+    Q_and_F: MappingProxyType[int, QAndFFunction]
+    """Immutable mapping of period to pointwise state-action value functions.
+
+    Evaluates the canonical `Q` and its feasibility at one action value per
+    subject, rather than maximizing over the action grid. It shares the model
+    DAG, transitions, constraints, aggregators, params, and next-period value
+    arrays with `argmax_and_max_Q_over_a`, so a value it reports for an off-grid
+    candidate action is directly comparable with the grid winner's value.
+    """
+
     next_state: MappingProxyType[int, NextStateSimulationFunction]
     """Immutable mapping of period to next-period-state functions."""
 
@@ -518,6 +615,17 @@ class SimulationPhase:
     carry the true per-age closures. Consumers computing period-specific outputs
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
+
+    egm_policy_read: EGMPolicyRead | None = None
+    """Off-grid read of the published EGM simulation policy, or `None`.
+
+    Present only where replaying the solve-phase policy is valid:
+    - the regime is solved by an EGM kernel that publishes `EGMSimPolicy`;
+    - the Koopmans aggregator `W` is phase-invariant (a phase-variant `W`
+      changes the simulate-phase FOC, so the stored policy is wrong there);
+    - the regime declares no taste shocks.
+    `None` keeps the grid-argmax decision path for the continuous action.
+    """
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -784,7 +892,13 @@ class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
     V_arr: Float1D
-    """Value function array for all subjects at this period."""
+    """Value function array for all subjects at this period.
+
+    The grid-argmax value: where the off-grid policy read replaces the
+    continuous action, this value belongs to the pre-replacement gridded
+    action combination, not to the recorded action — the pair is not a
+    consistent (action, value) evaluation there.
+    """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
     """Immutable mapping of action names to optimal action arrays for all subjects."""

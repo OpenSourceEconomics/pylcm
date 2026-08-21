@@ -1,0 +1,212 @@
+"""Equivalent-spec pairs for solver comparisons (brute force vs DC-EGM).
+
+The DC-EGM contract changes the model spec, not just a flag:
+
+- the borrowing constraint is dropped (the savings grid's lower bound enforces it),
+- the wealth transition consumes the post-decision state `savings` instead of
+  wealth/consumption directly,
+- `resources`, `savings`, and `inverse_marginal_utility` are declared as regime
+  functions.
+
+The builders here emit mathematically equivalent specs for both solvers so tests can
+compare value functions on the shared wealth grid. Importable only once `lcm.solvers`
+exists.
+"""
+
+import dataclasses
+import functools
+from typing import Literal
+
+from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.solvers import DCEGM
+from lcm_examples.iskhakov_et_al_2017 import (
+    CONSUMPTION_GRID,
+    WEALTH_GRID,
+    LaborSupply,
+    dead,
+    inverse_marginal_utility,
+    is_working,
+    labor_income,
+    next_wealth_from_savings,
+    savings,
+    utility_retirement,
+    utility_working,
+)
+from tests.envelope_configs import envelope_config
+from tests.test_models.deterministic import base, retirement_only
+
+# Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
+# the original `consumption <= wealth` constraint. This is the number the regime
+# declares, and the engine checks the savings grid against it.
+#
+# Deliberately stated independently of the grid below rather than as its
+# `start`: the two can therefore disagree, which is what gives that check
+# something to catch. A toy whose grid is built from this constant cannot
+# exhibit a grid-versus-declaration mismatch at all, so it can only serve as an
+# end-to-end fixture -- never as evidence about the check.
+SAVINGS_FLOOR = 0.0
+
+# Exogenous end-of-period savings grid, whose lowest node is `SAVINGS_FLOOR`.
+# Nodes are cubically clustered toward the borrowing limit: the value function
+# curves hardest where the constraint starts to bind, and the published V is
+# interpolated from endogenous points spaced like the savings nodes — a
+# uniform grid under-resolves the lowest wealth nodes by orders of magnitude.
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(400.0 * (i / 199) ** 3 for i in range(200)))
+
+
+DCEGM_SOLVER = DCEGM(
+    savings_grid=SAVINGS_GRID,
+    # The final decision period consumes everything, so its carry in the
+    # queried resources range consists of constrained-segment points only;
+    # 64 of them keep the geometric spacing ratio (and hence the carry
+    # interpolation error) small.
+    n_constrained_points=64,
+)
+
+LIQUID_MARGIN = LiquidMargin(
+    state="wealth",
+    action="consumption",
+    resources="wealth",
+    post_decision_state="savings",
+)
+
+
+dcegm_retirement = ConsumptionSavingsRegime(
+    transition=retirement_only.next_regime_from_retirement,
+    actions={"consumption": CONSUMPTION_GRID},
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth_from_savings},
+    functions={
+        "utility": utility_retirement,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
+)
+
+
+dcegm_working_life = ConsumptionSavingsRegime(
+    transition=base.next_regime_from_working,
+    actions={
+        "labor_supply": DiscreteGrid(LaborSupply),
+        "consumption": CONSUMPTION_GRID,
+    },
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth_from_savings},
+    functions={
+        "utility": utility_working,
+        "labor_income": labor_income,
+        "is_working": is_working,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
+)
+
+
+dcegm_retirement_full = ConsumptionSavingsRegime(
+    transition=base.next_regime_from_retirement,
+    actions={"consumption": CONSUMPTION_GRID},
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth_from_savings},
+    functions={
+        "utility": utility_retirement,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    solver=DCEGM_SOLVER,
+    liquid=LIQUID_MARGIN,
+)
+
+
+@functools.cache
+def get_retirement_only_model(
+    solver: Literal["brute_force", "dcegm"], n_periods: int
+) -> Model:
+    """Build the two-regime retirement model for the requested solver."""
+    if solver == "brute_force":
+        return retirement_only.get_model(n_periods)
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    return Model(
+        regimes={
+            "retirement": dcegm_retirement.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+    )
+
+
+@functools.cache
+def get_full_model(
+    solver: Literal["brute_force", "dcegm"],
+    n_periods: int,
+    *,
+    envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] | None = None,
+) -> Model:
+    """Build the three-regime worker/retirement/dead model for the requested solver.
+
+    `envelope=None` keeps `DCEGM_SOLVER`'s backend, so a model built here
+    is comparable to one built directly from the shared regimes. Naming a
+    backend overrides it for tests that compare backends against each other.
+    """
+    if solver == "brute_force":
+        return base.get_model(n_periods)
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
+    dcegm_solver = (
+        DCEGM_SOLVER
+        if envelope is None
+        else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
+    )
+    return Model(
+        regimes={
+            "working_life": dcegm_working_life.replace(
+                active=lambda age, la=last_age: age < la, solver=dcegm_solver
+            ),
+            "retirement": dcegm_retirement_full.replace(
+                active=lambda age, la=last_age: age < la, solver=dcegm_solver
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=base.RegimeId,
+    )
+
+
+def get_retirement_only_params(
+    n_periods: int,
+    *,
+    discount_factor: float = 0.98,
+    interest_rate: float = 0.0,
+) -> dict:
+    """Params for the retirement-only pair; valid for both solver variants."""
+    return retirement_only.get_params(
+        n_periods,
+        discount_factor=discount_factor,
+        interest_rate=interest_rate,
+    )
+
+
+def get_full_params(
+    n_periods: int,
+    *,
+    discount_factor: float = 0.98,
+    disutility_of_work: float = 1.0,
+    interest_rate: float = 0.0,
+    wage: float = 20.0,
+) -> dict:
+    """Params for the full-model pair; valid for both solver variants."""
+    return base.get_params(
+        n_periods=n_periods,
+        discount_factor=discount_factor,
+        disutility_of_work=disutility_of_work,
+        interest_rate=interest_rate,
+        wage=wage,
+    )

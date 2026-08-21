@@ -12,11 +12,13 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from beartype import beartype
 
+import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
@@ -25,13 +27,10 @@ from _lcm.user_regime_validation import (
     _validate_logical_consistency,
     _validate_mapping_contents,
 )
-from _lcm.utils.containers import (
-    ensure_containers_are_immutable,
-)
+from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.solvers import GridSearch, Solver
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, MarkovTransition
 from lcm.typing import UserFunction
@@ -56,6 +55,8 @@ class Regime:
     needed.
 
     """
+
+    _accepts_margin_solver: ClassVar[bool] = False
 
     # `UserFunction`/`Phased` inside the per-target dict pass the type check
     # so the validator can reject them with an explanation.
@@ -114,6 +115,8 @@ class Regime:
         UserFunction
         | MarkovTransition
         | Phased
+        # `Phased` inside a per-target dict passes the type check so the
+        # validator can reject it with the outermost-only explanation.
         | Mapping[RegimeName, UserFunction | MarkovTransition | Phased]
         | None,
     ] = field(default_factory=lambda: MappingProxyType({}))
@@ -142,10 +145,15 @@ class Regime:
 
     # `Phased` passes the type check so the validator can reject it with an
     # explanation (constraints are phase-invariant).
-    constraints: Mapping[FunctionName, UserFunction | Phased | None] = field(
+    constraints: Mapping[FunctionName, ConstraintLike | Phased | None] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Mapping of constraint names to constraint functions.
+    """Mapping of constraint names to constraints.
+
+    A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
+    predicate. The two mean the same thing and are evaluated identically; a
+    condition additionally carries what it says, so a solver can prove or
+    refuse it instead of only being able to call it.
 
     Constraints are phase-invariant: a phase-specific feasible set would let
     the simulated argmax range over actions the value function was never
@@ -157,13 +165,22 @@ class Regime:
     )
     """Categorical grids for DAG function outputs not in states/actions."""
 
-    solver: Solver = field(default_factory=GridSearch)
+    solver: _solvers.Solver = field(default_factory=_solvers.GridSearch)
     """Solution algorithm for this regime during backward induction.
 
-    - `GridSearch()` (default): grid search over the full state-action product.
-    - `DCEGM(...)`: endogenous grid method for one continuous state and one
-      continuous action; the regime must satisfy the DC-EGM model contract,
-      which is validated at `Model` construction time.
+    The solver must match the regime declaration that supplies its structural
+    roles:
+
+    - `Regime`: `GridSearch()` (the default), or another `Solver` that does
+      not require margin binding.
+    - `ConsumptionSavingsRegime`: `GridSearch()` or a `OneMarginSolver`,
+      such as `EGM(...)`, `DCEGM(...)`, or `NBEGM(...)`.
+    - `NestedConsumptionSavingsRegime`: `GridSearch()` or a
+      `TwoMarginSolver`, such as `NEGM(...)` or `NNBEGM(...)`.
+
+    Endogenous-grid solvers validate their structural contracts during
+    `Model(...)`; the specialized regime owns the state, action, resources,
+    and post-decision role names bound into the solver.
     """
 
     taste_shocks: ExtremeValueTasteShocks | None = None
@@ -221,6 +238,7 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
+        self._fail_if_egm_solver_has_no_margin_declaration()
         _validate_mapping_contents(self)
         _validate_logical_consistency(self)
 
@@ -242,6 +260,20 @@ class Regime:
         # variants) is validated by the normalizer; the per-phase spec it
         # builds is consumed during model processing.
         normalize_regime_phases(self)
+
+    def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
+        if self._accepts_margin_solver:
+            return
+        if isinstance(self.solver, _solvers.OneMarginSolver | _solvers.TwoMarginSolver):
+            raise RegimeInitializationError(
+                "EGM-family solvers require regime-owned margin declarations: use "
+                "ConsumptionSavingsRegime for a OneMarginSolver or "
+                "NestedConsumptionSavingsRegime for a TwoMarginSolver."
+            )
+
+    def _validate_finalized_structure(self, *, regime_name: RegimeName) -> None:
+        """Validate subclass-owned structure after model-level slots are merged."""
+        _ = regime_name
 
     def get_koopmans_aggregator(
         self,
@@ -325,6 +357,12 @@ class Regime:
             else:
                 result["next_regime"] = cast("UserFunction", transition)
         return MappingProxyType(result)
+
+    def _augment_phase_functions(
+        self, functions: dict[FunctionName, UserFunction]
+    ) -> dict[FunctionName, UserFunction]:
+        """Add internal functions required by a specialized regime declaration."""
+        return functions
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.

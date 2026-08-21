@@ -56,12 +56,18 @@ class InvalidAdditionalTargetsError(PyLCMError):
     """Raised when the additional targets are invalid."""
 
 
-class RegimeInitializationError(PyLCMError):
-    """Raised when there is an error in the regime initialization."""
-
-
 class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
+
+
+class RegimeInitializationError(ModelInitializationError):
+    """Raised when there is an error in the regime initialization.
+
+    A regime is a component of a model and is validated both at its own
+    construction and again when a model finalizes it, so the same defect
+    surfaces from either call. Catching `ModelInitializationError` catches
+    both.
+    """
 
 
 class GridInitializationError(PyLCMError):
@@ -80,3 +86,43 @@ class CategoricalDefinitionError(PyLCMError):
 
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
+
+
+class NBEGMCaseError(PyLCMError):
+    """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
+
+    Covers three families of checks:
+
+    - Invalid boundary/piece declarations: a bare `(variable, threshold)` tuple
+      that does not declare equality ownership, a case boundary with no
+      `lcm.boundary(...)` surface, a piece referencing an undeclared predicate,
+      or a duplicate/missing `when`/`otherwise` side for an output.
+    - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
+      comparison, a piecewise primitive inside a helper) in a case's economic
+      nodes.
+    - The case-piece scope gate: a non-`'subsidy'` split output, a
+      state-dependent piece, a `'when'`-owned equality, a non-`'jump'` boundary
+      kind, or a boundary on a variable other than the liquid state.
+    """
+
+
+class ExactAffineKernelUnavailableError(PyLCMError):
+    """Raised when `ExactEnvelope` cannot load its exact-affine kernel.
+
+    `ExactEnvelope` uses exact arithmetic to determine which candidate delivers the
+    highest value. This calculation is performed by the compiled exact-affine kernel
+    shipped as part of pylcm. If that kernel is missing or cannot be loaded, pylcm
+    raises this error instead of silently using approximate floating-point
+    comparisons.
+    """
+
+
+class ScaledLotteryDifferentiationError(PyLCMError):
+    """Raised when differentiating a lottery with extremely small probabilities.
+
+    `aggregate_scaled` preserves probabilities that are too small to represent as
+    ordinary floating-point numbers. Derivatives with respect to such probabilities
+    are not supported. pylcm therefore raises this error instead of returning zero,
+    which could incorrectly suggest to an optimizer that the objective is locally
+    flat.
+    """

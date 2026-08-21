@@ -1,0 +1,124 @@
+"""The 1-D retirement EGM step reproduces the brute solve of the retired sub-problem.
+
+The retired agent solves a plain consumption--saving problem: one continuous state
+(`liquid`), one continuous action (`consumption`), no discrete choice, so the endogenous
+grid method needs no upper envelope — invert the consumption Euler equation on a
+post-decision savings grid and map back to the liquid grid. Run against the DS pension
+brute solve, the step matches the dense grid-search retired value where the grid covers.
+"""
+
+from typing import Any
+
+import jax.numpy as jnp
+import numpy as np
+
+from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from _lcm.egm.preferences import Preferences
+from tests.solution._crra_preferences import crra_preferences
+from tests.test_models.deterministic.ds_pension import get_model, get_params
+
+_CRRA = 2.0
+_LIQUID_GRID = jnp.linspace(0.1, 20.0, 12)
+_SAVINGS_GRID = jnp.linspace(0.0, 20.0, 40)
+_RETURN_LIQUID = 0.02
+_INCOME = 0.50
+_P: dict[str, Any] = {
+    "discount_factor": 0.98,
+    "preferences": crra_preferences(_CRRA),
+    # The step takes the law's readings rather than a return and an income: where
+    # each savings level lands next period, and how that landing point moves.
+    "next_liquid": (1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,
+    "marginal_return": jnp.full_like(_SAVINGS_GRID, 1.0 + _RETURN_LIQUID),
+}
+# The two lowest liquid points sit in the borrowing-constrained boundary layer, where
+# the value has a kink and a coarse linear grid cannot resolve the steep low-wealth
+# value; both EGM and grid search carry boundary error there. The unconstrained
+# interior is what the parity assertion covers.
+_INTERIOR = np.s_[2:]
+
+
+def _brute_retired(*, n_consumption=200):
+    """Brute retired value, solved with a fine consumption grid as the fair reference.
+
+    The default oracle's 14-point consumption grid is too coarse to be a faithful
+    reference at low liquid (the optimal consumption is small and falls between grid
+    points); a fine grid converges to the true value the EGM step targets.
+    """
+    model = get_model(n_periods=5, n_consumption=n_consumption)
+    brute = model.solve(params=get_params(), log_level="debug")
+    return jnp.asarray(brute[4]["dead"]), np.asarray(brute[3]["retired"])
+
+
+def _bequest_marginal():
+    """Marginal value of liquid for the terminal CRRA bequest `u(liquid)`."""
+    return _LIQUID_GRID ** (-_CRRA)
+
+
+def test_retired_egm_matches_brute_on_the_liquid_interior():
+    """One retired EGM step from the terminal bequest matches the brute solve."""
+    v_dead, brute_retired = _brute_retired()
+    step = egm_one_asset_step(
+        next_value=v_dead,
+        next_marginal=_bequest_marginal(),
+        liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_LIQUID_GRID,
+        savings_grid=_SAVINGS_GRID,
+        **_P,
+    )
+    v_retired = np.asarray(step.value)
+    assert np.isfinite(v_retired).all()
+    rel = np.abs(v_retired[_INTERIOR] - brute_retired[_INTERIOR]) / np.abs(
+        brute_retired[_INTERIOR]
+    )
+    assert np.median(rel) < 0.01
+    assert np.max(rel) < 0.05
+
+
+def test_retired_egm_value_is_increasing_in_liquid():
+    """More liquid wealth is weakly more valuable in retirement."""
+    v_dead, _brute = _brute_retired()
+    step = egm_one_asset_step(
+        next_value=v_dead,
+        next_marginal=_bequest_marginal(),
+        liquid_grid=_LIQUID_GRID,
+        next_liquid_grid=_LIQUID_GRID,
+        savings_grid=_SAVINGS_GRID,
+        **_P,
+    )
+    assert np.all(np.diff(np.asarray(step.value)) >= -1e-6)
+    # The marginal value of liquid is positive and decreasing (concave value).
+    assert np.all(np.asarray(step.marginal) > 0)
+    assert np.all(np.diff(np.asarray(step.marginal)) <= 1e-6)
+    # Consumption is positive and weakly increasing in liquid wealth.
+    assert np.all(np.asarray(step.consumption) > 0)
+    assert np.all(np.diff(np.asarray(step.consumption)) >= -1e-6)
+
+
+def test_plain_egm_extrapolates_a_child_continuation_below_its_grid() -> None:
+    """A landing below the child grid continues its first value segment."""
+
+    def utility(consumption):
+        return jnp.zeros_like(consumption)
+
+    def marginal_utility(consumption):
+        return jnp.ones_like(consumption)
+
+    def inverse_marginal_utility(marginal_continuation):
+        return jnp.ones_like(marginal_continuation)
+
+    result = egm_one_asset_step(
+        next_value=jnp.asarray([1.0, 2.0, 3.0]),
+        next_marginal=jnp.asarray([1.0, 1.0, 1.0]),
+        liquid_grid=jnp.asarray([1.0]),
+        next_liquid_grid=jnp.asarray([1.0, 2.0, 3.0]),
+        savings_grid=jnp.asarray([0.0]),
+        discount_factor=jnp.asarray(0.5),
+        preferences=Preferences(
+            utility=utility,
+            marginal_utility=marginal_utility,
+            inverse_marginal_utility=inverse_marginal_utility,
+        ),
+        next_liquid=jnp.asarray([0.0]),
+        marginal_return=jnp.asarray([1.0]),
+    )
+    np.testing.assert_allclose(np.asarray(result.value), np.asarray([0.0]))

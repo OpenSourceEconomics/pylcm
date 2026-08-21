@@ -15,15 +15,17 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
-from lcm.certainty_equivalent import LinearExpectation
+from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import RegimeInitializationError
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
-from lcm.solvers import DCEGM
+from lcm.solvers import NBEGM, NNBEGM
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -88,7 +90,9 @@ def _callable_mapping_errors(
                     f"computed for."
                 )
         elif not callable(v):
-            error_messages.append(f"{attr_name} value {v!r} must be a callable.")
+            error_messages.append(
+                f"{attr_name} value {v!r} must be a Condition or a callable."
+            )
     return error_messages
 
 
@@ -501,24 +505,78 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
-    - only `GridSearch` supports a nonlinear certainty equivalent (the
-      Euler inversion in DC-EGM assumes expected utility)
+    - a solver that reads a continuation payload inverts the Euler equation
+      against it. That inversion assumes expected utility unless the solver
+      declares `supports_nonlinear_certainty_equivalent`, so a nonlinear
+      certainty equivalent is otherwise rejected rather than silently ignored;
+      a solver that reads only the value array (grid search) aggregates any
+      certainty equivalent in concrete values and is never subject to the rule
+    - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
+      logsum is not invariant under the certainty-equivalent transform, so the
+      combination is rejected
+
+    `LinearExpectation` is the expected-utility default every solver and every
+    taste-shock regime implements, so only a nonlinear certainty equivalent is
+    subject to the composition rules.
     """
     if regime.certainty_equivalent is None:
         return []
+    # Which class owns which reduction is a separate question from linearity, so
+    # it is asked before the linear default is waved through: a subclass of
+    # `LinearExpectation` that restates `aggregate` is an instance of it, and
+    # would otherwise skip the very gate written to catch it.
     error_messages: list[str] = []
+    error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
     if regime.terminal:
         error_messages.append(
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if isinstance(regime.solver, DCEGM) and not isinstance(
-        regime.certainty_equivalent, LinearExpectation
+    if _is_plain_linear_expectation(regime.certainty_equivalent):
+        return error_messages
+    if (
+        regime.solver.requires_continuation
+        and not regime.solver.supports_nonlinear_certainty_equivalent
     ):
         error_messages.append(
-            "The DCEGM solver does not support a nonlinear "
-            "`certainty_equivalent`: the Euler inversion assumes expected "
-            "utility. Use GridSearch() for this regime."
+            f"The {type(regime.solver).__name__} solver does not support a "
+            "nonlinear `certainty_equivalent`: its Euler inversion assumes "
+            "expected utility. Use GridSearch(), NBEGM(), or NNBEGM() for "
+            "this regime."
+        )
+    if isinstance(regime.solver, (NBEGM, NNBEGM)):
+        # The endogenous-grid kernels implement the Epstein-Zin recursion for
+        # exactly one pairing: they read the power mean's `risk_aversion`
+        # parameter for the transform partials and the aggregator's
+        # intertemporal elasticity for the Euler inversion and period value.
+        # NNBEGM's inner solve runs the same NBEGM kernels, so the contract
+        # binds it identically. GridSearch aggregates any certainty
+        # equivalent in concrete values, so only the endogenous-grid routes
+        # are narrowed.
+        solver_name = type(regime.solver).__name__
+        if not isinstance(regime.certainty_equivalent, PowerMean):
+            error_messages.append(
+                f"{solver_name} implements the recursive certainty "
+                f"equivalent for `PowerMean` only, got "
+                f"{type(regime.certainty_equivalent).__name__}. Use "
+                f"`certainty_equivalent=PowerMean()` or solve the regime with "
+                f"GridSearch()."
+            )
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
+            error_messages.append(
+                f"{solver_name} with a `certainty_equivalent` requires the "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
+                "inversion and period value read its intertemporal "
+                "elasticity. With a different aggregator the kernels would "
+                "solve a recursion the regime does not declare."
+            )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            "A regime cannot combine `certainty_equivalent` with "
+            "`taste_shocks`: the extreme-value logsum is not invariant under "
+            "the certainty-equivalent transform, so the Epstein-Zin recursion "
+            "and taste shocks do not compose."
         )
     return error_messages
 
@@ -857,3 +915,82 @@ def _validate_per_target_dict(
             f"MarkovTransition or none are.",
         )
     return error_messages
+
+
+def _is_plain_linear_expectation(
+    certainty_equivalent: CertaintyEquivalent,
+) -> bool:
+    """Whether continuation solvers may use their plain expected-value route.
+
+    A subclass is plain only when it inherits both ordinary and scaled
+    semantics unchanged from `LinearExpectation`. A subclass that overrides
+    both methods is internally consistent but states a different mean, which a
+    continuation solver would otherwise accept and silently replace by expected
+    utility.
+    """
+    mean_type = type(certainty_equivalent)
+    return (
+        isinstance(certainty_equivalent, LinearExpectation)
+        and _method_owner(mean_type, "aggregate") is LinearExpectation
+        and _method_owner(mean_type, "aggregate_scaled") is LinearExpectation
+    )
+
+
+def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list[str]:
+    """Collect errors for a certainty equivalent that cannot take scaled weights.
+
+    A continuation lottery's weights reach the certainty equivalent as
+    `(coefficient, shift)` pairs, because a joint probability built from several
+    rare factors sits further below the likeliest node than the exponent field
+    spans and no ordinary weight vector states it. `aggregate_scaled` is the
+    method that reads the pair.
+
+    Which implementation runs is decided by ownership rather than presence, and
+    two cases are wrong:
+
+    - the most-derived owner of `aggregate_scaled` is the base class, which
+      cannot reduce a scaled lottery for an algebra it has never seen and says
+      so rather than approximating one;
+    - `aggregate` is owned further down the class hierarchy than
+      `aggregate_scaled`, so a subclass has changed what the mean *means* while
+      inheriting a scaled reduction written for its parent's meaning. The two
+      would then disagree, and which one ran would depend on whether a lottery
+      happened to carry scales.
+
+    Inherited semantics with an inherited scaled method agree by construction,
+    and an explicit override of both is the author's own business.
+    """
+    mean_type = type(certainty_equivalent)
+    ordinary_owner = _method_owner(mean_type, "aggregate")
+    scaled_owner = _method_owner(mean_type, "aggregate_scaled")
+    remedy = (
+        f"Implement `aggregate_scaled` on `{mean_type.__name__}` so it reduces "
+        "the lottery with its scales still present, or use one of the shipped "
+        "certainty equivalents (`LinearExpectation`, `QuasiArithmeticMean`, "
+        "`PowerMean`), which do."
+    )
+    if scaled_owner is CertaintyEquivalent:
+        boundary = (
+            f"`{mean_type.__name__}` defines `aggregate` but inherits "
+            "`aggregate_scaled` from `CertaintyEquivalent`, which is a "
+            "capability boundary rather than an implementation: a weight below "
+            "the smallest positive float cannot be handed to an arbitrary "
+            f"`aggregate` as an ordinary number. {remedy}"
+        )
+        return [boundary]
+    order = mean_type.__mro__
+    if order.index(ordinary_owner) < order.index(scaled_owner):
+        mismatch = (
+            f"`{mean_type.__name__}` overrides `aggregate` but inherits "
+            f"`aggregate_scaled` from `{scaled_owner.__name__}`, whose scaled "
+            "reduction states the parent's mean rather than this one. The two "
+            "would disagree, and which of them ran would depend on whether the "
+            f"lottery carried scales. {remedy}"
+        )
+        return [mismatch]
+    return []
+
+
+def _method_owner(mean_type: type, name: str) -> type:
+    """Return the most-derived class in `mean_type`'s MRO that defines `name`."""
+    return next(klass for klass in mean_type.__mro__ if name in vars(klass))

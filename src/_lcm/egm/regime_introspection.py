@@ -1,0 +1,292 @@
+"""Pure spec-introspection helpers for DC-EGM regimes and their carry targets.
+
+These read a regime's (or a carry target's) static specification — its
+`VInterpolationInfo`, its `UserRegime`, its function set — and return the
+names, grids, and composed functions the kernel build, the continuation
+subsystem, and the kernel-scope checks all need. They hold no kernel state and
+perform no numerics, so they form the dependency leaf the other `egm` step
+modules import from.
+"""
+
+from collections.abc import Callable
+from typing import Any, cast
+
+from dags import concatenate_functions, get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
+from dags.tree import qname_from_tree_path
+
+from _lcm.grids.continuous import ContinuousGrid
+from _lcm.params.regime_template import create_regime_params_template
+from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.negm import _BoundNEGM
+from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
+from _lcm.utils.functools import get_union_of_args
+from _lcm.variables import from_regime, get_grids
+from lcm.phased import Phased
+from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM, NEGM
+from lcm.typing import ScalarFloat, UserFunction
+
+
+def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
+    """Return the DC-EGM config a carry target solves its inner Euler with.
+
+    A `DCEGM` regime solves directly; a `NEGM` regime nests the same 1-D
+    DC-EGM consumption-savings solve, so its child read uses `solver.inner`. Any
+    other solver (e.g. a terminal grid-search regime) returns `None` — the
+    target's carry lives in M-space and is read with the identity map.
+    """
+    solver = user_regime.solver
+    if isinstance(solver, DCEGM):
+        return cast("_BoundDCEGM", solver)
+    if isinstance(solver, NEGM):
+        return cast("_BoundNEGM", solver).inner
+    return None
+
+
+def _get_discrete_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+) -> tuple[StateName, ...]:
+    """Discrete-state names of a regime in carry-axis (V state) order."""
+    return tuple(
+        name
+        for name in v_interpolation_info.state_names
+        if name in v_interpolation_info.discrete_states
+    )
+
+
+def _get_passive_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+    euler_state_name: StateName,
+) -> tuple[StateName, ...]:
+    """Passive-state names of a regime in carry-axis (V continuous-state) order.
+
+    Every continuous state other than the Euler state is passive — DC-EGM
+    validation enforces this for DC-EGM regimes, and terminal carry targets
+    are restricted to a single continuous state.
+    """
+    return tuple(
+        name
+        for name in v_interpolation_info.continuous_states
+        if name != euler_state_name
+    )
+
+
+def _get_process_state_names(
+    *,
+    v_interpolation_info: VInterpolationInfo,
+) -> tuple[StateName, ...]:
+    """Names of a regime's process states (node-valued discrete dimensions)."""
+    return tuple(
+        name
+        for name, grid in v_interpolation_info.discrete_states.items()
+        if isinstance(grid, _ContinuousStochasticProcess)
+    )
+
+
+def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
+    """Name of a carry target's continuous (Euler) state.
+
+    For a DC-EGM or NEGM target this is its configured (inner) Euler state; for a
+    terminal target it is the first non-process continuous state, matching the
+    carry's Euler axis (passive continuous states, e.g. a ride-along wage, follow
+    it). A model-level distributed state (e.g. a permanent type sharded across
+    devices) is broadcast into the terminal regime as an extra discrete axis, so
+    the Euler state is the first continuous state, never an int-coded discrete
+    state that happens to iterate first.
+    """
+    dcegm = _as_dcegm(user_regime)
+    if dcegm is not None:
+        return dcegm.continuous_state
+    grids = get_grids(user_regime)
+    # A carried state (imputed in solve, seeded in simulate) has no solve grid, so
+    # it never appears in `grids` and is not the Euler axis; skip it. The Euler axis
+    # is a genuine grid-backed continuous state.
+    continuous = tuple(
+        name
+        for name in user_regime.states
+        if name in grids
+        and isinstance(grids[name], ContinuousGrid)
+        and not isinstance(grids[name], _ContinuousStochasticProcess)
+    )
+    if not continuous:
+        msg = (
+            f"A terminal carry target must have at least one continuous (Euler) "
+            f"state; regime states {tuple(user_regime.states)} resolve to no "
+            f"continuous states."
+        )
+        raise ValueError(msg)
+    return continuous[0]
+
+
+def _get_child_discrete_actions(
+    *, user_regime: UserRegime
+) -> tuple[tuple[ActionName, ...], tuple[Any, ...]]:
+    """Discrete-action names and grid values of a carry target, in combo order.
+
+    The order matches the target's own kernel combos (its state-action
+    space's discrete actions), so per-row bindings line up with the carry's
+    action axes. Terminal targets have no actions (guarded).
+    """
+    variables = from_regime(user_regime)
+    grids = get_grids(user_regime)
+    names = tuple(variables.discrete_action_names)
+    return names, tuple(grids[name].to_jax() for name in names)
+
+
+def _get_child_resources_function(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> Callable[..., ScalarFloat]:
+    """Build the closed-over resources map of one carry target.
+
+    For a DC-EGM or NEGM target the map is its (inner) resources function
+    (resolved to the solve-phase variant); for a terminal target the carry lives
+    in M-space and the map is the identity. The returned callable takes the
+    child's state, passive, and discrete-action values as keyword arguments
+    (child names) so the kernel can compose it with the state transition and
+    differentiate the composition per carry row.
+    """
+    if _as_dcegm(user_regime) is not None:
+        return _concatenate_child_resources(
+            regime_name=regime_name, user_regime=user_regime
+        )
+
+    state_name = _get_child_state_name(user_regime=user_regime)
+
+    def identity_resources(**kwargs: ScalarFloat) -> ScalarFloat:
+        return kwargs[state_name]
+
+    return identity_resources
+
+
+def _get_child_resources_arg_names(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> set[str]:
+    """Argument names of a carry target's resources map."""
+    if _as_dcegm(user_regime) is not None:
+        return set(
+            get_union_of_args(
+                [
+                    _concatenate_child_resources(
+                        regime_name=regime_name, user_regime=user_regime
+                    )
+                ]
+            )
+        )
+    return {_get_child_state_name(user_regime=user_regime)}
+
+
+def _concatenate_child_resources(
+    *, regime_name: RegimeName, user_regime: UserRegime
+) -> UserFunction:
+    """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
+
+    Each user function's params are renamed to target-qualified names
+    (`<regime>__<func>__<param>`) before concatenation, matching the combo
+    pool's cross-regime binding vocabulary. The regime prefix keeps two
+    transition targets with the same inner qualified name distinct.
+    Solve-phase imputed intermediates (a
+    `Phased` function or a carried state's solve law) are resolved to their
+    solve variant and baked into the DAG, so their outputs are computed from
+    leaf states and params rather than demanded as leaves.
+
+    For a NEGM target the published continuation lives on the keeper's
+    cash-on-hand axis — the axis where keeping is free — so the inner
+    resources' outer post-decision is replaced by the keeper's no-adjustment
+    map `next_<durable> = keep(<durable>)` (the identity when the regime
+    declares none). The child resources then read `<durable>` (a bound passive
+    state) rather than demanding the outer post-decision as an unbound leaf,
+    and the parent's query axis matches the axis the stacked candidates are
+    lifted onto.
+    """
+    # Imported lazily: `regime_building.processing` imports the solver
+    # registry, which imports this module, so a top-level import would cycle.
+    from _lcm.regime_building import processing as _proc  # noqa: PLC0415
+
+    dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
+    regime_params_template = create_regime_params_template(user_regime)
+    resolved: dict[str, UserFunction] = {}
+    for name, func in user_regime.functions.items():
+        if isinstance(func, Phased):
+            resolved[name] = cast("UserFunction", func.solve)
+        elif func is not None:
+            resolved[name] = func
+    # A carried state contributes a solve-phase imputation function under its
+    # own name; include it so resources may read the imputed value.
+    for name, value in user_regime.states.items():
+        if isinstance(value, Phased) and name not in resolved:
+            resolved[name] = cast("UserFunction", value.solve)
+    resolved = user_regime._augment_phase_functions(resolved)  # noqa: SLF001
+    if isinstance(user_regime.solver, NEGM):
+        negm = cast("_BoundNEGM", user_regime.solver)
+        no_adjustment_name = negm.outer_no_adjustment_candidate
+        resolved[negm.outer_post_decision] = _keeper_no_adjustment_function(
+            durable_state=negm.outer_state,
+            outer_post_decision=negm.outer_post_decision,
+            no_adjustment_func=(
+                resolved[no_adjustment_name] if no_adjustment_name is not None else None
+            ),
+            functions=resolved,
+        )
+    qnamed = {
+        name: _proc._rename_params_to_qnames(  # noqa: SLF001
+            func=func,
+            regime_params_template=regime_params_template,
+            param_key=qname_from_tree_path((regime_name, name)),
+            names_key=name,
+        )
+        for name, func in resolved.items()
+    }
+    return concatenate_functions(
+        functions=qnamed,
+        targets=dcegm.resources,
+        enforce_signature=False,
+        set_annotations=True,
+    )
+
+
+def _keeper_no_adjustment_function(
+    *,
+    durable_state: StateName,
+    outer_post_decision: FunctionName,
+    no_adjustment_func: UserFunction | None,
+    functions: dict[str, UserFunction],
+) -> UserFunction:
+    """Build the keeper map `next_<durable>(durable) = keep(durable)`.
+
+    `keep` is the regime's no-adjustment candidate (e.g. the depreciated stock
+    `durable (1 - delta)`); with none declared it is the identity. The injected
+    function declares the durable state as its single argument and copies its
+    annotation off the first regime function that declares it, so the DAG's
+    annotation-consistency check (which requires every consumer of a leaf to
+    agree) stays satisfied.
+    """
+    annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
+
+    @with_signature(args={durable_state: annotation}, return_annotation=annotation)
+    def keep_outer_post_decision(**kwargs: ScalarFloat) -> ScalarFloat:
+        if no_adjustment_func is None:
+            return kwargs[durable_state]
+        return no_adjustment_func(kwargs[durable_state])
+
+    keep_outer_post_decision.__name__ = outer_post_decision
+    return cast("UserFunction", keep_outer_post_decision)
+
+
+def _annotation_of_arg(
+    *, functions: dict[str, UserFunction], arg_name: StateName
+) -> str:
+    """Return the annotation the regime's functions use for one argument.
+
+    Falls back to `"FloatND"` when no function annotates it.
+    """
+    for func in functions.values():
+        annotations = ensure_annotations_are_strings(get_annotations(func))
+        annotation = annotations.get(arg_name, "no_annotation_found")
+        if annotation != "no_annotation_found":
+            return annotation
+    return "FloatND"
