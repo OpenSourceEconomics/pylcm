@@ -1,10 +1,10 @@
-"""Merge gates for the paper-mode Mahler & Yum configuration.
+"""Behavioral tests for the paper-mode Mahler & Yum configuration.
 
-Fast gates check the paper-mode equations against the brute-force module's
+Fast tests check the paper-mode equations against the brute-force module's
 (the shared functions are imported, so only the *replaced* ones can drift)
-and the solver wiring against the plan's target interface. These run in CI.
+and verify the public solver wiring. These run in CI.
 
-The `manual` gates solve the real paper-scale model down to the capture
+The `manual` tests solve the paper-scale model down to the capture
 period and assert the continuous-outer contract on it: keeper dominance
 under the closed-form fixed-cost fold, off-node (continuous) next-habit
 selections, and coarse/fine outer-mesh convergence. They are excluded from
@@ -14,12 +14,9 @@ CI and run on request:
 pytest tests/test_mahler_yum_continuous_outer.py -m manual
 ```
 
-Their cost is the paper-scale state space the outer-mesh solve iterates
-over, not the mesh sizes: the mesh knobs below scale AOT compile time
-roughly with `max_nodes`, but a single non-terminal period does not finish
-within a quarter hour even with refinement cut to the bone, where the
-off-node and coarse/fine assertions would no longer have anything to
-measure. Reach for a smaller model before reaching for a smaller mesh.
+Their cost is dominated by the paper-scale state space. Reducing the mesh
+enough to make them cheap would remove the off-grid and convergence behavior
+they are meant to test.
 """
 
 import jax
@@ -143,7 +140,7 @@ def test_params_adapter_preserves_the_flat_calibration() -> None:
     )
 
 
-def test_paper_solver_wiring_matches_the_plan_interface() -> None:
+def test_paper_solver_wiring_matches_the_public_interface() -> None:
     """Both living regimes use the same continuous outer-margin vocabulary."""
     for regime in (build_working_regime(), build_retirement_regime()):
         outer = regime.outer_continuous
@@ -268,8 +265,8 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
 
     `E_chi[max(V_K, W* - B*chi)] >= V_K` pointwise, and where the analytic
     adjustment probability is zero the collapse equals the separately
-    evaluated keeper exactly (plan rule: the keeper is never read through
-    the adjuster surrogate).
+    evaluated keeper exactly because the keeper is evaluated directly rather
+    than through the adjuster surrogate.
     """
     keeper_V = coarse_capture["keeper_V"]
     collapsed = coarse_capture["V"]
@@ -291,8 +288,7 @@ def test_coarse_fine_outer_convergence(
     No one-sided bound is asserted: period 36 re-solves on period 37's
     *changed* carry, so a finer mesh can shift values in either direction
     (a grid ladder is a refinement path, not a pointwise bound). The gate
-    is two-sided closeness at solver accuracy — measured deviation between
-    the 9->33 and 17->65 meshes is ~3e-4 in value units.
+    is two-sided closeness at solver accuracy.
     """
     coarse_V = coarse_capture["V"]
     fine_V = fine_capture["V"]
@@ -304,11 +300,9 @@ def test_coarse_fine_outer_convergence(
 def test_next_habit_is_continuous_not_grid_snapped(coarse_capture: dict) -> None:
     """A material share of cells selects an off-node continuous next habit.
 
-    The safeguarded argmax refines between exact mesh nodes; if every
-    selected effort sat on a node the outer choice would still be the old
-    grid search. Golden-section abscissae are irrational combinations, so
-    distance-to-node is a robust off-grid witness; refinement must also
-    have strictly improved the value somewhere.
+    The safeguarded argmax refines between exact mesh nodes. Distance-to-node
+    is a direct witness that simulation can consume a genuinely continuous
+    policy; refinement must also improve the value somewhere.
     """
     valid = coarse_capture["search_valid"]
     x = coarse_capture["search_x"][valid]

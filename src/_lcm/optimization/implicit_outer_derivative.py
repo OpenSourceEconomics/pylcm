@@ -1,4 +1,4 @@
-"""Implicit derivative of a continuous outer optimum (plan section 19.2).
+"""Implicit derivative of a continuous outer optimum.
 
 `continuous_outer_optimum` maximizes a smooth scalar objective `Q(f, theta)`
 over a bracket and carries a *custom JVP*: the tangent of the winning

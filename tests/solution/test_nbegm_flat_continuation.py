@@ -3,11 +3,9 @@
 The last alive period of a model whose terminal target has no bequest motive
 reads a continuation whose marginal value of liquid wealth is identically
 zero. Every interior Euler candidate is then degenerate (dropped as NaN by
-design), and the whole solution must come from the savings-node corner
+the Euler step), and the whole solution must come from the savings-node corner
 chains — which requires the segment-id bookkeeping to survive an all-NaN
-interior segment (`_next_segment_id`). Before that guard, `nanmax` of the
-all-NaN interior ids poisoned the corner chains and the published value
-was all-NaN.
+interior segment (`_next_segment_id`).
 
 The consume-everything solution is analytic — `V(liquid) = u(liquid +
 base_income)` with zero savings — so the test pins values, not just

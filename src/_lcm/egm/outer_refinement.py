@@ -18,8 +18,7 @@ beyond tolerance, until every interval validates or the budget is exhausted.
 Inference-grade runs fail closed (`OuterSearchConvergenceError`); development
 runs may return the partial mesh flagged `unresolved`.
 
-Three deliberate deviations from a literal reading of the design document,
-each because the literal rule cannot terminate:
+Three rules keep validation informative and terminating:
 
 - an optimum-containing interval is *not* marked unconditionally — it is
   held to a 10x tighter validation standard plus the margin rule (marked

@@ -1915,21 +1915,15 @@ class _Dyadic(NamedTuple):
     """Exactly-represented reals `mantissa * 2**exponent`, one per trailing slot.
 
     Every quantity in the ordering kernel travels this way: a finite float
-    mantissa and a SEPARATE `int32` exponent. That split is the whole design.
+    mantissa and a separate `int32` exponent.
     An exponent held as an integer never rounds, never overflows and never
     flushes, so a term's magnitude may range over the entire real line while its
     mantissa stays inside one binade — the binade where every error-free
     transform below is exact.
 
-    Nine consecutive repairs to this kernel each moved the same
-    defect one layer down: a value comparison, a slope tie-break, an exponent, a
-    normalization's scope, then its shape, then the last normalization inside
-    the "exact" fallback. All nine shared one premise — that a rescaling can
-    make a rounded evaluation safe. It cannot: scaling operands DOWN merges
-    distinct floats and scaling them UP eventually overflows, and no single
-    binade holds a problem whose terms span more binades than the format has.
-    Carrying the exponent outside the float removes the premise instead of
-    patching its latest consequence.
+    No single floating-point rescaling is safe across the full format: scaling
+    down can merge distinct floats, while scaling up can overflow. Carrying the
+    exponent outside the float avoids both operations.
     """
 
     mantissa: FloatND
@@ -2005,18 +1999,8 @@ def _dyadic_negate(terms: _Dyadic, flip: BoolND) -> _Dyadic:
 def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
     """`a - b` as an UNEVALUATED two-term dyadic sum. No subtraction is performed.
 
-    An earlier repair formed the difference with `_two_diff` on operands LIFTED
-    into
-    mid-range, and justified it with the hinge claim that "subtraction of two
-    finite floats cannot overflow". That claim is false, and opposite-signed
-    top-binade operands are the counterexample: for `H = 2**127` in float32 or
-    `2**1023` in float64 — both finite normals — the lift is zero because the
-    operands already exceed the target, and `_two_diff(H, -H)` returns
-    `(inf, nan)`. A finite exact envelope was then published as three NaNs.
-
-    Every earlier repair guarded this operation against UNDERFLOW and against
-    nothing else; each fixed the direction its witness pointed at
-    and left the mirror image open. The fix is to stop performing the operation.
+    Keeping the terms separate avoids both underflow of a small finite gap and
+    overflow of an opposite-signed top-binade difference.
 
     `a = m_a * 2**e_a` and `b = m_b * 2**e_b` exactly, from `frexp`, so
     `a - b` is exactly the two-term sum `[(m_a, e_a), (-m_b, e_b)]`. Each
@@ -2096,28 +2080,23 @@ def _framed_affine(
 ) -> _FramedAffine:
     """Interpolate ONE affine channel exponent-preservingly, rounding once.
 
-    An earlier repair gave the VALUE channel this treatment and left `policy` and
-    `marginal` on `left + fraction*(right - left)` in the working dtype, where
-    `fraction = ldexp(rh, t_exp - w_exp)`. Both halves of that expression lose
-    finite results:
+    Evaluating `left + fraction * (right - left)` directly can lose finite
+    results in either half of the expression:
 
     - `fraction` is materialized BEFORE it is multiplied, so it can flush to
       zero even when `fraction * (right - left)` is a finite normal. With
       `x0 = 1`, `q = nextafter(1)`, `x1 = 2**(maxexp-2)` and outputs
-      `[0, x1]` the exact result is `ulp(1)` and production published `0`.
+      `[0, x1]` the exact result is `ulp(1)`.
     - `right - left` is a raw subtraction, so opposite-signed top-binade
-      outputs overflow: `[H, -H]` at `q = 1/2` has exact result `0` and
-      production published `-inf`.
+      outputs overflow even though `[H, -H]` at `q = 1/2` has exact result `0`.
 
     The ratio therefore never becomes a float. It stays a significand pair with
     a separate integer exponent, the endpoint difference is framed, the product
     is formed from significands alone, and the sum with `left` happens in a
     frame that holds BOTH addends — the single rounding is at publication.
 
-    The winner's value, policy and marginal all go through this one function, so
-    a channel cannot be repaired while its siblings are forgotten. That is how
-    this defect survived that repair: the value was certified, and the outputs
-    gathered from the very same certified winner were not.
+    The winner's value, policy and marginal all use this evaluator, so every
+    published channel has the same finite-result guarantee.
     """
     difference_hi, difference_lo, difference_frame = _framed_difference(right, left)
     difference_exp = _binade_exponent(jnp.abs(difference_hi)) + difference_frame
@@ -2359,12 +2338,9 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     value is that float over one — exact by construction, and expressible here
     with a unit denominator and no arithmetic at all.
 
-    **No scale is shared and none is passed in.** Earlier rounds took a value
-    exponent from the caller so both candidates' values could be compared in one
-    frame; that frame is what underflowed. With the exponent carried per term,
-    `V_a` and `V_b` are comparable because they are EXACT, not because they were
-    manoeuvred into common units — and the grid differences, which used to need a
-    group scale of their own, need none either.
+    No scale is shared or passed in. With the exponent carried per term, `V_a`
+    and `V_b` are comparable because they are exact; the grid differences likewise
+    need no group scale.
     """
     dtype = cols.dtype
     split = _dekker_split_factor(dtype)
@@ -2526,13 +2502,12 @@ def _exactly_maximal(
 ) -> BoolND:
     """Mask of the exactly-maximal bracketing candidates, per query.
 
-    Two stages, and the split is the point of the design:
+    Two stages separate cheap certification from exact resolution:
 
     1. **Certified screen.** The double-double leader's interval is compared
        against every other candidate's. Anything whose certified interval lies
        strictly below the leader's is certified to lose and is discarded with
-       no further work — this is where the radius, previously computed and then
-       ignored, actually enters selection. The screen is deliberately generous:
+       no further work. The screen is deliberately generous:
        it must be a superset, and a superset only costs comparisons.
     2. **Exact resolution.** Whatever the screen could not separate is resolved
        by `_exact_compare`, which is exact and therefore recognises a true tie
@@ -2690,35 +2665,15 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         right_value=right_value,
     )
 
-    # Interior: compensated interpolation `left + (t/w)*d` in double-double.
-    # TwoDiff makes t, w, d exact dd representations; division and product are
-    # dd-accurate in source, so (hi, lo) carries the interpolant to O(eps^2).
-    #
-    # SCALE AFTER DIFFERENCING, AND CARRY THE EXPONENT AS AN INTEGER.
-    #
-    # Dekker's TwoProd splits an operand by multiplying it by `2**s + 1`, so it
-    # needs `|a| < 2**(emax - s)` — `2**115` in float32, `2**996` in float64 —
-    # and past that the interior pair goes non-finite. Two earlier
-    # repairs bought that headroom by scaling the OPERANDS first: one with a
-    # single exponent for the whole array, the next with one per candidate.
-    # Both are
-    # lossy for the same reason — scaling `q` and `x0` before subtracting them
-    # can map two distinct represented grid points onto the SAME float, and then
-    # `t = q - x0` is zero and no downstream exactness can recover it. That
-    # approach's own witness: `x0 = 1`, `q = nextafter(1)`, `x1 = 2**126`, where the
-    # candidate exponent 127 makes both `x0` and `q` the same subnormal and a
-    # strictly lower constant competitor takes the value, policy and marginal.
-    #
-    # So the differences are formed FIRST, on the raw stored operands, where
-    # `_two_diff` is exact and subtraction of finite floats cannot overflow.
-    # Only then is each difference scaled by its OWN binade, and the scale is
-    # kept as an integer exponent rather than being applied to the operands:
+    # Interior interpolation is `left + (t/w)*d` in double-double. Each
+    # difference is formed in its own binade frame before Dekker arithmetic, and
+    # its scale remains a separate integer exponent:
     #
     #     r = t/w = (t * 2**-et) / (w * 2**-ew) * 2**(et - ew)
     #     p = r*d = [(t*2**-et)/(w*2**-ew) * (d*2**-ed)] * 2**(et - ew + ed)
     #
-    # Every significand handed to Dekker is O(1), so splitting cannot overflow at
-    # any model scale, and the exponent is applied ONCE, exactly, at the end.
+    # Every significand handed to Dekker is O(1), and the exponent is applied
+    # once at publication.
     #
     # No value scale is needed to keep the intermediates BOUNDED. A bracketing
     # candidate has `q` in `[x0, x1]`, hence `|t| <= |w|` and `r` in `[0, 1]`, so
@@ -2726,32 +2681,15 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # The unbounded intermediates only ever came from mixing units — a value
     # times a grid difference — which this form never constructs.
     #
-    # Boundedness is not the whole requirement, though, and reading it as if it
-    # were is what left the value axis unscaled for so long. The value axis
-    # needs a scale for the OPPOSITE reason to the grid axis: not because its
-    # intermediates can grow, but because they can vanish. See
-    # the value lift below.
+    # The value axis also needs a frame because a representable endpoint gap can
+    # vanish in the working dtype even when the interpolated value is material.
     zero_width = right_grid == left_grid
     split = _dekker_split_factor(block.dtype)
 
-    # ... and the ONE thing a shift of the OPERANDS can never deliver is safety
-    # in both directions at once. A difference of
-    # finite floats can UNDERFLOW — near the bottom of the range the gap between
-    # two distinct normals is subnormal and XLA flushes it, so `q - x0` came back
-    # exactly `0.0` and the interpolant collapsed onto its left value. Earlier
-    # repairs answered that by LIFTING, never lowering, and asserted that
-    # subtraction of finite floats cannot overflow. It can: for
-    # `H = 2**127` in float32 the operands already exceed any target, the lift is
-    # zero, and `H - (-H)` is `+inf`. A finite exact envelope was published as
-    # three NaNs.
-    #
-    # No choice of shift closes both ends, because the spread the operands can
-    # span is the whole format and no single frame holds it. So the difference is
-    # not formed in the working dtype at all: `_framed_difference` divides each
-    # PAIR by its own `2**max(e_a, e_b)` — exact, by `ldexp` on the `frexp`
-    # mantissa — and returns the pair's exponent alongside the double-double
-    # head and tail. Both operands are then in `(-1, 1]`, where `_two_diff`
-    # cannot overflow and cannot lose its residual, at any model scale.
+    # `_framed_difference` divides each operand pair by its own
+    # `2**max(e_a, e_b)` and returns that exponent alongside the double-double
+    # head and tail. The scaled operands lie in `(-1, 1]`, where `_two_diff`
+    # neither overflows nor loses its residual.
     #
     # Each difference carries its OWN frame, so the grid axis needs no common
     # shift for `q` and the two nodes: `r = t/w` recombines them through the
@@ -2764,13 +2702,9 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     wl = jnp.where(zero_width, jnp.zeros_like(wl), wl)
     w_frame = jnp.where(zero_width, jnp.zeros_like(w_frame), w_frame)
 
-    # The value axis takes the same treatment, and for BOTH reasons. Downward:
-    # with `v0 = tiny` and `v1 = nextafter(tiny)` the endpoint gap `d` used to
-    # flush and a strictly lower branch took the policy and the marginal.
-    # Upward: with `v0 = -H` and `v1 = H` the gap `2H`
-    # is not representable at all, though every endpoint and the interpolated
-    # value are. In the framed form `d` is `(1.0, 0.0)` at exponent `maxexp`, and
-    # nothing overflows.
+    # The value difference uses the same treatment: it preserves a subnormal
+    # endpoint gap and represents an opposite-signed top-binade gap without
+    # materializing an overflowing subtraction.
     #
     # Only the HEAD is needed here: the interpolated value itself is built by
     # `_framed_affine`, which forms this difference again for the channel it is
@@ -2798,14 +2732,6 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     # EVERY published affine channel goes through the SAME evaluator. The ratio
     # is handed over as a significand pair plus a separate integer exponent and
     # is never materialized as a float.
-    #
-    # An earlier repair gave this treatment to the value alone and left `policy`
-    # and
-    # `marginal` on `left + fraction*(right - left)` in the working dtype, so a
-    # certified winner published uncertified outputs: a `fraction` that flushed
-    # to zero before multiplication, and a `right - left` that overflowed on
-    # opposite-signed top-binade endpoints. Repairing the channel a witness
-    # names and not its siblings is exactly how every earlier repair ended.
     #
     # For a BRACKETING candidate `|t| <= |w|`, so `r` is in `[0, 1]` and each
     # result is bounded by its own endpoints: scaling back out of the frame is
@@ -3225,21 +3151,10 @@ def _envelope_at_query_407(
         and all gathered from the same winning segment. A query no live segment
         brackets yields NaN in all three.
     """
-    # NO global rescaling happens here, deliberately. An earlier revision
-    # normalized the
-    # whole problem at this point to keep Dekker's splitting in range, and that
-    # map is NOT INJECTIVE over a mixed-scale array: one exponent was chosen
-    # from the largest candidate anywhere in the input, including candidates
-    # that cannot bracket the query, so a remote segment at `2**126` collapsed
-    # two adjacent local floats into the same subnormal BEFORE the certified
-    # comparator ever saw them. Exact arithmetic downstream cannot rebuild bits
-    # that were discarded upstream, and the published value, policy and marginal
-    # all changed in response to a segment that is mathematically irrelevant.
-    #
-    # Exponent safety is therefore established PER CANDIDATE, inside
+    # Exponent safety is established per candidate, inside
     # `_candidate_terms`, where the operands of each error-free transform are
-    # known and nothing another candidate does can perturb them. Topology and
-    # node events stay on the ORIGINAL represented coordinates.
+    # known and unrelated candidate scales cannot perturb them. Topology and
+    # node events remain on the original represented coordinates.
     dead = jnp.isnan(endog_grid) | jnp.isnan(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.

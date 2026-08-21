@@ -1,4 +1,4 @@
-"""Historical-compatibility manifest for the Mahler-Yum model (plan PR 13).
+"""Historical-compatibility manifest for the Mahler-Yum model.
 
 The published Fortran differs from the paper's own equations in identified,
 enumerable ways (the continuation evaluated at the OLD effort habit contra
@@ -18,13 +18,12 @@ preparation or moment construction and are consumed by the replication's
 `legacy_fortran` module — a model factory that claimed them would be
 asserting faithfulness it cannot see.
 
-Implementation status is per switch and honest: the historical
-finite-grid searches and the five-node cost grid ARE the existing brute
-configuration and are buildable today; the remaining solver switches
-(old-habit continuation above all) need solve-phase-only transition
-support in the engine and raise `NotImplementedError` naming exactly the
-unimplemented switches, rather than building a model that does not
-implement what its manifest declares.
+Implementation support is explicit per switch: the historical finite-grid
+searches and five-node cost grid use the brute configuration. The remaining
+solver switches (old-habit continuation above all) need solve-phase-only
+transition support in the engine and raise `NotImplementedError` naming
+exactly the unimplemented switches, rather than building a model that does
+not implement what its manifest declares.
 """
 
 from dataclasses import asdict, dataclass, fields, replace
@@ -168,9 +167,8 @@ def assert_canonical_for_inference(
     """Refuse canonical-looking outputs from a non-canonical configuration.
 
     A non-canonical run is allowed only when its output label explicitly
-    declares it (contains ``"historical"``); everything else raises. This is
-    the plan's rule that canonical estimation and standard errors may never
-    run with legacy switches enabled.
+    declares it (contains ``"historical"``); everything else raises so canonical
+    estimation and standard errors cannot run with legacy switches enabled.
     """
     if compatibility == CANONICAL:
         return

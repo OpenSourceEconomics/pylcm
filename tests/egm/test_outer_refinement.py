@@ -1,6 +1,6 @@
-"""Safeguarded continuous argmax and the adaptive shared outer mesh.
+"""Safeguarded continuous argmax and adaptive shared-mesh behavior.
 
-The PR-4 refinement battery: analytic unimodal surfaces, multimodal surfaces
+The battery covers analytic unimodal surfaces, multimodal surfaces
 where a single full-domain golden search would risk the wrong basin,
 boundary optima kept exactly, the exact-node safeguard against a broken
 surrogate, deterministic flat-tie resolution, invalid cells, adaptive-mesh

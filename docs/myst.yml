@@ -82,8 +82,6 @@ project:
         - file: development/conventions.md
         - file: development/continuous_integration.md
         - file: development/benchmarking.md
-        - file: development/adr_continuous_outer_inference.md
-        - file: development/outer_search_error_budget.md
     - file: credits.md
       title: Credits & Acknowledgments
   error_rules:

@@ -1,6 +1,6 @@
-"""The vectorized golden-section primitive — bracket-local, safeguarded.
+"""Behavioral tests for the bracket-local golden-section primitive.
 
-The PR-3 gate battery from the continuous-outer plan: interior maxima to
+The battery covers interior maxima to
 golden-section accuracy, boundary maxima found *exactly* (the endpoint
 safeguard — golden section alone can only approach a boundary), deterministic
 smaller-abscissa tie-breaking on flat objectives, degenerate brackets,

@@ -1,8 +1,8 @@
-"""PR-12's Mahler pilot gate: implicit AD vs FD on the real model.
+"""Implicit AD versus finite differences on the Mahler-Yum model.
 
 The pilot objective is the paper-mode period-36 adjuster node solve itself
-(see `lcm_examples.mahler_yum_2024.implicit_pilot`). Plan section 19.3 is
-applied per cell, with the branch structure the pilot itself uncovered:
+(see `lcm_examples.mahler_yum_2024.implicit_pilot`). Each cell follows one of
+two numerically meaningful cases:
 
 - a cell whose outer optimum is a genuine smooth interior stationary point
   is RESOLVED — its AD tangent must agree with the Richardson-extrapolated
@@ -16,11 +16,8 @@ applied per cell, with the branch structure the pilot itself uncovered:
 
 On the real paper-mode model the consumption floor makes the value
 non-smooth in effort, so the interior optima found at this period are
-floor-induced kinks; the gate therefore exercises the second branch on the
-real model and the first branch is covered analytically in
-`test_outer_implicit_derivative.py`. The full AD-vs-FD agreement on a
-resolved *moment* is the GPU-scale gate that lands with the estimation
-pipeline.
+floor-induced kinks; these tests exercise that branch on the real model, while
+`test_outer_implicit_derivative.py` covers smooth stationary points analytically.
 
 Excluded from CI and run on request:
 

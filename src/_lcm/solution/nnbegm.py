@@ -723,10 +723,11 @@ class _NNBEGMPeriodKernel:
         The adjuster sweep first materializes every node's exact conditional
         solve into an `OuterCandidateBank` (the structure the continuous-outer
         interpolant and adaptive mesh consume), then the finite collapse folds
-        the bank into the keeper exactly as the pre-bank incremental sweep did.
+        the bank into the keeper in node order with deterministic tie semantics.
         `outer_batch_size` bounds how many node solves are dispatched before
-        forcing them to device; the bank itself retains all candidates by
-        design, so peak retention is one full bank regardless of batching.
+        forcing them to device; the bank retains all candidates because the
+        interpolant consumes the shared bank, so peak retention is one full bank
+        regardless of batching.
         """
         keeper_result = self._solve_keeper(
             compiled_cores=compiled_cores,

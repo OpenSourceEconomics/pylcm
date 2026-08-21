@@ -1,17 +1,13 @@
-"""Frozen-baseline equivalence for the NNBEGM candidate-bank refactor.
+"""Reference-output equivalence for finite NNBEGM candidate aggregation.
 
-The candidate-bank refactor is required to be numerically neutral: the finite
-collapse must reproduce the pre-refactor incremental sweep. That claim is
-tested against arrays frozen from the pre-refactor HEAD (`a1d9ca7` on
-`feat/nested-nbegm-ez`), not against a reimplementation of the old fold — a
-test that re-types the fold would pass while the shipped code did something
-else. The fixture `tests/data/n_nbegm_finite_baseline.npz` holds, per
+The finite collapse must reproduce stored reference outputs rather than an
+independently reimplemented aggregation. The fixture
+`tests/data/n_nbegm_finite_baseline.npz` holds, per
 `outer_batch_size` in {0, 1, 4} on the smooth two-asset toy (x64, 3 periods):
 every alive period's `V_arr` and `EGMCarry` leaves as returned by
 `_NNBEGMPeriodKernel.__call__`, plus the public `Model.solve` output.
 
-Tolerances per the design freeze (see the continuous-outer ADR): `V` and carry
-value/grid within 1e-12, the carry marginal within 1e-11.
+`V` and carry value/grid agree within 1e-12; carry marginals agree within 1e-11.
 """
 
 from pathlib import Path

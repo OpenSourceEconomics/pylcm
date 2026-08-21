@@ -160,7 +160,7 @@ def test_exact_kink_optimum_is_flagged_though_ad_reads_stationary() -> None:
     theta = jnp.array(1.0)
     f_star = jnp.array([0.3])  # exactly on the kink
 
-    # The single forward-mode Q_f the old screen relied on reads ~0 here.
+    # A single forward-mode derivative at the symmetric kink reads approximately zero.
     q_f = jax.jvp(lambda f: kinked(f, theta), (f_star,), (jnp.ones_like(f_star),))[1]
     assert abs(float(q_f[0])) < 1e-6
 
@@ -440,8 +440,8 @@ def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
     assert float(found.value) > 150.0, "the ninth-basin off-node peak is the global max"
     assert node_x[16] < float(found.x) < node_x[18], "winner sits in the ninth basin"
 
-    # The old top-8 cap refines only basins 1-8, so the ninth basin competes as
-    # its exact node (value 20) and the ~100 node peak wins instead.
+    # A cap of eight refines only basins 1-8, so the ninth basin competes as its
+    # exact node and a lower continuous peak wins instead.
     capped = safeguarded_continuous_argmax(
         objective,
         nodes=node_x,
@@ -531,10 +531,9 @@ def test_finite_off_node_island_is_not_discarded() -> None:
 
     Cell 1 is ``-inf`` at every initial node ``[0,.25,.5,.75,1]`` but carries a
     narrow feasible bump peaking at ``x=0.375`` (the midpoint of ``[.25,.5]``).
-    The old incumbent threshold ``-inf + rtol*inf`` was ``NaN``, so ``beats_best``
-    read False and the island was silently discarded (``n_cells_all_invalid=1``,
-    no finite node ever inserted). The ``has_finite_incumbent`` gate now samples
-    it.
+    With no finite incumbent, a relative improvement threshold is undefined.
+    ``has_finite_incumbent`` therefore samples the interval before comparing
+    improvements.
     """
 
     def solve_at(x: jnp.ndarray) -> jnp.ndarray:
@@ -561,7 +560,7 @@ def test_finite_off_node_island_is_not_discarded() -> None:
         fail_closed=False,
     )
 
-    # The island is now captured: cell 1 has a finite node near its peak and is
+    # The island is captured: cell 1 has a finite node near its peak and is
     # no longer counted as an all-invalid cell.
     assert result.n_cells_all_invalid == 0
     cell1 = result.node_values[:, 1]
@@ -575,9 +574,8 @@ def test_unresolved_beats_best_interval_reports_infinite_residual() -> None:
     Node 0 is finite, node 1 is ``-inf``, and the midpoint value beats node 0 —
     so the interval is marked, but the cubic across a ``-inf`` endpoint reads
     ``-inf``. With the round budget spent and ``fail_closed=False`` the solve is
-    honestly ``unresolved``; the old validator forced the residual to ``0`` (the
-    "resolved to tolerance" reading) because ``interp_finite`` was False. It must
-    read ``inf``.
+    honestly ``unresolved``. Its residual must be ``inf``, not the zero used for
+    convergence to tolerance.
     """
 
     def solve_at(x: jnp.ndarray) -> jnp.ndarray:
@@ -694,7 +692,7 @@ def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
     curvature term, so the heuristic reports the winner resolved. Supplying a
     `branch_id` oracle labelling the analytic piece (`sign(f - 0.3)`) marks the
     breakpoint winner nonstationary regardless of amplitude — and reports that the
-    verdict now rests on the exact certificate.
+    verdict rests on the exact certificate.
     """
     objective = _pinned_kink_objective(1e-7)
     theta = jnp.asarray(0.0)
@@ -853,10 +851,9 @@ def test_nested_policy_reads_exact_consumption_not_the_slope_scaled_marginal() -
         np.asarray(sim_policy.policy), np.asarray(true_c), rtol=1e-12
     )
 
-    # The earlier recovery inverted the slope-scaled marginal:
-    #   inverse_marginal(slope * c**-crra) = slope**(-1/crra) * c  != c  (slope != 1).
-    # Confirm the correct policy genuinely diverges from that buggy value, so
-    # the test would fail on the old code path (guards against slope == 1).
+    # Inverting the slope-scaled marginal would yield
+    # `slope**(-1/crra) * c`, so require the fixture to distinguish that value
+    # from the carried consumption policy.
     wrong_c = slope ** (-1.0 / crra) * true_c
     assert not np.allclose(np.asarray(true_c), np.asarray(wrong_c))
 

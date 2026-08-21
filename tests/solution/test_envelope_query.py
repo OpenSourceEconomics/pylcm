@@ -215,16 +215,12 @@ def test_exact_node_tie_selects_the_segment_that_continues_right():
 def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
     """Right-continuity applies to an EXACT stored tie — at any magnitude.
 
-    This test descends from ``test_large_magnitude_value_tie_is_precision_
-    scaled``, which asserted that a 16-ULP represented gap should be treated as
-    a tie by a magnitude-scaled band. That expectation was itself the defect:
-    a stored node value carries ZERO rounding error, so genuinely distinct
-    stored floats must never be declared tied. The
-    tie half of the old test survives here with a ``gap`` BELOW half an ULP of
-    ``base``, so ``base + gap`` rounds to exactly ``base``: the two branches
+    A stored node value carries no evaluation error, so only bitwise-equal
+    stored floats are tied. Here ``gap`` is below half an ULP of ``base``, so
+    ``base + gap`` rounds to exactly ``base``: the two branches
     carry bitwise-equal stored values at the shared node ``q=1`` and the
     right-continuous segment B (the one defined immediately to the right) wins.
-    The strict-gap half lives in
+    Strictly represented gaps are covered by
     ``test_strict_represented_gap_selects_the_higher_branch``.
     """
     ending = float(jnp.asarray(base + gap, dtype=dtype))
@@ -829,11 +825,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     Multiplying every grid and value coordinate by one positive power of two is
     a change of units: exact in binary floating point, and it leaves the value
     ordering and every slope ordering algebraically untouched, so the published
-    policy and marginal must be identical. The earlier selector failed this
-    three ways at
-    once -- the cross products, the interpolant's products, and Dekker's own
-    splitting each break at their own scale -- and each turned a strict exact
-    ordering into a branch-order coin flip.
+    policy and marginal must be identical.
 
     The ladder is derived per case from the representable range, so it reaches
     the real limits, and the test asserts IN-LINE that its top rung crosses the
@@ -948,19 +940,9 @@ def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
 ):
     """A candidate that cannot bracket the query is mathematically irrelevant.
 
-    An earlier repair normalized the whole problem by ONE grid exponent and ONE
-    value
-    exponent chosen from the largest candidate anywhere in the input. That map
-    is not injective: a remote segment which does not bracket the query still
-    selected the scale, and two adjacent local floats collapsed into the same
-    subnormal BEFORE the certified comparator saw them. The comparator then
-    correctly reported an exact tie between values that are distinct as stored,
-    and the published value, policy and marginal all moved in response to a
-    segment that cannot affect the answer.
-
-    Exact arithmetic cannot rebuild bits discarded upstream of it, so this is
-    pinned at the public boundary: inserting the far segment must change
-    nothing at all.
+    Candidate-local framing prevents a remote segment's scale from coalescing
+    adjacent local floats. Inserting the non-bracketing segment must change
+    neither the selected branch nor any published channel.
     """
     info = np.finfo(dtype)
     one = dtype(1)
@@ -1047,9 +1029,8 @@ def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block
     contender set empties, `_exact_slope_compare` never runs, and the winner is
     whatever `argmax` over the rounded key returned: candidate order.
 
-    That is exactly the earlier signature -- the value is tied either way and
-    only the published policy and marginal are wrong -- so it is pinned the same
-    way: the answer must not depend on the order the branches are listed in.
+    The value is tied either way, so policy and marginal directly witness that
+    the answer does not depend on branch order.
     """
     for value_exp, width_exp in _slope_overflow_cases(dtype):
         width = dtype(np.ldexp(1.0, width_exp))
@@ -1223,13 +1204,12 @@ def _rounded_between(exact, lower, upper, dtype):
 def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
     dtype, order, block_size, fraction
 ):
-    """The value axis needs the lift too, and for the OPPOSITE reason to the grid.
+    """A one-ULP endpoint gap must survive affine interpolation.
 
     The grid lift exists because differencing can lose a difference; the value
     lift exists because the increment `r*d` can be smaller than anything the
-    format represents at that scale. Earlier repairs all reasoned that the value
-    axis needed no scale because its intermediates stay BOUNDED, which is true
-    and beside the point (234 of 234 generated cells).
+    format represents at that scale. Bounded intermediates alone do not preserve
+    that increment.
 
     `fraction` sweeps both rounding directions on purpose. Above one half the
     correctly rounded value is A's upper endpoint, so the defect showed up in
@@ -1319,24 +1299,16 @@ def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_si
 
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
-    """The selection's central invariant, checked where it previously broke.
+    """A certified tie never coexists with a strict exact ordering.
 
     `_exactly_maximal` may skip `_exact_compare` only for candidates certified
     tied. If it ever certifies a tie between two candidates that `_exact_compare`
     strictly orders, the exact comparator has been bypassed on precisely the
     input it exists for, and the answer is whatever the approximate layer said.
 
-    An earlier revision read `radius == 0` as that certificate. A radius is a
-    float: at the
-    bottom of the range `eps**2 * |v|` underflows, and two candidates that were
-    not tied at all presented as certifiably tied while `_exact_compare` returned
-    the correct strict sign `+1`. The certificate is now
-    structural -- a node event, which publishes stored data and performs no
-    arithmetic -- so no numerical accident can manufacture it.
-
-    This is the INVERSE of the reviewer's localization artifact, which asserts the
-    defect reproduces. Adopting that script as a regression would pin the broken
-    state; what belongs in the suite is the invariant it violates.
+    `radius == 0` is not sufficient because the radius itself can underflow.
+    The certificate is structural: a node event publishes stored data without
+    arithmetic, so a rounded residual cannot manufacture a tie.
     """
     lower, upper = _smallest_value_scale_case(dtype)
     q = dtype(0.75)
@@ -1406,19 +1378,15 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 ):
     """`q - x0` must survive a segment whose own endpoints span many binades.
 
-    Two earlier repairs both scaled the OPERANDS before differencing them -- one
-    with a single exponent for the whole array, the next with one per candidate.
-    Both
-    lose the same way: scaling `q` and `x0` before subtracting can map two
+    Scaling `q` and `x0` before subtracting can map two
     distinct represented grid points onto the same float, after which `q - x0` is
     zero and no downstream exactness can rebuild it. Here the candidate exponent
     is set by its own far endpoint, so a candidate that is entirely relevant
     destroys its own interpolation fraction and collapses to its left value,
     handing value, policy and marginal to a strictly lower competitor.
 
-    The repair forms the differences first, on the raw operands where `_two_diff`
-    is exact, and carries each scale as an integer exponent applied once at the
-    end.
+    The implementation frames each operand pair before differencing and carries
+    the scale as an integer exponent applied once at publication.
     """
     x0, q, x1, competitor, exact = _wide_segment_case(dtype)
     info = np.finfo(dtype)
@@ -1488,14 +1456,8 @@ def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
 
 # The exponent-preserving exact ordering kernel.
 #
-# Earlier repairs each fixed the SITE a witness pointed at — a value
-# comparison, a slope tie-break, an exponent, a normalization's scope, then its
-# shape, then the last normalization inside the "exact" fallback — and every
-# time the same reasoning error reappeared one layer down. The premise all nine
-# repairs shared is that a rescaling can make a rounded evaluation safe. It
-# cannot, and these tests pin the two things that replaced it: exponents carried
-# as integers, and a fixed-point accumulator wide enough that no term can fall
-# out of it.
+# These tests pin exponents carried as integers and a fixed-point accumulator
+# wide enough that no term can fall out of it.
 
 
 def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):
@@ -1593,8 +1555,8 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     Reads the dyadic term list straight out of `_dyadic_product` and sums it in
     `Fraction`. The result must equal the cross difference computed independently
-    from the two ratios — and dropping the half the earlier kernel flushed must
-    collapse that difference to zero, so the test cannot pass vacuously.
+    from the two ratios. Dropping either product must collapse that difference
+    to zero, so the test cannot pass vacuously.
     """
     info = np.finfo(dtype)
     tiny = dtype(info.tiny)
@@ -1625,9 +1587,8 @@ def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
 
     assert expected > 0, "the witness must be a strict gap"
     assert forward - reverse == expected
-    # The earlier kernel's behaviour: with `reverse` flushed the difference is
-    # exactly zero and the comparator reports a tie. If that does not happen
-    # the assertion above is not testing what it claims to.
+    # The witness is constructed so omitting `reverse` makes the difference
+    # exactly zero; this guards against a vacuous strict-gap assertion.
     assert forward == 0
     assert float(_exact_compare(cols_a=cols_a, cols_b=cols_b, q=q)) == 1.0
 
@@ -1735,11 +1696,8 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
 def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
     """`H - (-H)` must be represented, not computed.
 
-    An earlier repair built differences with `_two_diff` on operands lifted into
-    mid-range, and justified it with the claim that subtraction of two finite
-    floats cannot overflow. Opposite-signed top-binade operands refute that:
-    for `H = 2**127` in float32 both operands are finite normals while their
-    difference `2H` is not representable at all.
+    Opposite-signed top-binade operands are finite normals while their
+    mathematical difference is not representable in the working dtype.
 
     So the assertion is not that the difference is finite — it is that no float
     is ever asked to hold it. Every mantissa stays inside its own binade and the
@@ -1796,10 +1754,8 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
     value axis the sloped branch legitimately WINS at some query positions, and
     a hand-written expectation gets that wrong.
 
-    Note what an earlier sweep did instead: it drew wide-range operands and
-    then skipped any draw with `not np.isfinite(x1 - x0)`, which discards
-    precisely the cells this test keeps. A filter written in the same arithmetic
-    as the defect cannot witness it.
+    The test deliberately keeps cases where the raw endpoint difference is not
+    finite, because representable endpoints can still define a finite envelope.
     """
     top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
     if axis == "grid-width":
@@ -1876,18 +1832,15 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
 def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
     """Policy and marginal must be as certified as the value they accompany.
 
-    An earlier repair certified the VALUE channel and left `policy` and
-    `marginal` on
-    `left + fraction * (right - left)` in the working dtype, so the winner was
-    selected exactly and then described by two lossy numbers. Both halves of
-    that expression lose finite results:
+    Directly evaluating `left + fraction * (right - left)` can lose finite
+    results in either half of the expression:
 
     - `fraction` is materialized before it is multiplied, so it can flush to
       zero while `fraction * (right - left)` is a finite normal;
     - `right - left` overflows on opposite-signed top-binade endpoints.
 
-    The value stays correct in both families, which is exactly why this went
-    unnoticed: the channel under test is not the channel that was wrong.
+    The value remains correct in both families, so policy and marginal are
+    asserted independently.
     """
     info = np.finfo(dtype)
     if family == "tiny-fraction":
