@@ -59,6 +59,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
@@ -189,9 +190,11 @@ def utility(
     effort_cost: FloatND,
     work_disutility: FloatND,
     consumption_utility: FloatND,
+    retirement_is_feasible: BoolND,
 ) -> FloatND:
-    """Flow utility; the adjustment cost is folded analytically, not here."""
-    return consumption_utility - work_disutility - effort_cost
+    """Flow utility, with mandatory retirement enforced on discrete choices."""
+    flow = consumption_utility - work_disutility - effort_cost
+    return jnp.where(retirement_is_feasible, flow, -jnp.inf)
 
 
 def raw_cash_on_hand(
@@ -354,9 +357,10 @@ def build_alive_regime(
             "pension": pension,
             "scaled_productivity_shock": scaled_productivity_shock,
             "adjustment_cost_scale": adjustment_cost_scale,
+            "retirement_is_feasible": retirement_constraint,
             "discount_factor": discount_factor,
         },
-        constraints={"retirement_constraint": retirement_constraint},
+        constraints={},
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",

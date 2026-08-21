@@ -105,14 +105,17 @@ def test_effort_identities_hold() -> None:
     np.testing.assert_array_equal(keep_effort(lagged_effort=values), values)
 
 
-def test_utility_drops_only_the_adjustment_penalty() -> None:
-    """Paper flow utility is the brute utility net of the folded penalty."""
-    out = utility(
-        effort_cost=jnp.asarray(0.3),
-        work_disutility=jnp.asarray(0.2),
-        consumption_utility=jnp.asarray(1.5),
-    )
-    np.testing.assert_allclose(np.asarray(out), 1.0)
+def test_utility_enforces_mandatory_retirement() -> None:
+    """Paper flow utility excludes an infeasible discrete retirement choice."""
+    common = {
+        "effort_cost": jnp.asarray(0.3),
+        "work_disutility": jnp.asarray(0.2),
+        "consumption_utility": jnp.asarray(1.5),
+    }
+    feasible = utility(**common, retirement_is_feasible=jnp.ones((), dtype=bool))
+    infeasible = utility(**common, retirement_is_feasible=jnp.zeros((), dtype=bool))
+    np.testing.assert_allclose(np.asarray(feasible), 1.0)
+    assert bool(jnp.isneginf(infeasible))
 
 
 def test_dead_utility_is_identically_zero_on_the_wealth_axis() -> None:
