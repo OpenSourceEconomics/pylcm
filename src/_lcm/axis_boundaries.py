@@ -84,6 +84,12 @@ def boundary_owner_for_feasible_region(
     return "right" if feasible_owns else "left"
 
 
+def canonical_boundary_order(*, values: Float1D, owner_is_right: BoolND) -> Int1D:
+    """Sort by location, with right owners before left owners at a tie."""
+    owner_order = jnp.argsort(~owner_is_right, stable=True)
+    return owner_order[jnp.argsort(values[owner_order], stable=True)].astype(jnp.int32)
+
+
 def resolve_axis_partition(
     *,
     start: ScalarFloat,
@@ -96,12 +102,16 @@ def resolve_axis_partition(
         unsorted_values = jnp.stack(
             [jnp.asarray(boundary.value, dtype=dtype) for boundary in boundaries]
         )
-        order = jnp.argsort(unsorted_values, stable=True)
-        values = unsorted_values[order]
-        owner_is_right = jnp.asarray(
+        unsorted_owner_is_right = jnp.asarray(
             [boundary.owner == "right" for boundary in boundaries],
             dtype=jnp.bool_,
-        )[order]
+        )
+        order = canonical_boundary_order(
+            values=unsorted_values,
+            owner_is_right=unsorted_owner_is_right,
+        )
+        values = unsorted_values[order]
+        owner_is_right = unsorted_owner_is_right[order]
         effect_codes = jnp.asarray(
             [effect_code(boundary.effect) for boundary in boundaries],
             dtype=jnp.int32,
