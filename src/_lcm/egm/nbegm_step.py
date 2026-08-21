@@ -530,6 +530,8 @@ def nbegm_multi_interval_step_savings(
     breakpoints: Float1D,
     inverse_eis: ScalarFloat | None = None,
     arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a continuous piecewise-affine regime against savings-space continuation.
 
@@ -699,6 +701,8 @@ def nbegm_multi_interval_step_savings(
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
         arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
     )
     return value, marginal, policy
 
@@ -817,6 +821,8 @@ def nbegm_per_interval_continuation_step_savings(
     extra_savings: FloatND | None = None,
     extra_cont_value: FloatND | None = None,
     arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -1083,6 +1089,8 @@ def nbegm_per_interval_continuation_step_savings(
         x_query=liquid_grid,
         segment_block_size=envelope_segment_block_size,
         arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
     )
     return value, marginal, policy
 

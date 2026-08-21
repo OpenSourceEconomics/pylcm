@@ -19,7 +19,7 @@ from _lcm.constraints.dispositions import (
 from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
 from _lcm.typing import FunctionName
-from lcm.typing import FloatND, StateName
+from lcm.typing import BoolND, FloatND, IntND, StateName
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ def _compile_surface(
 def feasibility_axis_boundaries(
     *,
     programs: tuple[NBEGMFeasibilityBoundaryProgram, ...],
-    params: Mapping[str, FloatND],
+    params: Mapping[str, FloatND | IntND | BoolND],
 ) -> tuple[AxisBoundary, ...]:
     """Resolve compiled literal and flat-parameter thresholds into axis sources."""
     return tuple(

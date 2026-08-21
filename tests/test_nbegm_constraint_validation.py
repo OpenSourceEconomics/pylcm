@@ -400,6 +400,83 @@ def test_grid_search_accepts_the_same_nested_constraint():
     assert "nested_rationing" in model._regimes["alive"].solution.constraints
 
 
+def test_nnbegm_filters_the_boundary_plan_for_each_inner_route(monkeypatch) -> None:
+    """Adjuster and keeper inner builders receive only their own route ledger."""
+    threshold = float(np.asarray(n_nbegm_toy.WEALTH_GRID.to_jax()[4]))
+    declaration = cast(
+        "Callable[..., object]",
+        lcm.ref("wealth") >= threshold,
+    )
+    received_paths = []
+    original = nbegm_module._consume_nbegm_feasibility_constraints
+
+    def recording_consumer(*, context, **kwargs):
+        assert context.constraint_plan is not None
+        received_paths.append(
+            {entry.route.solver_path for entry in context.constraint_plan.entries}
+        )
+        return original(context=context, **kwargs)
+
+    monkeypatch.setattr(
+        nbegm_module,
+        "_consume_nbegm_feasibility_constraints",
+        recording_consumer,
+    )
+
+    n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        constraints={"wealth_floor": declaration},
+    )
+
+    assert received_paths == [
+        {("nnbegm", "adjuster")},
+        {("nnbegm", "keeper")},
+    ]
+
+
+def test_nnbegm_enforces_a_compiled_wealth_boundary() -> None:
+    """Keeper and adjuster together publish only feasible wealth rows."""
+    wealth = n_nbegm_toy.WEALTH_GRID.to_jax()
+    threshold = float(np.asarray(wealth[4]))
+    declaration = cast(
+        "Callable[..., object]",
+        lcm.ref("wealth") >= threshold,
+    )
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        constraints={"wealth_floor": declaration},
+    )
+
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    value = np.asarray(solution[0]["alive"])
+
+    assert np.all(np.isneginf(value[wealth < threshold]))
+    assert np.all(np.isfinite(value[wealth >= threshold]))
+
+
+def test_nnbegm_carries_a_compiled_wealth_boundary_between_periods() -> None:
+    """The outer envelope retains inner one-sided feasibility topology."""
+    wealth = n_nbegm_toy.WEALTH_GRID.to_jax()
+    threshold = float(np.asarray(wealth[4]))
+    declaration = cast(
+        "Callable[..., object]",
+        lcm.ref("wealth") >= threshold,
+    )
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=3,
+        constraints={"wealth_floor": declaration},
+    )
+
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    first_period_value = np.asarray(solution[0]["alive"])
+
+    assert np.all(np.isneginf(first_period_value[wealth < threshold]))
+    assert np.all(np.isfinite(first_period_value[wealth >= threshold]))
+
+
 _LIQUID_MARGIN = LiquidMargin(
     state="liquid",
     action="consumption",

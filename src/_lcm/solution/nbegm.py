@@ -40,7 +40,7 @@ from _lcm.axis_boundaries import (
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.constraints.dispositions import CompileBoundary
-from _lcm.constraints.routes import ConstraintRoute
+from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry, shard_carry_template
@@ -461,7 +461,6 @@ class NBEGM(OneMarginSolver):
             registry=registry,
             jump_read=self.jump_read,
             has_discrete=has_discrete,
-            has_ride_along=has_ride_along,
             regime_name=context.regime_name,
         )
         # No declared case pieces routes to the schedule path. With no declared
@@ -515,6 +514,7 @@ class NBEGM(OneMarginSolver):
                 context=context,
                 savings_grid=savings_grid,
                 schedule_spec=schedule_spec,
+                feasibility_constraints=feasibility_constraints,
             )
 
         # Every route below solves the additive expected-utility step; only the
@@ -784,6 +784,7 @@ class NBEGM(OneMarginSolver):
         context: SolverBuildContext,
         savings_grid: Float1D,
         schedule_spec: _NBEGMScheduleSpec,
+        feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
     ) -> SolutionKernels:
         """Build the case-piece kernels for a regime carrying a ride-along co-state.
 
@@ -929,6 +930,7 @@ class NBEGM(OneMarginSolver):
                     is_epstein_zin=_aggregates_nonlinearly(
                         context.certainty_equivalent
                     ),
+                    feasibility_constraints=feasibility_constraints,
                 )
                 continuation_cores[key] = (
                     jax.jit(continuation_core)
@@ -960,12 +962,19 @@ class NBEGM(OneMarginSolver):
                             next(iter(statics_by_key.values())).n_published_jumps
                             if statics_by_key
                             else 0
+                        )
+                        + sum(
+                            len(constraint.program.surfaces)
+                            for constraint in feasibility_constraints
                         ),
                     ),
                     grids=context.grids,
                     ride_along_state_names=schedule_spec.ride_along_state_names,
                 ),
-                layout=self.egm_continuation_layout,
+                layout=replace(
+                    self.egm_continuation_layout,
+                    rows_share_state_grid=not feasibility_constraints,
+                ),
             ),
             param_checks=tuple(param_checks),
         )
@@ -982,6 +991,18 @@ class _NBEGMFeasibilityConstraint:
     """Executable predicate generated from the same declaration."""
 
 
+def _compiled_boundaries_for_inner(
+    *, plan: ConstraintPlan, solver_path: tuple[str, ...]
+) -> tuple[CompileBoundary, ...]:
+    """Select a direct route or an already-filtered rewritten inner plan."""
+    selected = plan.for_solver_path(solver_path=solver_path).compiled_boundaries
+    if selected:
+        return selected
+
+    route_paths = {entry.route.solver_path for entry in plan.entries}
+    return plan.compiled_boundaries if len(route_paths) == 1 else ()
+
+
 def _consume_nbegm_feasibility_constraints(
     *,
     context: SolverBuildContext,
@@ -992,7 +1013,7 @@ def _consume_nbegm_feasibility_constraints(
     if plan is None:
         return ()
 
-    selected = plan.for_solver_path(solver_path=solver_path).compiled_boundaries
+    selected = _compiled_boundaries_for_inner(plan=plan, solver_path=solver_path)
     all_compiled = plan.compiled_boundaries
     if len(selected) != len(all_compiled):
         msg = (
@@ -1050,7 +1071,6 @@ def _fail_if_feasibility_composition_is_unsupported(
     registry: NBEGMRegistry,
     jump_read: Literal["one_sided", "bridged"],
     has_discrete: bool,
-    has_ride_along: bool,
     regime_name: RegimeName,
 ) -> None:
     """Reject boundary combinations that need another one-sided topology."""
@@ -1083,13 +1103,12 @@ def _fail_if_feasibility_composition_is_unsupported(
             "smooth budgets, continuous kinks, and flat-budget floors only."
         )
         raise RegimeInitializationError(msg)
-    if has_discrete or has_ride_along:
-        shape = "a discrete action" if has_discrete else "a ride-along state"
+    if has_discrete:
         msg = (
             f"Regime {regime_name!r} composes a compiled feasibility boundary "
-            f"with {shape}. NBEGM's initial feasibility topology supports one "
-            "liquid axis with smooth budgets, continuous kinks, and flat-budget "
-            "floors."
+            "with a discrete action. NBEGM's feasibility topology supports the "
+            "liquid axis, including ride-along cells, but not a further discrete "
+            "branch envelope."
         )
         raise RegimeInitializationError(msg)
 
@@ -1119,7 +1138,7 @@ def _resolve_nbegm_feasibility(
     liquid: Float1D,
     schedule_breakpoints: Float1D,
     schedule_kinds: tuple[str, ...],
-    params: Mapping[str, FloatND],
+    params: Mapping[str, FloatND | IntND | BoolND],
 ) -> _ResolvedNBEGMFeasibility:
     """Resolve one owner-aware partition and evaluate every interval predicate."""
     schedule_sources = tuple(
@@ -4121,6 +4140,8 @@ def _solve_ride_along_cell_step(
     extra_cont_value: Float1D | None = None,
     inverse_eis: FloatND | None = None,
     arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Run one ride-along cell's 1-D case-piece step against savings continuation.
 
@@ -4173,6 +4194,8 @@ def _solve_ride_along_cell_step(
         breakpoints=breakpoints,
         inverse_eis=inverse_eis,
         arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
     )
 
 
@@ -5024,6 +5047,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     schedule_spec: _NBEGMScheduleSpec,
     statics: _NBEGMRideAlongStatics,
     is_epstein_zin: bool = False,
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
 ) -> Callable:
     """Build the EGM/envelope half of the ride-along solve, jitted in isolation.
 
@@ -5068,8 +5092,13 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     utility_arg_names = frozenset(
         inspect.signature(schedule_spec.utility_dag).parameters
     )
+    n_feasibility_boundaries = sum(
+        len(constraint.program.surfaces) for constraint in feasibility_constraints
+    )
+    n_published_boundaries = statics.n_published_jumps + n_feasibility_boundaries
+    schedule_kinds = tuple(source.kind for source in statics.sources)
 
-    def envelope_core(
+    def envelope_core(  # noqa: C901, PLR0915
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
@@ -5122,6 +5151,12 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             # (guarded), and the cell-level partition is branch-independent. The bridged
             # read skips the augmentation; each branch then partitions on its own
             # breakpoints (recomputed inside `solve_branch`) over the plain liquid grid.
+            query_grid = liquid
+            endog_row = liquid
+            unsort = jnp.arange(liquid.shape[0], dtype=jnp.int32)
+            published_boundaries = jnp.zeros((0,), dtype=dtype)
+            feasibility_partition = None
+            feasible_interval_mask = None
             if statics.n_published_jumps:
                 breakpoints, jump_positions = _nbegm_cell_breakpoints(
                     statics=statics,
@@ -5134,8 +5169,30 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 query_grid, endog_row, unsort = _augment_liquid_with_jump_sides(
                     liquid_grid=liquid, jumps=jumps
                 )
-            else:
-                query_grid = liquid
+                published_boundaries = jumps
+            elif feasibility_constraints:
+                cell_breakpoints, _jump_positions = _nbegm_cell_breakpoints(
+                    statics=statics,
+                    kwargs=kwargs,
+                    cell=cell,
+                    liquid_grid=liquid,
+                    dtype=dtype,
+                )
+                feasibility = _resolve_nbegm_feasibility(
+                    constraints=feasibility_constraints,
+                    liquid=liquid,
+                    schedule_breakpoints=cell_breakpoints,
+                    schedule_kinds=schedule_kinds,
+                    params=kwargs,
+                )
+                query_grid, unsort = _augment_liquid_for_feasibility(
+                    liquid=liquid,
+                    feasibility=feasibility,
+                )
+                endog_row = query_grid
+                published_boundaries = feasibility.carry_boundary_values
+                feasibility_partition = feasibility.partition
+                feasible_interval_mask = feasibility.feasible_interval_mask
 
             def solve_branch(
                 action_binding: Mapping[str, IntND],
@@ -5222,6 +5279,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         arithmetic=statics.envelope_arithmetic,
                         extra_savings=branch_cliff_savings,
                         extra_cont_value=branch_extra_cont_value,
+                        feasibility_partition=feasibility_partition,
+                        feasible_interval_mask=feasible_interval_mask,
                     )
                 return _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
@@ -5239,6 +5298,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     breakpoints=branch_breakpoints,
                     inverse_eis=inverse_eis,
                     arithmetic=statics.envelope_arithmetic,
+                    feasibility_partition=feasibility_partition,
+                    feasible_interval_mask=feasible_interval_mask,
                 )
 
             # The discrete actions are enveloped over per cell: each branch is one
@@ -5310,15 +5371,21 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
 
-            if statics.n_published_jumps == 0:
+            if n_published_boundaries == 0:
                 return (value_row, marginal_row)
-            # The carry keeps the whole augmented row — the jump rides inside
+            # The carry keeps the whole augmented row — topology rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
             # one-sided value and marginal limits. Only the published value
             # array needs the original liquid nodes, sliced back out through
             # the sort permutation.
             value_at_liquid = value_row[unsort][: liquid.shape[0]]
-            return (value_at_liquid, endog_row, value_row, marginal_row, jumps)
+            return (
+                value_at_liquid,
+                endog_row,
+                value_row,
+                marginal_row,
+                published_boundaries,
+            )
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
@@ -5338,7 +5405,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         )
         value_arr, carry = _assemble_ride_carry(
             stacks=stacks,
-            n_jumps=statics.n_published_jumps,
+            n_jumps=n_published_boundaries,
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
