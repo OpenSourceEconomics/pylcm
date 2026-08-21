@@ -198,8 +198,8 @@ import lcm
   (see above), accepting that DC-EGM will not run on its defaults.
 - **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
   kernel, or carries one built by a different toolchain. Rebuild in the current
-  environment with `pixi run build-exact-affine`, or explicitly select another typed
-  envelope under its approximation contract.
+  environment with `pixi reinstall pylcm`, or explicitly select another typed envelope
+  under its approximation contract.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).

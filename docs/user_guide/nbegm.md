@@ -81,6 +81,39 @@ margin declaration. A general callable remains opaque; `NBEGM` accepts it only i
 route can evaluate every required name and otherwise refuses the model before lowering.
 `Condition` itself grants no extra solver capability.
 
+`NBEGM` does compile one useful retained shape: a conjunction of ordered comparisons
+between the current liquid state and either a literal or a flat parameter. For example:
+
+```python
+asset_band = (lcm.ref("liquid") >= lcm.ref("minimum_assets")) & (
+    lcm.ref("liquid") < 10.0
+)
+```
+
+The operators determine exact boundary ownership. `>=` and `<=` include equality on the
+feasible side; `>` and `<` exclude it. During the solve, `NBEGM` turns these comparisons
+into an owner-aware liquid-axis partition and masks every value, policy, and marginal
+channel together. During simulation, pylcm evaluates the original condition on the
+simulated candidates.
+
+This compiled route supports:
+
+- `<`, `<=`, `>`, and `>=`, in either operand order;
+- intersections of those comparisons;
+- literal and flat-parameter thresholds; and
+- smooth budgets, continuous kinks, and flat-budget floors.
+
+`NNBEGM` applies the same compiled subset independently inside its adjuster and keeper
+routes, so both outer candidates enforce the identical liquid feasibility geometry.
+
+It requires `jump_read="one_sided"`, because a parent must not interpolate from a finite
+value across an infeasible child region. `NBEGM` refuses a union, complement,
+implication, equality comparison, opaque callable, or a boundary that depends on an
+action, post-decision value, computed output, or another state. It also refuses this
+feasibility topology combined with a finite-value schedule jump or a binary case piece.
+Use `GridSearch` when the restriction falls outside the compiled subset and can be
+evaluated on complete state-action candidates.
+
 See
 [Writing a constraint: callable or `Condition`](choosing_a_solver.md#writing-a-constraint-callable-or-condition)
 for named-to-literal and named-to-named comparisons, intersections, unions, complements,
@@ -412,6 +445,8 @@ NB-EGM sits alongside pylcm's other endogenous-grid solvers rather than replacin
   institutional breakpoints** — which DC-EGM's black-box envelope cannot locate exactly
   — and a query-side (map-reduce) upper envelope that parallelises better on a GPU than
   a topology-discovering scan.
+
+(validating-an-nb-egm-regime)=
 
 ## Validating an NB-EGM regime
 

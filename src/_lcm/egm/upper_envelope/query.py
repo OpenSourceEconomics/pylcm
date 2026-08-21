@@ -23,11 +23,16 @@ is cheaper, but it carries no exact ownership guarantee.
 
 import functools
 from collections.abc import Callable
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
 
+from _lcm.axis_boundaries import (
+    ResolvedAxisPartition,
+    axis_interval_indices,
+    feasibility_region_indices,
+)
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     exact_affine_read,
     exact_query_winner,
@@ -569,6 +574,8 @@ def envelope_at_query(
     x_query: FloatND,
     segment_block_size: int = 0,
     arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
 ) -> tuple[FloatND, FloatND, FloatND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
@@ -599,13 +606,44 @@ def envelope_at_query(
             The choice is made when the function is traced, so `"ordinary"`
             emits none of the error-free transforms rather than masking them.
             Implemented for the dense reduction only.
+        feasibility_partition: Shared liquid-axis partition containing the
+            feasibility boundaries that candidates and queries must respect.
+            Must be supplied together with `feasible_interval_mask`.
+        feasible_interval_mask: Whether each interval of
+            `feasibility_partition` is feasible. Infeasible candidates are
+            removed before links are built, and infeasible queries publish the
+            carry contract: `-inf` value, NaN policy, and zero marginal.
 
     Returns:
         Tuple of the envelope value, the winning segment's policy, and the
         winning segment's marginal at each query, each shaped like `x_query`. A
         query no live segment brackets yields NaN in all three.
     """
-    dead = jnp.isnan(endog_grid) | jnp.isnan(value)
+    if (feasibility_partition is None) != (feasible_interval_mask is None):
+        raise ValueError(
+            "feasibility_partition and feasible_interval_mask must be supplied "
+            "together."
+        )
+
+    if feasibility_partition is None:
+        candidate_region = jnp.zeros_like(segment_id, dtype=jnp.int32)
+    else:
+        feasible_interval_mask = cast("BoolND", feasible_interval_mask)
+        candidate_interval = axis_interval_indices(
+            partition=feasibility_partition,
+            values=endog_grid,
+        )
+        candidate_feasible = feasible_interval_mask[candidate_interval]
+        candidate_region = feasibility_region_indices(
+            partition=feasibility_partition,
+            values=endog_grid,
+        )
+        endog_grid = jnp.where(candidate_feasible, endog_grid, jnp.nan)
+        value = jnp.where(candidate_feasible, value, jnp.nan)
+        policy = jnp.where(candidate_feasible, policy, jnp.nan)
+        marginal = jnp.where(candidate_feasible, marginal, jnp.nan)
+
+    dead = ~jnp.isfinite(endog_grid) | ~jnp.isfinite(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
     consecutive = _SegmentLinks(
@@ -617,7 +655,12 @@ def envelope_at_query(
         right_policy=policy[1:],
         left_marginal=marginal[:-1],
         right_marginal=marginal[1:],
-        live=~dead[:-1] & ~dead[1:] & (segment_id[:-1] == segment_id[1:]),
+        live=(
+            ~dead[:-1]
+            & ~dead[1:]
+            & (segment_id[:-1] == segment_id[1:])
+            & (candidate_region[:-1] == candidate_region[1:])
+        ),
     )
     # Every live candidate is also a zero-width self-bracket at its own abscissa,
     # so a lone point — a folded-out or boundary-collapsed candidate with no
@@ -651,7 +694,13 @@ def envelope_at_query(
         # a partition request with no numerical effect: the native operation
         # streams the same stored segments and returns one winner/status per
         # query, so dense and blocked calls are identical by construction.
-        return _envelope_exact(links=links, query=query).published
+        published = _envelope_exact(links=links, query=query).published
+        return _mask_infeasible_queries(
+            published=published,
+            query=query,
+            partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
 
     published = _envelope_blocked_ordinary(
         links=links,
@@ -666,7 +715,33 @@ def envelope_at_query(
     readable_value, readable_policy, readable_marginal = (
         jnp.where(unreadable, jnp.nan, channel) for channel in published
     )
-    return readable_value, readable_policy, readable_marginal
+    return _mask_infeasible_queries(
+        published=(readable_value, readable_policy, readable_marginal),
+        query=query,
+        partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+
+
+def _mask_infeasible_queries(
+    *,
+    published: tuple[FloatND, FloatND, FloatND],
+    query: FloatND,
+    partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> tuple[FloatND, FloatND, FloatND]:
+    """Apply the value, policy, and carry contracts to infeasible query rows."""
+    if partition is None or feasible_interval_mask is None:
+        return published
+
+    interval = axis_interval_indices(partition=partition, values=query)
+    feasible = feasible_interval_mask[interval]
+    value, policy, marginal = published
+    return (
+        jnp.where(feasible, value, -jnp.inf),
+        jnp.where(feasible, policy, jnp.nan),
+        jnp.where(feasible, marginal, 0.0),
+    )
 
 
 def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> BoolND:

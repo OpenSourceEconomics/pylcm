@@ -11,6 +11,24 @@ from tests import conftest
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 
+def test_native_payload_is_resolved_from_the_installed_distribution(
+    monkeypatch, tmp_path
+):
+    """The exact kernel remains available when its source checkout disappears."""
+    installed_root = tmp_path / "site-packages"
+
+    class InstalledPylcm:
+        def locate_file(self, path):
+            return installed_root / path
+
+    monkeypatch.setattr(ffi, "distribution", lambda _name: InstalledPylcm())
+
+    assert ffi._installed_native_directory() == installed_root / "_pylcm_native"
+
+
+@pytest.mark.requires(device="any", native=("exact_affine",))
+@pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
+@pytest.mark.resources(wall="xs", compile="light")
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_exact_kernel_answers_in_the_active_precision():
     """The native comparator answers one finite strict ordering in each profile."""

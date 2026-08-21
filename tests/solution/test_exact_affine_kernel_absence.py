@@ -82,7 +82,7 @@ def test_a_missing_kernel_is_reported_when_a_verdict_is_requested(monkeypatch):
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
 
@@ -123,7 +123,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
     assert ffi.kernel_built_for_current_backend() is True
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
 
@@ -222,7 +222,7 @@ def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdi
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         request_a_verdict()
 
 
@@ -264,7 +264,7 @@ def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkey
     monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
     monkeypatch.setattr(ffi, "_default_backend", lambda: "gpu")
 
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
 
