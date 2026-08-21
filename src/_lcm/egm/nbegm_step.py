@@ -44,7 +44,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 
-from _lcm.axis_boundaries import ResolvedAxisPartition
+from _lcm.axis_boundaries import ResolvedAxisPartition, effect_code
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
@@ -198,6 +198,18 @@ def nbegm_multi_interval_step(
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
+        feasibility_partition: Owner-aware liquid partition containing the
+            compiled feasibility boundaries. Each feasible equality boundary
+            receives a dense savings-node point-candidate block.
+        feasible_interval_mask: Whether each interval of
+            `feasibility_partition` is feasible. Must be supplied with the
+            partition.
+        boundary_savings_targets: Savings values that land on or immediately
+            beside the child carry's feasibility boundaries. `None` adds no
+            child-boundary candidates.
+        boundary_next_liquid: Child liquid landing points paired with
+            `boundary_savings_targets`. `None` adds no child-boundary
+            candidates.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
@@ -310,6 +322,24 @@ def nbegm_multi_interval_step(
         policy_parts.append(policies)
         marginal_parts.append(marginals)
         segment_parts.append(jnp.full((2,), next_segment + 1.0 + float(offset)))
+    first_point_segment = next_segment + 1.0 + float(len(flat_corners))
+    n_current_boundary_segments = _append_current_feasibility_boundary_candidates(
+        feasibility_partition=feasibility_partition,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        continuation_at_savings=value_next,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        budget_breakpoints=breakpoints,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        first_segment=first_point_segment,
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
     _append_boundary_savings_corners(
         boundary_savings_targets=boundary_savings_targets,
         boundary_next_liquid=boundary_next_liquid,
@@ -320,7 +350,7 @@ def nbegm_multi_interval_step(
         next_value=next_value,
         preferences=preferences,
         discount_factor=discount_factor,
-        first_segment=next_segment + 1.0 + float(len(flat_corners)),
+        first_segment=first_point_segment + float(n_current_boundary_segments),
         endog_parts=endog_parts,
         value_parts=value_parts,
         policy_parts=policy_parts,
@@ -340,6 +370,79 @@ def nbegm_multi_interval_step(
         feasible_interval_mask=feasible_interval_mask,
     )
     return value, marginal, policy
+
+
+def _append_current_feasibility_boundary_candidates(
+    *,
+    feasibility_partition: ResolvedAxisPartition | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    continuation_at_savings: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    budget_breakpoints: Float1D,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    first_segment: ScalarFloat,
+    endog_parts: list[Float1D],
+    value_parts: list[Float1D],
+    policy_parts: list[Float1D],
+    marginal_parts: list[Float1D],
+    segment_parts: list[Float1D],
+) -> int:
+    """Offer every savings node at an equality-owned feasibility boundary.
+
+    Feasibility masking separates the Euler path into distinct regions. At a
+    boundary owned by the feasible side, the first feasible Euler root can lie
+    strictly inside that region, so no interior link reaches the exact threshold.
+    Evaluating the finite savings grid at the threshold supplies zero-width Bellman
+    candidates there. A strict comparison classifies the same candidates into the
+    infeasible interval and masks them normally.
+
+    Returns:
+        Number of segment identifiers reserved by the fixed-shape candidate block.
+
+    """
+    if feasibility_partition is None:
+        return 0
+
+    boundaries = feasibility_partition.values
+    n_boundaries = boundaries.shape[0]
+    n_savings = savings_grid.shape[0]
+    boundary_interval = jnp.searchsorted(budget_breakpoints, boundaries, side="right")
+    boundary_coh = (
+        coh_slopes[boundary_interval] * boundaries + coh_intercepts[boundary_interval]
+    )
+    consumption = boundary_coh[:, None] - savings_grid[None, :]
+    consumption_safe = jnp.where(consumption > 0.0, consumption, 1.0)
+    value = (
+        preferences.utility(consumption_safe)
+        + discount_factor * continuation_at_savings[None, :]
+    )
+    marginal = coh_slopes[boundary_interval, None] * preferences.marginal_utility(
+        consumption_safe
+    )
+    is_feasibility = feasibility_partition.effect_codes == effect_code("feasibility")
+    in_domain = (boundaries >= liquid_grid[0]) & (boundaries <= liquid_grid[-1])
+    live = (
+        is_feasibility[:, None]
+        & in_domain[:, None]
+        & (consumption > 0.0)
+        & jnp.isfinite(continuation_at_savings)[None, :]
+    )
+
+    endog_parts.append(
+        jnp.where(
+            live, jnp.broadcast_to(boundaries[:, None], live.shape), jnp.nan
+        ).reshape(-1)
+    )
+    value_parts.append(jnp.where(live, value, jnp.nan).reshape(-1))
+    policy_parts.append(jnp.where(live, consumption, jnp.nan).reshape(-1))
+    marginal_parts.append(jnp.where(live, marginal, jnp.nan).reshape(-1))
+    segment_parts.append(
+        first_segment + jnp.arange(n_boundaries * n_savings, dtype=liquid_grid.dtype)
+    )
+    return n_boundaries * n_savings
 
 
 def _append_boundary_savings_corners(

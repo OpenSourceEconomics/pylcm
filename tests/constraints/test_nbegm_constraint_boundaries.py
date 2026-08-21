@@ -195,6 +195,9 @@ def test_nbegm_rejects_non_ordering_comparisons(declaration: Condition) -> None:
     [
         (ref("wealth") >= 0.0, "liquid"),
         (ref("liquid") >= ref("wealth"), "flat parameter"),
+        (ref("liquid") >= ref("consumption"), "flat parameter"),
+        (ref("liquid") >= ref("savings"), "flat parameter"),
+        (ref("liquid") >= ref("retired"), "flat parameter"),
         (ref("liquid") >= ref("computed_limit"), "flat parameter"),
         (ref("liquid") >= ref("limit"), "flat parameter"),
     ],

@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+import _lcm.solution.egm as egm_module
 import _lcm.solution.nbegm as nbegm_module
 import lcm
 from lcm import (
@@ -100,6 +101,9 @@ def _build_smooth_model(
     *,
     constraints: Mapping[str, Callable[..., object]],
     jump_read: str = "one_sided",
+    variant: str = "nbegm",
+    n_periods: int = 3,
+    n_consumption: int = 40,
 ) -> Model:
     """Assemble a smooth direct-resources NBEGM model with an aligned threshold."""
     liquid_grid = PiecewiseLinSpacedGrid(
@@ -109,14 +113,14 @@ def _build_smooth_model(
         points_per_segment=(5, 5),
     )
     return make_alive_dead_model(
-        n_periods=3,
+        n_periods=n_periods,
         n_liquid=10,
         liquid_max=8.0,
-        n_consumption=40,
+        n_consumption=n_consumption,
         alive_functions={"utility": utility, "savings": _savings_from_liquid},
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=8.0, n_points=30),
             jump_read=jump_read,
         ),
@@ -193,6 +197,50 @@ def test_nbegm_masks_a_compiled_parameter_interval_in_the_solved_value() -> None
 
     assert np.all(np.isneginf(value[liquid < 4.0]))
     assert np.all(np.isfinite(value[liquid >= 4.0]))
+
+
+def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
+    """Both solvers agree at the aligned threshold and on interior feasible rows."""
+    margin = LiquidMargin(
+        state="liquid",
+        action="consumption",
+        resources="liquid",
+        post_decision_state="savings",
+    )
+    constraints = {
+        "asset_test": cast("Callable[..., object]", lcm.ref("liquid") >= 4.0),
+        "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0),
+    }
+    nbegm = _build_smooth_model(
+        constraints=constraints,
+        n_periods=2,
+    )
+    grid_search = _build_smooth_model(
+        constraints=constraints,
+        variant="brute",
+        n_periods=2,
+        n_consumption=400,
+    )
+
+    params = _smooth_params(asset_limit=None)
+    for target in ("alive", "dead"):
+        params["alive"][target]["next_regime"]["final_age_alive"] = 1.0
+
+    nbegm_value = np.asarray(nbegm.solve(params=params, log_level="off")[0]["alive"])
+    brute_value = np.asarray(
+        grid_search.solve(params=params, log_level="off")[0]["alive"]
+    )
+    liquid = cast(
+        "PiecewiseLinSpacedGrid", nbegm.user_regimes["alive"].states["liquid"]
+    ).to_jax()
+    feasible = liquid >= 4.0
+    comparable = feasible & (liquid < liquid[-1])
+
+    assert np.all(np.isneginf(nbegm_value[~feasible]))
+    assert np.all(np.isneginf(brute_value[~feasible]))
+    np.testing.assert_allclose(
+        nbegm_value[comparable], brute_value[comparable], atol=0.03
+    )
 
 
 @pytest.mark.parametrize(
@@ -343,6 +391,48 @@ def test_nbegm_rejects_bridged_carry_with_a_feasibility_boundary() -> None:
             constraints={"asset_test": declaration},
             jump_read="bridged",
         )
+
+
+def test_nbegm_publishes_a_one_sided_feasibility_carry(monkeypatch) -> None:
+    """The parent reads the exact feasible owner beside an infeasible open side."""
+    seen = []
+    original = egm_module._EGMPeriodKernel.__call__
+
+    def recording_call(kernel, **kwargs):
+        carry = kwargs["next_regime_to_continuation"][kernel.continuation_target]
+        if carry.breakpoints is not None:
+            seen.append(
+                (
+                    np.asarray(carry.breakpoints),
+                    np.asarray(carry.endog_grid),
+                    np.asarray(carry.value),
+                )
+            )
+        return original(kernel, **kwargs)
+
+    monkeypatch.setattr(
+        egm_module._EGMPeriodKernel,
+        "__call__",
+        recording_call,
+    )
+    declaration = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    model = _build_smooth_model(constraints={"asset_test": declaration})
+
+    model.solve(params=_smooth_params(asset_limit=None), log_level="off")
+
+    assert seen, "no feasibility carry reached the parent reader"
+    breakpoints, endog_grid, value = seen[-1]
+    boundary = breakpoints.reshape(-1)[0]
+    endog_row = endog_grid.reshape(-1)
+    value_row = value.reshape(-1)
+    open_left = np.nextafter(boundary, -np.inf, dtype=endog_row.dtype)
+    at_boundary = endog_row == boundary
+    at_open_left = endog_row == open_left
+
+    assert at_boundary.sum() == 1
+    assert at_open_left.sum() >= 1
+    assert np.all(np.isfinite(value_row[at_boundary]))
+    assert np.all(np.isneginf(value_row[at_open_left]))
 
 
 def test_nbegm_rejects_feasibility_composed_with_a_binary_case_piece() -> None:

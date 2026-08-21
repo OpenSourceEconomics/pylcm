@@ -96,6 +96,25 @@ def test_multiple_breakpoints_contribute_the_declared_point_counts() -> None:
     assert np.count_nonzero(np.asarray(points) == 40.0) == 1
 
 
+def test_coordinates_recover_every_node_across_owned_breakpoints() -> None:
+    """Generalized coordinates remain contiguous across mixed ownership."""
+    grid = PiecewiseLinSpacedGrid(
+        start=0.0,
+        stop=100.0,
+        breakpoints=(
+            GridBreakpoint(value=10.0, owner="right"),
+            GridBreakpoint(value=40.0, owner="left"),
+        ),
+        points_per_segment=(4, 5, 3),
+    )
+    points = grid.to_jax()
+
+    np.testing.assert_allclose(
+        grid.get_coordinate(points),
+        np.arange(points.shape[0]),
+    )
+
+
 def test_empty_breakpoints_form_one_complete_segment() -> None:
     """An empty breakpoint tuple is a valid one-segment declaration."""
     grid = PiecewiseLinSpacedGrid(
@@ -180,6 +199,20 @@ def test_piecewise_grid_rejects_invalid_bounds(
             stop=kwargs["stop"],  # ty: ignore[invalid-argument-type]
             breakpoints=breakpoints,
             points_per_segment=(2,) * (len(breakpoints) + 1),
+        )
+
+
+def test_piecewise_grid_rejects_bounds_collapsed_by_canonical_precision(
+    x64_disabled,
+) -> None:
+    """Distinct inputs must remain distinct after canonical float conversion."""
+    assert x64_disabled is None
+    with pytest.raises(GridInitializationError, match="strictly between"):
+        PiecewiseLinSpacedGrid(
+            start=1.0,
+            stop=2.0,
+            breakpoints=(GridBreakpoint(value=1.0 + 2**-25),),
+            points_per_segment=(2, 2),
         )
 
 
