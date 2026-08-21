@@ -319,7 +319,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/websocket-client-1.9.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
       - pypi: ./
-      - pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=1409be36072ac49efc5b5e56cab0ac611d2dd1dc#1409be36072ac49efc5b5e56cab0ac611d2dd1dc
+      - pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=328e3710cfafb19c28ebcd46a27090238415fdd6#328e3710cfafb19c28ebcd46a27090238415fdd6
       - pypi: https://files.pythonhosted.org/packages/0c/30/19cebe8b381179ccd45faab303f4279c3aaa3a707387c42fbbb43ca778ac/orbax_checkpoint-0.12.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0f/36/104de52d6368f5b7f886e8fd252e0a438fe73a215e59b1b47f93a80ae2ea/nvidia_nccl_cu12-2.31.2-py3-none-manylinux_2_18_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/10/13/b8887c869cf2471339a24b60d3c28e761facbb534935f572b61423371abb/nvidia_cudnn_cu12-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl
@@ -25740,9 +25740,9 @@ packages:
   - pandas
   - pyarrow
   requires_python: '>=3.14'
-- pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=1409be36072ac49efc5b5e56cab0ac611d2dd1dc#1409be36072ac49efc5b5e56cab0ac611d2dd1dc
+- pypi: git+https://github.com/OpenSourceEconomics/aca-model.git?rev=328e3710cfafb19c28ebcd46a27090238415fdd6#328e3710cfafb19c28ebcd46a27090238415fdd6
   name: aca-model
-  version: 0.1.dev87+g1409be360
+  version: 0.1.dev98+g328e3710
   requires_dist:
   - attrs
   - beartype
