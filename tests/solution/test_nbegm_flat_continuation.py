@@ -20,7 +20,6 @@ import numpy as np
 from lcm import LinSpacedGrid
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
-    feasible,
     make_alive_dead_model,
     next_liquid_from_savings,
     resolve_solver,
@@ -85,7 +84,7 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
             "nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),
         ),
-        constraints={"feasible": feasible},
+        constraints={},
         dead_functions={"utility": _flat_utility},
     )
     solution = model.solve(params=_PARAMS, log_level="debug")
