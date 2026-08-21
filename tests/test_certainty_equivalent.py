@@ -949,13 +949,9 @@ def test_stateless_target_is_transformed_before_the_regime_expectation(
     ANY `g`, and the solved value is
     `max_{c <= wealth} log(c) + discount_factor * V_dead`.
 
-    This discriminates rather than smoke-tests. Before `d9aec7d` a stateless
-    target was probability-weighted RAW and only then inverted, leaving the
-    transformed domain: the continuation came out as `g^-1(V_dead)`, which
-    differs from `V_dead` at every `risk_aversion != 0`. MEASURED at `d9aec7d`'s
-    parent `3934701` with `risk_aversion = 2`, the solved values were
-    `[-0.2181, 1.4866, 2.0844, 2.0844, 2.0844]` against the correct
-    `[1.2069, 2.9116, 3.5094, 3.5094, 3.5094]` -- this test fails there.
+    The assertion distinguishes the transform order: weighting a stateless
+    target before transforming it would produce `g^-1(V_dead)`, which differs
+    from `V_dead` whenever `risk_aversion != 0`.
     """
     model = _make_model(
         alive_kwargs={"certainty_equivalent": PowerMean()},

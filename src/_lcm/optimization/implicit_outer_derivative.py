@@ -311,9 +311,9 @@ def implicit_optimum_diagnostics(
     # forward-mode q_f: at an exact kink jax.jvp returns one sub-gradient branch
     # and can read ~0 (a tent peak differentiates to 0), passing a non-smooth
     # optimum as stationary. Probe the slope jump at two shrinking radii and
-    # test CONTRACTION: a smooth optimum's jump shrinks ~linearly with the
-    # radius, a kink's does not — the discriminant is amplitude-independent,
-    # where a single fixed-radius threshold lets a small-but-critical kink pass.
+    # test contraction: a smooth optimum's jump shrinks approximately linearly
+    # with the radius, while a kink's does not. The discriminant is therefore
+    # amplitude-independent.
     delta = jnp.maximum(width, kink_probe_atol)
 
     def _slope_jump(radius: FloatND) -> FloatND:

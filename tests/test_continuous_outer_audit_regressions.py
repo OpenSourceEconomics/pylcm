@@ -1,17 +1,7 @@
-"""Regressions for the continuous-outer external audit (bundle-contouter-r1).
+"""Numerical invariants for continuous outer-choice solution and simulation.
 
-One runnable case per confirmed finding, each RED before its fix and GREEN
-after. Named to merge with the reviewer's own ``reusable_tests`` (RT*) when
-those are recovered.
-
-F6 — the adaptive mesh could silently discard a known global maximum. Mesh
-validation scored the exact-vs-interpolated midpoint error ONLY on intervals
-flanking a node-local maximum (the golden-section brackets). A peak sitting
-between two nodes that are both on a monotone ramp (neither a local maximum)
-was therefore never scored, never marked, never inserted, and never bracketed
-— so the search returned the best *node* and missed the true optimum. The fix
-also refines any interval whose EXACT midpoint value beats the cell's best
-node, because that is an unsampled incumbent regardless of the interpolant.
+The cases cover hidden interior maxima, invalid cells, interpolation accuracy,
+kink detection, nested policy publication, and safeguarded refinement.
 """
 
 import jax
@@ -268,9 +258,8 @@ def _cusp_surface(nodes: jnp.ndarray, state_shape: tuple[int, ...]) -> jnp.ndarr
 def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
     """A rank-4 state through the safeguarded argmax must not crash XLA/CPU.
 
-    A rank-7 eager gather segfaults the interpreter, so the guard is that this
-    returns finite per-cell optima. A reintroduced regression kills the test
-    process outright, which is the loud signal we want.
+    The result must contain finite per-cell optima without terminating the
+    interpreter.
     """
     nodes = jnp.linspace(0.0, 4.0, 129, dtype=jnp.float32)
     state_shape = (2, 2, 2, 2)  # rank 4 — the KV two-asset+shock+regime shape
@@ -408,13 +397,9 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
 def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
     """The global off-node optimum in a low-ranked basin must not be skipped.
 
-    Refining only the top-8 node-local maxima (``max_brackets=8``) skips a
-    basin. A surface with nine local maxima
-    whose ninth-ranked basin (by exact node value) hides the tallest OFF-node
-    interpolant peak then had that basin refined only as its exact node — the
-    peak between the nodes was never polished and was silently discarded. The
-    fixed default ``max_brackets=None`` refines every node-local maximum, so the
-    peak is found; passing ``max_brackets=8`` reproduces the miss.
+    The default ``max_brackets=None`` refines every node-local maximum. A surface
+    with nine local maxima whose ninth-ranked basin by node value hides the
+    tallest off-node interpolant peak must therefore select that ninth basin.
 
     Nine local maxima sit at odd nodes with descending heights 100, 90, ..., 20;
     the height-20 basin (rank 9) carries a tall bump (~220) between its nodes.
