@@ -324,7 +324,26 @@ class SolutionPhase:
     """Immutable mapping of variable names to grid objects (productmap order)."""
 
     functions: EconFunctionsMapping
-    """Immutable mapping of function names to internal user functions."""
+    """Immutable mapping of function names to internal user functions.
+
+    An age-specialized function is resolved here at the regime's first active
+    age, which stands in for the regime as a whole. Its consumers — feasibility
+    checks and the additional targets a simulation reports — need only a
+    concrete function, not the one belonging to a particular period. Pricing a
+    continuation does need the period's own age; that reads
+    `continuation_functions` instead.
+    """
+
+    _continuation_functions: EconFunctionsMapping | None = None
+    """Solve-phase pool with age-specialized functions left unresolved.
+
+    A simulated agent prices its continuation under the law it solved with, and
+    an age-specialized belief is a different function at every age. Leaving the
+    functions unresolved here lets each period resolve them at its own age.
+    Resolving them once, at the regime's first active age, would impose one
+    age's belief on the whole regime and can reverse the simulated choice.
+    `None` — the regime has nothing age-specialized — falls back to `functions`.
+    """
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
@@ -418,6 +437,16 @@ class SolutionPhase:
             self.compute_regime_transition_probs is not None
             and self.continuation_template is not None
         )
+
+    @property
+    def continuation_functions(self) -> EconFunctionsMapping:
+        """Solve-phase pool a simulated agent prices its continuation with.
+
+        Falls back to `functions` when the regime has no age-specialized
+        function to resolve. Read this rather than `_continuation_functions`,
+        so the fallback is applied once.
+        """
+        return self._continuation_functions or self.functions
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
@@ -669,11 +698,17 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — and for each target
-    of a per-target dict. The pre-solve state-transition validator consumes
-    these to evaluate the function on the regime's grid Cartesian product and
-    check that the output has the expected outcome-axis size, lies in [0, 1],
-    and has rows summing to 1.
+    One entry exists for every `MarkovTransition` state — for each target of a
+    per-target dict, and for each phase variant of a `Phased` law. The pre-solve
+    state-transition validator consumes these to evaluate the function on the
+    regime's grid Cartesian product and check that the output has the expected
+    outcome-axis size, lies in [0, 1], and has rows summing to 1.
+
+    A `Phased` law contributes one entry per phase, and both are kept. They are
+    different kernels doing different jobs: the perceived one prices every action
+    in backward induction, the realized one governs the draw the simulation
+    takes. Either is fatal if malformed, so keeping one key for both would leave
+    whichever was collected second the only one ever checked.
     """
 
     func: Callable[..., FloatND]
@@ -694,6 +729,13 @@ class _StochasticStateTransition:
     Derived statically at process time from the function's AST. Empty
     when the function doesn't use the `probs_array[...]` pattern, in
     which case the AST subscript-order check is permissively skipped.
+    """
+
+    phase: Literal["solve", "simulate"] | None = None
+    """Phase this kernel belongs to; `None` for a phase-invariant law.
+
+    Carried so that a failure names the offending phase — a phase-invariant law
+    and the two variants of a `Phased` pair are otherwise validated identically.
     """
 
 

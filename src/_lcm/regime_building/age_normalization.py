@@ -335,6 +335,7 @@ def continuation_group_key(
     continuation_info: (
         Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
+    continuation_functions: Mapping[str, object] | None = None,
 ) -> Callable[[int], tuple[tuple[RegimeName, ...], Hashable]]:
     """Build the per-period grouping key shared by Q_and_F construction and diagnostics.
 
@@ -356,6 +357,10 @@ def continuation_group_key(
             periods that read a target's continuation differently never share one
             compiled program. Omit only where the caller builds nothing that
             depends on that partition.
+        continuation_functions: The perceived (solve-phase) continuation pool, when
+            it differs from `functions`. Its per-period signature enters the key, so
+            periods whose pool resolves to different closures never share a compiled
+            kernel. `None` contributes a constant and collapses out of the grouping.
 
     Returns:
         A callable mapping a period to its grouping key.
@@ -384,6 +389,11 @@ def continuation_group_key(
             periodized_tree_signature(constraints, period),
             continuation_sig,
             scalar_targets,
+            (
+                periodized_tree_signature(continuation_functions, period)
+                if continuation_functions is not None
+                else ()
+            ),
         )
         return (complete, signature)
 

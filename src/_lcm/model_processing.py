@@ -15,6 +15,8 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
+from _lcm.constraints.bounds import lower_bound_declaration
+from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -54,6 +56,7 @@ from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.typing import UserParams
 
@@ -280,6 +283,13 @@ def validate_model_inputs(  # noqa: C901
             active_periods_by_regime=active_periods_by_regime,
         )
     )
+    error_messages.extend(
+        _validate_constraint_phase_invariance(
+            user_regimes,
+            ages=ages,
+            active_periods_by_regime=active_periods_by_regime,
+        )
+    )
 
     for name, user_regime in user_regimes.items():
         if user_regime.taste_shocks is not None and not any(
@@ -486,6 +496,186 @@ def _validate_all_variables_used(
                 f"utility, constraints, or transition functions."
             )
 
+    return error_messages
+
+
+def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
+    """Whether a name's `solve` and `simulate` resolutions are different laws.
+
+    Object identity is the test: `get_all_functions` returns the raw user
+    callables, so a phase-invariant value is one object in both phases while a
+    `Phased` yields two distinct ones. `fixed_transition` is the exception — its
+    identity law is rebuilt on every collection, so the two phases hold distinct
+    objects standing for the same law. Treating those as different would falsely
+    reject a constraint that reads a fixed `next_<state>`.
+    """
+    if solve_obj is sim_obj:
+        return False
+    if getattr(solve_obj, "_is_auto_identity", False) and getattr(
+        sim_obj, "_is_auto_identity", False
+    ):
+        return getattr(solve_obj, "_state_name", None) != getattr(
+            sim_obj, "_state_name", object()
+        )
+    return True
+
+
+def _post_decision_function_of_solver(solver: object) -> str | None:
+    """Return the bound liquid post-decision role of an EGM-family solver."""
+    current: object | None = solver
+    while current is not None:
+        post_decision = getattr(current, "post_decision_function", None)
+        if isinstance(post_decision, str):
+            return post_decision
+        inner = getattr(current, "inner", None)
+        if inner is current:
+            break
+        current = inner
+    return None
+
+
+def _is_solve_proved_post_decision_lower_bound(
+    *, constraint_name: str, user_regime: UserRegime
+) -> bool:
+    """Whether the solve grid proves this exact structural lower bound.
+
+    This is the one supported phase-resolved feasibility declaration: its solve
+    disposition is a grid proof, while simulation evaluates the declaration
+    against the simulation function pool.
+    """
+    post_decision = _post_decision_function_of_solver(user_regime.solver)
+    declaration = user_regime.constraints[constraint_name]
+    if post_decision is None or declaration is None:
+        return False
+    processed = normalize_constraints(
+        constraints={constraint_name: cast("ConstraintLike", declaration)}
+    )[constraint_name]
+    bound = lower_bound_declaration(constraint=processed)
+    return bound is not None and bound[0] == post_decision
+
+
+def _validate_constraint_phase_invariance(
+    user_regimes: Mapping[RegimeName, UserRegime],
+    *,
+    ages: AgeGrid | None = None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+) -> list[str]:
+    """Reject a constraint whose dependency ancestry contains a phase-varying node.
+
+    The feasible set is a primitive of the model the agent solved, so it may not
+    differ across phases: a phase-specific feasible set would let the simulated
+    agent choose actions its value function was never computed for. A `Phased`
+    constraint is already rejected when the regime is built, but a plain constraint
+    can reach a `Phased` helper or law of motion further up its dependency chain
+    and become phase-specific that way. This walks the whole chain.
+
+    A name is phase-varying when its solve and simulate resolutions are different
+    laws (`_law_phase_varies`). A structural lower bound on an EGM-family
+    post-decision state is the deliberate exception: the solve grid proves it,
+    while simulation evaluates it against the phase-resolved function pool.
+    Two other cases need care:
+
+    - A per-target law is keyed `next_<state>__<target>`, while a constraint reads
+      the unqualified `next_<state>`. If any target's law varies by phase, so does
+      the unqualified name, so the qualified entries are aliased onto it.
+    - A carried state is not phase-varying: both phases read the same solve-phase
+      imputation, which is also the value its decision is taken at. Reading such a
+      state's *next* value is a different matter — the solve phase has no producer
+      for it — and is rejected separately.
+
+    Args:
+        user_regimes: Mapping of finalized regime names to `Regime` instances.
+        ages: The model's age grid, or `None` when no age-specialized function
+            needs resolving before the ancestry is walked.
+        active_periods_by_regime: Immutable mapping of regime names to their
+            active periods, as prepared by `compute_active_periods_by_regime`.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages = []
+    for regime_name, user_regime in user_regimes.items():
+        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
+        sim_funcs = user_regime.get_all_functions(phase="simulate")
+        phase_varying = frozenset(
+            name
+            for name in solve_funcs
+            if _law_phase_varies(solve_funcs[name], sim_funcs.get(name))
+        )
+        # Alias each phase-varying per-target law onto the unqualified
+        # `next_<state>` a constraint actually reads.
+        phase_varying = phase_varying | frozenset(
+            name.rsplit(QNAME_DELIMITER, 1)[0]
+            for name in phase_varying
+            if QNAME_DELIMITER in name
+        )
+        # The solve phase imputes a carried state, so its *next* value has no
+        # producer there. A constraint reading `next_<carried>` would fail deep in
+        # the solve build with an unsupplied argument; reject it here instead.
+        # Reading the carried state's current value is fine.
+        carried_next = frozenset(
+            f"next_{name}"
+            for name, spec in user_regime.states.items()
+            if isinstance(spec, Phased)
+        )
+        if not phase_varying and not carried_next:
+            continue
+        # Resolve every age-specialized function to a concrete per-age function
+        # before walking constraint ancestry (as `_validate_all_variables_used`
+        # does). Unresolved, such a function exposes only a generic
+        # `(*args, **kwargs)` signature, so the ancestry stops there and a
+        # phase-varying helper reached below it would escape this check. The
+        # dependency structure is age-invariant, so any active age serves.
+        ancestry_funcs = solve_funcs
+        if ages is not None:
+            # Read the PREPARED active periods rather than recomputing them:
+            # `compute_active_periods_by_regime` is the single canonical
+            # evaluation point, and a second call site could disagree with it
+            # (Fraction vs. float32-rounded ages).
+            active_periods = (
+                ()
+                if active_periods_by_regime is None
+                else active_periods_by_regime.get(regime_name, ())
+            )
+            if active_periods:
+                representative_age = float(ages.period_to_age(active_periods[0]))
+                ancestry_funcs = cast(
+                    "dict[str, Callable[..., object]]",
+                    {
+                        name: resolve_node(func, representative_age)
+                        for name, func in solve_funcs.items()
+                    },
+                )
+        for constraint_name in user_regime.constraints:
+            ancestors = get_ancestors(
+                ancestry_funcs, targets=[constraint_name], include_targets=False
+            )
+            offending = sorted(ancestors & phase_varying)
+            if offending and not _is_solve_proved_post_decision_lower_bound(
+                constraint_name=constraint_name, user_regime=user_regime
+            ):
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"depends on phase-varying function(s) {offending}. "
+                    f"Constraints must be phase-invariant through their whole "
+                    f"dependency chain: a phase-specific feasible set would let "
+                    f"the simulated agent choose actions its value function was "
+                    f"never computed for. Make the constraint's dependencies "
+                    f"phase-invariant, or keep the phase variance out of the "
+                    f"feasibility path."
+                )
+            offending_carried = sorted(ancestors & carried_next)
+            if offending_carried:
+                error_messages.append(
+                    f"Constraint '{constraint_name}' in regime '{regime_name}' "
+                    f"reads the next value of a carried state {offending_carried}. "
+                    f"A carried state is imputed in the solve phase, so its next "
+                    f"value has no solve-phase producer and the solve feasibility "
+                    f"DAG would be left with an unsupplied argument. Read the "
+                    f"carried state's current value instead, or make it an "
+                    f"ordinary (non-carried) state."
+                )
     return error_messages
 
 
