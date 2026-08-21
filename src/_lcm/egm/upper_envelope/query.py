@@ -643,7 +643,7 @@ def envelope_at_query(
         policy = jnp.where(candidate_feasible, policy, jnp.nan)
         marginal = jnp.where(candidate_feasible, marginal, jnp.nan)
 
-    dead = jnp.isnan(endog_grid) | jnp.isnan(value)
+    dead = ~jnp.isfinite(endog_grid) | ~jnp.isfinite(value)
     # A link is a real segment only within one branch: both endpoints live and
     # carrying the same label.
     consecutive = _SegmentLinks(

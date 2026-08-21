@@ -84,6 +84,41 @@ _FLAT_SPAN_REL_TOL = 1e-6
 _CHUNK_SIZE = 4
 
 
+def _interp_continuation_value(
+    *, query: FloatND, grid: Float1D, value: Float1D
+) -> FloatND:
+    """Read a value carry without interpolating through infeasible rows.
+
+    Feasibility carries publish ``-inf`` outside their domain. ``jnp.interp``
+    combines both bracketing ordinates even at an exact node, so a finite value
+    whose neighbour is ``-inf`` becomes NaN. This reader preserves exact nodes,
+    returns ``-inf`` throughout an infeasible link, and performs ordinary linear
+    interpolation only when both endpoints are finite.
+    """
+    upper = jnp.searchsorted(grid, query, side="right")
+    lower = jnp.clip(upper - 1, 0, grid.shape[0] - 1)
+    upper = jnp.clip(upper, 0, grid.shape[0] - 1)
+    left_grid = grid[lower]
+    right_grid = grid[upper]
+    left_value = value[lower]
+    right_value = value[upper]
+
+    width = right_grid - left_grid
+    safe_width = jnp.where(width != 0.0, width, 1.0)
+    interpolated = (
+        (right_grid - query) * left_value + (query - left_grid) * right_value
+    ) / safe_width
+    across_infeasible = jnp.isneginf(left_value) | jnp.isneginf(right_value)
+    interior = jnp.where(across_infeasible, -jnp.inf, interpolated)
+    exact = query == left_grid
+    inside = jnp.where(exact, left_value, interior)
+    return jnp.where(
+        query <= grid[0],
+        value[0],
+        jnp.where(query >= grid[-1], value[-1], inside),
+    )
+
+
 def nbegm_multi_interval_step(
     *,
     next_value: Float1D,
@@ -174,7 +209,9 @@ def nbegm_multi_interval_step(
         coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
     )
 
-    value_next = jnp.interp(next_liquid, next_liquid_grid, next_value)
+    value_next = _interp_continuation_value(
+        query=next_liquid, grid=next_liquid_grid, value=next_value
+    )
     marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
 
     consumption = preferences.inverse_marginal_utility(
@@ -250,7 +287,9 @@ def nbegm_multi_interval_step(
     # and land wherever the declared law sends the savings grid's lowest node. A
     # candidate over the whole grid, since the constraint binds wherever the no-save
     # corner beats the Euler path.
-    value_at_corner = jnp.interp(next_liquid[0], next_liquid_grid, next_value)
+    value_at_corner = _interp_continuation_value(
+        query=next_liquid[0], grid=next_liquid_grid, value=next_value
+    )
     s0 = _no_save_corner(
         endog_grid=liquid_grid,
         coh=coh_grid,
@@ -327,10 +366,10 @@ def _append_boundary_savings_corners(
 
     for offset in range(boundary_savings_targets.shape[0]):
         fixed_savings = boundary_savings_targets[offset]
-        continuation = jnp.interp(
-            boundary_next_liquid[offset],
-            next_liquid_grid,
-            next_value,
+        continuation = _interp_continuation_value(
+            query=boundary_next_liquid[offset],
+            grid=next_liquid_grid,
+            value=next_value,
         )
         boundary_consumption = coh_grid - fixed_savings
         live = (boundary_consumption > 0.0) & jnp.isfinite(continuation)
@@ -1367,8 +1406,12 @@ def _floor_optimum(
         savings_grid=savings_grid,
         next_liquid=next_liquid,
     )
-    value = preferences.utility(consumption) + discount_factor * jnp.interp(
-        landing, next_liquid_grid, next_value
+    value = preferences.utility(
+        consumption
+    ) + discount_factor * _interp_continuation_value(
+        query=landing,
+        grid=next_liquid_grid,
+        value=next_value,
     )
     best = jnp.argmax(value)
     return value[best], consumption[best]

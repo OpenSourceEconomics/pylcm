@@ -10,6 +10,7 @@ from _lcm.axis_boundaries import (
     boundary_owner_for_feasible_region,
     resolve_axis_partition,
 )
+from _lcm.egm.nbegm_step import _interp_continuation_value
 from _lcm.egm.upper_envelope.query import envelope_at_query
 
 
@@ -175,3 +176,48 @@ def test_feasibility_envelope_supports_both_precisions_jit_and_vmap(
         np.testing.assert_allclose(actual[0], expected_value)
         np.testing.assert_allclose(actual[1], expected_policy, equal_nan=True)
         np.testing.assert_allclose(actual[2], expected_marginal)
+
+
+def test_continuation_value_read_preserves_an_isolated_feasible_point() -> None:
+    """An exact feasible child value survives adjacent infeasible carry rows."""
+    boundary = jnp.float32(4.0)
+    grid = jnp.array(
+        [
+            3.0,
+            jnp.nextafter(boundary, -jnp.inf),
+            boundary,
+            jnp.nextafter(boundary, jnp.inf),
+            5.0,
+        ]
+    )
+    value = jnp.array([-jnp.inf, -jnp.inf, 7.0, -jnp.inf, -jnp.inf])
+    query = jnp.array(
+        [
+            jnp.float32(3.5),
+            boundary,
+            jnp.float32(4.5),
+        ]
+    )
+
+    actual = _interp_continuation_value(query=query, grid=grid, value=value)
+
+    np.testing.assert_array_equal(actual, np.array([-np.inf, 7.0, -np.inf]))
+
+
+def test_negative_infinity_candidate_cannot_poison_a_finite_exact_point() -> None:
+    """A dead continuation candidate loses to a finite point at the same node."""
+    boundary = jnp.float32(4.0)
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.array([boundary, boundary]),
+        value=jnp.array([-jnp.inf, 7.0], dtype=boundary.dtype),
+        policy=jnp.array([jnp.nan, 2.0], dtype=boundary.dtype),
+        marginal=jnp.array([0.0, 3.0], dtype=boundary.dtype),
+        segment_id=jnp.array([0.0, 1.0], dtype=boundary.dtype),
+        x_query=boundary,
+    )
+
+    np.testing.assert_array_equal(
+        (value, policy, marginal),
+        np.array([7.0, 2.0, 3.0]),
+    )
