@@ -10,10 +10,10 @@ from pandas.testing import assert_frame_equal
 from _lcm.config import TEST_DATA
 from _lcm.grids import UniformContinuousGrid
 from lcm import (
+    GridBreakpoint,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
@@ -157,26 +157,20 @@ def _create_grid(
     if grid_type == "LogSpacedGrid":
         return LogSpacedGrid(start=start, stop=stop, n_points=n_points)
     if grid_type == "PiecewiseLinSpacedGrid":
-        # More points in lower part, cutoff at 100
         n_lower = n_points // 3 * 2
         return PiecewiseLinSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(interval=f"[{start}, 100)", n_points=n_lower),
-                PiecewiseGridSegment(
-                    interval=f"[100, {stop}]", n_points=n_points - n_lower + 1
-                ),
-            )
+            start=start,
+            stop=stop,
+            breakpoints=(GridBreakpoint(value=100.0, owner="right"),),
+            points_per_segment=(n_lower, n_points - n_lower),
         )
     if grid_type == "PiecewiseLogSpacedGrid":
-        # Different cutoff at 50, more points in upper part
         n_upper = n_points // 3 * 2
         return PiecewiseLogSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(
-                    interval=f"[{start}, 50)", n_points=n_points - n_upper + 1
-                ),
-                PiecewiseGridSegment(interval=f"[50, {stop}]", n_points=n_upper),
-            )
+            start=start,
+            stop=stop,
+            breakpoints=(GridBreakpoint(value=50.0, owner="right"),),
+            points_per_segment=(n_points - n_upper, n_upper),
         )
     if grid_type == "IrregSpacedGrid":
         # Points between lin/log spacing - use average of both
