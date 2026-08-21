@@ -18,6 +18,7 @@ answers to it come to disagree.
 
 from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.routes import (
+    BoundaryCompiler,
     ConstraintRoute,
     ConstraintRouteKey,
     ConstraintSite,
@@ -32,6 +33,7 @@ def case_piece_routes(
     post_decision_function: FunctionName | None,
     solver_path: tuple[str, ...],
     function_pool: EconFunctionsMapping | None = None,
+    boundary_compilers: tuple[BoundaryCompiler, ...] = (),
 ) -> tuple[ConstraintRoute, ...]:
     """Declare the one route a case-piece kernel walks in one phase.
 
@@ -61,6 +63,8 @@ def case_piece_routes(
         function_pool: The pool in scope at the site, for a nesting solver that
             rewrites it going into this branch. Defaults to the phase's own
             pool, which is what a solver that rewrites nothing hands over.
+        boundary_compilers: Boundary compilers offered at the solve savings
+            stage. They are ignored on the shared simulation route.
 
     Returns:
         The route, as a one-tuple.
@@ -88,6 +92,7 @@ def case_piece_routes(
                     ),
                     available_names=frozenset(),
                     structural_proofs=proofs,
+                    boundary_compilers=boundary_compilers,
                 ),
             ),
         ),

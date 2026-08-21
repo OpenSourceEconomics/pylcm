@@ -44,6 +44,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 
+from _lcm.axis_boundaries import ResolvedAxisPartition
 from _lcm.egm.euler import invert_euler
 from _lcm.egm.ez_kernel import (
     ez_consumption_from_euler,
@@ -99,6 +100,10 @@ def nbegm_multi_interval_step(
     breakpoints: Float1D,
     flat_interval_mask: tuple[bool, ...] | None = None,
     arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
 
@@ -266,6 +271,23 @@ def nbegm_multi_interval_step(
         policy_parts.append(policies)
         marginal_parts.append(marginals)
         segment_parts.append(jnp.full((2,), next_segment + 1.0 + float(offset)))
+    _append_boundary_savings_corners(
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        liquid_grid=liquid_grid,
+        coh_grid=coh_grid,
+        coh_slope=coh_slopes[interval_of_grid],
+        next_liquid_grid=next_liquid_grid,
+        next_value=next_value,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        first_segment=next_segment + 1.0 + float(len(flat_corners)),
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -275,8 +297,59 @@ def nbegm_multi_interval_step(
         segment_id=jnp.concatenate(segment_parts),
         x_query=liquid_grid,
         arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
     )
     return value, marginal, policy
+
+
+def _append_boundary_savings_corners(
+    *,
+    boundary_savings_targets: Float1D | None,
+    boundary_next_liquid: Float1D | None,
+    liquid_grid: Float1D,
+    coh_grid: Float1D,
+    coh_slope: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    first_segment: ScalarFloat,
+    endog_parts: list[Float1D],
+    value_parts: list[Float1D],
+    policy_parts: list[Float1D],
+    marginal_parts: list[Float1D],
+    segment_parts: list[Float1D],
+) -> None:
+    """Add fixed-savings branches where a child feasibility boundary binds."""
+    if boundary_savings_targets is None or boundary_next_liquid is None:
+        return
+
+    for offset in range(boundary_savings_targets.shape[0]):
+        fixed_savings = boundary_savings_targets[offset]
+        continuation = jnp.interp(
+            boundary_next_liquid[offset],
+            next_liquid_grid,
+            next_value,
+        )
+        boundary_consumption = coh_grid - fixed_savings
+        live = (boundary_consumption > 0.0) & jnp.isfinite(continuation)
+        boundary_value = (
+            preferences.utility(boundary_consumption) + discount_factor * continuation
+        )
+        boundary_marginal = coh_slope * preferences.marginal_utility(
+            boundary_consumption
+        )
+        endog_parts.append(jnp.where(live, liquid_grid, jnp.nan))
+        value_parts.append(jnp.where(live, boundary_value, jnp.nan))
+        policy_parts.append(jnp.where(live, boundary_consumption, jnp.nan))
+        marginal_parts.append(jnp.where(live, boundary_marginal, jnp.nan))
+        segment_parts.append(
+            jnp.full_like(
+                liquid_grid,
+                first_segment + float(offset),
+            )
+        )
 
 
 def _invert_coh_with_linear_extension(

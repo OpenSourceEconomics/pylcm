@@ -235,6 +235,38 @@ class ConstraintPlan:
         """
         return ConstraintPlan(entries=(*self.entries, *other.entries))
 
+    def for_solver_path(self, *, solver_path: tuple[str, ...]) -> ConstraintPlan:
+        """Return the entries belonging to one solver branch.
+
+        Args:
+            solver_path: The route path whose entries to retain.
+
+        Returns:
+            A plan containing only entries for `solver_path`.
+
+        """
+        return ConstraintPlan(
+            entries=tuple(
+                entry
+                for entry in self.entries
+                if entry.route.solver_path == solver_path
+            )
+        )
+
+    @property
+    def compiled_boundaries(self) -> tuple[CompileBoundary, ...]:
+        """Return the boundary dispositions in plan order.
+
+        Returns:
+            Every compiled boundary carried by this plan.
+
+        """
+        return tuple(
+            entry.disposition
+            for entry in self.entries
+            if isinstance(entry.disposition, CompileBoundary)
+        )
+
 
 def plan_constraints(
     *,

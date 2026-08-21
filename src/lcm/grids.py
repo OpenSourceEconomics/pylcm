@@ -15,17 +15,17 @@ from _lcm.grids.continuous import (
 )
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.grids.piecewise import (
-    PiecewiseGridSegment,
+    GridBreakpoint,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
 
 __all__ = [
     "DiscreteGrid",
+    "GridBreakpoint",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
-    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "categorical",

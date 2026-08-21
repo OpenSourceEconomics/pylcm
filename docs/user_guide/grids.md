@@ -14,14 +14,14 @@ bounds or node values vary with age instead (e.g., an age-dependent borrowing li
 
 ## Quick Reference
 
-| Grid Type                | Use Case                  | Key Parameters                               |
-| ------------------------ | ------------------------- | -------------------------------------------- |
-| `DiscreteGrid`           | Categorical choices       | `category_class`                             |
-| `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points`                  |
-| `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points`                  |
-| `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`                       |
-| `PiecewiseLinSpacedGrid` | Dense in some regions     | `segments` (tuple of `PiecewiseGridSegment`) |
-| `PiecewiseLogSpacedGrid` | Log-dense in some regions | `segments` (tuple of `PiecewiseGridSegment`) |
+| Grid Type                | Use Case                  | Key Parameters                                       |
+| ------------------------ | ------------------------- | ---------------------------------------------------- |
+| `DiscreteGrid`           | Categorical choices       | `category_class`                                     |
+| `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points`                          |
+| `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points`                          |
+| `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`                               |
+| `PiecewiseLinSpacedGrid` | Dense in some regions     | `start`, `stop`, `breakpoints`, `points_per_segment` |
+| `PiecewiseLogSpacedGrid` | Log-dense in some regions | `start`, `stop`, `breakpoints`, `points_per_segment` |
 
 All grid classes are imported from `lcm`:
 
@@ -31,7 +31,7 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     IrregSpacedGrid,
-    PiecewiseGridSegment,
+    GridBreakpoint,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
@@ -104,36 +104,55 @@ IrregSpacedGrid(n_points=4)
 
 ### PiecewiseLinSpacedGrid
 
-Multiple linearly spaced segments joined at breakpoints. Dense where you need precision,
-sparse elsewhere:
+Use explicit breakpoints when different parts of one finite domain need different linear
+resolutions. Each breakpoint declares which neighboring segment owns the exact boundary
+value:
 
 ```python
-from lcm import PiecewiseGridSegment, PiecewiseLinSpacedGrid
+from lcm import GridBreakpoint, PiecewiseLinSpacedGrid
 
-PiecewiseLinSpacedGrid(
-    segments=(
-        PiecewiseGridSegment(interval="[0, 10)", n_points=20),
-        PiecewiseGridSegment(interval="[10, 100]", n_points=10),
+grid = PiecewiseLinSpacedGrid(
+    start=0.0,
+    stop=100.0,
+    breakpoints=(
+        GridBreakpoint(value=10.0, owner="right"),
+        GridBreakpoint(value=40.0, owner="left"),
     ),
+    points_per_segment=(20, 50, 30),
 )
 ```
 
-Segments must be adjacent: the upper bound of each segment must equal the lower bound of
-the next, with compatible open/closed boundaries (e.g., `[0, 10)` followed by
-`[10, 100]`).
+This declaration forms the nominal segments `[0, 10)`, `[10, 40]`, and `(40, 100]`. The
+outer endpoints are always included. A right-owned breakpoint is the first node of the
+segment to its right; a left-owned breakpoint is the last node of the segment to its
+left. Every breakpoint therefore appears exactly once, and each count is the number of
+output nodes its segment contributes:
+
+```python
+grid.n_points == 20 + 50 + 30
+```
+
+On the open side, the effective endpoint is the representable floating-point value
+immediately next to the breakpoint. This keeps equality ownership exact without removing
+a full grid spacing.
+
+Use `breakpoints=()` with one entry in `points_per_segment` for a one-segment piecewise
+declaration. `LinSpacedGrid` is normally simpler for that case.
 
 ### PiecewiseLogSpacedGrid
 
-Same structure as `PiecewiseLinSpacedGrid` but with log spacing within each segment.
-Good for wealth grids spanning orders of magnitude. All boundary values must be
+`PiecewiseLogSpacedGrid` uses the same breakpoint and ownership declarations but
+logarithmic spacing within each segment. The complete domain and all breakpoints must be
 positive.
 
 ```python
+from lcm import GridBreakpoint, PiecewiseLogSpacedGrid
+
 PiecewiseLogSpacedGrid(
-    segments=(
-        PiecewiseGridSegment(interval="[0.1, 10)", n_points=50),
-        PiecewiseGridSegment(interval="[10, 1000]", n_points=30),
-    ),
+    start=0.1,
+    stop=1_000.0,
+    breakpoints=(GridBreakpoint(value=10.0, owner="right"),),
+    points_per_segment=(50, 30),
 )
 ```
 

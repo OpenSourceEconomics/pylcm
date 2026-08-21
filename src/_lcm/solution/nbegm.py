@@ -31,8 +31,15 @@ from beartype import beartype
 from dags import concatenate_functions
 
 import lcm.typing as lcm_typing
+from _lcm.axis_boundaries import (
+    AxisBoundary,
+    ResolvedAxisPartition,
+    partition_effect_for_schedule_kind,
+    resolve_axis_partition,
+)
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.constraints.dispositions import CompileBoundary
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
@@ -48,6 +55,10 @@ from _lcm.egm.fixed_width_map import (
     map_partitioned,
 )
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.nbegm_constraint_boundaries import (
+    NBEGMFeasibilityBoundaryProgram,
+    feasibility_axis_boundaries,
+)
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
@@ -73,10 +84,7 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
 )
 from _lcm.solution.dcegm import _carry_subset
-from _lcm.solution.egm import (
-    _build_one_asset_carry_template,
-    _EGMPeriodKernel,
-)
+from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
@@ -354,12 +362,26 @@ class NBEGM(OneMarginSolver):
         wrong one here, where the description is available and says that no
         name is readable anywhere along the pipeline.
         """
+        from _lcm.egm.nbegm_constraint_boundaries import (  # noqa: PLC0415
+            build_nbegm_feasibility_boundary_compiler,
+        )
         from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
 
+        bound = cast("_BoundNBEGM", self)
+        boundary_compilers = (
+            ()
+            if context.phase == "simulate"
+            else (
+                build_nbegm_feasibility_boundary_compiler(
+                    liquid_state=bound.continuous_state
+                ),
+            )
+        )
         return case_piece_routes(
             context=context,
             post_decision_function=proved_post_decision_of(solver=self),
             solver_path=("nbegm",),
+            boundary_compilers=boundary_compilers,
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
@@ -421,6 +443,10 @@ class NBEGM(OneMarginSolver):
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         bound = cast("_BoundNBEGM", self)
+        feasibility_constraints = _consume_nbegm_feasibility_constraints(
+            context=context,
+            solver_path=("nbegm",),
+        )
         savings_grid = self.savings_grid.to_jax()
 
         functions = cast(
@@ -430,6 +456,14 @@ class NBEGM(OneMarginSolver):
         registry = collect_nbegm_metadata(functions=functions)
         has_discrete = bool(context.state_action_space.discrete_actions)
         has_ride_along = self._schedule_has_ride_along(context=context)
+        _fail_if_feasibility_composition_is_unsupported(
+            constraints=feasibility_constraints,
+            registry=registry,
+            jump_read=self.jump_read,
+            has_discrete=has_discrete,
+            has_ride_along=has_ride_along,
+            regime_name=context.regime_name,
+        )
         # No declared case pieces routes to the schedule path. With no declared
         # piecewise-affine schedules either, the partition is empty — a single
         # interval covering the whole liquid axis, solved as plain EGM — so a
@@ -582,6 +616,7 @@ class NBEGM(OneMarginSolver):
                         consumption_action=consumption_action,
                         schedule_spec=schedule_spec,
                         envelope_arithmetic=self.envelope_arithmetic,
+                        feasibility_constraints=feasibility_constraints,
                     )
                 elif discrete_spec is not None:
                     core = _build_nbegm_discrete_core(
@@ -628,8 +663,17 @@ class NBEGM(OneMarginSolver):
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
             continuation_spec=EGMContinuationSpec(
-                template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
-                layout=self.egm_continuation_layout,
+                template=_build_nbegm_feasibility_carry_template(
+                    liquid_grid=liquid_grid,
+                    n_boundaries=sum(
+                        len(constraint.program.surfaces)
+                        for constraint in feasibility_constraints
+                    ),
+                ),
+                layout=replace(
+                    self.egm_continuation_layout,
+                    rows_share_state_grid=not feasibility_constraints,
+                ),
             ),
             param_checks=(
                 schedule_spec.param_checks if schedule_spec is not None else ()
@@ -925,6 +969,301 @@ class NBEGM(OneMarginSolver):
             ),
             param_checks=tuple(param_checks),
         )
+
+
+@dataclass(frozen=True)
+class _NBEGMFeasibilityConstraint:
+    """One compiled boundary paired with its phase-processed predicate."""
+
+    program: NBEGMFeasibilityBoundaryProgram
+    """Solver-facing boundary geometry."""
+
+    predicate: Callable[..., BoolND]
+    """Executable predicate generated from the same declaration."""
+
+
+def _consume_nbegm_feasibility_constraints(
+    *,
+    context: SolverBuildContext,
+    solver_path: tuple[str, ...],
+) -> tuple[_NBEGMFeasibilityConstraint, ...]:
+    """Pair every compiled program for one builder with its predicate exactly once."""
+    plan = context.constraint_plan
+    if plan is None:
+        return ()
+
+    selected = plan.for_solver_path(solver_path=solver_path).compiled_boundaries
+    all_compiled = plan.compiled_boundaries
+    if len(selected) != len(all_compiled):
+        msg = (
+            f"NBEGM for regime {context.regime_name!r} received compiled "
+            "constraint boundaries belonging to another solver route; filter the "
+            "constraint plan before constructing the inner solver context."
+        )
+        raise RegimeInitializationError(msg)
+
+    names = tuple(disposition.constraint.name for disposition in selected)
+    if len(names) != len(set(names)):
+        msg = (
+            f"NBEGM for regime {context.regime_name!r} would consume a compiled "
+            f"constraint more than once; got route entries {names}."
+        )
+        raise RegimeInitializationError(msg)
+
+    consumed: list[_NBEGMFeasibilityConstraint] = []
+    for disposition in selected:
+        if not isinstance(disposition, CompileBoundary):
+            msg = "Internal error: selected a non-boundary constraint disposition."
+            raise TypeError(msg)
+        payload = disposition.program.payload
+        if not isinstance(payload, NBEGMFeasibilityBoundaryProgram):
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received an unsupported "
+                f"compiled payload for constraint {disposition.constraint.name!r}."
+            )
+            raise RegimeInitializationError(msg)
+        if payload.constraint_name != disposition.constraint.name:
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received a boundary "
+                f"program named {payload.constraint_name!r} for constraint "
+                f"{disposition.constraint.name!r}."
+            )
+            raise RegimeInitializationError(msg)
+        predicate = context.constraint_functions.get(payload.constraint_name)
+        if predicate is None:
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received compiled "
+                f"constraint {payload.constraint_name!r} without its executable "
+                "phase-processed predicate."
+            )
+            raise RegimeInitializationError(msg)
+        consumed.append(
+            _NBEGMFeasibilityConstraint(program=payload, predicate=predicate)
+        )
+
+    return tuple(consumed)
+
+
+def _fail_if_feasibility_composition_is_unsupported(
+    *,
+    constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+    registry: NBEGMRegistry,
+    jump_read: Literal["one_sided", "bridged"],
+    has_discrete: bool,
+    has_ride_along: bool,
+    regime_name: RegimeName,
+) -> None:
+    """Reject boundary combinations that need another one-sided topology."""
+    if not constraints:
+        return
+    if jump_read == "bridged":
+        msg = (
+            f"Regime {regime_name!r} compiles a feasibility boundary, which "
+            "requires NBEGM's one-sided carry; `jump_read='bridged'` would "
+            "interpolate across it."
+        )
+        raise RegimeInitializationError(msg)
+    if registry.piece_sets:
+        msg = (
+            f"Regime {regime_name!r} composes a compiled feasibility boundary "
+            "with binary case pieces. NBEGM does not yet combine those two "
+            "one-sided boundary topologies."
+        )
+        raise RegimeInitializationError(msg)
+
+    schedule_kinds = tuple(
+        breakpoint_meta.kind
+        for schedule in registry.piecewise_affine_schedules
+        for breakpoint_meta in schedule.breakpoints
+    )
+    if "jump" in schedule_kinds:
+        msg = (
+            f"Regime {regime_name!r} composes a compiled feasibility boundary "
+            "with a finite-value schedule jump. NBEGM supports feasibility with "
+            "smooth budgets, continuous kinks, and flat-budget floors only."
+        )
+        raise RegimeInitializationError(msg)
+    if has_discrete or has_ride_along:
+        shape = "a discrete action" if has_discrete else "a ride-along state"
+        msg = (
+            f"Regime {regime_name!r} composes a compiled feasibility boundary "
+            f"with {shape}. NBEGM's initial feasibility topology supports one "
+            "liquid axis with smooth budgets, continuous kinks, and flat-budget "
+            "floors."
+        )
+        raise RegimeInitializationError(msg)
+
+
+@dataclass(frozen=True)
+class _ResolvedNBEGMFeasibility:
+    """Runtime feasibility geometry shared by the solve and its carry."""
+
+    partition: ResolvedAxisPartition
+    """Combined schedule and feasibility partition on the liquid axis."""
+
+    feasible_interval_mask: BoolND
+    """Whether every interval satisfies every compiled predicate."""
+
+    boundary_values: Float1D
+    """In-domain feasibility thresholds, sorted and NaN-padded."""
+    carry_boundary_values: Float1D
+    """Distinct in-domain thresholds published to the parent, NaN-padded."""
+
+    boundary_owner_is_right: BoolND
+    """Equality ownership aligned with `boundary_values`."""
+
+
+def _resolve_nbegm_feasibility(
+    *,
+    constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+    liquid: Float1D,
+    schedule_breakpoints: Float1D,
+    schedule_kinds: tuple[str, ...],
+    params: Mapping[str, FloatND],
+) -> _ResolvedNBEGMFeasibility:
+    """Resolve one owner-aware partition and evaluate every interval predicate."""
+    schedule_sources = tuple(
+        AxisBoundary(
+            value=value,
+            owner="right",
+            effect=partition_effect_for_schedule_kind(
+                cast(
+                    "Literal['continuous_kink', 'jump', 'hard_constraint']",
+                    kind,
+                )
+            ),
+        )
+        for value, kind in zip(schedule_breakpoints, schedule_kinds, strict=True)
+    )
+    feasibility_sources = feasibility_axis_boundaries(
+        programs=tuple(constraint.program for constraint in constraints),
+        params=params,
+    )
+    partition = resolve_axis_partition(
+        start=liquid[0],
+        stop=liquid[-1],
+        boundaries=(*schedule_sources, *feasibility_sources),
+    )
+
+    representatives = 0.5 * partition.effective_starts + 0.5 * partition.effective_stops
+    feasible = jnp.ones_like(representatives, dtype=jnp.bool_)
+    for constraint in constraints:
+        arguments = {
+            name: (
+                representatives
+                if name == constraint.program.liquid_state
+                else params[name]
+            )
+            for name in inspect.signature(constraint.predicate).parameters
+        }
+        feasible = feasible & jnp.asarray(
+            constraint.predicate(**arguments),
+            dtype=jnp.bool_,
+        )
+
+    if feasibility_sources:
+        unsorted_values = jnp.stack(
+            [
+                jnp.asarray(source.value, dtype=liquid.dtype)
+                for source in feasibility_sources
+            ]
+        )
+        order = jnp.argsort(unsorted_values, stable=True)
+        boundary_values = unsorted_values[order]
+        owner_is_right = jnp.asarray(
+            [source.owner == "right" for source in feasibility_sources],
+            dtype=jnp.bool_,
+        )[order]
+        in_domain = (boundary_values > liquid[0]) & (boundary_values < liquid[-1])
+        distinct = jnp.concatenate(
+            (
+                jnp.ones((1,), dtype=jnp.bool_),
+                boundary_values[1:] != boundary_values[:-1],
+            )
+        )
+        boundary_values = jnp.where(in_domain, boundary_values, jnp.nan)
+        carry_boundary_values = jnp.where(
+            in_domain & distinct, boundary_values, jnp.nan
+        )
+    else:
+        boundary_values = jnp.zeros((0,), dtype=liquid.dtype)
+        carry_boundary_values = jnp.zeros((0,), dtype=liquid.dtype)
+        owner_is_right = jnp.zeros((0,), dtype=jnp.bool_)
+
+    return _ResolvedNBEGMFeasibility(
+        partition=partition,
+        feasible_interval_mask=feasible,
+        boundary_values=boundary_values,
+        carry_boundary_values=carry_boundary_values,
+        boundary_owner_is_right=owner_is_right,
+    )
+
+
+def _augment_liquid_for_feasibility(
+    *,
+    liquid: Float1D,
+    feasibility: _ResolvedNBEGMFeasibility,
+) -> tuple[Float1D, IntND]:
+    """Add the exact owner and the adjacent open-side point at each boundary.
+
+    The solve sees a weakly ascending query grid containing both representable
+    sides of every in-domain feasibility threshold. Out-of-domain declarations
+    occupy fixed-shape padding slots at the upper grid endpoint; their published
+    breakpoint entry is NaN.
+
+    Returns:
+        The augmented query grid and the permutation that restores the original
+        concatenation order, whose first `liquid.shape[0]` entries are the
+        model's state-grid rows.
+
+    """
+    boundary = feasibility.boundary_values
+    finite = jnp.isfinite(boundary)
+    first_at_location = jnp.concatenate(
+        (
+            jnp.ones((1,), dtype=jnp.bool_),
+            boundary[1:] != boundary[:-1],
+        )
+    )
+    already_on_grid = jnp.any(boundary[:, None] == liquid[None, :], axis=1)
+    exact_slot = jnp.where(
+        finite & first_at_location & ~already_on_grid,
+        boundary,
+        liquid[-1],
+    )
+    open_base = jnp.where(finite, boundary, liquid[-1])
+    open_side = jnp.where(
+        feasibility.boundary_owner_is_right,
+        jnp.nextafter(open_base, -jnp.inf),
+        jnp.nextafter(open_base, jnp.inf),
+    )
+    open_side = jnp.where(finite, open_side, liquid[-1])
+    concatenated = jnp.concatenate((liquid, exact_slot, open_side))
+    order = jnp.argsort(concatenated, stable=True)
+    return concatenated[order], jnp.argsort(order).astype(jnp.int32)
+
+
+def _build_nbegm_feasibility_carry_template(
+    *, liquid_grid: Float1D, n_boundaries: int
+) -> EGMCarry:
+    """Build the fixed-shape carry used by one-sided feasibility boundaries."""
+    row = jnp.concatenate(
+        (
+            liquid_grid,
+            jnp.repeat(liquid_grid[-1:], repeats=2 * n_boundaries),
+        )
+    )
+    return EGMCarry(
+        endog_grid=row,
+        value=jnp.zeros_like(row),
+        marginal_utility=jnp.zeros_like(row),
+        taste_shock_scale=jnp.asarray(0.0, dtype=liquid_grid.dtype),
+        breakpoints=(
+            jnp.zeros((n_boundaries,), dtype=liquid_grid.dtype)
+            if n_boundaries
+            else None
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -3470,6 +3809,10 @@ def _solve_cliffed_budget(
     is_mixed: bool,
     jump_mask: tuple[bool, ...],
     flat_mask: tuple[bool, ...] | None,
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
     arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve one period of a cliffed single-liquid budget, dispatching on kind.
@@ -3563,6 +3906,10 @@ def _solve_cliffed_budget(
         breakpoints=breakpoints,
         flat_interval_mask=flat_mask,
         arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
     )
 
 
@@ -3572,6 +3919,7 @@ def _build_nbegm_continuous_core(
     functions: EconFunctionsMapping,
     consumption_action: ActionName,
     schedule_spec: _NBEGMScheduleSpec,
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
     envelope_arithmetic: ComparisonArithmetic = "certified",
 ) -> Callable:
     """Build the jittable continuous-schedule EGM core for one continuation target.
@@ -3612,6 +3960,9 @@ def _build_nbegm_continuous_core(
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
+        effective_savings_grid: Float1D,
+        boundary_savings_targets: Float1D,
+        boundary_next_liquid: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
@@ -3635,15 +3986,26 @@ def _build_nbegm_continuous_core(
             else jnp.zeros((0,), dtype=canonical_float_dtype())
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+        feasibility = _resolve_nbegm_feasibility(
+            constraints=feasibility_constraints,
+            liquid=liquid,
+            schedule_breakpoints=breakpoints,
+            schedule_kinds=kinds,
+            params=params,
+        )
+        query_liquid, unsort = _augment_liquid_for_feasibility(
+            liquid=liquid,
+            feasibility=feasibility,
+        )
         coh_slopes, coh_intercepts = interval_segment_coefficients(
             schedule=coh_of_liquid, interval_midpoints=midpoints
         )
         value, marginal, _policy = _solve_cliffed_budget(
             next_value=next_value,
             next_marginal=next_marginal,
-            liquid=liquid,
+            liquid=query_liquid,
             next_liquid_grid=next_liquid_grid,
-            savings_grid=savings_grid,
+            savings_grid=effective_savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
             preferences=preferences,
             next_liquid=next_liquid,
@@ -3656,15 +4018,23 @@ def _build_nbegm_continuous_core(
             is_mixed=is_mixed,
             jump_mask=jump_mask,
             flat_mask=flat_mask,
+            feasibility_partition=feasibility.partition,
+            feasible_interval_mask=feasibility.feasible_interval_mask,
+            boundary_savings_targets=boundary_savings_targets,
+            boundary_next_liquid=boundary_next_liquid,
             arithmetic=envelope_arithmetic,
         )
+        value_at_liquid = value[unsort][: liquid.shape[0]]
         carry = EGMCarry(
-            endog_grid=liquid,
+            endog_grid=query_liquid,
             value=value,
+            breakpoints=(
+                feasibility.carry_boundary_values if feasibility_constraints else None
+            ),
             marginal_utility=marginal,
             taste_shock_scale=jnp.asarray(0.0, dtype=value.dtype),
         )
-        return value, carry
+        return value_at_liquid, carry
 
     return core
 
