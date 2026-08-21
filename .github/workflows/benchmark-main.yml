@@ -72,6 +72,8 @@ jobs:
           fi
       - name: Setup ASV machine
         run: pixi run -e benchmarks-cuda12 asv machine --yes
+      - name: Verify external benchmark compatibility
+        run: pixi run -e benchmarks-cuda12 asv-preflight
       - name: Run benchmarks and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

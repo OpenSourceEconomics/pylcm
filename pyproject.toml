@@ -115,6 +115,7 @@ pylcm = { path = ".", editable = true }
 test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-compare = "asv compare"
 asv-preview = "asv preview"
+asv-preflight = "python -m benchmarks.preflight"
 asv-pr-comment = "python benchmarks/pr_comment.py"
 asv-publish = "python benchmarks/publish.py"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
