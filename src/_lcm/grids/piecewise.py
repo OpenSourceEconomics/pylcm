@@ -53,7 +53,6 @@ class _PiecewiseGrid(ContinuousGrid):
     _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
     _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
 
-    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
@@ -160,7 +159,7 @@ def _init_piecewise_grid(
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
     breakpoints: tuple[GridBreakpoint, ...],
-    points_per_segment: tuple[int | ScalarInt, ...],
+    points_per_segment: tuple[object, ...],
     batch_size: int,
     distributed: bool,
     requires_positive_bounds: bool,
@@ -225,9 +224,7 @@ def _init_piecewise_grid(
     object.__setattr__(grid, "_cumulative_offsets", cumulative_offsets)
 
 
-def _integer_point_counts(
-    *, points_per_segment: tuple[int | ScalarInt, ...]
-) -> tuple[int, ...]:
+def _integer_point_counts(*, points_per_segment: tuple[object, ...]) -> tuple[int, ...]:
     """Return exact Python integer counts, refusing lossy numeric coercion."""
     counts: list[int] = []
     errors: list[str] = []
@@ -238,7 +235,7 @@ def _integer_point_counts(
             )
             continue
         try:
-            count = operator.index(value)
+            count = operator.index(value)  # ty: ignore[invalid-argument-type]
         except TypeError:
             errors.append(
                 f"points_per_segment[{index}] must be an integer >= 2, but is "
