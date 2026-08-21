@@ -1,9 +1,11 @@
 """Mahler & Yum (2024): a finite-horizon discrete-continuous lifecycle model.
 
 Example implementation of the lifecycle model from "Lifestyle Behaviors and
-Wealth-Health Gaps in Germany" (Mahler & Yum, Econometrica 2024): two regimes
-(alive/dead), nine states, three actions, with stochastic health and regime
-transitions, an AR(1) productivity shock, and discount-factor heterogeneity.
+Wealth-Health Gaps in Germany" (Mahler & Yum, Econometrica 2024): working,
+retirement, and death regimes with stochastic health and regime transitions,
+an AR(1) productivity shock, and discount-factor heterogeneity. The retirement
+regime omits labor supply and the productivity states, which cease to affect the
+model at the mandatory retirement age.
 
 The full replication — estimation against empirical moments and the paper's
 tables and figures — lives in `lcm-replications`, which imports this model.
@@ -113,6 +115,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
+    ScalarFloat,
     ScalarInt,
 )
 
@@ -176,7 +179,8 @@ class DiscountType:
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: ScalarInt
+    working: ScalarInt
+    retirement: ScalarInt
     dead: ScalarInt
 
 
@@ -230,7 +234,7 @@ def _load_survival_probs() -> pd.Series:
     return df.set_index(["age", "education", "health"])["survival_probability"]
 
 
-def utility(
+def working_utility(
     adjustment_cost_penalty: FloatND,
     effort_cost: FloatND,
     work_disutility: FloatND,
@@ -239,14 +243,22 @@ def utility(
     return consumption_utility - work_disutility - effort_cost - adjustment_cost_penalty
 
 
+def retirement_utility(
+    adjustment_cost_penalty: FloatND,
+    effort_cost: FloatND,
+    consumption_utility: FloatND,
+) -> FloatND:
+    return consumption_utility - effort_cost - adjustment_cost_penalty
+
+
 def discount_factor(
     discount_type: DiscreteState,
     discount_factor_by_type: FloatND,
 ) -> FloatND:
     """Per-period discount factor indexed by `discount_type`.
 
-    Wired as a DAG function on `ALIVE_REGIME.functions`; pylcm's default
-    Bellman aggregator picks the scalar up as a DAG-output H input.
+    Wired as a DAG function on both living regimes; pylcm's default Bellman
+    aggregator picks the scalar up as a DAG-output H input.
     """
     return discount_factor_by_type[discount_type]
 
@@ -344,8 +356,12 @@ def effort_cost(
     )
 
 
-def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> FloatND:
-    return taxed_income + pension + benefits
+def working_net_income(benefits: FloatND, taxed_income: FloatND) -> FloatND:
+    return taxed_income + benefits
+
+
+def retirement_net_income(pension: FloatND) -> FloatND:
+    return pension
 
 
 def scaled_productivity_shock(
@@ -400,29 +416,25 @@ def taxed_income(
 
 
 def benefits(
-    period: Period,
     health: DiscreteState,
     labor_supply: DiscreteAction,
     benefit_rate: FloatND,
     avg_earnings: FloatND,
-    retirement_period: ScalarInt,
 ) -> FloatND:
+    """Return working-life welfare benefits for non-working agents in bad health."""
     eligible = jnp.logical_and(health == 0, labor_supply == 0)
-    return jnp.where(
-        jnp.logical_and(eligible, period < retirement_period),
-        benefit_rate * avg_earnings,
-        0,
-    )
+    return jnp.where(eligible, benefit_rate * avg_earnings, 0)
 
 
 def pension(
-    period: Period,
     education: DiscreteState,
     pension_base: FloatND,
     pension_replacement_rate: FloatND,
-    retirement_period: ScalarInt,
 ) -> FloatND:
     """Pension benefit `P(e)`: education-specific, scaled by `pension_replacement_rate`.
+
+    Paid in every period of the retirement regime, which begins at the
+    mandatory retirement age.
 
     `pension_base[e]` is what an agent of education `e` would have earned in the
     last working period, full time, in good health, at the median productivity
@@ -434,11 +446,7 @@ def pension(
     `sub_main.f90:487`), which the text does not license — "median productivity
     shock" pins down `z`, not `theta`. Here it is education-only.
     """
-    return jnp.where(
-        period >= retirement_period,
-        pension_base[education] * pension_replacement_rate,
-        0,
-    )
+    return pension_base[education] * pension_replacement_rate
 
 
 def next_wealth(saving: ContinuousAction) -> ContinuousState:
@@ -478,26 +486,51 @@ def next_lagged_effort(effort: DiscreteAction) -> DiscreteState:
     return effort
 
 
-def next_regime(
+def working_to_working_probability(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    transition_probs: FloatND,
-) -> FloatND:
-    """Return regime transition probabilities indexed by RegimeId."""
-    survival_prob = transition_probs[period, education, health]
-    probs = jnp.zeros(2).at[RegimeId.alive].set(survival_prob)
-    return probs.at[RegimeId.dead].set(1.0 - survival_prob)
+    survival_probs: FloatND,
+) -> ScalarFloat:
+    survival_prob = survival_probs[period, education, health]
+    return jnp.where(period < retirement_period - 1, survival_prob, 0.0)
 
 
-def retirement_constraint(
+def working_to_retirement_probability(
     period: Period,
-    labor_supply: DiscreteAction,
-    retirement_period: ScalarInt,
-) -> BoolND:
-    return jnp.logical_not(
-        jnp.logical_and(period >= retirement_period, labor_supply > 0)
-    )
+    education: DiscreteState,
+    health: DiscreteState,
+    survival_probs: FloatND,
+) -> ScalarFloat:
+    survival_prob = survival_probs[period, education, health]
+    return jnp.where(period >= retirement_period - 1, survival_prob, 0.0)
+
+
+def working_to_dead_probability(
+    period: Period,
+    education: DiscreteState,
+    health: DiscreteState,
+    survival_probs: FloatND,
+) -> ScalarFloat:
+    return 1.0 - survival_probs[period, education, health]
+
+
+def retirement_to_retirement_probability(
+    period: Period,
+    education: DiscreteState,
+    health: DiscreteState,
+    survival_probs: FloatND,
+) -> ScalarFloat:
+    return survival_probs[period, education, health]
+
+
+def retirement_to_dead_probability(
+    period: Period,
+    education: DiscreteState,
+    health: DiscreteState,
+    survival_probs: FloatND,
+) -> ScalarFloat:
+    return 1.0 - survival_probs[period, education, health]
 
 
 def savings_constraint(
@@ -509,17 +542,25 @@ def savings_constraint(
     return net_income + wealth * gross_interest_rate >= saving
 
 
-def alive_is_active(age: int, final_age_alive: float) -> bool:
-    return age <= final_age_alive
+def working_is_active(age: int) -> bool:
+    return age < retirement_age
+
+
+def retirement_is_active(age: int, final_age_alive: int) -> bool:
+    return retirement_age <= age <= final_age_alive
 
 
 def dead_is_active(age: int, initial_age: float) -> bool:
     return age > initial_age
 
 
-ALIVE_REGIME = Regime(
-    transition=MarkovTransition(next_regime),
-    active=partial(alive_is_active, final_age_alive=int(ages.values[-2])),
+WORKING_REGIME = Regime(
+    transition={
+        "working": MarkovTransition(working_to_working_probability),
+        "retirement": MarkovTransition(working_to_retirement_probability),
+        "dead": MarkovTransition(working_to_dead_probability),
+    },
+    active=working_is_active,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
         "health": DiscreteGrid(Health),
@@ -546,7 +587,7 @@ ALIVE_REGIME = Regime(
         "effort": DiscreteGrid(Effort),
     },
     functions={
-        "utility": utility,
+        "utility": working_utility,
         "effort_value": effort_value,
         "lagged_effort_value": lagged_effort_value,
         "work_disutility": work_disutility,
@@ -557,9 +598,8 @@ ALIVE_REGIME = Regime(
         "income": income,
         "benefits": benefits,
         "adjustment_cost_penalty": adjustment_cost_penalty,
-        "net_income": net_income,
+        "net_income": working_net_income,
         "taxed_income": taxed_income,
-        "pension": pension,
         "scaled_productivity_shock": scaled_productivity_shock,
         # Heterogeneous β: the scalar is produced by indexing
         # `discount_factor_by_type` by the `discount_type` state, and
@@ -568,20 +608,64 @@ ALIVE_REGIME = Regime(
         "discount_factor": discount_factor,
     },
     constraints={
-        "retirement_constraint": retirement_constraint,
         "savings_constraint": savings_constraint,
     },
+)
+
+
+RETIREMENT_REGIME = Regime(
+    transition={
+        "retirement": MarkovTransition(retirement_to_retirement_probability),
+        "dead": MarkovTransition(retirement_to_dead_probability),
+    },
+    active=partial(
+        retirement_is_active,
+        final_age_alive=int(ages.values[-2]),
+    ),
+    states={
+        "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+        "health": DiscreteGrid(Health),
+        "lagged_effort": DiscreteGrid(Effort),
+        "adjustment_cost": UniformIIDProcess(n_points=5, start=0, stop=1),
+        "education": DiscreteGrid(Education),
+        "health_type": DiscreteGrid(HealthType),
+        "discount_type": DiscreteGrid(DiscountType),
+    },
+    state_transitions={
+        "wealth": next_wealth,
+        "health": MarkovTransition(next_health),
+        "lagged_effort": next_lagged_effort,
+        "education": fixed_transition("education"),
+        "health_type": fixed_transition("health_type"),
+        "discount_type": fixed_transition("discount_type"),
+    },
+    actions={
+        "saving": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+        "effort": DiscreteGrid(Effort),
+    },
+    functions={
+        "utility": retirement_utility,
+        "effort_value": effort_value,
+        "lagged_effort_value": lagged_effort_value,
+        "effort_cost": effort_cost,
+        "consumption_utility": consumption_utility,
+        "consumption": consumption,
+        "adjustment_cost_penalty": adjustment_cost_penalty,
+        "net_income": retirement_net_income,
+        "pension": pension,
+        "discount_factor": discount_factor,
+    },
+    constraints={"savings_constraint": savings_constraint},
 )
 
 
 def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
     """Dead-regime utility: always zero.
 
-    `discount_type` is a fixed state on the alive regime (consumed by
-    `discount_factor`), so V_alive integrates next-period continuation
-    values along a `discount_type` axis. Because `alive` transitions to
-    `dead`, V_dead must carry the same axis — otherwise the lookup of
-    V_dead at the next-period `discount_type` value has nothing to index.
+    `discount_type` is a fixed state on each living regime (consumed by
+    `discount_factor`), so their value functions integrate next-period
+    continuation values along a `discount_type` axis. Because both regimes
+    transition to `dead`, its value function must carry the same axis.
     pylcm enforces this by requiring every reachable target regime to
     declare the same fixed states as the source. Hence `discount_type`
     on `DEAD_REGIME.states` below, and hence `discount_type` in this
@@ -595,34 +679,35 @@ DEAD_REGIME = Regime(
     transition=None,
     active=partial(dead_is_active, initial_age=int(ages.values[0])),
     states={
-        # Mirrors alive's `discount_type` so V_dead is indexable along
-        # the same fixed-state axis the alive→dead transition integrates
-        # over. See `dead_utility` for the full reasoning.
+        # Mirrors the living regimes' `discount_type` so the dead value is
+        # indexable along the same fixed-state axis. See `dead_utility`.
         "discount_type": DiscreteGrid(DiscountType),
     },
     functions={"utility": dead_utility},
 )
 
+_SURVIVAL_PROBS = _load_survival_probs()
+
 MAHLER_YUM_MODEL = Model(
-    regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
+    regimes={
+        "working": WORKING_REGIME,
+        "retirement": RETIREMENT_REGIME,
+        "dead": DEAD_REGIME,
+    },
     ages=ages,
     regime_id_class=RegimeId,
     fixed_params={
-        "alive": {
-            "effort_grid": effort_grid,
-            "productivity_type_multiplier": productivity_type_multiplier,
-            "consumption_utility": {"sigma": risk_aversion},
-            "next_health": {
-                "health_intercept": health_intercept,
-                "health_age_effects": health_age_effects,
-                "good_health_coefficient": good_health_coefficient,
-                "health_type_coefficient": health_type_coefficient,
-                "college_coefficient": college_coefficient,
-                "health_effort_coefficient": health_effort_coefficient,
-                "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
-            },
-            "next_regime": {"transition_probs": _load_survival_probs()},
-        },
+        "effort_grid": effort_grid,
+        "productivity_type_multiplier": productivity_type_multiplier,
+        "sigma": risk_aversion,
+        "health_intercept": health_intercept,
+        "health_age_effects": health_age_effects,
+        "good_health_coefficient": good_health_coefficient,
+        "health_type_coefficient": health_type_coefficient,
+        "college_coefficient": college_coefficient,
+        "health_effort_coefficient": health_effort_coefficient,
+        "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
+        "survival_probs": _SURVIVAL_PROBS,
     },
 )
 
@@ -915,15 +1000,16 @@ def create_inputs(
     """Build model params and initial conditions.
 
     The two-valued discount-factor grid (`mean ± std`) is exposed via
-    `model_params["discount_factor"]["discount_factor_by_type"]`; the
-    `discount_type` state picks the per-subject value at simulate time.
+    `model_params["discount_factor_by_type"]`; the `discount_type` state picks
+    the per-subject value at simulate time. Model-level parameters broadcast to
+    each living regime that uses them.
 
     Returns:
         Tuple of (model_params, initial_conditions_df).
 
     """
     # Economy-wide constants. Kept inside `create_inputs` so the public
-    # surface — including the DAG functions on `ALIVE_REGIME` — has no
+    # surface — including the DAG functions on the living regimes — has no
     # implicit dependency on module globals.
     avg_earnings_raw = 57706.57
     avg_earnings = avg_earnings_raw / wealth_normalization[1]
@@ -952,56 +1038,35 @@ def create_inputs(
         "labor_tax_rate": labor_tax_rate,
         "avg_earnings": avg_earnings,
         "benefit_rate": benefit_rate,
-        "retirement_period": retirement_period,
-        "work_disutility": {
-            "work_disutility_grid": create_work_disutility_grid(
-                work_disutility=params["work_disutility"],
-                education_disutility_adjustment=params[
-                    "education_disutility_adjustment"
-                ],
-            ),
-        },
-        "effort_cost": {
-            "effort_elasticity": params["effort_elasticity"],
-            "effort_cost_grid": create_effort_cost_grid(
-                effort_cost=params["effort_cost"]
-            ),
-        },
-        "consumption_utility": {
-            "utility_constant": params["utility_constant"],
-            "health_consumption_penalty": params["health_consumption_penalty"],
-        },
-        "base_income": {
-            "y1": jnp.array(
-                [income_process["y1"]["low"], income_process["y1"]["high"]]
-            ),
-            "yt_s": jnp.array(
-                [income_process["yt_s"]["low"], income_process["yt_s"]["high"]]
-            ),
-            "yt_sq": jnp.array(
-                [income_process["yt_sq"]["low"], income_process["yt_sq"]["high"]]
-            ),
-            "wagep": jnp.array(
-                [income_process["wagep"]["low"], income_process["wagep"]["high"]]
-            ),
-            "income_normalization": income_norm,
-        },
-        "pension": {
-            "pension_base": _compute_pension_base(
-                income_process=income_process,
-                income_normalization=income_norm,
-            ),
-            "pension_replacement_rate": params["pension_replacement_rate"],
-        },
-        "adjustment_cost_penalty": {
-            "adjustment_cost_envelope": create_adjustment_cost_envelope(
-                adjustment_cost=params["adjustment_cost"],
-            ),
-        },
-        "scaled_productivity_shock": {
-            "productivity_shock_scale": jnp.sqrt(income_process["sigx"]),
-        },
-        "discount_factor": {"discount_factor_by_type": discount_factor_by_type},
+        "work_disutility_grid": create_work_disutility_grid(
+            work_disutility=params["work_disutility"],
+            education_disutility_adjustment=params["education_disutility_adjustment"],
+        ),
+        "effort_elasticity": params["effort_elasticity"],
+        "effort_cost_grid": create_effort_cost_grid(effort_cost=params["effort_cost"]),
+        "utility_constant": params["utility_constant"],
+        "health_consumption_penalty": params["health_consumption_penalty"],
+        "y1": jnp.array([income_process["y1"]["low"], income_process["y1"]["high"]]),
+        "yt_s": jnp.array(
+            [income_process["yt_s"]["low"], income_process["yt_s"]["high"]]
+        ),
+        "yt_sq": jnp.array(
+            [income_process["yt_sq"]["low"], income_process["yt_sq"]["high"]]
+        ),
+        "wagep": jnp.array(
+            [income_process["wagep"]["low"], income_process["wagep"]["high"]]
+        ),
+        "income_normalization": income_norm,
+        "pension_base": _compute_pension_base(
+            income_process=income_process,
+            income_normalization=income_norm,
+        ),
+        "pension_replacement_rate": params["pension_replacement_rate"],
+        "adjustment_cost_envelope": create_adjustment_cost_envelope(
+            adjustment_cost=params["adjustment_cost"],
+        ),
+        "productivity_shock_scale": jnp.sqrt(income_process["sigx"]),
+        "discount_factor_by_type": discount_factor_by_type,
     }
 
     td = _build_type_distribution()
@@ -1045,7 +1110,7 @@ def create_inputs(
 
     initial_conditions_df = pd.DataFrame(
         {
-            "regime_name": "alive",
+            "regime_name": "working",
             "age": ages.values[0],
             "wealth": np.zeros(n_simulation_subjects),
             "health": np.where(health_draw > health_thresholds, "bad", "good"),
@@ -1074,11 +1139,12 @@ def create_inputs(
 
 
 __all__ = [
-    "ALIVE_REGIME",
     "DEAD_REGIME",
     "EFFORT_FIELD_NAMES",
     "MAHLER_YUM_MODEL",
+    "RETIREMENT_REGIME",
     "START_PARAMS",
+    "WORKING_REGIME",
     "DiscountType",
     "Education",
     "Effort",
