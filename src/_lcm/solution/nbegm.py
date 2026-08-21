@@ -34,6 +34,7 @@ import lcm.typing as lcm_typing
 from _lcm.axis_boundaries import (
     AxisBoundary,
     ResolvedAxisPartition,
+    canonical_boundary_order,
     partition_effect_for_schedule_kind,
     resolve_axis_partition,
 )
@@ -1124,9 +1125,9 @@ class _ResolvedNBEGMFeasibility:
     """Whether every interval satisfies every compiled predicate."""
 
     boundary_values: Float1D
-    """In-domain feasibility thresholds, sorted and NaN-padded."""
+    """Topology-relevant feasibility thresholds, sorted and NaN-padded."""
     carry_boundary_values: Float1D
-    """Distinct in-domain thresholds published to the parent, NaN-padded."""
+    """Distinct topology-relevant thresholds published to the parent."""
 
     boundary_owner_is_right: BoolND
     """Equality ownership aligned with `boundary_values`."""
@@ -1187,22 +1188,38 @@ def _resolve_nbegm_feasibility(
                 for source in feasibility_sources
             ]
         )
-        order = jnp.argsort(unsorted_values, stable=True)
-        boundary_values = unsorted_values[order]
-        owner_is_right = jnp.asarray(
+        unsorted_owner_is_right = jnp.asarray(
             [source.owner == "right" for source in feasibility_sources],
             dtype=jnp.bool_,
-        )[order]
-        in_domain = (boundary_values > liquid[0]) & (boundary_values < liquid[-1])
-        distinct = jnp.concatenate(
+        )
+        order = canonical_boundary_order(
+            values=unsorted_values,
+            owner_is_right=unsorted_owner_is_right,
+        )
+        boundary_values = unsorted_values[order]
+        owner_is_right = unsorted_owner_is_right[order]
+        open_side = jnp.where(
+            owner_is_right,
+            jnp.nextafter(boundary_values, -jnp.inf),
+            jnp.nextafter(boundary_values, jnp.inf),
+        )
+        boundary_in_domain = (boundary_values >= liquid[0]) & (
+            boundary_values <= liquid[-1]
+        )
+        open_side_in_domain = (open_side >= liquid[0]) & (open_side <= liquid[-1])
+        topology_relevant = boundary_in_domain & open_side_in_domain
+        previous_is_relevant_at_same_location = jnp.concatenate(
             (
-                jnp.ones((1,), dtype=jnp.bool_),
-                boundary_values[1:] != boundary_values[:-1],
+                jnp.zeros((1,), dtype=jnp.bool_),
+                topology_relevant[:-1] & (boundary_values[1:] == boundary_values[:-1]),
             )
         )
-        boundary_values = jnp.where(in_domain, boundary_values, jnp.nan)
+        first_relevant_at_location = (
+            topology_relevant & ~previous_is_relevant_at_same_location
+        )
+        boundary_values = jnp.where(topology_relevant, boundary_values, jnp.nan)
         carry_boundary_values = jnp.where(
-            in_domain & distinct, boundary_values, jnp.nan
+            first_relevant_at_location, boundary_values, jnp.nan
         )
     else:
         boundary_values = jnp.zeros((0,), dtype=liquid.dtype)
@@ -1226,8 +1243,10 @@ def _augment_liquid_for_feasibility(
     """Add the exact owner and the adjacent open-side point at each boundary.
 
     The solve sees a weakly ascending query grid containing both representable
-    sides of every in-domain feasibility threshold. Out-of-domain declarations
-    occupy fixed-shape padding slots at the upper grid endpoint; their published
+    sides of every topology-relevant feasibility threshold. A threshold is
+    relevant when both its exact value and its ownership-selected open-side
+    neighbour lie on the closed state domain. Other declarations occupy
+    fixed-shape padding slots at the upper grid endpoint; their published
     breakpoint entry is NaN.
 
     Returns:
