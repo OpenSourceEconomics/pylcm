@@ -2380,6 +2380,11 @@ def _build_solution_phase(
         edge_target_regimes=edge_target_regimes,
         fold_state_names=fold_state_names,
     )
+    _fail_if_solver_cannot_consume_transition_local_lotteries(
+        solver=solver,
+        regime_name=regime_name,
+        transition_plans=core.transition_plans,
+    )
     solver.validate_build(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
 
@@ -3253,6 +3258,33 @@ def _regime_has_passive_state(
     )
 
 
+def _fail_if_solver_cannot_consume_transition_local_lotteries(
+    *,
+    solver: Solver,
+    regime_name: RegimeName,
+    transition_plans: TargetTransitionPlans,
+) -> None:
+    """Reject a solver that would ignore transition-local lottery axes."""
+    lotteries = tuple(
+        (target, lottery.name)
+        for target, plan in transition_plans.items()
+        for lottery in plan.lotteries.values()
+        if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+    )
+    if not lotteries or solver.supports_transition_local_lotteries:
+        return
+    rendered = ", ".join(
+        f"{regime_name} -> {target}: {name!r}" for target, name in lotteries
+    )
+    raise ModelInitializationError(
+        f"{type(solver).__name__.removeprefix('_Bound')} cannot solve regime "
+        f"'{regime_name}' with transition-local JointTransition lotteries "
+        f"({rendered}). This solver does not enumerate those post-action lottery "
+        "nodes in its continuation kernel; use GridSearch until that solver "
+        "declares and implements this capability."
+    )
+
+
 def regime_declares_phased(user_regime: UserRegime) -> bool:
     """Whether any regime slot carries a `Phased` (phase-variant) declaration.
 
@@ -3265,14 +3297,18 @@ def regime_declares_phased(user_regime: UserRegime) -> bool:
         if isinstance(value, Phased):
             return True
         if isinstance(value, Mapping):
-            return any(isinstance(cell, Phased) for cell in value.values())
+            return any(is_phased(cell) for cell in value.values())
         return False
 
-    return (
-        any(is_phased(value) for value in user_regime.functions.values())
-        or any(is_phased(value) for value in user_regime.state_transitions.values())
-        or is_phased(user_regime.transition)
-        or any(is_phased(value) for value in user_regime.states.values())
+    return any(
+        is_phased(slot)
+        for slot in (
+            user_regime.functions,
+            user_regime.state_transitions,
+            user_regime.joint_transitions,
+            user_regime.transition,
+            user_regime.states,
+        )
     )
 
 
@@ -3858,7 +3894,9 @@ def _process_joint_transitions(
             support_name = qname_from_tree_path((target, f"support_{kernel_name}"))
             processed_functions[axis_name] = _joint_support_indices(kernel.support_size)
             node_annotation = _joint_node_annotation(
-                kernel_name=kernel_name, kernel=kernel
+                kernel_name=kernel_name,
+                kernel=kernel,
+                functions=processed_functions,
             )
 
             support_provider = (
@@ -3901,21 +3939,37 @@ def _joint_support_indices(support_size: int) -> EconFunction:
     return cast("EconFunction", indices)
 
 
-def _joint_node_annotation(*, kernel_name: str, kernel: JointTransition) -> str:
-    """Return the common DAG annotation under which outputs read a joint node."""
-    annotations = {
-        annotation
-        for output in kernel.outputs.values()
-        if (
-            annotation := ensure_annotations_are_strings(get_annotations(output)).get(
-                kernel_name
-            )
-        )
-        is not None
-    }
+def _joint_node_annotation(
+    *,
+    kernel_name: str,
+    kernel: JointTransition,
+    functions: Mapping[str, UserFunction],
+) -> str:
+    """Return the common annotation under which the output DAG reads a node.
+
+    A joint output may read its node through ordinary helpers.  The sampled
+    node's synthetic DAG function must therefore carry the annotation used by
+    the entire reachable output closure, not only by the public output wrapper.
+    Otherwise a valid helper boundary is typed as ``Any`` and DAG composition
+    rejects it before the model can solve or simulate.
+    """
+    annotations: set[str] = set()
+    walked: set[str] = set()
+    frontier: list[UserFunction] = list(kernel.outputs.values())
+    while frontier:
+        func = frontier.pop()
+        func_annotations = ensure_annotations_are_strings(get_annotations(func))
+        if annotation := func_annotations.get(kernel_name):
+            annotations.add(annotation)
+        for arg_name in func_annotations:
+            if arg_name == "return" or arg_name in walked or arg_name not in functions:
+                continue
+            walked.add(arg_name)
+            frontier.append(functions[arg_name])
+
     if len(annotations) > 1:
         raise ModelInitializationError(
-            f"Joint transition node '{kernel_name}' has inconsistent output-law "
+            f"Joint transition node '{kernel_name}' has inconsistent output-DAG "
             f"annotations: {sorted(map(repr, annotations))}."
         )
     return next(iter(annotations), "Any")
@@ -3988,7 +4042,9 @@ def _build_transition_plans(
                     weight_name=weight_name,
                     support_provider_name=support_provider_name,
                     node_annotation=_joint_node_annotation(
-                        kernel_name=next_state_name, kernel=joint_kernel
+                        kernel_name=next_state_name,
+                        kernel=joint_kernel,
+                        functions=processed_functions,
                     ),
                 )
                 continue

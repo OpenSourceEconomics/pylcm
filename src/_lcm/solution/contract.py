@@ -731,6 +731,19 @@ class Solver(ABC):
         return None
 
     @property
+    def supports_transition_local_lotteries(self) -> bool:
+        """Whether this solver consumes transition-local lottery axes.
+
+        A ``JointTransition`` is enumerated inside the source action value.  The
+        grid-search Q kernel implements that dataflow.  Continuation-based
+        solvers must opt in only after their own child-read representation also
+        enumerates the canonical ``TargetTransitionPlan`` lotteries; accepting
+        the declaration without doing so would defer a semantic mismatch to a
+        runtime missing-node failure.
+        """
+        return False
+
+    @property
     def requires_continuation(self) -> bool:
         """Whether this solver reads a continuation payload from its targets.
 

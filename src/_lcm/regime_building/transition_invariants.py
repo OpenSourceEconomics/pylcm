@@ -20,6 +20,7 @@ from dags.tree.tree_utils import QNAME_DELIMITER
 from _lcm.grids import Grid
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
+    LotteryLifetime,
     TargetTransitionPlan,
     TargetTransitionPlans,
 )
@@ -66,6 +67,12 @@ def fail_if_transition_namespaces_are_mixed(
         ModelInitializationError: If any of the three conditions fails.
 
     """
+    _fail_if_joint_node_scopes_are_crossed(
+        source_regime_name=source_regime_name,
+        transitions=transitions,
+        transition_plans=transition_plans,
+        processed_functions=processed_functions,
+    )
     for target, bundle in transitions.items():
         plan = transition_plans[target]
         _fail_if_a_stochastic_law_carries_a_basis(
@@ -116,6 +123,61 @@ def _functions_feeding(
             found[arg] = candidates[arg]
             frontier.append(candidates[arg])
     return found
+
+
+def _fail_if_joint_node_scopes_are_crossed(
+    *,
+    source_regime_name: RegimeName,
+    transitions: TransitionFunctionsMapping,
+    transition_plans: TargetTransitionPlans,
+    processed_functions: MappingProxyType[str, UserFunction],
+) -> None:
+    """Reject a target output DAG that reads another target's local node."""
+    all_local_nodes = frozenset(
+        lottery.name
+        for plan in transition_plans.values()
+        for lottery in plan.lotteries.values()
+        if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+    )
+    if not all_local_nodes:
+        return
+
+    for target, bundle in transitions.items():
+        plan = transition_plans[target]
+        target_local_nodes = frozenset(
+            lottery.name
+            for lottery in plan.lotteries.values()
+            if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+        )
+        consumers: dict[str, UserFunction] = dict(bundle)
+        weight_names = {lottery.weight_name for lottery in plan.lotteries.values()} | {
+            output.continuation_coordinate.weight_name
+            for output in plan.outputs.values()
+            if isinstance(output.continuation_coordinate, InterpolationBasisInfo)
+        }
+        consumers |= {
+            name: processed_functions[name]
+            for name in weight_names
+            if name in processed_functions
+        }
+        consumers |= _functions_feeding(roots=consumers, candidates=processed_functions)
+
+        for consumer_name, consumer in consumers.items():
+            foreign = sorted(
+                arg
+                for arg in get_annotations(consumer)
+                if arg in all_local_nodes and arg not in target_local_nodes
+            )
+            if not foreign:
+                continue
+            msg = (
+                f"'{consumer_name}' of regime '{source_regime_name}' on the way "
+                f"into target '{target}' reads transition-local joint node(s) "
+                f"{foreign}, but those nodes are scoped to another target edge. "
+                "A JointTransition node is available only to outputs and helpers "
+                "of the target that declares it."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_a_stochastic_law_carries_a_basis(

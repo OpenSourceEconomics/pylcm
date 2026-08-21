@@ -510,6 +510,16 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
     if not validation_enabled(logger):
         return
 
+    # A callable support is resolved only after params are bound, so its full
+    # pytree signature cannot be checked during ``Regime`` construction.  Compare
+    # every active period and both phases in this one preflight instead.  Values
+    # may differ, but tree structure, event shapes, and dtypes are a static JIT/AOT
+    # contract and must not depend on period or perceived/realized phase.
+    support_schemas: dict[
+        tuple[RegimeName, RegimeName, str],
+        tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]],
+    ] = {}
+
     for period in range(ages.n_periods - 1):
         period_int32 = jnp.int32(period)
         age = ages.values[period]  # noqa: PD011
@@ -565,7 +575,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                                 f"Joint transition {kernel_name!r} has no "
                                 "support provider in its canonical plan."
                             )
-                        _evaluate_joint_support(
+                        support = _evaluate_joint_support(
                             func=phase.transitions[target][support_provider_name],
                             regime_params=flat_params[regime_name],
                             period=period_int32,
@@ -577,6 +587,52 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                             target=target,
                             logger=logger,
                         )
+                        if support is not None:
+                            leaves, tree = jax.tree_util.tree_flatten(support)
+                            leaf_schema = tuple(
+                                (tuple(leaf.shape[1:]), str(leaf.dtype))
+                                for leaf in leaves
+                            )
+                            signature_key = (regime_name, target, kernel_name)
+                            previous = support_schemas.get(signature_key)
+                            if previous is None:
+                                support_schemas[signature_key] = (
+                                    phase_name,
+                                    period,
+                                    tree,
+                                    leaf_schema,
+                                )
+                            else:
+                                (
+                                    previous_phase,
+                                    previous_period,
+                                    previous_tree,
+                                    previous_leaves,
+                                ) = previous
+                                if (
+                                    tree != previous_tree
+                                    or leaf_schema != previous_leaves
+                                ):
+                                    changed_support = (
+                                        "Joint transition "
+                                        f"{kernel_name}.support changed its "
+                                        "static pytree signature between "
+                                        f"{previous_phase} period "
+                                        f"{previous_period} and {phase_name} "
+                                        f"period {period} of regime "
+                                        f"{regime_name}, target {target}. "
+                                        "Support values may differ, but "
+                                        "pytree structure, leaf event shapes, "
+                                        "and dtypes must remain identical "
+                                        "across periods and phases; got "
+                                        f"{previous_leaves} and {leaf_schema}."
+                                    )
+                                    raise_or_warn(
+                                        logger=logger,
+                                        error=RegimeInitializationError(
+                                            changed_support
+                                        ),
+                                    )
                         probs = weights[f"weight_{target}__{kernel_name}"]
                         if (
                             probs.ndim == 0
@@ -661,7 +717,10 @@ def _evaluate_joint_support(
                 f"invalid leaf shape(s): {invalid_shapes}."
             ),
         )
-        return support
+        # The caller compares static schemas only for structurally valid
+        # supports. In warning mode validation continues, so returning the invalid
+        # pytree here would make the comparison itself dereference missing shapes.
+        return None
 
     try:
         has_nonfinite = any(

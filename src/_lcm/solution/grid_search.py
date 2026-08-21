@@ -57,6 +57,11 @@ class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
     @property
+    def supports_transition_local_lotteries(self) -> bool:
+        """Grid search enumerates transition-local lotteries inside Q."""
+        return True
+
+    @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
         """A brute child publishes one action-maxed row on its state grid."""
         return EGMContinuationLayout(

@@ -123,6 +123,7 @@ def create_regime_params_template(
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     _fail_if_a_next_name_is_read_outside_a_transition(user_regime)
+    _fail_if_a_joint_node_is_read_outside_its_transition(user_regime)
 
     # Every illegitimate read is already rejected, so the subtraction below only
     # has to be permissive enough for the legitimate ones: a name in transition
@@ -130,14 +131,18 @@ def create_regime_params_template(
     transition_role = _function_names_in_transition_role(
         user_regime, phase="solve"
     ) | _function_names_in_transition_role(user_regime, phase="simulate")
-    variables_in_transition_role = variables | {
-        f"next_{name}"
-        for name in (
-            *user_regime.states,
-            *user_regime.state_transitions,
-            *other_regime_state_names,
-        )
-    }
+    variables_in_transition_role = (
+        variables
+        | _joint_transition_node_names(user_regime)
+        | {
+            f"next_{name}"
+            for name in (
+                *user_regime.states,
+                *user_regime.state_transitions,
+                *other_regime_state_names,
+            )
+        }
+    )
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[str, Any]] = {}
 
@@ -278,9 +283,7 @@ def _add_joint_transition_params(
 ) -> None:
     """File joint support, probability, and output params under their owners."""
     joint_transitions = getattr(user_regime, "joint_transitions", {})
-    joint_node_names = {
-        kernel_name for kernels in joint_transitions.values() for kernel_name in kernels
-    }
+    joint_node_names = set(_joint_transition_node_names(user_regime))
     next_state_names = {
         f"next_{name}"
         for name in (
@@ -297,8 +300,8 @@ def _add_joint_transition_params(
         )
     }
     output_non_params = variables | joint_node_names | next_state_names
-    probability_non_params = variables | next_state_names
-    support_non_params = {"period", "age"}
+    probability_non_params = variables | joint_node_names | next_state_names
+    support_non_params = {"period", "age", *joint_node_names}
 
     for target_name, kernels in joint_transitions.items():
         target_branch = per_target_params.setdefault(target_name, {})
@@ -334,6 +337,26 @@ def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...
             "tuple[JointTransition, JointTransition]", (raw.solve, raw.simulate)
         )
     return (raw,)
+
+
+def _joint_variant_for_phase(
+    raw: JointTransition | Phased,
+    *,
+    phase: Literal["solve", "simulate"],
+) -> JointTransition:
+    """Return the concrete joint declaration used in one phase."""
+    if isinstance(raw, Phased):
+        return cast("JointTransition", raw.solve if phase == "solve" else raw.simulate)
+    return raw
+
+
+def _joint_transition_node_names(user_regime: UserRegime) -> frozenset[str]:
+    """Return every public transition-local node name declared by a regime."""
+    return frozenset(
+        kernel_name
+        for kernels in user_regime.joint_transitions.values()
+        for kernel_name in kernels
+    )
 
 
 def _union_callable_params(
@@ -384,6 +407,186 @@ def _discovered_params(
         if arg_name not in non_params
         and not (strip_target_value_operands and is_target_value_operand(arg_name))
     }
+
+
+def _fail_if_a_joint_node_is_read_outside_its_transition(
+    user_regime: UserRegime,
+) -> None:
+    """Reject transition-local nodes outside target-output evaluation.
+
+    A joint node is engine-wired only while one target edge's output DAG is
+    evaluated. It is not a parameter, a current-period payoff input, or an input
+    to support/probability construction. Helpers inherit that permission only on
+    a path feeding a transition output. Target-specific scope is checked again
+    after canonicalization, when the target plans are available.
+    """
+    joint_node_names = _joint_transition_node_names(user_regime)
+    if not joint_node_names:
+        return
+
+    for phase in ("solve", "simulate"):
+        transition_role = _function_names_in_transition_role(user_regime, phase=phase)
+        consumers: dict[str, object] = {
+            name: func
+            for name, func in _collect_all_functions_for_template(user_regime).items()
+            if tree_path_from_qname(name)[0] not in transition_role
+        }
+        if user_regime.koopmans_aggregator is not None:
+            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        for name, func in consumers.items():
+            _fail_if_a_joint_node_is_read(
+                consumer_name=name,
+                reserved=_joint_nodes_reachable_from(
+                    func,
+                    user_regime.functions,
+                    phase=phase,
+                    joint_node_names=joint_node_names,
+                ),
+                allowed_context="a target transition output and the helpers feeding it",
+            )
+
+        for target, kernels in user_regime.joint_transitions.items():
+            for kernel_name, raw in kernels.items():
+                kernel = _joint_variant_for_phase(raw, phase=phase)
+                roles: dict[str, object] = {
+                    "probabilities": kernel.probabilities,
+                }
+                if callable(kernel.support):
+                    roles["support"] = kernel.support
+                for role, func in roles.items():
+                    consumer_name = (
+                        f"joint transition '{kernel_name}' {role} on target '{target}'"
+                    )
+                    _fail_if_a_joint_node_is_read(
+                        consumer_name=consumer_name,
+                        reserved=_joint_nodes_reachable_from(
+                            func,
+                            user_regime.functions,
+                            phase=phase,
+                            joint_node_names=joint_node_names,
+                        ),
+                        allowed_context=(
+                            "neither support nor probability construction; express "
+                            "correlation through one joint support"
+                        ),
+                    )
+                    _fail_if_joint_role_reads_a_next_output(
+                        consumer_name=consumer_name,
+                        reserved=_next_names_reachable_from(
+                            func, user_regime.functions, phase=phase
+                        ),
+                    )
+                    if role == "support":
+                        _fail_if_joint_support_reads_runtime_names(
+                            consumer_name=consumer_name,
+                            func=func,
+                            phase=phase,
+                            user_regime=user_regime,
+                        )
+
+
+def _fail_if_joint_role_reads_a_next_output(
+    *,
+    consumer_name: str,
+    reserved: Mapping[str, tuple[FunctionName, ...]],
+) -> None:
+    """Reject support or probabilities conditioned on a realized output."""
+    if not reserved:
+        return
+    routes = [
+        f"'{name}' through {' -> '.join(repr(step) for step in chain)}"
+        if chain
+        else f"'{name}'"
+        for name, chain in sorted(reserved.items())
+    ]
+    raise InvalidNameError(
+        f"{consumer_name} reads next-period output(s) {', '.join(routes)}. "
+        "Joint support and probabilities are formed before any target output "
+        "is realized, so they cannot condition on a `next_<state>` value."
+    )
+
+
+def _fail_if_joint_support_reads_runtime_names(
+    *,
+    consumer_name: str,
+    func: object,
+    phase: Literal["solve", "simulate"],
+    user_regime: UserRegime,
+) -> None:
+    """Reject source states, actions, and helpers in a support provider."""
+    forbidden = {
+        *user_regime.states,
+        *user_regime.actions,
+        *user_regime.functions,
+        *user_regime.constraints,
+        *user_regime.value_constraints,
+        "CE",
+    }
+    inputs = {
+        tree_path_from_qname(arg)[-1]
+        for variant in _callables_in(func, phase=phase)
+        for arg in dt.create_tree_with_input_types({"_": variant})
+    }
+    invalid = sorted(inputs & forbidden)
+    if not invalid:
+        return
+    raise InvalidNameError(
+        f"{consumer_name} reads source runtime name(s) {invalid}. A callable "
+        "JointTransition support may read only `period`, `age`, and parameters; "
+        "source states, actions, helpers, constraints, and realized transition "
+        "values are unavailable because support is hoisted outside source-cell "
+        "evaluation."
+    )
+
+
+def _joint_nodes_reachable_from(
+    func: object,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    *,
+    phase: Literal["solve", "simulate"],
+    joint_node_names: frozenset[str],
+) -> dict[str, tuple[FunctionName, ...]]:
+    """Return joint-node names reachable from one consumer, with helper routes."""
+    reached: dict[str, tuple[FunctionName, ...]] = {}
+    walked: set[FunctionName] = set()
+    frontier: list[tuple[UserFunction, tuple[FunctionName, ...]]] = [
+        (variant, ()) for variant in _callables_in(func, phase=phase)
+    ]
+    while frontier:
+        current, chain = frontier.pop()
+        for arg in dt.create_tree_with_input_types({"_": current}):
+            arg_name = tree_path_from_qname(arg)[-1]
+            if arg_name in joint_node_names:
+                reached.setdefault(arg_name, chain)
+            elif arg_name in functions and arg_name not in walked:
+                walked.add(arg_name)
+                frontier.extend(
+                    (variant, (*chain, arg_name))
+                    for variant in _callables_in(functions[arg_name], phase=phase)
+                )
+    return reached
+
+
+def _fail_if_a_joint_node_is_read(
+    *,
+    consumer_name: str,
+    reserved: Mapping[str, tuple[FunctionName, ...]],
+    allowed_context: str,
+) -> None:
+    """Reject a consumer that would reclassify a joint node as a parameter."""
+    if not reserved:
+        return
+    routes = [
+        f"'{name}' through {' -> '.join(repr(step) for step in chain)}"
+        if chain
+        else f"'{name}'"
+        for name, chain in sorted(reserved.items())
+    ]
+    raise InvalidNameError(
+        f"'{consumer_name}' reads transition-local joint node(s) "
+        f"{', '.join(routes)}. A joint node is engine-wired only while evaluating "
+        f"{allowed_context}; it is never a user parameter."
+    )
 
 
 def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -> None:
@@ -742,6 +945,12 @@ def _function_names_in_transition_role(
         for law in user_regime.state_transitions.values()
         for variant in _callables_in(law, phase=phase)
     ]
+    frontier.extend(
+        output
+        for kernels in user_regime.joint_transitions.values()
+        for raw in kernels.values()
+        for output in _joint_variant_for_phase(raw, phase=phase).outputs.values()
+    )
     while frontier:
         func = frontier.pop()
         for arg in dt.create_tree_with_input_types({"_": func}):
@@ -751,8 +960,16 @@ def _function_names_in_transition_role(
             feeders.add(arg_name)
             frontier.extend(_callables_in(functions[arg_name], phase=phase))
 
+    joint_output_names = {
+        f"next_{state_name}"
+        for kernels in user_regime.joint_transitions.values()
+        for raw in kernels.values()
+        for state_name in _joint_variant_for_phase(raw, phase=phase).outputs
+    }
     return frozenset(
-        {f"next_{name}" for name in user_regime.state_transitions} | feeders
+        {f"next_{name}" for name in user_regime.state_transitions}
+        | joint_output_names
+        | feeders
     )
 
 
