@@ -1394,7 +1394,7 @@ def _keeper_post_decision(
     fallback) when the candidate's arguments cannot be resolved.
     """
     if payload.outer_no_adjustment_name is None:
-        durable_name = payload.outer_post_decision_name.removeprefix("next_")
+        durable_name = payload.outer_state_name
         durable = states.get(durable_name)
         if durable is None:
             return None

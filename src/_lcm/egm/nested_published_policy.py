@@ -171,6 +171,9 @@ class NestedEGMSimPolicy:
     outer_action_name: ActionName
     """The regime's outer continuous action the reader replaces."""
 
+    outer_state_name: StateName
+    """The durable state held unchanged by the keeper."""
+
     outer_post_decision_name: FunctionName
     """The outer post-decision the candidate nodes are values of."""
 
@@ -200,6 +203,7 @@ class NestedEGMSimPolicy:
 
 _NESTED_STATIC_FIELDS = (
     "outer_action_name",
+    "outer_state_name",
     "outer_post_decision_name",
     "inner_action_name",
     "liquid_state_name",

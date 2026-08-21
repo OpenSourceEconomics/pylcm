@@ -439,6 +439,7 @@ class NNBEGM(TwoMarginSolver):
                     outer_batch_size=outer_batch_size,
                     outer_search=search,
                     outer_action=bound.outer_action,
+                    outer_state_name=bound.outer_state,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
                     savings_lower_bound=float(spec.savings_grid.to_jax()[0]),
@@ -534,6 +535,9 @@ class _NNBEGMPeriodKernel:
     outer_action: ActionName
     """The regime's outer continuous action (published for the nested
     simulation reader)."""
+
+    outer_state_name: StateName
+    """Name of the durable state held unchanged by the keeper."""
 
     inner_action: ActionName
     """The regime's inner continuous action (the consumption the published
@@ -876,6 +880,7 @@ class _NNBEGMPeriodKernel:
                     policies=adjuster_policies,
                 ),
                 outer_action_name=self.outer_action,
+                outer_state_name=self.outer_state_name,
                 outer_post_decision_name=self.outer_post_decision,
                 inner_action_name=self.inner_action,
                 liquid_state_name=self.liquid_state_name,
