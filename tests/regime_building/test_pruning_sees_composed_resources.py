@@ -93,7 +93,7 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
             state="wealth",
             action="consumption",
             resources=NetOfAdjustmentCost(
-                name_in_dag="resources",
+                output="resources",
                 before_cost="gross_resources",
                 cost="adjustment_cost",
             ),

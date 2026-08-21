@@ -216,17 +216,6 @@ class EGM(OneMarginSolver):
             )
             raise ModelInitializationError(msg)
 
-        if user_regime.constraints:
-            constraint_names = sorted(user_regime.constraints)
-            msg = (
-                f"EGM regime '{regime_name}' declares constraints "
-                f"{constraint_names}. Plain EGM evaluates no user constraint; "
-                "encode the borrowing limit in `savings_grid.start` and the "
-                "budget identity in the post-decision function, or use "
-                "GridSearch."
-            )
-            raise ModelInitializationError(msg)
-
         utility_ancestors = _dag_ancestors(
             functions=functions, target_func=functions["utility"]
         )
