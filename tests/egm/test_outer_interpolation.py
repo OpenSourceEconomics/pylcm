@@ -1,6 +1,6 @@
-"""The validated local cubic Hermite outer interpolant.
+"""Behavioral tests for the validated local cubic Hermite outer interpolant.
 
-The PR-4 interpolation battery: exact node reproduction, quadratic-exact
+The battery covers exact node reproduction, quadratic-exact
 recovery between nodes (value and derivative), derivative-vs-central-FD
 agreement on a smooth surface, refusal to bridge nonfinite gaps or declared
 invalid intervals, no poisoning of valid intervals by a nonfinite neighbor,
@@ -26,8 +26,8 @@ def _exactness_atol(expected: np.ndarray, *, floor: float) -> float:
     format can carry. A fixed `1e-12` says exactly that at float64 and something
     impossible at float32, where one ULP at these magnitudes is already ~1e-7: under
     `--precision=32` the constant failed on the format rather than on the interpolant.
-    Taking the maximum leaves the float64 bound bit-for-bit what it was, so nothing is
-    loosened where it was previously meaningful.
+    Taking the maximum preserves the explicit floor while admitting the rounding
+    error the active precision can represent.
     """
     values = np.asarray(expected)
     scale = float(np.max(np.abs(values))) or 1.0
@@ -103,12 +103,8 @@ def test_derivative_matches_central_finite_difference() -> None:
     # The step is a property of the format, not a constant. A central difference
     # carries truncation error ~ h**2 and cancellation error ~ machine_eps / h, so the
     # step that balances them is the cube root of the machine epsilon -- ~6e-6 at
-    # float64, but ~5e-3 at float32. The old fixed `1e-6` is the float64 answer; at
-    # float32 it sits three decades below the optimum, where cancellation dominates and
-    # the "reference" difference quotient is itself wrong by ~4e-2. The test then failed
-    # on its own yardstick rather than on the interpolant's derivative. Both the step
-    # and the bound are therefore derived from the working dtype, with the float64
-    # tolerance floored at its previous value so nothing is loosened there.
+    # float64, but ~5e-3 at float32. Both the step and the bound are therefore
+    # derived from the working dtype, with an explicit absolute floor.
     machine_eps = float(np.finfo(np.asarray(values).dtype).eps)
     step = machine_eps ** (1.0 / 3.0)
     atol = max(1e-6, 100.0 * step**2)

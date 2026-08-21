@@ -1,6 +1,6 @@
-"""The historical-compatibility manifest (plan PR 13, pylcm side).
+"""Behavioral tests for the Mahler-Yum historical-compatibility manifest.
 
-Merge-gate properties: canonical and legacy manifests cannot be confused
+Canonical and legacy manifests cannot be confused
 (distinct labels, refusal of canonical-looking outputs under historical
 switches), the one-switch decomposition variants each differ from canonical
 in exactly one field, and the model factory is honest per switch — the

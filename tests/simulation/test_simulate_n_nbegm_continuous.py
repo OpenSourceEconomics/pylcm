@@ -1,10 +1,8 @@
 """End-to-end continuous-outer NNBEGM simulation through the nested read.
 
-The merge gate for the nested simulation policy: simulate must replay the
-solve's continuous policy class — off-grid outer actions (no silent snapping
-to the legacy finite action grid), consumption from the conditional inner
-policies, both under the published acceptance rules — and stay deterministic
-without taste shocks.
+Simulation must preserve off-grid outer actions without snapping them to the
+finite action grid, recover consumption from the conditional inner policies,
+and remain deterministic without taste shocks.
 """
 
 import jax.numpy as jnp

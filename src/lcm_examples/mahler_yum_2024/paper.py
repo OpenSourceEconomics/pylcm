@@ -114,34 +114,18 @@ from lcm_examples.mahler_yum_2024 import (
 #
 # `NBEGM`'s three streaming knobs all default to `0`, meaning every ride cell,
 # discrete branch and liquid interval has its buffers in flight simultaneously.
-# For a toy model that is free; for this one it is not. The alive regime has 2720
-# ride cells (every non-liquid state: health x productivity_shock x lagged_effort
-# x education x productivity x health_type x discount_type), each carrying an
-# augmented liquid row per outer-mesh node, and the paper-mode gates consequently
-# ask for one enormous allocation. No 80 GB A100 can serve it.
+# This model's product of non-liquid state axes and outer-mesh nodes makes that
+# allocation impractical, so cells and discrete branches are streamed.
 #
-# Measured on `hmg-office`, one solve per PROCESS -- a long-lived JAX process
-# keeps each solve's executables and buffers alive, so a sweep inside one process
-# would measure accumulated leakage rather than the setting:
-#
-# - all three knobs at `0`: aborts requesting 260_448_759_408 bytes (242.6 GiB);
-# - `cell_block_size=256` with `branch_batch_size=1`: ~10.4 GiB resident, ran
-#   15 minutes without blowing up.
-#
-# The unbounded request is far past any available machine, so these knobs are
-# necessary rather than merely prudent.
-#
-# Blocking is the mechanism the solver already provides for exactly this, and it
-# is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,
+# Blocking is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,
 # `test_nbegm_branch_batch_size.py` and `test_nbegm_interval_batch.py` pin the
 # solved value against the unstreamed reference to `atol=rtol=1e-10` -- agreement
 # at that tolerance, not bit-for-bit, because blocking changes the XLA reduction
 # order.
 _PAPER_CELL_BLOCK_SIZE = 256
 
-# `labor_supply` has three values and appears as an axis of the very array that
-# overflowed, so streaming it is the cheapest remaining factor. The branch body
-# still compiles once -- the axis is scanned, never Python-unrolled.
+# `labor_supply` is a branch axis of the large candidate array. Streaming it
+# reduces peak memory while the branch body remains compiled once.
 _PAPER_BRANCH_BATCH_SIZE = 1
 
 # `interval_batch_size` is left at `0`: the per-interval continuation buffers are
@@ -280,7 +264,7 @@ def build_paper_solver(
     branch_batch_size: int = _PAPER_BRANCH_BATCH_SIZE,
     interval_batch_size: int = 0,
 ) -> NNBEGM:
-    """The paper-mode NNBEGM solver (plan section 12.1's target interface).
+    """Construct the paper-mode NNBEGM solver.
 
     The three streaming knobs are set rather than left at their `0` default;
     see `_PAPER_CELL_BLOCK_SIZE` for why. Pass `0` explicitly to restore the

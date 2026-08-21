@@ -1,11 +1,10 @@
-"""Mahler-Yum pilot for the implicit outer derivative (plan PR 12 gate).
+"""Mahler-Yum pilot for the implicit outer derivative.
 
 Wires `continuous_outer_optimum` — the custom-JVP outer optimum — into the
 REAL paper-mode model: the pilot objective is the period kernel's own exact
 adjuster-node solve `Q(f, theta) = V_adjuster(f; theta)` at the capture
 period (36, the first period whose optimal effort is interior and off-node),
-read at a small set of pilot state cells. Section 19.3's acceptance is then
-checked directly on the model: the AD tangent `df*/dtheta` from the implicit
+read at a small set of pilot state cells. The AD tangent `df*/dtheta` from the implicit
 JVP must agree with a Richardson-extrapolated central difference of the
 primal search, within the finite-difference method's own uncertainty.
 

@@ -1,6 +1,6 @@
 """Closed-form uniform-fixed-cost aggregation against dense quadrature.
 
-The PR-7 battery: every cutoff regime (`Delta < 0`, `Delta = 0`, interior
+Every cutoff regime (`Delta < 0`, `Delta = 0`, interior
 cutoff, cutoff at both support boundaries, `Delta > B*b`) is compared to a
 1,000,001-node midpoint quadrature of `E[max(V_K, V_A - B*chi)]`; the
 `B = 0` degenerate branch reproduces the deterministic keeper-wins-ties

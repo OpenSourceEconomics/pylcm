@@ -4,7 +4,7 @@ Analytic-surface unit tests: the collapsed value matches the true optimized
 value, the collapsed marginal is the *conditional* marginal at the selected
 outer action (envelope theorem), a central finite difference of the
 collapsed value across the liquid axis reproduces the collapsed marginal
-(the PR-5 envelope-consistency gate), the keeper wins where it is better and
+within the method's truncation error, the keeper wins where it is better and
 on exact ties, and NaN padding / all-infeasible columns keep the finite
 fold's semantics.
 """

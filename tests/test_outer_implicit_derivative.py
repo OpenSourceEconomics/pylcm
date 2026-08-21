@@ -1,4 +1,4 @@
-"""The implicit JVP of the continuous outer optimum (plan section 19.2).
+"""Behavioral tests for the implicit JVP of a continuous outer optimum.
 
 Gate battery on analytic test problems where `f*(theta)` and `df*/dtheta`
 have closed forms:
@@ -9,8 +9,7 @@ have closed forms:
 - the custom JVP returns the implicit-function-theorem tangent
   `-Q_{f theta}/Q_{ff}`, not the derivative of the search's control flow;
 - the value tangent is the envelope term `Q_theta(f*, theta)`;
-- AD agrees with central finite differences of the primal (plan
-  section 19.3's cross-check, here at analytic-problem scale);
+- AD agrees with central finite differences of the primal;
 - diagnostics flag exactly the advertised unresolved cases: optimum at a
   bound, curvature below the floor, tied basins — and nothing else on a
   well-behaved interior problem;
@@ -106,7 +105,7 @@ def test_value_tangent_is_envelope_term() -> None:
 
 
 def test_ad_agrees_with_central_finite_differences() -> None:
-    """Plan section 19.3: AD must agree with central differences of the primal.
+    """AD agrees with central differences of the full primal search.
 
     The FD baseline differentiates the *whole search* (mesh + polish), so
     its own error floor is the polish tolerance; a loose-but-honest atol.
