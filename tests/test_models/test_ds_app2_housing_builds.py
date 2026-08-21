@@ -202,10 +202,11 @@ def test_round_trip_cost_creates_an_inaction_wedge():
 def test_reduced_housing_model_solves_on_gpu():
     """A reduced DS App.2 model exercises the nested solve on every pull request.
 
-    The short horizon and small grids preserve the liquid-inner / housing-outer
-    route while bounding compilation and execution time.
+    The small grids preserve the liquid-inner / housing-outer route while the
+    full lifecycle keeps the model's fixed working, retirement, and terminal
+    transition ages aligned with its active regimes.
     """
-    model = ds_app2_housing.build_model(n_grid=12, n_periods=4)
+    model = ds_app2_housing.build_model(n_grid=12, n_periods=51)
     params = ds_app2_housing.build_params(tau=0.05)
     solution = model.solve(params=params, log_level="debug")
     working = np.asarray(solution[0]["working"])
