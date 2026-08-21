@@ -421,14 +421,14 @@ def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_
 
 
 @pytest.mark.parametrize("dtype", _JNP_DTYPES)
-def test_certified_radius_is_zero_at_nodes_and_second_order_interior(dtype):
+def test_certified_radius_is_zero_at_nodes_and_outward_interior(dtype):
     """The certified rounding radius tracks the arithmetic actually performed.
 
     At a node event the candidate value is stored data — the radius is exactly
     zero, so no tolerance can ever separate exactly-equal stored floats or
     merge distinct ones. At an interior query the compensated evaluation's
-    residual radius is O(eps^2) of the operand scale — orders of magnitude
-    below one ULP of the data, so it can never swallow a represented gap.
+    residual radius covers working-precision backend rounding at the operand
+    scale.
     """
     # One segment from (0, 1) to (2, 3): columns are (lx, rx, lv, rv, lp, rp,
     # lm, rm); queries hit the left node, the right node, and an interior point.
@@ -448,8 +448,8 @@ def test_certified_radius_is_zero_at_nodes_and_second_order_interior(dtype):
     assert value_lo[0] == 0.0
     assert value_lo[1] == 0.0
     eps = float(jnp.finfo(dtype).eps)
-    assert 0.0 < radius[2] <= 64.0 * eps * eps * abs(value_hi[2]), (
-        "interior radius is strictly positive but second-order small"
+    assert 0.0 < radius[2] <= 64.0 * eps * abs(value_hi[2]), (
+        "interior radius is strictly positive and working-precision outward"
     )
 
 
