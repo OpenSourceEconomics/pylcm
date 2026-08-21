@@ -168,15 +168,19 @@ class Regime:
     solver: _solvers.Solver = field(default_factory=_solvers.GridSearch)
     """Solution algorithm for this regime during backward induction.
 
-    - `GridSearch()` (default): grid search over the full state-action product.
-    - `EGM(...)`: envelope-free one-asset endogenous grid method.
-    - `DCEGM(...)`: discrete-continuous endogenous grid method.
-    - `NEGM(...)`: an outer continuous search nesting an inner `DCEGM`.
+    The solver must match the regime declaration that supplies its structural
+    roles:
 
-    The endogenous-grid solvers validate their structural contracts during
-    `Model(...)`. `ConsumptionSavingsRegime` may own their shared state, action,
-    resources, and post-decision role names so those names need not be repeated
-    on each solver configuration.
+    - `Regime`: `GridSearch()` (the default), or another `Solver` that does
+      not require margin binding.
+    - `ConsumptionSavingsRegime`: `GridSearch()` or a `OneMarginSolver`,
+      such as `EGM(...)`, `DCEGM(...)`, or `NBEGM(...)`.
+    - `NestedConsumptionSavingsRegime`: `GridSearch()` or a
+      `TwoMarginSolver`, such as `NEGM(...)` or `NNBEGM(...)`.
+
+    Endogenous-grid solvers validate their structural contracts during
+    `Model(...)`; the specialized regime owns the state, action, resources,
+    and post-decision role names bound into the solver.
     """
 
     taste_shocks: ExtremeValueTasteShocks | None = None
