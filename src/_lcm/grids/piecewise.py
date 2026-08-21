@@ -3,6 +3,7 @@
 import dataclasses
 import operator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import jax.numpy as jnp
 from beartype import beartype
@@ -16,6 +17,14 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
+
+if TYPE_CHECKING:
+    PiecewisePointCounts: TypeAlias = tuple[int | ScalarInt, ...]  # noqa: UP040
+else:
+    # The constructor's validator owns element errors and maps them to the
+    # public GridInitializationError. The runtime alias keeps the package claw
+    # from sampling an invalid tuple element before that validator runs.
+    PiecewisePointCounts = tuple[Any, ...]
 
 
 @beartype(conf=GRID_CONF)
@@ -53,14 +62,13 @@ class _PiecewiseGrid(ContinuousGrid):
     _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
     _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
 
-    @beartype(conf=GRID_CONF)
     def __init__(
         self,
         *,
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
         breakpoints: tuple[GridBreakpoint, ...],
-        points_per_segment: tuple[int | ScalarInt, ...],
+        points_per_segment: PiecewisePointCounts,
         batch_size: int = 0,
         distributed: bool = False,
     ) -> None:
@@ -160,7 +168,7 @@ def _init_piecewise_grid(
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
     breakpoints: tuple[GridBreakpoint, ...],
-    points_per_segment: tuple[int | ScalarInt, ...],
+    points_per_segment: PiecewisePointCounts,
     batch_size: int,
     distributed: bool,
     requires_positive_bounds: bool,
@@ -226,7 +234,7 @@ def _init_piecewise_grid(
 
 
 def _integer_point_counts(
-    *, points_per_segment: tuple[int | ScalarInt, ...]
+    *, points_per_segment: PiecewisePointCounts
 ) -> tuple[int, ...]:
     """Return exact Python integer counts, refusing lossy numeric coercion."""
     counts: list[int] = []

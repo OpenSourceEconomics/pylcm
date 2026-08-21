@@ -115,6 +115,7 @@ pylcm = { path = ".", editable = true }
 test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-compare = "asv compare"
 asv-preview = "asv preview"
+asv-preflight = "python -m benchmarks.preflight"
 asv-pr-comment = "python benchmarks/pr_comment.py"
 asv-publish = "python benchmarks/publish.py"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
@@ -125,7 +126,7 @@ asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 # Pinned to an aca-model main that carries both the keyword-only case-piece
 # call sites this branch's API requires and the DC-EGM solver path; flip back
 # to `branch = "main"` once this branch merges.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "1409be36072ac49efc5b5e56cab0ac611d2dd1dc" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "328e3710cfafb19c28ebcd46a27090238415fdd6" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
