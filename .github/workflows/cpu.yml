@@ -135,80 +135,18 @@ jobs:
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
-        # A worker's resident memory grows with every distinct program it has
-        # compiled, because JAX holds each one live in an in-memory cache, and
-        # the DC-EGM solve/oracle battery (`slow`) compiles enough of them to
-        # exhaust the 16 GB runner mid-suite. Two mechanisms keep it in budget:
-        # - the suite drops that cache at every module boundary by default,
-        #   which bounds the growth instead of merely dividing it. Measured on
-        #   the `slow` battery at `-n 2`: peak resident memory over the process
-        #   tree falls from 18.25 GB to 9.44 GB and stops ratcheting, and the
-        #   phase runs faster rather than slower, because a released program is
-        #   recompiled from the persistent on-disk cache. `--keep-compiled-
-        #   programs` turns it off, for a run measuring compile behaviour
-        #   itself; nothing here wants that.
-        # - the phases stay separate, each starting from a fresh process, as a
-        #   second line of defence and so coverage can be appended across them.
-        #
-        # `--timeout-method=thread` is not the default and the default cannot do
-        # this job: `signal` delivers `SIGALRM` on schedule, but the handler runs
-        # only at a bytecode boundary, so a test blocked inside one long call —
-        # which is what an XLA compile is — reports its timeout when that call
-        # returns and never bounds anything. Measured on a single LAPACK call
-        # with a 20 s limit: `signal` reported at 91.8 s, `thread` at 20 s with
-        # the frame. Under xdist the thread method takes the worker with it, so
-        # the timing-out test is named, its siblings continue on a restarted
-        # worker, and the run fails instead of being killed by the job ceiling
-        # hours later with nothing to point at.
-        #
-        # The ceiling is set from what a healthy test of this battery costs, not
-        # from what the job can absorb, because a worker sits idle until it fires
-        # and every second of that is wall clock — ten stalls on two workers at a
-        # 1200 s ceiling spend 100 minutes of a 168-minute phase waiting rather
-        # than testing, which is most of the phase.
-        #
-        # What a healthy test costs *here* is not yet measured, which is why the
-        # ceiling is not tighter. In isolation the slowest solve test is a
-        # little over a minute, but these phases run two or four ways parallel
-        # against a 16 GB runner, and contention is not a small multiplier on a
-        # test that spends its time in compilation. `--durations` publishes the
-        # per-phase tail so the next run answers this from the configuration
-        # that is actually in doubt; tighten the ceiling once it has.
-        #
-        # The certified-envelope cases get their own phase because they need
-        # `--xla_backend_optimization_level=0` and the rest of the suite must not
-        # have it: turning the backend optimizer off collapses every vmap width
-        # onto one bit pattern, which would silence the batch-width invariance
-        # `assert_agrees_to_ulp` checks. A separate process is what keeps those
-        # two requirements from trading against each other. Without the flag the
-        # cases do not leave XLA's optimizer in bounded time and their own
-        # `skipif` drops them, so this phase is the only thing standing between
-        # "certified is green" and "certified is never run outside a laptop".
-        # Serial and with a wide ceiling: the 20-branch cell peaks near 9.5 GB.
-        #
-        # The phase names the file rather than filtering the directory. `-k
-        # certified` across `tests/solution` matches every id containing the
-        # word — 535 tests, not 2 — and would hand all of them the flag, which
-        # is the same harm as setting it suite-wide.
-        #
-        # `-v` and `--max-worker-restart` are what a killed run leaves behind.
-        # The JUnit report and `--durations` are both written at the end, so a job
-        # that hits the 6-hour ceiling produces neither, and dot-mode output
-        # attributes nothing to a test name. `-v` streams one line per test, which
-        # is the only record of a run that does not finish. `--max-worker-restart`
-        # bounds the other half: past its limit xdist ends the session instead of
-        # waiting on a worker that will not come back, turning a four-hour silence
-        # into a failure that names how many workers died.
+        # The long `tests/solution -m slow` battery runs in the sharded matrix
+        # below. This base leg keeps the fast suite, slow non-solution tests, and
+        # the two certified-envelope cases. Certified runs in its own process
+        # because it alone requires the disabled XLA backend optimizer; applying
+        # that flag to the rest would invalidate batch-width invariance checks.
+        # Coverage from this base leg and the fp64 shards is merged by Codecov.
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow" \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
-          && pixi run -e tests-cpu pytest tests/solution -m slow \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp64-solution-slow.xml \
-            --cov=./ --cov-append --cov-report= -n 2 \
           && XLA_FLAGS=--xla_backend_optimization_level=0 \
             pixi run -e tests-cpu pytest \
             tests/solution/test_nbegm_multi_discrete_agreement.py \
@@ -347,13 +285,8 @@ jobs:
           --precision=32 --output-dir=reports
       - name: Run pytest at fp32
         shell: bash {0}
-        # Same memory budget as the fp64 leg above, for the same reason: a
-        # worker's resident memory grows with every program it compiles, and the
-        # `slow` battery compiles enough to exhaust the 16 GB runner. So this leg
-        # runs the same separate phases rather than the single `tests-32bit`
-        # invocation, which is the configuration that dies.
-        # Precision does not change the compile load, so it does not change the
-        # remedy.
+        # The long slow solution battery runs in the shared precision/shard
+        # matrix below. This leg retains the fast and slow non-solution tests.
         env:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
@@ -362,10 +295,6 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
-          && pixi run -e tests-cpu pytest tests/solution --precision=32 -m slow \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp32-solution-slow.xml \
-            -n 2 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision=32 -m slow \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
@@ -407,6 +336,130 @@ jobs:
               [ -n "$cache_id" ] || continue
               gh cache delete "$cache_id" || true
             done
+  # The slow solution phase dominates both CPU precisions. Stable hashing assigns
+  # whole files to three jobs, preserving module-local compile reuse while new or
+  # renamed files enter exactly one shard without maintaining a timing manifest.
+  # Each job keeps two xdist workers: increasing that inside a 16 GB runner has
+  # exhausted memory, whereas separate runners provide real parallel capacity.
+  tests-slow-solution:
+    name: >-
+      Run slow solution tests on ubuntu-latest at fp${{ matrix.precision }}
+      (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - 64
+          - 32
+        shard:
+          - 1
+          - 2
+          - 3
+    env:
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CI_SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.76.1
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache this shard's JAX compiled programs
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/jax
+          key: >-
+            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-${{
+            hashFiles('pixi.lock') }}-${{ github.sha }}
+          restore-keys: |
+            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-${{
+              hashFiles('pixi.lock') }}-
+            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-
+      - name: Run one slow solution shard
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          pixi run -e tests-cpu python -m tests.ci.shard_test_files \
+            tests/solution --shards 3 --shard "$PYLCM_CI_SHARD" \
+            > reports/solution-shard-files.txt
+          mapfile -t files < reports/solution-shard-files.txt
+          test "${#files[@]}" -gt 0
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            pylcm_coverage_report="reports/coverage-64-$PYLCM_CI_SHARD.xml"
+            coverage_args=(
+              --cov=./
+              --cov-report="xml:$pylcm_coverage_report"
+            )
+          fi
+          pylcm_junit_report="reports/junit-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.xml"
+          pixi run -e tests-cpu pytest "${files[@]}" \
+            --precision="$PYLCM_CI_PRECISION" -m slow \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --durations=25 \
+            --junitxml="$pylcm_junit_report" \
+            -n 2 "${coverage_args[@]}"
+      - name: Upload JUnit report and shard manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            junit-cpu-fp${{ matrix.precision }}-solution-${{ matrix.shard }}
+          path: |
+            reports/junit-*.xml
+            reports/solution-shard-files.txt
+          if-no-files-found: warn
+      - name: Upload coverage report
+        if: matrix.precision == 64
+        uses: codecov/codecov-action@v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: >-
+            reports/coverage-64-${{ matrix.shard }}.xml
+          disable_search: true
+          fail_ci_if_error: true
+      - name: Prune superseded JAX caches for this shard
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --ref "$GITHUB_REF" \
+            --key "jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
   # One context for the whole matrix, so branch protection names `cpu` rather than
   # every (os, python-version) leg — adding a platform would otherwise silently drop
   # out of the required set until someone remembered to add it there too.
@@ -415,6 +468,7 @@ jobs:
     needs:
       - tests
       - tests-fp32
+      - tests-slow-solution
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -422,5 +476,7 @@ jobs:
         run: |-
           echo "tests: ${{ needs.tests.result }}"
           echo "tests-fp32: ${{ needs.tests-fp32.result }}"
+          echo "tests-slow-solution: ${{ needs.tests-slow-solution.result }}"
           test "${{ needs.tests.result }}" = "success"
           test "${{ needs.tests-fp32.result }}" = "success"
+          test "${{ needs.tests-slow-solution.result }}" = "success"
