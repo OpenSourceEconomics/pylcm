@@ -23,7 +23,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
-from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
+from _lcm.continuation import EGMContinuationLayout
 from _lcm.egm.branch_aggregation import (
     DeterministicOuterMaximum,
     OuterBranchAggregator,
@@ -206,6 +206,9 @@ class NNBEGM(TwoMarginSolver):
         them, since the inner case-piece solve is the only place a liquid
         constraint could be met and it evaluates none.
         """
+        from _lcm.egm.nbegm_constraint_boundaries import (  # noqa: PLC0415
+            build_nbegm_feasibility_boundary_compiler,
+        )
         from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
 
         if context.phase == "simulate":
@@ -215,6 +218,11 @@ class NNBEGM(TwoMarginSolver):
                 solver_path=("nnbegm",),
             )
         bound = cast("_BoundNNBEGM", self)
+        boundary_compilers = (
+            build_nbegm_feasibility_boundary_compiler(
+                liquid_state=bound.inner.continuous_state
+            ),
+        )
         return tuple(
             route
             for branch, pool in (
@@ -244,6 +252,7 @@ class NNBEGM(TwoMarginSolver):
                 post_decision_function=proved_post_decision_of(solver=bound.inner),
                 solver_path=("nnbegm", branch),
                 function_pool=pool,
+                boundary_compilers=boundary_compilers,
             )
         )
 
@@ -345,6 +354,13 @@ class NNBEGM(TwoMarginSolver):
                 outer_post_decision=bound.outer_post_decision,
             ),
             flat_param_names=context.flat_param_names | {bound.outer_post_decision},
+            constraint_plan=(
+                None
+                if context.constraint_plan is None
+                else context.constraint_plan.for_solver_path(
+                    solver_path=("nnbegm", "adjuster")
+                )
+            ),
         )
         adjuster_kernels = bound.inner.build_period_kernels(context=adjuster_context)
         no_adjustment_func = (
@@ -363,8 +379,16 @@ class NNBEGM(TwoMarginSolver):
                 outer_post_decision=bound.outer_post_decision,
                 no_adjustment_func=no_adjustment_func,
             ),
+            constraint_plan=(
+                None
+                if context.constraint_plan is None
+                else context.constraint_plan.for_solver_path(
+                    solver_path=("nnbegm", "keeper")
+                )
+            ),
         )
         keeper_kernels = bound.inner.build_period_kernels(context=keeper_context)
+        keeper_continuation_spec = keeper_kernels.continuation_spec
         # The inner ride-along template may carry the exact-consumption `policy`
         # leaf so a STANDALONE ride-along NBEGM continuation
         # matches its policy-carrying runtime carry. NNBEGM,
@@ -374,14 +398,21 @@ class NNBEGM(TwoMarginSolver):
         # the republished template so the cross-period roll sees the same pytree
         # as the policy-free continuation — the standalone F1 leaf must not leak
         # into the NNBEGM continuation template.
-        inner_template = keeper_kernels.continuation_template
+        inner_template = (
+            None
+            if keeper_continuation_spec is None
+            else keeper_continuation_spec.template
+        )
         template = (
             replace(inner_template, policy=None)
             if isinstance(inner_template, EGMCarry)
             else inner_template
         )
         _fail_if_inner_carry_rows_not_grid_aligned(inner=bound.inner)
-        _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
+        if not (
+            context.constraint_plan and context.constraint_plan.compiled_boundaries
+        ):
+            _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
         search = self.outer_search
         match search:
             case FiniteOuterGrid():
@@ -458,18 +489,16 @@ class NNBEGM(TwoMarginSolver):
                 for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
             }
         )
-        # The bridged outer envelope folds candidates pointwise on the shared
-        # liquid state grid, so the published rows keep the keeper's shape —
-        # no carry widening.
+        # The bridged outer envelope folds candidates pointwise on shared inner
+        # abscissae. Plain rows use the liquid grid; compiled feasibility augments
+        # keeper and adjuster identically, and the forwarded spec retains that
+        # one-sided geometry for the parent read.
         return SolutionKernels(
             period_kernels=period_kernels,
             continuation_spec=(
                 None
-                if template is None
-                else EGMContinuationSpec(
-                    template=template,
-                    layout=self.egm_continuation_layout,
-                )
+                if keeper_continuation_spec is None
+                else replace(keeper_continuation_spec, template=template)
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.

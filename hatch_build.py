@@ -1,19 +1,20 @@
-"""Compile the exact-affine FFI shared objects into the package tree.
+"""Compile and install the exact-affine FFI shared objects.
 
 The certified upper-envelope path decides candidate ownership with exact integer
 arithmetic over the stored IEEE operands rather than with backend floating
 arithmetic. That kernel is C++ (and CUDA), so a wheel — including the editable
-wheel a development environment installs — has to carry the compiled libraries
-beside `_lcm/egm/upper_envelope/_exact_affine/`.
+wheel a development environment installs — carries a native payload under
+`_pylcm_native/`. The payload is independent of the source checkout: deleting or
+replacing the checkout after installation does not delete the installed kernel.
 
 Compiling is a build-time step on purpose. Importing pylcm never invokes a
 compiler: a missing library is reported when an exact verdict is requested,
 naming the task that builds it, rather than silently falling back to arithmetic
 that cannot make the guarantee.
 
-Run standalone during development, after any change to the C++ or CUDA sources:
+Reinstall during development after changing the C++ or CUDA sources:
 
-    pixi run build-exact-affine
+    pixi reinstall pylcm
 
 CUDA is optional. Where `nvcc` is absent the CPU library is built alone and the
 certified path runs on CPU only. Where it is present the build emits ready code
@@ -27,8 +28,11 @@ found on stdout so that a CPU-only result is read at the time rather than
 inferred later from a library that is not there.
 """
 
+import hashlib
 import importlib.util
+import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -38,13 +42,100 @@ from pathlib import Path
 try:
     from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 except ImportError:
-    # Run standalone — `pixi run build-exact-affine` — from a runtime environment,
-    # which carries no build backend. Only the hook class needs hatchling, and
-    # nothing instantiates it here.
+    # Only the hook class needs hatchling. Keeping this import optional also lets
+    # CI compute the native fingerprint from a runtime environment.
     BuildHookInterface = object
 
 # Location of the FFI sources, relative to the project root.
 PACKAGE_DIR = Path("src/_lcm/egm/upper_envelope/_exact_affine")
+NATIVE_PAYLOAD_DIR = Path("_pylcm_native")
+NATIVE_MANIFEST = "native-manifest.json"
+
+
+def native_source_fingerprint(*, root: Path) -> str:
+    """Return a stable digest of every input maintained in this repository."""
+    source_dir = root / PACKAGE_DIR
+    inputs = [
+        root / "hatch_build.py",
+        source_dir / "handler_symbols.py",
+        *sorted(source_dir.glob("*.cc")),
+        *sorted(source_dir.glob("*.cu")),
+    ]
+    digest = hashlib.sha256()
+    for path in inputs:
+        if not path.is_file():
+            continue
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _tool_version(executable: str | None) -> str | None:
+    """Return one compiler's version report for the installed-build manifest."""
+    if executable is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "unavailable"
+    report = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    return f"exit={result.returncode}\n{report}"
+
+
+def native_build_inputs(*, root: Path) -> dict[str, object]:
+    """Return all inputs that decide whether an installed payload is reusable."""
+    compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("g++")
+    nvcc = shutil.which("nvcc")
+    try:
+        from importlib.metadata import version  # noqa: PLC0415
+
+        jax_version = version("jax")
+        jaxlib_version = version("jaxlib")
+    except ImportError:  # pragma: no cover - Python always provides importlib.metadata
+        jax_version = "unknown"
+        jaxlib_version = "unknown"
+    return {
+        "schema": 1,
+        "source": native_source_fingerprint(root=root),
+        "python_abi": sys.implementation.cache_tag,
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "jax": jax_version,
+        "jaxlib": jaxlib_version,
+        "compiler": compiler,
+        "compiler_version": _tool_version(compiler),
+        "nvcc": nvcc,
+        "nvcc_version": _tool_version(nvcc),
+        "nvccflags": os.environ.get("NVCCFLAGS", ""),
+    }
+
+
+def write_native_manifest(
+    *, root: Path, output_dir: Path, libraries: list[Path]
+) -> Path:
+    """Write the installed payload's complete reproducibility fingerprint."""
+    inputs = native_build_inputs(root=root)
+    encoded = json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()
+    payload = {
+        "fingerprint": hashlib.sha256(encoded).hexdigest(),
+        "inputs": inputs,
+        "libraries": [library.name for library in libraries],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / NATIVE_MANIFEST
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+    return path
 
 
 def _accepts_msvc_flags(compiler: str) -> bool:
@@ -207,11 +298,19 @@ def toolchain_report(*, compiler: str, nvcc: str | None) -> str:
     return f"exact-affine: building with c++ at {compiler} and nvcc at {nvcc}."
 
 
-def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> list[Path]:
+def build_exact_affine(
+    *,
+    root: Path,
+    output_dir: Path | None = None,
+    jax_include_dir: str | None = None,
+) -> list[Path]:
     """Compile the FFI libraries and return the paths that were written.
 
     Args:
         root: Project root containing `src/`.
+        output_dir: Directory that receives libraries and compiler reports.
+            Defaults to the build-only `.pylcm-native-build/` directory under
+            `root`; native artifacts are never written into the source package.
         jax_include_dir: Directory holding the XLA FFI headers. Resolved from the
             importable `jax` when omitted.
 
@@ -240,6 +339,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         return []
 
     source_dir = root / PACKAGE_DIR
+    output_dir = output_dir or root / ".pylcm-native-build"
     include_dir = jax_include_dir or _find_jax_include_dir()
 
     if sys.platform == "win32":
@@ -259,8 +359,9 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                 "an MSVC developer environment or set CXX."
             )
             raise RuntimeError(msg)
-        target = source_dir / WINDOWS_CPU_LIBRARY
-        definition = source_dir / "certified_affine_ffi_cpu.def"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        target = output_dir / WINDOWS_CPU_LIBRARY
+        definition = output_dir / "certified_affine_ffi_cpu.def"
         definition.write_text(windows_module_definition())
         sys.stdout.write(
             f"exact-affine: building Windows CPU library with MSVC at {compiler}.\n"
@@ -277,7 +378,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                     "/LD",
                     f"/I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cpu.cc"),
-                    f"/Fo{source_dir}\\",
+                    f"/Fo{output_dir}\\",
                     f"/Fe:{target}",
                     "/link",
                     f"/DEF:{definition}",
@@ -294,6 +395,7 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
         )
         raise RuntimeError(msg)
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     nvcc = shutil.which("nvcc")
     sys.stdout.write(f"{toolchain_report(compiler=compiler, nvcc=nvcc)}\n")
 
@@ -310,9 +412,9 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                 f"-I{include_dir}",
                 str(source_dir / "certified_affine_ffi_cpu.cc"),
                 "-o",
-                str(source_dir / CPU_LIBRARY),
+                str(output_dir / CPU_LIBRARY),
             ],
-            target=source_dir / CPU_LIBRARY,
+            target=output_dir / CPU_LIBRARY,
         )
     ]
 
@@ -334,12 +436,27 @@ def build_exact_affine(*, root: Path, jax_include_dir: str | None = None) -> lis
                     f"-I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cuda.cu"),
                     "-o",
-                    str(source_dir / CUDA_LIBRARY),
+                    str(output_dir / CUDA_LIBRARY),
                 ],
-                target=source_dir / CUDA_LIBRARY,
+                target=output_dir / CUDA_LIBRARY,
             )
         )
     return written
+
+
+def native_inclusion_map(libraries: list[Path]) -> dict[str, str]:
+    """Map compiled libraries into the checkout-independent install payload."""
+    return {
+        str(library): (NATIVE_PAYLOAD_DIR / library.name).as_posix()
+        for library in libraries
+    }
+
+
+def include_native_payload(*, build_data: dict, libraries: list[Path]) -> None:
+    """Add one native payload to ordinary and editable Hatch builds."""
+    inclusion = native_inclusion_map(libraries)
+    build_data.setdefault("force_include", {}).update(inclusion)
+    build_data.setdefault("force_include_editable", {}).update(inclusion)
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -348,8 +465,13 @@ class CustomBuildHook(BuildHookInterface):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict) -> None:  # noqa: ARG002
-        """Compile the libraries and mark the wheel as platform-specific."""
-        build_exact_affine(root=Path(self.root))
+        """Compile and force-include the installed native payload."""
+        output_dir = Path(self.directory) / "pylcm-native"
+        libraries = build_exact_affine(root=Path(self.root), output_dir=output_dir)
+        manifest = write_native_manifest(
+            root=Path(self.root), output_dir=output_dir, libraries=libraries
+        )
+        include_native_payload(build_data=build_data, libraries=[*libraries, manifest])
         build_data["infer_tag"] = True
         build_data["pure_python"] = False
 

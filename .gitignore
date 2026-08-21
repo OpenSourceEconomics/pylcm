@@ -35,9 +35,10 @@ node_modules/
 __pycache__/
 *.py[cod]
 *.so
-# The Windows kernel and everything link.exe emits alongside it. Only the .dll
-# is packaged (see `build.artifacts` in pyproject.toml); the rest are inputs and
-# by-products of the link step.
+# Native outputs live in an install payload, never in the source package. The
+# standalone hook uses this build-only directory for diagnostics.
+.pylcm-native-build/
+# Everything link.exe emits alongside the installed Windows DLL.
 *.def
 *.dll
 *.exp

@@ -22,12 +22,11 @@ class MahlerYum:
         )
 
         self.model = MAHLER_YUM_MODEL
-        common_params, self.initial_conditions = create_inputs(
+        self.model_params, self.initial_conditions = create_inputs(
             seed=0,
             n_simulation_subjects=_N_SUBJECTS,
             params=START_PARAMS,
         )
-        self.model_params = {"alive": common_params}
 
     def setup(self):
         self._build()
