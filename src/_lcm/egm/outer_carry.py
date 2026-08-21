@@ -1,7 +1,7 @@
 """Continuous collapse of an outer candidate bank into the keeper.
 
-The finite collapse (`_collapse_finite_candidate_bank` in the solver layer)
-folds exact candidates pointwise; this module is its continuous counterpart:
+The finite solver folds exact candidates pointwise as their chunks complete;
+this module is its continuous counterpart:
 per state cell it runs the globally safeguarded continuous argmax over the
 outer axis of the bank's stacked surfaces (interpolant between exact nodes,
 golden refinement inside mesh-identified brackets, exact nodes always

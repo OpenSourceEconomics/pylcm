@@ -37,7 +37,6 @@ from _lcm.egm.nested_published_policy import (
 )
 from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
 from _lcm.egm.outer_candidates import (
-    OuterCandidateBank,
     OuterCandidateResult,
     build_outer_candidate_bank,
 )
@@ -718,16 +717,12 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Solve keeper and adjuster bank, then collapse the finite candidates.
+        """Solve the keeper, then dispatch to the configured outer search.
 
-        The adjuster sweep first materializes every node's exact conditional
-        solve into an `OuterCandidateBank` (the structure the continuous-outer
-        interpolant and adaptive mesh consume), then the finite collapse folds
-        the bank into the keeper in node order with deterministic tie semantics.
-        `outer_batch_size` bounds how many node solves are dispatched before
-        forcing them to device; the bank retains all candidates because the
-        interpolant consumes the shared bank, so peak retention is one full bank
-        regardless of batching.
+        The finite strategy folds completed chunks immediately, so
+        `outer_batch_size` bounds retained candidate data. The adaptive
+        strategy keeps its exact-node bank because interpolation and policy
+        publication consume every refined node.
         """
         keeper_result = self._solve_keeper(
             compiled_cores=compiled_cores,
@@ -750,7 +745,8 @@ class _NNBEGMPeriodKernel:
                 period=period,
                 ages=ages,
             )
-        bank = self._build_candidate_bank(
+        return self._solve_finite(
+            keeper_result=keeper_result,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -759,7 +755,54 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        return _collapse_finite_candidate_bank(keeper=keeper_result, bank=bank)
+
+    def _solve_finite(
+        self,
+        *,
+        keeper_result: KernelResult,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> KernelResult:
+        """Fold finite candidates in node order, retaining at most one chunk."""
+        V_arr = keeper_result.V_arr
+        carry = cast("EGMCarry", keeper_result.continuation)
+        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
+        nodes = list(self.outer_grid_values)
+        chunk_size = self.outer_batch_size or len(nodes)
+        for chunk_start in range(0, len(nodes), chunk_size):
+            chunk_results = [
+                self._solve_adjuster_node(
+                    node=node,
+                    adjuster_cores=adjuster_cores,
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                )
+                for node in nodes[chunk_start : chunk_start + chunk_size]
+            ]
+            for candidate in chunk_results:
+                V_arr = jnp.fmax(V_arr, candidate.V_arr)
+                carry = _fold_bridged_outer_carry(
+                    running=carry,
+                    candidate=candidate.carry,
+                )
+            # Materialize the ordered fold before the next chunk is dispatched
+            # so the completed candidate arrays can be released.
+            V_arr, carry = jax.block_until_ready((V_arr, carry))
+        return KernelResult(
+            V_arr=V_arr,
+            # The continuation template deliberately omits the policy leaf.
+            continuation=replace(carry, policy=None),
+            simulation_policy=keeper_result.simulation_policy,
+        )
 
     def _solve_continuous(
         self,
@@ -988,57 +1031,6 @@ class _NNBEGMPeriodKernel:
             ),
         )
 
-    def _build_candidate_bank(
-        self,
-        *,
-        compiled_cores: Mapping[str, Callable],
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> OuterCandidateBank:
-        """Solve every outer node and stack the results into a candidate bank.
-
-        Nodes are dispatched in `outer_batch_size` chunks, each chunk forced to
-        device before the next is dispatched, so a chunk's independent solves
-        can overlap while the number of in-flight solves stays bounded. Every
-        adjuster's `sim_policy` is collected into the bank (the continuous
-        simulation reader will consume them); the finite collapse does not.
-        """
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
-        nodes = list(self.outer_grid_values)
-        chunk_size = self.outer_batch_size or len(nodes)
-        results: list[OuterCandidateResult] = []
-        for chunk_start in range(0, len(nodes), chunk_size):
-            chunk_results = [
-                self._solve_adjuster_node(
-                    node=node,
-                    adjuster_cores=adjuster_cores,
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    # The node binding is not dropped, it MOVED: this branch and
-                    # the adaptive-mesh one both go through
-                    # `_solve_adjuster_node`, which applies
-                    # `_with_outer_post_decision` itself. Re-applying it here
-                    # would bind the same value twice.
-                    flat_params=flat_params,
-                    period=period,
-                    ages=ages,
-                )
-                for node in nodes[chunk_start : chunk_start + chunk_size]
-            ]
-            jax.block_until_ready(
-                [(result.V_arr, result.carry) for result in chunk_results]
-            )
-            results.extend(chunk_results)
-        return build_outer_candidate_bank(
-            outer_nodes=self.outer_grid_values,
-            results=results,
-        )
-
 
 def _subcores(
     *, compiled_cores: Mapping[str, Callable], role: str
@@ -1051,51 +1043,6 @@ def _subcores(
             for key, core in compiled_cores.items()
             if key.startswith(token)
         }
-    )
-
-
-def _collapse_finite_candidate_bank(
-    *, keeper: KernelResult, bank: OuterCandidateBank
-) -> KernelResult:
-    """Collapse a finite candidate bank into the keeper — the exact grid search.
-
-    Reproduces the pre-bank incremental sweep exactly, including tie-breaking:
-    the keeper initializes the running envelope and every fold compares with a
-    strict `>`, so the keeper wins exact ties and an earlier node beats a
-    later one. `V = max(V_keeper, max_j W_j)` uses `fmax` — the inner NB-EGM
-    NaN-dead masks cells an outer node makes infeasible, and one infeasible
-    candidate must not poison a cell another candidate solves; a cell stays
-    NaN only when every candidate is infeasible there. The carry rows all live
-    on the shared liquid state grid, so the outer envelope is a pointwise
-    maximum per row entry — value and marginal follow the winning candidate.
-
-    The simulate phase re-optimizes the outer durable action by grid argmax
-    over the next-period value array, so the keeper's published `sim_policy`
-    rides through unchanged; the bank's collected adjuster policies are not
-    consumed here (the continuous simulation reader will consume them).
-    """
-    V_arr = keeper.V_arr
-    carry = cast("EGMCarry", keeper.continuation)
-    for index in range(bank.n_candidates):
-        V_arr = jnp.fmax(V_arr, bank.candidate_v_arr(index))
-        carry = _fold_bridged_outer_carry(
-            running=carry,
-            candidate=bank.candidate_carry(index),
-        )
-    return KernelResult(
-        V_arr=V_arr,
-        # The fold seeds from the KEEPER's carry, which — being a standalone
-        # ride-along NBEGM carry — may hold the exact-consumption `policy` leaf
-        # leaf. The republished NNBEGM
-        # continuation TEMPLATE strips that leaf, so the producer must strip it
-        # too, or the cross-period roll compares a policy-carrying continuation
-        # against a policy-free template. `jax.tree.map` does NOT catch that:
-        # it flattens the FIRST tree, and `flatten_up_to` then hands back the
-        # template's `None` subtree as though it were a leaf, so the mismatch
-        # surfaces only as a type violation deep inside the sharding match.
-        # `simulation_policy` is a separate field and is unaffected.
-        continuation=replace(carry, policy=None),
-        simulation_policy=keeper.simulation_policy,
     )
 
 

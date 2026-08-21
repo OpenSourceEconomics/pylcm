@@ -738,15 +738,12 @@ def _replace_continuous_action_with_policy_read(
 
     - the recovered actions;
     - the value to report for the emitted pair. Every path that keeps the grid
-      pair returns `grid_values` unchanged; only the flat single-EGM read, which
-      is the one path that moves the action off the grid here, recomputes it.
-      The nested (continuous-outer) path also moves the action, but it reports
-      its own value through the payload rather than through this return, so it
-      passes `grid_values` straight back;
+      pair returns `grid_values` unchanged; every accepted off-grid pair is
+      scored by the canonical Q and returns that attained value;
     - a nested-fallback flag: the per-subject Boolean array from
-      `_read_nested_policy` on the continuous-outer path, or `None` on every
-      other path (no policy, the flat single-EGM read, passive rows, the
-      discrete-branch redecide). The caller resolves `None` to all-False where
+      `_read_nested_policy`, extended to include canonical infeasibility,
+      non-finite scores, and pairs that score below the grid pair; or `None`
+      on every other path. The caller resolves `None` to all-False where
       the regime's subject count is known.
     """
     if sim_policy is None:
@@ -764,7 +761,63 @@ def _replace_continuous_action_with_policy_read(
             period=period,
             age=age,
         )
-        return nested_actions, grid_values, nested_fallback
+        nested_actions, nested_value, nested_feasible = (
+            _canonically_refine_nested_inner_action(
+                payload=sim_policy,
+                proposed_actions=nested_actions,
+                regime=regime,
+                canonical_states=canonical_states,
+                action_names=action_names,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+            )
+        )
+        nested_admissible = _nested_actions_are_intrinsically_admissible(
+            payload=sim_policy,
+            actions=nested_actions,
+            regime=regime,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+        baseline_actions, baseline_value, baseline_admissible = _nested_grid_baseline(
+            payload=sim_policy,
+            grid_actions=optimal_actions,
+            grid_values=grid_values,
+            regime=regime,
+            states=states,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+        accepted = (
+            ~nested_fallback
+            & nested_feasible
+            & nested_admissible
+            & jnp.isfinite(nested_value)
+            & ((~baseline_admissible) | (nested_value >= baseline_value))
+        )
+        emitted_actions = MappingProxyType(
+            {
+                name: jnp.where(
+                    accepted,
+                    jnp.asarray(nested_actions[name]),
+                    jnp.asarray(baseline_actions[name]),
+                )
+                for name in optimal_actions
+            }
+        )
+        return (
+            emitted_actions,
+            jnp.where(accepted, nested_value, baseline_value),
+            ~accepted,
+        )
     read = regime.simulation.egm_policy_read
     if read is None:
         return optimal_actions, grid_values, None
@@ -1248,6 +1301,209 @@ def _read_nested_policy(
     return MappingProxyType(new_actions), ~accepted
 
 
+def _nested_actions_are_intrinsically_admissible(
+    *,
+    payload: NestedEGMSimPolicy,
+    actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> BoolND:
+    """Check the solver-owned domain and budget for a nested action pair.
+
+    Canonical Q feasibility covers user constraints, but the nested solver also
+    owns two intrinsic restrictions: the recovered outer post-decision must lie
+    on its published outer domain, and inner consumption must leave at least the
+    declared savings lower bound. The raw simulation-grid winner is subject to
+    the same restrictions before it can serve as the no-degradation baseline;
+    otherwise extrapolation beyond the solved outer domain can assign an
+    inadmissible grid pair a spuriously high value.
+    """
+    n_subjects = next(iter(states.values())).shape[0]
+    outer_transition = _outer_transition_offset_and_slope(
+        payload=payload,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    if outer_transition is None:
+        return jnp.zeros(n_subjects, dtype=bool)
+    _, slope_is_unit, transition_at = outer_transition
+    outer_action = jnp.asarray(actions[payload.outer_action_name])
+    outer_post_decision = transition_at(outer_action)
+    outer_nodes = payload.adjuster.outer_nodes
+    in_outer_domain = (outer_post_decision >= outer_nodes[0]) & (
+        outer_post_decision <= outer_nodes[-1]
+    )
+    resources = _nested_resources(
+        payload=payload,
+        regime=regime,
+        states=states,
+        outer_action=outer_action,
+        outer_post_decision=outer_post_decision,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    inner_action = jnp.asarray(actions[payload.inner_action_name])
+    return (
+        slope_is_unit
+        & in_outer_domain
+        & jnp.isfinite(outer_action)
+        & jnp.isfinite(inner_action)
+        & jnp.isfinite(resources)
+        & (inner_action > 0.0)
+        & (inner_action <= resources - payload.savings_lower_bound)
+    )
+
+
+def _nested_grid_baseline(
+    *,
+    payload: NestedEGMSimPolicy,
+    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
+    grid_values: FloatND,
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
+    """Return an admissible baseline for the nested no-degradation check.
+
+    The simulation grid maximizer does not know the nested solver's outer
+    post-decision domain. Where its pair lies inside that domain and respects
+    the intrinsic savings floor, retain it and its already-computed value.
+    Else project only the outer post-decision to the nearest published domain
+    endpoint, trim consumption only if the projected resources require it,
+    and score that repaired pair through canonical Q. The repaired pair stays
+    marked as a nested fallback, but it is safe to emit and evolve.
+    """
+    grid_admissible = _nested_actions_are_intrinsically_admissible(
+        payload=payload,
+        actions=grid_actions,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    projected_actions = _project_grid_pair_into_nested_domain(
+        payload=payload,
+        grid_actions=grid_actions,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    projected_value, projected_q_feasible = _canonical_Q_at_actions(
+        candidate_actions=projected_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    projected_admissible = (
+        _nested_actions_are_intrinsically_admissible(
+            payload=payload,
+            actions=projected_actions,
+            regime=regime,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+        & projected_q_feasible
+    )
+    baseline_actions = MappingProxyType(
+        {
+            name: jnp.where(
+                grid_admissible,
+                jnp.asarray(grid_action),
+                jnp.asarray(projected_actions[name]),
+            )
+            for name, grid_action in grid_actions.items()
+        }
+    )
+    return (
+        baseline_actions,
+        jnp.where(grid_admissible, grid_values, projected_value),
+        grid_admissible | projected_admissible,
+    )
+
+
+def _project_grid_pair_into_nested_domain(
+    *,
+    payload: NestedEGMSimPolicy,
+    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> MappingProxyType[ActionName, FloatND | IntND]:
+    """Project a raw grid pair onto the nested outer domain and savings floor."""
+    n_subjects = next(iter(states.values())).shape[0]
+    outer_transition = _outer_transition_offset_and_slope(
+        payload=payload,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    if outer_transition is None:
+        return grid_actions
+    _, slope_is_unit, transition_at = outer_transition
+    outer_action = jnp.asarray(grid_actions[payload.outer_action_name])
+    outer_post_decision = transition_at(outer_action)
+    outer_nodes = payload.adjuster.outer_nodes
+    projected_post_decision = jnp.clip(
+        outer_post_decision, outer_nodes[0], outer_nodes[-1]
+    )
+    projected_outer_action = jnp.where(
+        slope_is_unit,
+        outer_action + (projected_post_decision - outer_post_decision),
+        outer_action,
+    )
+    projected_post_decision = transition_at(projected_outer_action)
+    resources = _nested_resources(
+        payload=payload,
+        regime=regime,
+        states=states,
+        outer_action=projected_outer_action,
+        outer_post_decision=projected_post_decision,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    inner_action = jnp.minimum(
+        jnp.asarray(grid_actions[payload.inner_action_name]),
+        resources - payload.savings_lower_bound,
+    )
+    return MappingProxyType(
+        {
+            **grid_actions,
+            payload.outer_action_name: projected_outer_action,
+            payload.inner_action_name: inner_action,
+        }
+    )
+
+
 def _nested_resources(
     *,
     payload: NestedEGMSimPolicy,
@@ -1497,6 +1753,88 @@ def _canonical_Q_at_actions(
         age=age,
     )
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
+
+
+def _canonically_refine_nested_inner_action(
+    *,
+    payload: NestedEGMSimPolicy,
+    proposed_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
+    """Re-optimize the inner action at the proposed continuous outer action.
+
+    Interpolating the conditional inner policies across outer nodes does not
+    generally preserve the pair's canonical value. Keep the proposed outer
+    action, evaluate canonical Q on every exact inner-action node, refine every
+    node-local maximum with the global safeguard, and return the attained
+    action, value, and feasibility together. Exact inner nodes always compete,
+    so this search cannot lose the best inner grid action conditional on the
+    proposed outer action.
+    """
+    inner_name = payload.inner_action_name
+    inner_nodes = jnp.asarray(regime.simulation.grids[inner_name].to_jax())
+    subject_shape = jnp.asarray(proposed_actions[inner_name]).shape
+
+    def score(inner_action: FloatND) -> FloatND:
+        target_shape = jnp.broadcast_shapes(subject_shape, inner_action.shape)
+        candidate_actions = MappingProxyType(
+            {
+                name: (
+                    jnp.broadcast_to(jnp.asarray(inner_action), target_shape)
+                    if name == inner_name
+                    else jnp.broadcast_to(jnp.asarray(action), target_shape)
+                )
+                for name, action in proposed_actions.items()
+            }
+        )
+        candidate_states = MappingProxyType(
+            {
+                name: jnp.broadcast_to(jnp.asarray(state), target_shape)
+                for name, state in canonical_states.items()
+            }
+        )
+        values, feasible = _canonical_Q_at_actions(
+            candidate_actions=candidate_actions,
+            regime=regime,
+            canonical_states=candidate_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+        return jnp.where(feasible, values, -jnp.inf)
+
+    node_values = vmap(score)(inner_nodes)
+    search = safeguarded_continuous_argmax(
+        score,
+        nodes=inner_nodes,
+        node_values=node_values,
+        golden_iterations=payload.golden_iterations,
+    )
+    refined_actions = MappingProxyType(
+        {
+            name: search.x if name == inner_name else action
+            for name, action in proposed_actions.items()
+        }
+    )
+    values, feasible = _canonical_Q_at_actions(
+        candidate_actions=refined_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    return refined_actions, values, feasible & search.valid
 
 
 def _resources_at_subjects(

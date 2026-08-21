@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+import _lcm.solution.nnbegm as nnbegm_module
 from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
@@ -166,3 +167,24 @@ def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
                 np.asarray(chunked[period][regime_name]),
                 err_msg=f"{regime_name} at period {period}",
             )
+
+
+def test_finite_outer_grid_does_not_materialize_a_candidate_bank(monkeypatch) -> None:
+    """Finite batching folds each completed chunk without retaining every node."""
+
+    def fail_if_bank_is_built(**_kwargs):
+        raise AssertionError("FiniteOuterGrid retained a full candidate bank")
+
+    monkeypatch.setattr(
+        nnbegm_module,
+        "build_outer_candidate_bank",
+        fail_if_bank_is_built,
+    )
+
+    solution = toy.build_model(
+        variant="n_nbegm",
+        outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
+        n_periods=2,
+    ).solve(params=_PARAMS, log_level="debug")
+
+    assert np.isfinite(np.asarray(solution[0]["alive"])).all()
