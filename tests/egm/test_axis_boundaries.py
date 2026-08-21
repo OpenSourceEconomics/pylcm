@@ -7,6 +7,7 @@ import pytest
 
 from _lcm.axis_boundaries import (
     AxisBoundary,
+    BoundaryOwner,
     axis_interval_indices,
     boundary_owner_for_feasible_region,
     effect_code,
@@ -79,16 +80,26 @@ def test_resolved_partition_uses_one_ulp_for_each_open_side() -> None:
     )
 
 
-def test_coincident_opposite_owners_create_an_equality_only_interval() -> None:
+@pytest.mark.parametrize("declaration_order", ["right-left", "left-right"])
+@pytest.mark.parametrize("boundary_value", [1.0, -3.5, 2.0**-10, 2.0**10])
+def test_coincident_opposite_owners_create_an_equality_only_interval(
+    declaration_order: str,
+    boundary_value: float,
+) -> None:
     """An exact shared threshold remains distinct from both open neighbours."""
-    boundary = jnp.float32(4.0)
+    boundary = jnp.asarray(boundary_value)
+    scale = jnp.maximum(jnp.abs(boundary), jnp.asarray(1.0))
+    right = AxisBoundary(
+        value=boundary,
+        owner="right",
+        effect="continuous_kink",
+    )
+    left = AxisBoundary(value=boundary, owner="left", effect="feasibility")
+    boundaries = (right, left) if declaration_order == "right-left" else (left, right)
     partition = resolve_axis_partition(
-        start=jnp.float32(0.0),
-        stop=jnp.float32(10.0),
-        boundaries=(
-            AxisBoundary(value=boundary, owner="right", effect="continuous_kink"),
-            AxisBoundary(value=boundary, owner="left", effect="feasibility"),
-        ),
+        start=boundary - 4 * scale,
+        stop=boundary + 4 * scale,
+        boundaries=boundaries,
     )
     values = jnp.array(
         [
@@ -101,6 +112,67 @@ def test_coincident_opposite_owners_create_an_equality_only_interval() -> None:
     np.testing.assert_array_equal(
         axis_interval_indices(partition=partition, values=values),
         np.array([0, 1, 2]),
+    )
+    np.testing.assert_array_equal(
+        partition.owner_is_right,
+        np.array([True, False]),
+    )
+    np.testing.assert_array_equal(
+        partition.effect_codes,
+        np.array([effect_code("continuous_kink"), effect_code("feasibility")]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("owner", "expected_intervals", "expected_regions"),
+    [
+        ("right", (0, 2, 2), (0, 1, 1)),
+        ("left", (0, 0, 2), (0, 0, 1)),
+    ],
+)
+@pytest.mark.parametrize(
+    "declaration_order",
+    ["schedule-feasibility", "feasibility-schedule"],
+)
+def test_coincident_same_owner_boundaries_leave_no_reachable_zero_width_interval(
+    owner: BoundaryOwner,
+    expected_intervals: tuple[int, int, int],
+    expected_regions: tuple[int, int, int],
+    declaration_order: str,
+) -> None:
+    """Repeated ownership retains every effect without exposing an empty interval."""
+    boundary = jnp.float32(4.0)
+    schedule = AxisBoundary(value=boundary, owner=owner, effect="flat_budget")
+    feasibility = AxisBoundary(value=boundary, owner=owner, effect="feasibility")
+    boundaries = (
+        (schedule, feasibility)
+        if declaration_order == "schedule-feasibility"
+        else (feasibility, schedule)
+    )
+    partition = resolve_axis_partition(
+        start=jnp.float32(0.0),
+        stop=jnp.float32(10.0),
+        boundaries=boundaries,
+    )
+    values = jnp.array(
+        [
+            jnp.nextafter(boundary, -jnp.inf),
+            boundary,
+            jnp.nextafter(boundary, jnp.inf),
+        ]
+    )
+
+    np.testing.assert_array_equal(
+        axis_interval_indices(partition=partition, values=values),
+        np.array(expected_intervals),
+    )
+    np.testing.assert_array_equal(
+        feasibility_region_indices(partition=partition, values=values),
+        np.array(expected_regions),
+    )
+    np.testing.assert_array_equal(
+        np.sort(partition.effect_codes),
+        np.sort(np.array([effect_code("flat_budget"), effect_code("feasibility")])),
     )
 
 

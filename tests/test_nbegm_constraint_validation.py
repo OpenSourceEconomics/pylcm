@@ -8,7 +8,7 @@ structure remain outside the route and are refused when the model is built.
 """
 
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -433,6 +433,92 @@ def test_nbegm_publishes_a_one_sided_feasibility_carry(monkeypatch) -> None:
     assert at_open_left.sum() >= 1
     assert np.all(np.isfinite(value_row[at_boundary]))
     assert np.all(np.isneginf(value_row[at_open_left]))
+
+
+@pytest.mark.parametrize(
+    ("declaration", "boundary", "open_direction", "endpoint_status"),
+    [
+        (lcm.ref("liquid") < 8.0, 8.0, -np.inf, "infeasible"),
+        (lcm.ref("liquid") > 0.1, 0.1, np.inf, "infeasible"),
+        (
+            (lcm.ref("liquid") <= 8.0) & (lcm.ref("liquid") >= 8.0),
+            8.0,
+            -np.inf,
+            "finite",
+        ),
+        (
+            (lcm.ref("liquid") >= 8.0) & (lcm.ref("liquid") <= 8.0),
+            8.0,
+            -np.inf,
+            "finite",
+        ),
+        (
+            (lcm.ref("liquid") >= 0.1) & (lcm.ref("liquid") <= 0.1),
+            0.1,
+            np.inf,
+            "finite",
+        ),
+        (
+            (lcm.ref("liquid") <= 0.1) & (lcm.ref("liquid") >= 0.1),
+            0.1,
+            np.inf,
+            "finite",
+        ),
+    ],
+)
+def test_nbegm_carry_retains_the_declared_topology_at_a_grid_endpoint(
+    monkeypatch,
+    declaration,
+    boundary: float,
+    open_direction: float,
+    endpoint_status: Literal["finite", "infeasible"],
+) -> None:
+    """An endpoint carry distinguishes its exact value from the adjacent germ."""
+    seen = []
+    original = egm_module._EGMPeriodKernel.__call__
+
+    def recording_call(kernel, **kwargs):
+        carry = kwargs["next_regime_to_continuation"][kernel.continuation_target]
+        if carry.breakpoints is not None:
+            seen.append(
+                (
+                    np.asarray(carry.breakpoints),
+                    np.asarray(carry.endog_grid),
+                    np.asarray(carry.value),
+                )
+            )
+        return original(kernel, **kwargs)
+
+    monkeypatch.setattr(
+        egm_module._EGMPeriodKernel,
+        "__call__",
+        recording_call,
+    )
+    model = _build_smooth_model(
+        constraints={"asset_test": cast("Callable[..., object]", declaration)}
+    )
+
+    model.solve(params=_smooth_params(asset_limit=None), log_level="off")
+
+    assert seen, "no feasibility carry reached the parent reader"
+    breakpoints, endog_grid, value = seen[-1]
+    finite_breakpoints = breakpoints[np.isfinite(breakpoints)]
+    expected_boundary = np.asarray(boundary, dtype=breakpoints.dtype)
+    np.testing.assert_array_equal(finite_breakpoints, expected_boundary[None])
+
+    endog_row = endog_grid.reshape(-1)
+    value_row = value.reshape(-1)
+    endpoint = endog_row == expected_boundary
+    open_side = endog_row == np.nextafter(
+        expected_boundary,
+        open_direction,
+    )
+
+    assert endpoint.sum() >= 1
+    assert open_side.sum() >= 1
+    endpoint_is_finite = endpoint_status == "finite"
+    assert bool(np.all(np.isfinite(value_row[endpoint]))) == endpoint_is_finite
+    assert bool(np.all(np.isfinite(value_row[open_side]))) != endpoint_is_finite
 
 
 def test_nbegm_rejects_feasibility_composed_with_a_binary_case_piece() -> None:
