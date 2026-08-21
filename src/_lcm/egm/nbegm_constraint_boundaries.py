@@ -1,10 +1,15 @@
 """Compile declarative liquid-state constraints into NBEGM boundary surfaces."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
 from dags.tree import qname_from_tree_path
 
+from _lcm.axis_boundaries import (
+    AxisBoundary,
+    boundary_owner_for_feasible_region,
+)
 from _lcm.constraints.dispositions import (
     BoundaryProgram,
     CompileBoundary,
@@ -14,7 +19,7 @@ from _lcm.constraints.dispositions import (
 from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.routes import BoundaryCompiler, BoundConstraint
 from _lcm.typing import FunctionName
-from lcm.typing import StateName
+from lcm.typing import FloatND, StateName
 
 
 @dataclass(frozen=True)
@@ -145,6 +150,30 @@ def _compile_surface(
         threshold=threshold,
         feasible_side=feasible_side,
         includes_boundary=surface.admits_equality,
+    )
+
+
+def feasibility_axis_boundaries(
+    *,
+    programs: tuple[NBEGMFeasibilityBoundaryProgram, ...],
+    params: Mapping[str, FloatND],
+) -> tuple[AxisBoundary, ...]:
+    """Resolve compiled literal and flat-parameter thresholds into axis sources."""
+    return tuple(
+        AxisBoundary(
+            value=(
+                surface.threshold.value
+                if isinstance(surface.threshold, Const)
+                else params[surface.threshold.name]
+            ),
+            owner=boundary_owner_for_feasible_region(
+                feasible_side=surface.feasible_side,
+                includes_boundary=surface.includes_boundary,
+            ),
+            effect="feasibility",
+        )
+        for program in programs
+        for surface in program.surfaces
     )
 
 

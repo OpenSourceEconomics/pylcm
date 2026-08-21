@@ -3,8 +3,11 @@
 from types import MappingProxyType
 from typing import Literal
 
+import jax
+import jax.numpy as jnp
 import pytest
 
+from _lcm.axis_boundaries import resolve_axis_partition
 from _lcm.constraints.dispositions import (
     CompileBoundary,
     ConstraintContext,
@@ -16,6 +19,7 @@ from _lcm.constraints.routes import BoundConstraint, ConstraintSite
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
     build_nbegm_feasibility_boundary_compiler,
+    feasibility_axis_boundaries,
 )
 from lcm import Condition, implies, ref
 from lcm.typing import BoolND, FloatND
@@ -116,6 +120,34 @@ def test_nbegm_qualifies_a_constraint_parameter_threshold() -> None:
     payload = disposition.program.payload
     assert isinstance(payload, NBEGMFeasibilityBoundaryProgram)
     assert payload.surfaces[0].threshold == Ref("eligible__limit")
+
+
+def test_compiled_surfaces_resolve_runtime_thresholds_inside_jit() -> None:
+    """Literal and flat-parameter surfaces become one runtime axis partition."""
+    disposition = _compile(
+        (ref("liquid") >= ref("limit")) & (ref("liquid") < 9.0),
+        param_names=frozenset({"eligible__limit"}),
+    )
+    assert isinstance(disposition, CompileBoundary)
+    program = disposition.program.payload
+    assert isinstance(program, NBEGMFeasibilityBoundaryProgram)
+
+    def resolve_values(limit):
+        boundaries = feasibility_axis_boundaries(
+            programs=(program,),
+            params={"eligible__limit": limit},
+        )
+        partition = resolve_axis_partition(
+            start=jnp.float32(0.0),
+            stop=jnp.float32(10.0),
+            boundaries=boundaries,
+        )
+        return partition.values, partition.owner_is_right
+
+    values, owner_is_right = jax.jit(resolve_values)(jnp.float32(3.0))
+
+    assert values.tolist() == [3.0, 9.0]
+    assert owner_is_right.tolist() == [True, True]
 
 
 @pytest.mark.parametrize(
