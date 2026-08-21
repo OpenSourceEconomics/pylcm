@@ -1,0 +1,462 @@
+"""Dobrescu--Shanker / Druedahl--Jorgensen two-asset pension benchmark (brute form).
+
+The 2-D pension model the RFC-vs-G2EGM comparison solves: a finite-horizon
+consumption--saving problem with a **liquid** account and an illiquid **pension**
+account. While working, the agent chooses consumption `c` and a one-directional
+pension `deposit` (`d >= 0`); the liquid post-decision balance `liquid - c - d` is
+kept non-negative by a borrowing constraint, and the pension post-decision balance
+`pension + d + chi*log(1 + d)` carries a concave employer match. Liquid earns gross
+return `1 + return_liquid`, pension the higher `1 + return_pension`.
+
+Retirement is a **deterministic lifecycle transition** at a fixed age (not an
+endogenous per-period choice -- the Druedahl--Jorgensen `solve.m` solves the retired
+sub-problem as a separate 1-D continuation, with no per-period work/retire max). At
+the working->retired transition the pension is paid out as a lump sum into liquid and
+the problem collapses to a 1-D liquid-only consumption problem; the retired agent
+receives a flat retirement income and earns the liquid return. Working utility carries
+an additive disutility of work `work_disutility` (the retired agent pays none).
+
+This is the dense-grid brute-force **oracle** the 2-D EGM kernel (G2EGM / multidim
+RFC) is validated against. It is written in brute-solvable form -- two continuous
+states (`liquid`, `pension`), two continuous actions (`consumption`, `deposit`), both
+coupled through the budget -- with the faithful calibration read from the G2EGM
+`SetupPar.m` (`get_params`). Default grids are small for fast local oracle solves;
+pass larger sizes (and the full calibration) for the reference comparison.
+
+Two micro-conventions are parameterized pending confirmation against `fun.m`:
+`pension_payout_return` (the return factor applied to the paid-out pension balance at
+retirement; `1 + return_pension` by default) and `retirement_income_in_first_period`
+(whether `retirement_income` is received in the first retired period).
+"""
+
+from collections.abc import Callable
+from typing import cast
+
+import jax.numpy as jnp
+
+from _lcm.grids.continuous import ContinuousGrid
+from lcm import (
+    AgeGrid,
+    AgeSpecializedGrid,
+    LinearAggregator,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime
+from lcm.solvers import EGM, GridSearch, Solver
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
+
+type _StateGrid = ContinuousGrid | AgeSpecializedGrid
+
+
+@categorical(ordered=False)
+class RegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+def _crra(consumption: FloatND, crra: float) -> FloatND:
+    # `jnp.where` evaluates both branches, so the unselected one must stay
+    # finite: at `crra == 1` the power branch is `c**0 / 0`, and while that
+    # infinity is discarded from the primal it reaches the derivative as
+    # `0 * inf`, giving a NaN marginal utility for a perfectly ordinary model.
+    # Substituting an exponent of one there costs nothing — the branch is not
+    # selected — and leaves `c / 1` behind instead.
+    #
+    # The predicate is exact equality on purpose. This felicity omits the `-1`
+    # that would make the power branch tend to `log` as `crra -> 1`, so the two
+    # branches genuinely differ by `1 / (1 - crra)` nearby. Widening the test to
+    # a tolerance band would not remove a discontinuity but introduce one, of
+    # size `1 / tol`.
+    is_log = crra == 1.0
+    safe_exponent = jnp.where(is_log, 1.0, 1.0 - crra)
+    return jnp.where(
+        is_log,
+        jnp.log(consumption),
+        consumption**safe_exponent / safe_exponent,
+    )
+
+
+def utility_working(
+    consumption: ContinuousAction, crra: float, work_disutility: float
+) -> FloatND:
+    """CRRA consumption utility net of the additive disutility of work."""
+    return _crra(consumption, crra) - work_disutility
+
+
+def utility_retired(consumption: ContinuousAction, crra: float) -> FloatND:
+    """CRRA consumption utility; the retired agent pays no work disutility."""
+    return _crra(consumption, crra)
+
+
+def bequest(liquid: ContinuousState, crra: float) -> FloatND:
+    """Terminal value: consume remaining liquid wealth (the pension is paid out)."""
+    return _crra(liquid, crra)
+
+
+def inverse_marginal_utility(marginal_continuation: FloatND, crra: float) -> FloatND:
+    """Inverse of `u'(c) = c**(-crra)`; the work disutility is additive."""
+    return marginal_continuation ** (-1.0 / crra)
+
+
+def _pension_post_decision(
+    pension: ContinuousState,
+    deposit: ContinuousAction,
+    match_rate: float,
+) -> FloatND:
+    """Pension post-decision balance `pension + deposit + chi*log(1 + deposit)`."""
+    return pension + deposit + match_rate * jnp.log(1.0 + deposit)
+
+
+def next_liquid_working(
+    liquid: ContinuousState,
+    consumption: ContinuousAction,
+    deposit: ContinuousAction,
+    return_liquid: float,
+    wage: float,
+) -> ContinuousState:
+    """Liquid law of motion while staying in the working regime."""
+    return (1.0 + return_liquid) * (liquid - consumption - deposit) + wage
+
+
+def next_liquid_retiring(
+    liquid: ContinuousState,
+    pension: ContinuousState,
+    consumption: ContinuousAction,
+    deposit: ContinuousAction,
+    return_liquid: float,
+    pension_payout_return: float,
+    match_rate: float,
+    retirement_income: float,
+) -> ContinuousState:
+    """Liquid on the working->retired transition: the pension is paid out as a lump sum.
+
+    The liquid post-decision balance earns the liquid return, the pension
+    post-decision balance is paid out scaled by `pension_payout_return`, and the
+    first retirement income is added.
+    """
+    liquid_post = liquid - consumption - deposit
+    pension_post = _pension_post_decision(pension, deposit, match_rate)
+    return (
+        (1.0 + return_liquid) * liquid_post
+        + pension_payout_return * pension_post
+        + retirement_income
+    )
+
+
+def next_pension_working(
+    pension: ContinuousState,
+    deposit: ContinuousAction,
+    return_pension: float,
+    match_rate: float,
+) -> ContinuousState:
+    """Pension law of motion while staying in the working regime."""
+    return (1.0 + return_pension) * _pension_post_decision(pension, deposit, match_rate)
+
+
+def resources_retired(liquid: ContinuousState) -> FloatND:
+    return liquid
+
+
+def savings_retired(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    """Retired end-of-period balance the liquid law is written through."""
+    return liquid - consumption
+
+
+def next_liquid_retired(
+    savings: FloatND,
+    return_liquid: float,
+    retirement_income: float,
+) -> ContinuousState:
+    """Liquid law of motion within retirement (1-D consumption--saving)."""
+    return (1.0 + return_liquid) * savings + retirement_income
+
+
+def feasible_working(
+    liquid: ContinuousState,
+    consumption: ContinuousAction,
+    deposit: ContinuousAction,
+) -> BoolND:
+    """Liquid borrowing constraint: the liquid post-decision balance stays >= 0."""
+    return consumption + deposit <= liquid
+
+
+def feasible_retired(
+    liquid: ContinuousState,
+    consumption: ContinuousAction,
+) -> BoolND:
+    """Liquid borrowing constraint in retirement (no deposit margin)."""
+    return consumption <= liquid
+
+
+def prob_stay_working(age: int, retirement_age: float) -> FloatND:
+    """Deterministic (0/1) probability of staying in the working regime next period."""
+    return jnp.where(age + 1 < retirement_age, 1.0, 0.0)
+
+
+def prob_retire(age: int, retirement_age: float) -> FloatND:
+    """Deterministic (0/1) probability of transitioning working->retired next period."""
+    return jnp.where(age + 1 >= retirement_age, 1.0, 0.0)
+
+
+def prob_stay_retired(age: int, final_age_alive: float) -> FloatND:
+    """Deterministic (0/1) probability of remaining retired next period."""
+    return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
+
+
+def prob_die(age: int, final_age_alive: float) -> FloatND:
+    """Deterministic (0/1) probability of transitioning retired->dead next period."""
+    return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
+
+
+def get_model(
+    *,
+    n_periods: int = 5,
+    retirement_period: int = 3,
+    n_liquid: int = 12,
+    n_pension: int = 10,
+    n_consumption: int = 14,
+    n_deposit: int = 8,
+    liquid_max: float = 20.0,
+    pension_max: float = 15.0,
+    working_liquid_grid: _StateGrid | None = None,
+    working_pension_grid: _StateGrid | None = None,
+    retired_liquid_grid: _StateGrid | None = None,
+    dead_liquid_grid: ContinuousGrid | None = None,
+    solvers: dict[str, Solver] | None = None,
+    laws: dict[str, Callable] | None = None,
+    koopmans_aggregator: UserFunction = LinearAggregator(),
+    analytic_inverse_marginal_utility: bool = True,
+    enable_jit: bool = True,
+) -> Model:
+    """Create the three-regime (working, retired, dead) DS pension model.
+
+    The agent works for `retirement_period` periods, then is retired for the rest of
+    the `n_periods`-period horizon, with a terminal (dead) period. Grid sizes default
+    to a small oracle scale; pass larger values for a finer reference solve.
+
+    Args:
+        working_liquid_grid: Optional override for the working regime's `liquid`
+            grid. Defaults to the shared grid built from `n_liquid` / `liquid_max`.
+            Pass an `AgeSpecializedGrid` to make the working liquid support move
+            with age.
+        working_pension_grid: Optional override for the working regime's `pension`
+            grid, defaulting to the shared grid built from `n_pension` /
+            `pension_max`.
+        retired_liquid_grid: Optional override for the retired regime's `liquid`
+            grid, defaulting to the shared liquid grid.
+        dead_liquid_grid: Optional override for the terminal regime's `liquid`
+            grid, defaulting to the shared liquid grid.
+        solvers: Optional mapping of regime name to its `Solver`. A name absent from
+            the mapping (or `solvers=None`) keeps the default `GridSearch` — so the
+            default model is the dense-grid brute oracle. Pass
+            `{"retired": EGM(...)}` for the 1-D retired consumption--saving
+            problem.
+        laws: Optional mapping of law-of-motion function name to a replacement.
+            A name absent from the mapping keeps this module's own function. Use
+            it to vary a law's parameter spellings without varying its
+            behaviour.
+        koopmans_aggregator: Model-level Bellman aggregator, defaulting to
+            pylcm's `utility + discount_factor * CE`.
+        analytic_inverse_marginal_utility: Whether a regime solved by an
+            endogenous-grid method declares the closed-form `(u')^-1`. With
+            `False` those regimes declare only `utility`, so the Euler equation
+            is inverted numerically. A brute-force regime never declares it: it
+            runs no Euler inversion, so `marginal_continuation` would surface as
+            one of its parameters.
+        enable_jit: Whether the model JIT-compiles its kernels. Pass `False` to
+            run the same solve eagerly.
+
+    Every grid override defaults to the shared grid, so calling `get_model` without
+    them reproduces one common `liquid` support across all three regimes. Passing a
+    different grid to one regime is what makes continuation-grid provenance
+    observable: a solver that reads `V_{t+1}` on its own grid rather than the
+    target's then disagrees with the dense brute.
+
+    """
+    solvers = solvers or {}
+    laws = laws or {}
+    working_solver = solvers.get("working", GridSearch())
+    retired_solver = solvers.get("retired", GridSearch())
+    liquid_working = laws.get("next_liquid_working", next_liquid_working)
+    liquid_retiring = laws.get("next_liquid_retiring", next_liquid_retiring)
+    pension_working = laws.get("next_pension_working", next_pension_working)
+    liquid_retired = laws.get("next_liquid_retired", next_liquid_retired)
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    retirement_age = ages.exact_values[retirement_period]
+    final_age = ages.exact_values[-1]
+    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
+    pension_grid = LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_pension)
+    consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
+
+    working = Regime(
+        actions={
+            "consumption": consumption_grid,
+            "deposit": LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_deposit),
+        },
+        states={
+            "liquid": working_liquid_grid or liquid_grid,
+            "pension": working_pension_grid or pension_grid,
+        },
+        state_transitions={
+            "liquid": {
+                "working": liquid_working,
+                "retired": liquid_retiring,
+            },
+            "pension": {"working": pension_working},
+        },
+        constraints={"feasible": feasible_working},
+        transition={
+            "working": MarkovTransition(prob_stay_working),
+            "retired": MarkovTransition(prob_retire),
+        },
+        functions={
+            "utility": utility_working,
+            **_euler_inversion_functions(
+                solver=working_solver, analytic=analytic_inverse_marginal_utility
+            ),
+        },
+        active=lambda age, ra=retirement_age: age < ra,
+        solver=working_solver,
+    )
+    retired = (ConsumptionSavingsRegime if isinstance(retired_solver, EGM) else Regime)(
+        actions={"consumption": consumption_grid},
+        states={"liquid": retired_liquid_grid or liquid_grid},
+        state_transitions={
+            "liquid": {
+                "retired": liquid_retired,
+                "dead": liquid_retired,
+            }
+        },
+        constraints={}
+        if isinstance(retired_solver, EGM)
+        else {"feasible": feasible_retired},
+        transition={
+            "retired": MarkovTransition(prob_stay_retired),
+            "dead": MarkovTransition(prob_die),
+        },
+        functions={
+            "utility": utility_retired,
+            "resources": resources_retired,
+            "savings": savings_retired,
+            **_euler_inversion_functions(
+                solver=retired_solver, analytic=analytic_inverse_marginal_utility
+            ),
+        },
+        active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+        solver=cast("EGM | GridSearch", retired_solver),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="liquid",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                )
+            }
+            if isinstance(retired_solver, EGM)
+            else {}
+        ),
+    )
+    dead = Regime(
+        transition=None,
+        states={"liquid": dead_liquid_grid or liquid_grid},
+        functions={"utility": bequest},
+        solver=solvers.get("dead", GridSearch()),
+    )
+    return Model(
+        regimes={"working": working, "retired": retired, "dead": dead},
+        ages=ages,
+        regime_id_class=RegimeId,
+        koopmans_aggregator=koopmans_aggregator,
+        enable_jit=enable_jit,
+    )
+
+
+def _euler_inversion_functions(
+    *, solver: Solver, analytic: bool
+) -> dict[str, Callable]:
+    """The closed-form `(u')^-1` entry a regime declares, if it needs one."""
+    if solver.requires_continuation and analytic:
+        return {"inverse_marginal_utility": inverse_marginal_utility}
+    return {}
+
+
+def get_params(
+    *,
+    discount_factor: float = 0.98,
+    crra: float = 2.0,
+    work_disutility: float = 0.25,
+    return_liquid: float = 0.02,
+    return_pension: float = 0.04,
+    match_rate: float = 0.10,
+    wage: float = 1.0,
+    retirement_income: float = 0.50,
+    retirement_age: float = 3.0,
+    final_age_alive: float = 4.0,
+    pension_payout_return: float | None = None,
+) -> dict:
+    """Get parameters for the DS pension model (faithful calibration from `SetupPar.m`).
+
+    `pension_payout_return` defaults to `1 + return_pension` (the pension balance is
+    paid out earning its own return at retirement); pass a value to override the
+    convention pending confirmation against `fun.m`.
+
+    `crra` is written once at the model level: one risk aversion is shared by every
+    regime's felicity and by the closed-form `(u')^-1` an endogenous-grid regime
+    declares, so the same tree fits the brute and the EGM variants of the model.
+    """
+    if pension_payout_return is None:
+        pension_payout_return = 1.0 + return_pension
+    return {
+        "crra": crra,
+        "working": {
+            "utility": {"work_disutility": work_disutility},
+            "koopmans_aggregator": {"discount_factor": discount_factor},
+            "working": {
+                "next_liquid": {"return_liquid": return_liquid, "wage": wage},
+                "next_pension": {
+                    "match_rate": match_rate,
+                    "return_pension": return_pension,
+                },
+                "next_regime": {"retirement_age": retirement_age},
+            },
+            "retired": {
+                "next_liquid": {
+                    "match_rate": match_rate,
+                    "pension_payout_return": pension_payout_return,
+                    "retirement_income": retirement_income,
+                    "return_liquid": return_liquid,
+                },
+                "next_regime": {"retirement_age": retirement_age},
+            },
+        },
+        "retired": {
+            "koopmans_aggregator": {"discount_factor": discount_factor},
+            "retired": {
+                "next_liquid": {
+                    "retirement_income": retirement_income,
+                    "return_liquid": return_liquid,
+                },
+                "next_regime": {"final_age_alive": final_age_alive},
+            },
+            "dead": {
+                "next_liquid": {
+                    "retirement_income": retirement_income,
+                    "return_liquid": return_liquid,
+                },
+                "next_regime": {"final_age_alive": final_age_alive},
+            },
+        },
+    }

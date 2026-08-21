@@ -65,6 +65,24 @@ class PhaseReachability:
         MappingProxyType[tuple[RegimeName, RegimeName], EdgeStatus], ...
     ]
 
+    def __hash__(self) -> int:
+        """Return a structural hash independent of mapping insertion order."""
+        return hash(
+            (
+                self.n_periods,
+                self.active_regimes_by_period,
+                tuple(sorted(self.candidate_targets_by_source.items())),
+                tuple(
+                    tuple(sorted(targets_by_source.items()))
+                    for targets_by_source in self.targets_by_period
+                ),
+                tuple(
+                    tuple(sorted(status_by_edge.items()))
+                    for status_by_edge in self.edge_status_by_period
+                ),
+            )
+        )
+
     def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
         """Return retained targets for the edge from ``period`` to ``period + 1``."""
         if not 0 <= period < self.n_periods - 1:

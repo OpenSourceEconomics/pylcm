@@ -21,6 +21,7 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     DiscreteGrid,
+    LinearExpectation,
     MarkovTransition,
     Model,
     PowerMean,
@@ -28,7 +29,7 @@ from lcm import (
     UniformIIDProcess,
     categorical,
 )
-from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 # The entry names 10.0 at the middle node, outside income's support.
@@ -282,9 +283,11 @@ def test_a_node_of_no_probability_stays_null_at_any_scale(*, compile_it: bool) -
 class _PlainWeightedMean(CertaintyEquivalent):
     """The ordinary weighted mean, written the way a user would write it.
 
-    It does nothing about impossible nodes, because nothing in the `aggregate`
-    contract asks it to. The engine is what must guarantee that a node carrying
-    no probability contributes nothing.
+    A user-written certainty equivalent states both reductions, because a
+    lottery may arrive with its weights still carrying base-two scales. Neither
+    does anything about impossible nodes, because nothing in either contract
+    asks them to. The engine is what must guarantee that a node carrying no
+    probability contributes nothing.
     """
 
     @property
@@ -299,6 +302,18 @@ class _PlainWeightedMean(CertaintyEquivalent):
         params: Mapping[str, FloatND],  # noqa: ARG002
     ) -> FloatND:
         return jnp.sum(weights * values, axis=-1) / jnp.sum(weights, axis=-1)
+
+    def aggregate_scaled(
+        self,
+        *,
+        values: FloatND,
+        coefficients: FloatND,
+        shifts: IntND,
+        params: Mapping[str, FloatND],
+    ) -> FloatND:
+        return LinearExpectation().aggregate_scaled(
+            values=values, coefficients=coefficients, shifts=shifts, params=params
+        )
 
 
 def test_a_user_written_certainty_equivalent_is_handed_no_impossible_nodes() -> None:

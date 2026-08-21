@@ -1,0 +1,70 @@
+---
+# Coverage sentinel for the EGM continuation-provenance witnesses.
+#
+# This file is the source the executable gate reads: `test_egm_continuation_grid_
+# provenance.py` asserts against these fields directly, so a bound and the gate
+# enforcing it cannot drift apart. An audit bundle that quotes these numbers is a
+# copy, and must be regenerated from here rather than edited alongside it.
+#
+# WHAT THIS IS NOT. These numbers are not an accuracy budget, and that holds for
+# every backend here. A solver
+# whose median value regret against a dense sweep is a percent or two has not
+# been certified accurate by sitting inside a bound of three; it has been
+# observed not to have changed. Read the levels as "the same solution the
+# reference produced last time", never as "this is how accurate the method is".
+# Establishing what the reference itself is worth — how dense the brute sweep
+# has to be, and whether the interior masks reach nodes where every method is
+# poor — is open work, and until it is done no level here supports an accuracy
+# claim.
+#
+# WHAT IT IS. A regression sentinel over one failure shape: a mask that stops
+# covering its interior, or a backend that stops producing a comparable solution
+# at all. `value_regret` is the relative deviation of a solver's published V from
+# a dense grid-search solve of the same model, node-by-node on the workload's
+# stated interior mask: `|V_egm - V_brute| / |V_brute|`.
+#
+# WHICH STATISTICS MAY GATE. Only ones that are stable across the profiles
+# recorded below, because a bound on a statistic that moves with the device is a
+# bound on the device. Two qualify and both are declared:
+#
+# - `median` — moves when a solution degrades broadly.
+# - `max` — moves first when a mask stops covering a node, since an uncovered
+#   node is a large regret. The node count is small (9 for retired), so this is
+#   a one-node statistic and moves discontinuously with the mask. It is
+#   declared anyway: a single badly wrong node is the shape a
+#   coverage failure takes, and a median cannot see it.
+#
+# A tail quantile does not qualify and is deliberately absent. On the rooftop cut
+# it is rounding-chaotic — the keep/delete verdict on a candidate sitting within
+# an ulp of a neighbour's tangent plane flips with the order the value arithmetic
+# is evaluated in, and a flipped verdict removes a whole candidate, moving the
+# published value at nearby targets by a finite amount. Such a statistic differs
+# between float32 and float64, and between CPU and GPU at one precision, by more
+# than either format's resolution, so any bound on it has to be widened whenever
+# a new device reports a value. A number that is refitted to each device measures
+# the device. It is neither gated nor recorded.
+#
+# A sentinel must satisfy `max >= median`, since each statistic dominates the
+# previous one by construction. Declaring them out of that order does not make
+# the contract impossible to meet, but it lets the tighter clause dominate so the
+# looser one never binds.
+#
+# A profile is a device and a precision (`cpu_float32`, `gpu_float32`, ...),
+# because reduction order and library kernels vary with the device. Every
+# recorded profile is gated, and every statistic recorded is one the sentinel
+# bounds, so adding a measurement here tightens the contract rather than
+# annotating it. A profile is recorded where it has been measured; a workload
+# need not carry all of them.
+contract_version: 4
+workloads:
+  retired_egm:
+    description: >-
+      The 1-D EGM solver's retired value on the unconstrained liquid interior.
+      Covers W1 (reading the terminal regime on the terminal regime's own grid)
+      and the matched-grid control.
+    sentinel:
+      median_value_regret: 0.01
+      max_value_regret: 0.03
+    measured:
+      cpu_float64: {median: 0.0027, max: 0.0199}
+      cpu_float32: {median: 0.0027, max: 0.0199}

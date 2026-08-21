@@ -28,7 +28,10 @@ from _lcm.regime_building.age_normalization import (
     group_periods_by_key,
     resolve_periodized_nodes,
 )
-from _lcm.regime_building.Q_and_F import get_compute_intermediates
+from _lcm.regime_building.Q_and_F import (
+    get_compute_intermediates,
+    partition_continuation_targets,
+)
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
@@ -78,8 +81,8 @@ def _build_compute_intermediates_per_period(
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        regimes_to_active_periods: Immutable mapping of regime names to
-            their active period tuples.
+        phase_reachability: Static graph for the solution phase.
+        source_regime_name: Regime whose continuation targets are requested.
         functions: Immutable mapping of internal user functions.
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition
@@ -112,7 +115,9 @@ def _build_compute_intermediates_per_period(
     # `continuation_info` mirrors `_build_Q_and_F_per_period.continuation_info` so a
     # NaN diagnostic recomputes intermediates on the *same* period-specific target
     # grid the primary solve used, not the representative grid. `group_key` mirrors
-    # `_build_Q_and_F_per_period.group_key`'s grouping.
+    # `_build_Q_and_F_per_period.group_key`'s grouping, the stateless-target
+    # partition included — a diagnostic that grouped periods differently from the
+    # solve would explain a value the solve never computed.
     continuation_info = continuation_info_lookup(
         period_to_regime_v_interp=period_to_regime_v_interp,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -123,6 +128,7 @@ def _build_compute_intermediates_per_period(
         functions=functions,
         constraints=constraints,
         grid_schedule=grid_schedule,
+        continuation_info=continuation_info,
     )
 
     configs = group_periods_by_key(active_periods, group_key)
@@ -133,9 +139,13 @@ def _build_compute_intermediates_per_period(
     )
     built: dict[tuple[tuple[RegimeName, ...], Hashable], Callable] = {}
     for key, periods in configs.items():
-        period_targets = key[0]
+        targets = key[0]
         representative_period = periods[0]
-        scalar = get_compute_intermediates(
+        stateful_targets, scalar_targets = partition_continuation_targets(
+            targets=targets,
+            regime_to_v_interpolation_info=continuation_info(representative_period),
+        )
+        compute_intermediates = get_compute_intermediates(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
@@ -145,7 +155,8 @@ def _build_compute_intermediates_per_period(
                 "ConstraintFunctionsMapping",
                 resolve_periodized_nodes(constraints, representative_period),
             ),
-            period_targets=period_targets,
+            period_targets=stateful_targets,
+            scalar_targets=scalar_targets,
             transitions=transitions,
             transition_laws=transition_laws,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -158,7 +169,7 @@ def _build_compute_intermediates_per_period(
             co_map_state_names=(),
         )
         mapped = _productmap_over_state_action_space(
-            func=scalar,
+            func=compute_intermediates,
             action_names=state_action_space.action_names,
             state_names=state_action_space.state_names,
             state_batch_sizes=state_batch_sizes,

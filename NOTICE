@@ -1,0 +1,18 @@
+PyLCM
+Copyright (c) 2023- The PyLCM Authors
+
+This product includes software adapted from third-party open-source projects.
+Their copyright notices and license terms are reproduced in the `licenses/`
+directory.
+
+--------------------------------------------------------------------------------
+OpenSourceEconomics/upper-envelope
+https://github.com/OpenSourceEconomics/upper-envelope
+
+Copyright (c) 2023-2025 The Upper-Envelope Authors
+Licensed under the Apache License, Version 2.0
+(full text in `licenses/upper-envelope-LICENSE`).
+
+The Fast Upper-Envelope Scan in `src/_lcm/egm/upper_envelope/fues.py` was adapted
+from this package and has since been substantially modified.
+--------------------------------------------------------------------------------

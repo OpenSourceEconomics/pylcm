@@ -92,7 +92,9 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                     "koopmans_aggregator__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
                     "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
-                    "next_regime__final_age_alive": jnp.asarray(0),
+                    # `simulate` consumes already-canonical params; an `int` leaf
+                    # is `int32` (a bare `jnp.asarray(0)` would be `int64` under x64).
+                    "next_regime__final_age_alive": jnp.asarray(0, dtype=jnp.int32),
                 }
             ),
             "dead": MappingProxyType({}),
@@ -104,10 +106,10 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         period_to_regime_to_V_arr=MappingProxyType(
             {
                 0: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
                 1: MappingProxyType(
-                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(())}
                 ),
             }
         ),

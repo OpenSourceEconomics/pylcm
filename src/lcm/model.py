@@ -5,7 +5,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast, overload
 
 import jax
 import pandas as pd
@@ -58,12 +58,14 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
-from _lcm.solution.validate_V import contains_nan
+from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
     ParamsTemplate,
+    PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
@@ -85,7 +87,6 @@ from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidValueFunctionError,
-    PyLCMError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
@@ -396,6 +397,45 @@ class Model:
 
         return cast("UserFacingParamsTemplate", _readable(mutable))
 
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[False] = ...,
+    ) -> PeriodToRegimeToVArr: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[True],
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: bool,
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    ): ...
+
     @beartype(conf=PARAMS_CONF)
     def solve(
         self,
@@ -405,8 +445,12 @@ class Model:
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
-    ) -> PeriodToRegimeToVArr:
-        """Solve the model using the pre-computed functions.
+        return_simulation_policy: bool = False,
+    ) -> (
+        PeriodToRegimeToVArr
+        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    ):
+        """Solve the model by backward induction, using each regime's solver.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -437,8 +481,20 @@ class Model:
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
 
+            return_simulation_policy: When `True`, also return the per-period
+                simulation-policy artifacts published by the configured
+                solvers, as `(value_functions, policies)`. A policy is what
+                `simulate` interpolates at a subject's resources where the
+                regime qualifies for the off-grid read; a fresh `simulate`
+                publishes and consumes it internally, so returning it here is
+                for inspection rather than for handing back. Regimes whose
+                solver publishes no policy have no entry in the policy
+                mapping. Defaults to `False` (value functions only).
+
         Returns:
-            Immutable mapping of period to a value function array for each regime.
+            Immutable mapping of period to a value function array for each
+            regime; or, when `return_simulation_policy=True`, that mapping
+            paired with the per-period simulation-policy mapping.
 
         """
         log = get_logger(log_level=log_level)
@@ -449,14 +505,18 @@ class Model:
             ages=self.ages,
             logger=log,
         )
-        return self._solve_compiled(
+        internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
             log=log,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
+            collect_simulation_policies=return_simulation_policy,
         )
+        if return_simulation_policy:
+            return internal_result.value_functions, internal_result.simulation_policies
+        return internal_result.value_functions
 
     def _solve_compiled(
         self,
@@ -467,21 +527,26 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-    ) -> PeriodToRegimeToVArr:
+        collect_simulation_policies: bool,
+    ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        With `log_path` set, a snapshot is written at `log_level="debug"`
-        (every solve) and at `"warning"` / `"progress"` whenever the returned
-        solution contains NaN. `_enforce_retention` caps the snapshot count at
+        Returns the named backward-induction outputs. Per-period simulation
+        policies are retained only when `collect_simulation_policies` is true.
+        With `log_path`
+        set, a snapshot is written at `log_level="debug"` (every solve) and at
+        `"warning"` / `"progress"` whenever the returned solution contains
+        NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
         try:
-            period_to_regime_to_V_arr = solve(
+            internal_result = solve(
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
+                collect_simulation_policies=collect_simulation_policies,
                 max_compilation_workers=max_compilation_workers,
             )
         except InvalidValueFunctionError as exc:
@@ -498,16 +563,18 @@ class Model:
         if (
             log_path is not None
             and validation_enabled(log)
-            and (validation_raises(log) or contains_nan(period_to_regime_to_V_arr))
+            and (
+                validation_raises(log) or contains_nan(internal_result.value_functions)
+            )
         ):
             _save_solve_snapshot(
                 model=self,
                 params=params,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_V_arr=internal_result.value_functions,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return period_to_regime_to_V_arr
+        return internal_result
 
     def _resolve_simulate_regimes(
         self,
@@ -545,6 +612,37 @@ class Model:
             return self._regimes
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
+
+    def _check_supplied_V_shapes(
+        self,
+        *,
+        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
+        log: logging.Logger,
+    ) -> None:
+        """Validate a caller-supplied solution against the declared state spaces.
+
+        A freshly solved value function is correct by construction, so only a
+        supplied one is checked. It is the one simulate input nothing else
+        validates: a value function of the wrong rank broadcasts rather than
+        raising, so it has to be caught against the declared state space here.
+        """
+        if period_to_regime_to_V_arr is None or not validation_enabled(log):
+            return
+        try:
+            validate_supplied_V_shapes(
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                # The solve phase, not the user declaration: a carried state is
+                # derived during backward induction and contributes no axis, so
+                # the user's `states` would over-count the ranks it produced.
+                regime_to_state_names=MappingProxyType(
+                    {
+                        name: tuple(regime.solution.state_names)
+                        for name, regime in self._regimes.items()
+                    }
+                ),
+            )
+        except InvalidValueFunctionError as error:
+            raise_or_warn(logger=log, error=error)
 
     @beartype(conf=PARAMS_CONF)
     def simulate(
@@ -591,9 +689,10 @@ class Model:
                 keys are drawn for the full population and sliced by global index.
                 - `0` (default): one pass over the whole (padded) population.
                 - `> 0`: chunk the subjects into passes of this size, bounding the
-                  per-period device workspace. Raises `PyLCMError` if any grid is
-                  distributed and more than one device is visible — there the
-                  subject axis is sharded across devices, not chunked.
+                  per-period device workspace. Under distributed grids each chunk
+                  is placed onto the subject mesh axis (the size is rounded up to
+                  a device multiple); the value-function arrays stay sharded
+                  throughout.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -631,19 +730,23 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
         )
-        # Align the subject axis to the block size the simulate path needs: the
-        # device count when grids are distributed (sharding must divide it
-        # evenly), or the chunk size when chunking on a single device (every chunk
-        # must match the AOT-compiled shape). The two are mutually exclusive —
-        # chunking under multi-device distribution is rejected in
-        # `_resolve_compile_batch_size`. Pad rows duplicate the last real subject
-        # and are trimmed inside `simulate`; a multiple of 1 (single pass) is a
-        # no-op.
-        if self._distributes_subjects() and len(jax.devices()) > 1:
-            alignment = len(jax.devices())
-        elif subject_batch_size > 0:
+        # Align the subject axis to the block size the simulate path needs.
+        # Every chunk must match the AOT-compiled shape, and under distributed
+        # grids each chunk is additionally placed onto the subject mesh axis,
+        # so the chunk itself is rounded up to a device multiple (mirroring
+        # `_resolve_compile_batch_size`) before the subject axis is padded to
+        # a multiple of it. Without chunking, distribution alone needs a
+        # device multiple. Pad rows duplicate the last real subject and are
+        # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
+        distributes = self._distributes_subjects() and len(jax.devices()) > 1
+        if subject_batch_size > 0:
             raw_n_subjects = len(next(iter(initial_conditions.values())))
             alignment = min(subject_batch_size, raw_n_subjects)
+            if distributes:
+                n_devices = len(jax.devices())
+                alignment = -(-alignment // n_devices) * n_devices
+        elif distributes:
+            alignment = len(jax.devices())
         else:
             alignment = 1
         initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
@@ -681,15 +784,31 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
+        self._check_supplied_V_shapes(
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
+        )
+        period_to_regime_to_sim_policy = None
         if period_to_regime_to_V_arr is None:
-            period_to_regime_to_V_arr = self._solve_compiled(
+            # A fresh solve also publishes the off-grid DC-EGM policy, which
+            # simulation interpolates at each subject's resources where the
+            # regime qualifies (`SimulationPhase.egm_policy_read`). With
+            # user-supplied V arrays there is no published policy, so the
+            # grid-argmax path decides the continuous action.
+            collect_simulation_policies = any(
+                regime.simulation.egm_policy_read is not None
+                for regime in self._regimes.values()
+            )
+            internal_result = self._solve_compiled(
                 flat_params=flat_params,
                 params=params,
                 log=log,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
                 max_compilation_workers=max_compilation_workers,
+                collect_simulation_policies=collect_simulation_policies,
             )
+            period_to_regime_to_V_arr = internal_result.value_functions
+            period_to_regime_to_sim_policy = internal_result.simulation_policies
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -702,6 +821,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
@@ -740,10 +860,12 @@ class Model:
         """Map the `subject_batch_size` knob to a concrete chunk shape.
 
         - `0` ⇒ the whole padded population (single pass).
-        - `> 0` ⇒ that size, clamped to the population. Forbidden under
-          multi-device distribution: subject-chunking is single-device, but the
-          value-function array is sharded across the devices and can't be
-          gathered onto one.
+        - `> 0` ⇒ that size, clamped to the population. Under multi-device
+          distribution the chunk is additionally rounded up to the next multiple
+          of the device count: every chunk is placed onto the subject mesh axis
+          (see `subject_array_sharding`), so its leading axis must divide evenly
+          across the devices. The value-function arrays stay sharded throughout —
+          chunking never gathers them.
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.
@@ -751,21 +873,14 @@ class Model:
         aot_active = (
             self.n_subjects is not None and self.n_subjects == actual_n_subjects
         )
-        distributed_multidevice = (
-            self._distributes_subjects() and len(jax.devices()) > 1
-        )
         if subject_batch_size > 0:
-            if distributed_multidevice:
-                msg = (
-                    "subject_batch_size > 0 chunks the subject axis on a single "
-                    "device, which cannot be combined with distributed grids "
-                    f"across multiple devices ({len(jax.devices())} visible): the "
-                    "value-function array is sharded across them and cannot be "
-                    "gathered onto one. Use subject_batch_size=0 with distributed "
-                    "grids, or run on a single device."
-                )
-                raise PyLCMError(msg)
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
+            if self._distributes_subjects():
+                n_devices = len(jax.devices())
+                compile_batch_size = min(
+                    -(-compile_batch_size // n_devices) * n_devices,
+                    padded_n_subjects,
+                )
         else:
             compile_batch_size = padded_n_subjects
         if aot_active:

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from dags import concatenate_functions, get_ancestors
 
+from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.transition_laws import is_stochastic
 from _lcm.typing import FlatRegimeParams, RegimeName
@@ -61,12 +62,39 @@ def _collect_all_available_targets(
 
 
 def _get_available_targets_for_regime(regime: Regime) -> set[str]:
-    """Get available target names for a single regime."""
-    excluded = _get_stochastic_weight_function_names(regime)
+    """Get available target names for a single regime.
+
+    Internal machinery is excluded: synthesized internal functions, stochastic
+    weight functions, and the budget mask synthesized for DC-EGM regimes (an
+    implementation detail of the simulate-phase argmax, not a user-declared
+    constraint). A regime that solves from a continuation also excludes
+    `inverse_marginal_utility` — its `marginal_continuation` argument exists only
+    inside the Euler inversion, so it is not computable from simulation data;
+    the exclusion is gated on the `solves_from_continuation` capability, not the
+    solver type.
+
+    The two names (`DCEGM_BUDGET_CONSTRAINT_NAME`, `"inverse_marginal_utility"`)
+    are name-based couplings to the EGM step's internal functions — the one spot
+    the generic simulation layer must know them. Synthesized functions instead
+    carry the internal marker, so a new adapter inherits the exclusion without
+    adding another name coupling here.
+    """
     sim = regime.simulation
-    return {
-        name for name in sim.functions if name not in excluded
-    } | sim.constraints.keys()
+    excluded = (
+        {DCEGM_BUDGET_CONSTRAINT_NAME}
+        | _get_stochastic_weight_function_names(regime)
+        | {
+            name
+            for pool in (sim.functions, sim.constraints)
+            for name, func in pool.items()
+            if getattr(func, "_lcm_internal_no_params", False)
+        }
+    )
+    if regime.solution.solves_from_continuation:
+        excluded.add("inverse_marginal_utility")
+    return {name for name in sim.functions if name not in excluded} | {
+        name for name in sim.constraints if name not in excluded
+    }
 
 
 def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:
@@ -208,10 +236,7 @@ def _fail_if_targets_depend_on_age_specialized(
 def _build_functions_pool(regime: Regime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
     sim = regime.simulation
-    pool: dict[str, UserFunction] = {
-        **sim.functions,
-        **sim.constraints,
-    }
+    pool: dict[str, UserFunction] = {**sim.functions, **sim.constraints}
     if sim.compute_regime_transition_probs is not None:
         pool["regime_transition_probs"] = sim.compute_regime_transition_probs
     return pool

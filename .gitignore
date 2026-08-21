@@ -35,6 +35,18 @@ node_modules/
 __pycache__/
 *.py[cod]
 *.so
+# The Windows kernel and everything link.exe emits alongside it. Only the .dll
+# is packaged (see `build.artifacts` in pyproject.toml); the rest are inputs and
+# by-products of the link step.
+*.def
+*.dll
+*.exp
+*.lib
+*.obj
+# Compiler reports written beside each built kernel: absolute paths and toolchain
+# versions from whichever machine built it, regenerated on every build.
+*.so.build.log
+*.dll.build.log
 *$py.class
 
 # Ruff
@@ -64,3 +76,9 @@ docs/superpowers/
 # under the project root — the audit tooling takes real project paths, not a staged
 # side directory — but they are per-round working files, not repository content.
 .pro-audit/
+
+# JUnit XML reports written by test runners (unique path per invocation).
+reports/
+
+# Local review-tool config, per checkout rather than repository content.
+.roborev.toml

@@ -5,14 +5,18 @@ wealth profile, health, survival, …) at `seed=32`, `n=10000`, so a change in
 the example's economics is caught as a change in a readable quantity rather
 than an opaque pickle diff.
 
-Re-frozen on an A100 (2026-08-12, commit 39cd7a3c) after the four correctness fixes
-(income normalizer, spline clipping, P(e) pension, nearest-habit rounding) landed on
-top of main's latest engine numerics (age-specialization, probability/zero-safe
-rework, PRs #398/#414/#416/#418). Every number here moved again; the structural
-invariants at the bottom of the module did not.
+The pinned numbers are a joint property of the example's economics and the
+engine's numerics, so a change to either moves them and they have to be
+re-frozen against a run whose correctness has been argued separately. They are
+reproducible across GPUs at float64 — a re-freeze needs a fresh run, not a
+matching device.
+
+The structural invariants at the bottom of the module are the stable half: they
+assert relations that hold for any correct solve, so they survive a re-freeze
+and are what catches an economics change that a shifted pin would merely
+absorb.
 """
 
-import jax
 import numpy as np
 import pytest
 
@@ -32,8 +36,8 @@ from tests.conftest import X64_ENABLED
 # 64-bit replication; under 32-bit the simulation drifts past every band,
 # so the moments lose signal. Skip the whole module at 32-bit precision.
 pytestmark = [
+    pytest.mark.slow,
     pytest.mark.gpu,
-    pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(
         not X64_ENABLED, reason="moments calibrated for 64-bit precision"
     ),

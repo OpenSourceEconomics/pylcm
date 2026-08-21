@@ -1,6 +1,9 @@
 [build-system]
 build-backend = "hatchling.build"
-requires = [ "hatch-vcs", "hatchling" ]
+# `jax` is a build requirement, not only a runtime one: the build hook compiles the
+# exact-affine FFI kernel against the XLA FFI headers that ship inside jaxlib, and
+# locates them through `jax.ffi.include_dir()`.
+requires = [ "hatch-vcs", "hatchling", "jax>=0.11.1" ]
 
 [project]
 name = "pylcm"
@@ -29,18 +32,29 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  "beartype>=0.21",
+  "beartype>=0.22",
   "cloudpickle>=3.1.2",
-  # Require the beartype fix, replace once release is there
-  # "dags>=0.6.0",
+  "dags>=0.6",
   "h5py>=3.12",
-  "jax>=0.11",
-  "jaxtyping>=0.3.10",
+  "jax>=0.11.1",
+  "jaxtyping>=0.3.11",
   "orbax-checkpoint>=0.11",
   "pandas",
   "portion>=2.6",
   "pyarrow",
 ]
+[project.readme]
+content-type = "text/markdown"
+file = "README.md"
+[project.license]
+file = "LICENSE"
+[[project.maintainers]]
+name = "Tim Mensinger"
+email = "mensingertim@gmail.com"
+
+[[project.maintainers]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
 [[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
@@ -54,18 +68,6 @@ name = "Janos Gabler"
 [[project.authors]]
 name = "Hans-Martin von Gaudecker"
 email = "hmgaudecker@uni-bonn.de"
-[project.license]
-file = "LICENSE"
-[[project.maintainers]]
-name = "Tim Mensinger"
-email = "mensingertim@gmail.com"
-
-[[project.maintainers]]
-name = "Hans-Martin von Gaudecker"
-email = "hmgaudecker@uni-bonn.de"
-[project.readme]
-content-type = "text/markdown"
-file = "README.md"
 [project.urls]
 Github = "https://github.com/opensourceeconomics/pylcm"
 Repository = "https://github.com/opensourceeconomics/pylcm"
@@ -74,12 +76,30 @@ Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 [tool.hatch]
 version.source = "vcs"
 metadata.allow-direct-references = true
+# The compiled kernels are gitignored, so they have to be named explicitly or
+# hatchling's VCS-based file selection would leave them out of the wheel.
+build.artifacts = [
+  "src/_lcm/egm/upper_envelope/_exact_affine/*.dll",
+  "src/_lcm/egm/upper_envelope/_exact_affine/*.so",
+]
 build.hooks.vcs.version-file = "src/_lcm/version.py"
-build.targets.sdist.exclude = [ "tests" ]
-build.targets.sdist.only-packages = true
+build.targets.wheel.hooks.custom.path = "hatch_build.py"
 build.targets.wheel.only-include = [ "src" ]
 build.targets.wheel.sources = [ "src" ]
+build.targets.sdist.exclude = [ "tests" ]
+build.targets.sdist.only-packages = true
 
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [
+  "linux-64",
+  "linux-aarch64",
+  "osx-arm64",
+  "win-64",
+  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
+  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
+  { name = "linux-aarch64-cuda13", platform = "linux-aarch64", cuda = "13" },
+]
 [tool.pixi.dependencies]
 asv = "*"
 python = "~=3.14.0"
@@ -87,25 +107,30 @@ cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
 jupyterlab = "*"
 memory_profiler = "*"
-# Required until numba accepts numpy>=2.5.0
-numpy = ">=2.4, <2.5.0"
+numpy = ">=2.4,<2.5"
 plotly = ">=6.5"
 prek = "*"
 pyarrow = "*"
 pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
-[tool.pixi.environments]
-benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-docs = { features = [ "docs" ], solve-group = "default" }
-metal = { features = [ "metal" ], solve-group = "metal" }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
-type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.pypi-dependencies]
+jax = ">=0.11.1"
+pdbp = "*"
+pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-pr-comment = "python benchmarks/pr_comment.py"
+asv-publish = "python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
+asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
+# Recompile the certified path's exact-affine kernel in place. An editable install
+# builds it once; rerun this after editing the C++ or CUDA sources. Set NVCCFLAGS
+# (e.g. '-arch=sm_80') to pick the CUDA target architecture.
+build-exact-affine = "python hatch_build.py"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to the aca-model version this solver-seam work is developed against
 # (feat/dcegm-solver: main's audit fixes + the DC-EGM solver + smooth-share
@@ -116,13 +141,17 @@ platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda12" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
-platforms = [ "linux-64-cuda13" ]
+platforms = [ "linux-64-cuda13", "linux-aarch64-cuda13" ]
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.11", extras = [ "cuda13" ] }
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
+[tool.pixi.feature.cuda13.target.linux-aarch64.dependencies]
+cuda-nvcc = "~=13.0"
+[tool.pixi.feature.cuda13.target.linux-aarch64.pypi-dependencies]
+jax = { version = ">=0.11.1", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
@@ -132,51 +161,71 @@ quantecon = "*"
 build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
-[tool.pixi.feature.metal]
-platforms = [ "osx-arm64" ]
-[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.11"
-jax-metal = ">=0.1.1"
+[tool.pixi.feature.tests-pro-py313]
+# Replicates the external reviewer's air-gapped container so a bundle can be
+# tested against the interpreter and libraries that will actually run it, rather
+# than against ours. It carries `no-default-feature`, so it deliberately has no
+# pylcm install and therefore no beartype, jaxtyping or dags — their absence is
+# the condition being reproduced. Point PYTHONPATH at a transformed bundle tree.
+#
+# Absences are as load-bearing as the pins. `pyarrow` in particular is confirmed
+# missing there, which is what makes every committed `.pkl` fixture holding a
+# pyarrow-backed string column unreadable for the reviewer — so a bundle ships
+# tests that build their own inputs, never ones that read a stored frame. Adding
+# any of pyarrow, orbax, h5py, quantecon or beartype here would quietly restore a
+# capability the reviewer does not have and make a green run mean nothing.
+platforms = [ "linux-64" ]
+[tool.pixi.feature.tests-pro-py313.dependencies]
+# Reported by the reviewer for /opt/pyvenv/bin/python.
+python = "==3.13.5"
+pandas = "==2.2.3"
+networkx = "==3.6.1"
+# Not yet reported by the reviewer; left unpinned rather than guessed. Pin each
+# one as its version is confirmed — an invented pin reproduces our environment
+# under another name.
+numpy = "*"
+pytest = "*"
+[tool.pixi.feature.tests-pro-py313.pypi-dependencies]
+jax = "==0.9.0.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
 pytest-cov = "*"
+pytest-timeout = "*"
 pytest-xdist = "*"
+py-spy = ">=0.4.2,<0.5"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+# Run the suite across 4 xdist workers (`--dist loadfile` in addopts keeps each
+# file on one worker). `XLA_PYTHON_CLIENT_PREALLOCATE=false` is a no-op on CPU but
+# required on GPU: it stops each of the 4 worker processes from preallocating ~75%
+# of the device and OOMing — they grow to their actual (small) per-test need
+# instead, and `loadfile` keeps the one heavy file (Mahler-Yum) on a single worker.
+#
+# `-v` and `--junitxml` are not decoration. The JUnit report is written when the run
+# ends, so a run that is killed part-way leaves none; `-v` has by then already streamed
+# one line per test, which is the only record such a run leaves behind. Together they
+# give a count that is complete by construction when the run finishes and an
+# attributable partial record when it does not. `reports/` is gitignored.
+tests = { cmd = "pytest tests -n 4 -v --junitxml=reports/tests.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-32bit = { cmd = "pytest tests --precision=32 -n 4 -v --junitxml=reports/tests-32bit.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junitxml=reports/tests-with-cov.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 [tool.pixi.feature.type-checking.dependencies]
 # The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
 # itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).
 matplotlib = "*"
 pandas-stubs = "*"
 scipy-stubs = "*"
-[tool.pixi.pypi-dependencies]
-jax = ">=0.11"
-pdbp = "*"
-pylcm = { path = ".", editable = true }
-# Remove and comment in `dags >= 0.6.0` above once released.
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
-[tool.pixi.tasks]
-asv-compare = "asv compare"
-asv-preview = "asv preview"
-asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
-asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [
-  "linux-64",
-  "osx-arm64",
-  "win-64",
-  { name = "linux-64-cuda12", platform = "linux-64", cuda = "12" },
-  { name = "linux-64-cuda13", platform = "linux-64", cuda = "13" },
-]
+[tool.pixi.environments]
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+docs = { features = [ "docs" ], solve-group = "default" }
+tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 
 [tool.ruff]
 target-version = "py314"
@@ -274,6 +323,12 @@ per-file-ignores."tests/test_koopmans_aggregation.py" = [
 per-file-ignores."tests/test_compilation_cache.py" = [
   "S603", # subprocess call with test-controlled input
 ]
+per-file-ignores."tests/solution/test_egm_interp.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
+per-file-ignores."tests/test_distributed.py" = [
+  "S603", # subprocess call with test-controlled input
+]
 per-file-ignores."tests/test_dtypes.py" = [
   "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
 ]
@@ -353,6 +408,9 @@ ini_options.addopts = [
 ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
+  "requires_exact_affine_kernel: requires the selected backend's exact-affine kernel",
+  "skipif_cpu: skip test when the JAX backend is CPU",
+  "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]
 ini_options.filterwarnings = [
   # JAX emits this UserWarning when user code asks for a dtype wider

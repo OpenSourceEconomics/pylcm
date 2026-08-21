@@ -13,15 +13,26 @@ reads the user's coarseness off it.
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
+
+from dags import get_annotations, with_signature
+from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
+from lcm.consumption_savings_regime import (
+    NetOfAdjustmentCost,
+    _composition_rule_message,
+    _EGMFamilyRegime,
+)
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.typing import UserFunction
+from lcm.transition import _AgeSpecialized
+from lcm.typing import FloatND, UserFunction
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -74,6 +85,12 @@ def finalize_regimes(
             user_regime=user_regime,
             derived_categoricals=derived_categoricals,
         )
+        functions = dict(user_regime.functions)
+        _compose_margin_resources(
+            regime_name=regime_name,
+            user_regime=user_regime,
+            functions=functions,
+        )
         # Terminal regimes have no continuation, so they need neither an
         # aggregator (Q = U directly) nor a certainty equivalent. Their slots
         # are carried through untouched so that a declared one still reaches
@@ -94,6 +111,7 @@ def finalize_regimes(
             )
         finalized = user_regime.replace(
             derived_categoricals=merged,
+            functions=MappingProxyType(functions),
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
         )
@@ -102,8 +120,100 @@ def finalize_regimes(
             raise RegimeInitializationError(
                 f"In regime '{regime_name}': {format_messages(error_messages)}"
             )
+        finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _compose_margin_resources(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction | Phased | None],
+) -> None:
+    """Compose a ``NetOfAdjustmentCost`` resources declaration.
+
+    The regime owns the three names explicitly.  pylcm performs the subtraction
+    at the single model-finalization seam, before validation and DAG processing,
+    so the coefficient on the cost is exactly ``-1`` by construction rather than
+    inferred from probes.  Bare resources declarations are untouched.
+
+    Raises:
+        ModelInitializationError: If the regime defines the resources function
+            itself, or the cost-free base or the declared cost is missing.
+
+    """
+    if not isinstance(user_regime, _EGMFamilyRegime):
+        return
+    resources = user_regime.liquid.resources
+    if not isinstance(resources, NetOfAdjustmentCost):
+        return
+
+    resources_name = resources.output
+    base_name = resources.before_cost
+    cost_name = resources.cost
+
+    if resources_name in functions:
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} defines the composed resources "
+                    f"function {resources_name!r}. "
+                ),
+            )
+        )
+    if base_name not in functions:
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} is missing the cost-free resources "
+                    f"function {base_name!r}. "
+                ),
+            )
+        )
+    if cost_name not in functions:
+        raise ModelInitializationError(
+            _composition_rule_message(
+                resources=resources,
+                prefix=(
+                    f"Regime {regime_name!r} is missing the adjustment-cost "
+                    f"function {cost_name!r}. "
+                ),
+            )
+        )
+
+    base_annotation = _return_annotation(functions[base_name])
+    cost_annotation = _return_annotation(functions[cost_name])
+
+    @with_signature(
+        args={base_name: base_annotation, cost_name: cost_annotation},
+        return_annotation=base_annotation,
+    )
+    def composed_resources(**kwargs: FloatND) -> FloatND:
+        return kwargs[base_name] - kwargs[cost_name]
+
+    composed_resources.__name__ = resources_name
+    functions[resources_name] = cast("UserFunction", composed_resources)
+
+
+def _return_annotation(func: UserFunction | Phased | None) -> str:
+    """Return a function's stringified return annotation, defaulting to `FloatND`.
+
+    The composed resources function copies its producers' annotations so the
+    DAG's annotation-consistency check stays satisfied.
+
+    An `AgeSpecializedFunction` carries no annotation of its own — the annotation
+    belongs to the concrete functions `build(age)` returns, which this stage has no
+    age to ask for. The default stands in, and the DAG's own annotation check still
+    compares it against the resolved function once the age is known, so a genuine
+    mismatch is caught there rather than passed through.
+    """
+    if not callable(func) or isinstance(func, _AgeSpecialized):
+        return "FloatND"
+    annotations = ensure_annotations_are_strings(get_annotations(func))
+    return annotations.get("return", "FloatND")
 
 
 def _merge_derived_categoricals(

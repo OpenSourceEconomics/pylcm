@@ -161,14 +161,34 @@ pylcm sets three JAX defaults at import and leaves the rest to the environment.
 - `XLA_PYTHON_CLIENT_PREALLOCATE=false` — allocate GPU memory on demand instead of
   grabbing a fixed fraction up front. This plays nicely with other processes and makes
   `nvidia-smi` and memory benchmarks reflect real usage.
-- `JAX_COMPILATION_CACHE_DIR=~/.cache/jax` — persist the JIT cache so repeated runs of a
-  large (many-regime) model skip the multi-minute compile.
+- `JAX_COMPILATION_CACHE_DIR=~/.cache/jax/<project>` — persist the JIT cache so repeated
+  runs of a large (many-regime) model skip the multi-minute compile. Set by default to a
+  per-project directory, named after the nearest enclosing directory holding a `.git` or
+  `pyproject.toml`. Cache entries are keyed by a hash of the computation, so splitting
+  costs no reuse; what it separates is concurrent *writers*, which are what leave
+  unreadable entries behind — surfacing much later as a decompression warning at read
+  time, after which the cache's work is silently lost.
+- `LCM_COMPILATION_CACHE_NAME=<name>` — name only the leaf under the shared cache root,
+  leaving the root alone. For a repository holding several independent models that run
+  concurrently (one package per paper, say), where the enclosing project is a single
+  directory and so too coarse a split. Set `JAX_COMPILATION_CACHE_DIR` instead to place
+  the cache somewhere else entirely; it takes precedence.
 - `JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0` — write every compiled program to the
   persistent cache. JAX's default skips programs that compile in under a second, and a
   pylcm model consists of many small per-regime/per-period programs — with the default
   threshold the cache stays empty and every fresh process recompiles the whole model.
   Cache hits skip XLA compilation only; tracing and lowering still run on each fresh
   process, so re-runs get faster, not free.
+
+Both cache settings are applied through `jax.config` as well as the environment, so they
+hold whether `lcm` is imported before or after `jax`. Worth checking when a run is
+inexplicably slow, because a disabled cache reports nothing — it just recompiles:
+
+```python
+import jax
+
+print(jax.config.jax_compilation_cache_dir)  # `None` means no caching at all
+```
 
 **Knobs you set yourself**, with the trade-off each carries:
 

@@ -23,6 +23,20 @@ jobs:
       - self-hosted
       - gpu-benchmark
     steps:
+      # On the benchmark runner `/tmp` sits on a small root filesystem, while the
+      # runner's own work volume has hundreds of GB free. The benchmarks write
+      # hundreds of MB of debug-log snapshots per run, which filled the root
+      # filesystem and failed three branches' jobs with ENOSPC. Keep temporary
+      # files on the big volume.
+      #
+      # This has to be a step rather than a job-level `env:`: the `runner`
+      # context is not available when job-level env is evaluated, and using it
+      # there makes GitHub reject the whole file at parse time. `RUNNER_TEMP` is
+      # a plain environment variable on the runner, so no expression is needed.
+      - name: Send temporary files to the runner's work volume
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Report free disk space
+        run: df -h "$TMPDIR" /tmp / | cat
       - name: Wait for GPU to be free
         run: |
           echo "Waiting for GPU to be free..."
@@ -40,6 +54,15 @@ jobs:
         run: git fetch origin main:main || true
       - name: Install environment
         run: pixi install -e benchmarks-cuda12
+      # The exact-affine kernel is a gitignored build artifact living in the
+      # source tree. `actions/checkout` cleans the work tree, which removes it,
+      # while `pixi install` re-runs the build hook only when it decides the
+      # editable package needs reinstalling. Whether the kernel survives a run
+      # is therefore leftover state from the previous one, and the DC-EGM
+      # benchmarks — the only ones that reach it — fail outright when it is
+      # gone. Build it explicitly so the job does not depend on that.
+      - name: Build the exact-affine kernel
+        run: pixi run -e benchmarks-cuda12 build-exact-affine
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"

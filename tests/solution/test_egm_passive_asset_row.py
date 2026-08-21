@@ -1,0 +1,669 @@
+"""DC-EGM passive continuous state carried through asset-row mode.
+
+The ACA living-regime shape carries two continuous states — the Euler state
+`wealth` (assets) and a passive `aime`-like state whose deterministic
+transition reads a discrete action and a stochastic process node, independent
+of the continuous action and the savings node — while a savings-stage function
+(the survival probability) reads the Euler state, so the regime solves per
+exogenous asset node *and* carries the passive axis and a process axis
+simultaneously. The passive read blends the two neighboring nodes of the
+child's passive grid, the process node is integrated with its intrinsic
+weights, and each asset row publishes its own node.
+
+The oracle is a dense-grid brute-force solve of a mathematically equivalent
+spec (same wealth, AIME, and income grids, dense consumption grid, explicit
+budget constraint).
+"""
+
+import functools
+
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from _lcm.typing import PeriodToRegimeToVArr
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    RouwenhorstAR1Process,
+    categorical,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM, GridSearch
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
+from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+
+pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+
+N_PERIODS = 4
+N_INCOME_NODES = 5
+
+# Wealth band over which the survival smoothstep ramps; resolved across many
+# wealth cells so the build-time continuity check admits it.
+BAND_START = 30.0
+BAND_WIDTH = 30.0
+SURVIVAL_LOW = 0.6
+SURVIVAL_HIGH = 0.95
+
+# AIME accrual per period of work, scaled by the income node; lands off the
+# AIME node spacing so the mixed passive read is exercised. Capped at the top
+# AIME node.
+AIME_GAIN = 1.3
+AIME_MAX = 20.0
+
+# Pension annuity drawn from accumulated AIME, added to next wealth.
+PENSION_RATE = 0.2
+
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=100.0, n_points=60)
+AIME_GRID = LinSpacedGrid(start=0.0, stop=AIME_MAX, n_points=6)
+# Dense enough that the brute-force oracle's own resolution error stays well
+# below the comparison tolerance; unlike the state grids above, this one
+# cannot shrink without reintroducing that oracle-side bias.
+CONSUMPTION_GRID = LinSpacedGrid(start=0.25, stop=120.0, n_points=600)
+SAVINGS_GRID = IrregSpacedGrid(points=tuple(100.0 * (i / 59) ** 3 for i in range(60)))
+
+N_BRUTE_UNSTABLE_NODES = 8
+
+
+@categorical(ordered=False)
+class PassiveAssetRowRegimeId:
+    working_life: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=True)
+class LaborChoice:
+    work: ScalarInt
+    rest: ScalarInt
+
+
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborChoice.work
+
+
+def smoothstep_in_band(wealth: ContinuousState) -> FloatND:
+    t = jnp.clip((wealth - BAND_START) / BAND_WIDTH, 0.0, 1.0)
+    return t * t * t * (t * (6.0 * t - 15.0) + 10.0)
+
+
+def survival_of_wealth(wealth: ContinuousState) -> FloatND:
+    return SURVIVAL_LOW + (SURVIVAL_HIGH - SURVIVAL_LOW) * smoothstep_in_band(wealth)
+
+
+def stay_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+    return jnp.where(age >= final_age_alive, 0.0, survival_of_wealth(wealth))
+
+
+def death_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+    return 1.0 - stay_prob(wealth, age, final_age_alive)
+
+
+def utility(
+    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+) -> FloatND:
+    return jnp.log(consumption) - jnp.where(is_working, disutility_of_work, 0.0)
+
+
+def labor_income(is_working: BoolND, income: ContinuousState, wage: float) -> FloatND:
+    return jnp.where(is_working, wage * jnp.exp(income), 0.0)
+
+
+def pension_income(aime: ContinuousState) -> FloatND:
+    return PENSION_RATE * aime
+
+
+def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
+
+
+def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def next_aime(
+    aime: ContinuousState, is_working: BoolND, income: ContinuousState
+) -> ContinuousState:
+    """Passive AIME accrual: reads the work choice and the income node only."""
+    return jnp.minimum(
+        aime + jnp.where(is_working, AIME_GAIN * jnp.exp(income), 0.0), AIME_MAX
+    )
+
+
+def next_wealth_dcegm(
+    savings: FloatND, labor_income: FloatND, pension_income: FloatND
+) -> ContinuousState:
+    return savings + labor_income + pension_income
+
+
+def next_wealth_brute(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    labor_income: FloatND,
+    pension_income: FloatND,
+) -> ContinuousState:
+    return wealth - consumption + labor_income + pension_income
+
+
+def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+DCEGM_SOLVER = DCEGM(
+    savings_grid=SAVINGS_GRID,
+    n_constrained_points=64,
+)
+
+
+def _ages() -> AgeGrid:
+    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+
+
+def _active(age: int) -> bool:
+    return age < 40 + (N_PERIODS - 1) * 10
+
+
+def _shared_functions() -> dict:
+    return {
+        "utility": utility,
+        "labor_income": labor_income,
+        "pension_income": pension_income,
+        "is_working": is_working,
+    }
+
+
+@functools.cache
+def _model(solver: str) -> Model:
+    """Euler `wealth` + passive `aime` + process `income`, asset-row mode."""
+    is_dcegm = solver == "dcegm"
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    states = {
+        "wealth": WEALTH_GRID,
+        "aime": AIME_GRID,
+        "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
+    }
+    working = regime_type(
+        transition={
+            "working_life": MarkovTransition(stay_prob),
+            "dead": MarkovTransition(death_prob),
+        },
+        active=_active,
+        actions={
+            "labor_supply": DiscreteGrid(LaborChoice),
+            "consumption": CONSUMPTION_GRID,
+        },
+        states=states,
+        state_transitions={
+            "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
+            "aime": next_aime,
+        },
+        constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
+        functions=(
+            {
+                **_shared_functions(),
+                "savings": savings,
+                "inverse_marginal_utility": inverse_marginal_utility,
+            }
+            if is_dcegm
+            else {**_shared_functions()}
+        ),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="wealth",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=PassiveAssetRowRegimeId,
+    )
+
+
+def _params() -> dict:
+    final_age_alive = 40 + (N_PERIODS - 2) * 10
+    return {
+        "discount_factor": 0.95,
+        "final_age_alive": final_age_alive,
+        "working_life": {
+            "income": {"mu": 0.0, "sigma": 0.2, "rho": 0.6},
+            "labor_income": {"wage": 12.0},
+            "utility": {"disutility_of_work": 0.3},
+        },
+    }
+
+
+def test_passive_aime_through_asset_row_matches_brute_force():
+    """A passive AIME state carried through asset-row mode matches brute force.
+
+    The regime solves per exogenous asset node (the survival probability reads
+    wealth) while carrying the passive AIME axis and the income process axis.
+    AIME accrues off its node spacing from the work choice and the income node,
+    so the mixed passive read is exercised, and the accumulated AIME feeds next
+    wealth through the pension annuity. Values agree with the dense-grid
+    brute-force oracle across the full wealth-by-AIME-by-income grid.
+    """
+    params = _params()
+    dcegm_solution: PeriodToRegimeToVArr = _model("dcegm").solve(
+        params=params, log_level="debug"
+    )
+    brute_solution: PeriodToRegimeToVArr = _model("brute_force").solve(
+        params=params, log_level="debug"
+    )
+    for period in sorted(brute_solution)[:-1]:
+        brute_V = np.asarray(brute_solution[period]["working_life"])
+        dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
+        assert brute_V.shape == dcegm_V.shape
+        # V leads with the income node and AIME axes; wealth is the trailing
+        # (Euler) axis. Exclude the lowest wealth nodes, where the coarse
+        # consumption grid makes the brute oracle itself unreliable.
+        flat_dcegm = np.moveaxis(dcegm_V, _euler_axis(dcegm_V), -1).reshape(
+            -1, dcegm_V.shape[_euler_axis(dcegm_V)]
+        )
+        flat_brute = np.moveaxis(brute_V, _euler_axis(brute_V), -1).reshape(
+            -1, brute_V.shape[_euler_axis(brute_V)]
+        )
+        np.testing.assert_allclose(
+            flat_dcegm[:, N_BRUTE_UNSTABLE_NODES:],
+            flat_brute[:, N_BRUTE_UNSTABLE_NODES:],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )
+
+
+def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
+    """The persisted asset-row carry holds one row per Euler node, unpadded.
+
+    In asset-row mode each carry row is the value/marginal published at the
+    regime's exogenous Euler (wealth) nodes; the dense envelope-refinement
+    workspace is transient. So the carry's trailing length is the wealth-grid
+    size, not the larger savings/envelope candidate length — the difference is
+    pure storage the parent never reads (the NaN tail is masked on interpolation).
+    """
+    template = _model("dcegm")._regimes["working_life"].solution.continuation_template
+    assert template is not None
+    n_euler = int(WEALTH_GRID.to_jax().shape[0])
+    # The envelope workspace would have been ceil(1.2 * (n_savings + n_constrained))
+    # = ceil(1.2 * (60 + 64)) = 149 rows; the persisted carry is the 60 Euler nodes.
+    assert template.value.shape[-1] == n_euler
+    assert template.marginal_utility.shape[-1] == n_euler
+    assert template.endog_grid.shape[-1] == n_euler
+
+
+def _euler_axis(value_array: np.ndarray) -> int:
+    """Axis of the Euler (wealth) state — the one matching the wealth grid."""
+    n_wealth = int(WEALTH_GRID.to_jax().shape[0])
+    return next(axis for axis, size in enumerate(value_array.shape) if size == n_wealth)
+
+
+# Regime-transition prob through a param-dependent Euler-state chain
+#
+# The means-tested survival probability reads the Euler state `wealth` through
+# a DAG-computed intermediate that itself reads a model param (a capital-income
+# return rate), mirroring an SSI/Medicaid eligibility share
+# `medicaid_eligibility_share <- countable_income <- capital_income(assets, r)`.
+# The regime simultaneously carries a passive AIME axis and an income process
+# axis, so the per-asset-node savings-stage probability evaluation must receive
+# the qualified param alongside the Euler node.
+
+RATE_OF_RETURN = 0.04
+
+
+def capital_income(wealth: ContinuousState, rate_of_return: float) -> FloatND:
+    """Capital income on current wealth — reads the Euler state and a param."""
+    return rate_of_return * wealth
+
+
+def countable_income(capital_income: FloatND) -> FloatND:
+    return capital_income
+
+
+def medicaid_eligibility_share(countable_income: FloatND) -> FloatND:
+    """SSI-style smoothstep eligibility share over the countable income band."""
+    return smoothstep_in_band(countable_income / RATE_OF_RETURN)
+
+
+def survival_of_share(medicaid_eligibility_share: FloatND) -> FloatND:
+    return SURVIVAL_LOW + (SURVIVAL_HIGH - SURVIVAL_LOW) * medicaid_eligibility_share
+
+
+def stay_prob_share(
+    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+) -> FloatND:
+    return jnp.where(
+        age >= final_age_alive, 0.0, survival_of_share(medicaid_eligibility_share)
+    )
+
+
+def death_prob_share(
+    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+) -> FloatND:
+    return 1.0 - stay_prob_share(medicaid_eligibility_share, age, final_age_alive)
+
+
+def _means_test_intermediates() -> dict:
+    return {
+        "capital_income": capital_income,
+        "countable_income": countable_income,
+        "medicaid_eligibility_share": medicaid_eligibility_share,
+    }
+
+
+@functools.cache
+def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
+    """Euler `wealth` + passive `aime` + process `income`; means-tested prob.
+
+    The survival probability reads `wealth` through the param-dependent chain
+    `capital_income(wealth, rate_of_return)`, triggering asset-row mode while
+    the regime carries the passive AIME and income-process axes. When
+    `rate_is_fixed`, the return rate is supplied through `fixed_params` (so it
+    is partialled at model build and dropped from the live params template)
+    rather than as a free solve param.
+    """
+    is_dcegm = solver == "dcegm"
+    regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    states = {
+        "wealth": WEALTH_GRID,
+        "aime": AIME_GRID,
+        "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
+    }
+    working = regime_type(
+        transition={
+            "working_life": MarkovTransition(stay_prob_share),
+            "dead": MarkovTransition(death_prob_share),
+        },
+        active=_active,
+        actions={
+            "labor_supply": DiscreteGrid(LaborChoice),
+            "consumption": CONSUMPTION_GRID,
+        },
+        states=states,
+        state_transitions={
+            "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
+            "aime": next_aime,
+        },
+        constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
+        functions=(
+            {
+                **_shared_functions(),
+                "savings": savings,
+                "inverse_marginal_utility": inverse_marginal_utility,
+                **_means_test_intermediates(),
+            }
+            if is_dcegm
+            else {
+                **_shared_functions(),
+                **_means_test_intermediates(),
+            }
+        ),
+        solver=DCEGM_SOLVER if is_dcegm else GridSearch(),
+        **(
+            {
+                "liquid": LiquidMargin(
+                    state="wealth",
+                    action="consumption",
+                    resources="wealth",
+                    post_decision_state="savings",
+                )
+            }
+            if is_dcegm
+            else {}
+        ),
+    )
+    fixed_params = (
+        {"working_life": {"capital_income": {"rate_of_return": RATE_OF_RETURN}}}
+        if rate_is_fixed
+        else {}
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=PassiveAssetRowRegimeId,
+        fixed_params=fixed_params,
+    )
+
+
+def _means_test_params(*, rate_is_fixed: bool) -> dict:
+    params = _params()
+    if not rate_is_fixed:
+        params["working_life"]["capital_income"] = {"rate_of_return": RATE_OF_RETURN}
+    return params
+
+
+@pytest.mark.parametrize("rate_is_fixed", [False, True])
+def test_means_tested_prob_through_param_intermediate_matches_brute_force(
+    rate_is_fixed: bool,  # noqa: FBT001
+):
+    """A means-tested survival prob `share <- capital_income(wealth, r)` matches.
+
+    The stay probability reads the Euler state `wealth` through a param-dependent
+    intermediate chain (the SSI/Medicaid eligibility-share shape), so the regime
+    solves per exogenous asset node while carrying the passive AIME and income
+    process axes. The per-asset-node regime-transition-probability evaluation
+    receives the qualified param `capital_income__rate_of_return` — whether the
+    return rate is a free solve param or supplied through `fixed_params` (and
+    thus partialled into the prebuilt kernel). The probability's wealth slope
+    carries the first-order term
+    $\\partial P_{stay}/\\partial wealth \\cdot EV_{stay}$ into the marginal
+    value. Values agree with the dense-grid brute-force oracle across the full
+    wealth-by-AIME-by-income grid.
+    """
+    params = _means_test_params(rate_is_fixed=rate_is_fixed)
+    dcegm_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
+        "dcegm", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
+    brute_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
+        "brute_force", rate_is_fixed=rate_is_fixed
+    ).solve(params=params, log_level="debug")
+    for period in sorted(brute_solution)[:-1]:
+        brute_V = np.asarray(brute_solution[period]["working_life"])
+        dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
+        assert brute_V.shape == dcegm_V.shape
+        flat_dcegm = np.moveaxis(dcegm_V, _euler_axis(dcegm_V), -1).reshape(
+            -1, dcegm_V.shape[_euler_axis(dcegm_V)]
+        )
+        flat_brute = np.moveaxis(brute_V, _euler_axis(brute_V), -1).reshape(
+            -1, brute_V.shape[_euler_axis(brute_V)]
+        )
+        np.testing.assert_allclose(
+            flat_dcegm[:, N_BRUTE_UNSTABLE_NODES:],
+            flat_brute[:, N_BRUTE_UNSTABLE_NODES:],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )
+
+
+@functools.cache
+def _model_with_aime_batch(aime_batch_size: int) -> Model:
+    """The asset-row passive-AIME DC-EGM model with `aime` splayed by batch_size."""
+    working = ConsumptionSavingsRegime(
+        transition={
+            "working_life": MarkovTransition(stay_prob),
+            "dead": MarkovTransition(death_prob),
+        },
+        active=_active,
+        actions={
+            "labor_supply": DiscreteGrid(LaborChoice),
+            "consumption": CONSUMPTION_GRID,
+        },
+        states={
+            "wealth": WEALTH_GRID,
+            "aime": LinSpacedGrid(
+                start=0.0, stop=AIME_MAX, n_points=6, batch_size=aime_batch_size
+            ),
+            "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
+        },
+        state_transitions={"wealth": next_wealth_dcegm, "aime": next_aime},
+        constraints={},
+        functions={
+            **_shared_functions(),
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM_SOLVER,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="wealth",
+            post_decision_state="savings",
+        ),
+    )
+    return Model(
+        regimes={"working_life": working, "dead": dead},
+        ages=_ages(),
+        regime_id_class=PassiveAssetRowRegimeId,
+    )
+
+
+def _euler_last_flat(value_array: np.ndarray) -> np.ndarray:
+    """Move the Euler (wealth) axis last and flatten the leading combo axes.
+
+    `batch_size` on a continuous state reorders the canonical continuous-axis
+    layout (a batched axis is placed ahead of an unbatched one — the same
+    reordering the brute solver applies). Moving the Euler axis last collapses
+    that difference: `(income, wealth, aime)` and `(income, aime, wealth)` both
+    become `(income, aime, wealth)`, so the solved values are directly
+    comparable regardless of the splay.
+    """
+    moved = np.moveaxis(value_array, _euler_axis(value_array), -1)
+    return moved.reshape(-1, moved.shape[-1])
+
+
+# Splaying the combo axis repartitions the compiled reduction, so the value
+# array is owed agreement to the working precision rather than bit identity.
+# Measured over this file's grids, across batch sizes 1, 2 and 4 and every
+# non-terminal period, the worst relative departure from the unsplayed solve is
+# 2.72 eps at float32 and 1.99 eps at float64. Eight eps is that measurement
+# with headroom, and is dtype-derived, so it tightens automatically at float64
+# instead of degrading into a bit-identity claim the way a fixed `1e-12` does.
+_INVARIANCE_EPS_MULTIPLE = 8.0
+
+
+def _invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
+    """Return the `(rtol, atol)` a repartitioned reduction is owed.
+
+    The absolute term is the relative one scaled by the magnitude actually
+    being compared, so a cell whose value sits near zero is not held to a
+    tighter standard than the arithmetic can deliver.
+    """
+    eps = float(np.finfo(reference.dtype).eps)
+    rtol = _INVARIANCE_EPS_MULTIPLE * eps
+    return rtol, rtol * float(np.max(np.abs(reference[np.isfinite(reference)])))
+
+
+def _simulated_choices(model: Model, solution: PeriodToRegimeToVArr):
+    """Simulate a fixed subject panel and return it keyed by subject and period.
+
+    The seed is pinned so the regime lottery draws the same shocks on both
+    sides; without that, subjects cross the survival threshold differently and
+    the comparison measures the draw rather than the schedule.
+    """
+    rng = np.random.default_rng(seed=925)
+    n_subjects = 400
+    initial_conditions = {
+        "age": jnp.full(n_subjects, float(_ages().period_to_age(0))),
+        "wealth": jnp.asarray(rng.uniform(2.0, 95.0, size=n_subjects)),
+        "aime": jnp.asarray(rng.uniform(0.0, AIME_MAX, size=n_subjects)),
+        "income": jnp.asarray(rng.uniform(-0.4, 0.4, size=n_subjects)),
+        "regime_id": jnp.full(n_subjects, PassiveAssetRowRegimeId.working_life),
+    }
+    simulated = model.simulate(
+        params=_params(),
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=solution,
+        seed=20260806,
+        log_level="debug",
+    ).to_dataframe(use_labels=False)
+    return simulated.set_index(["subject_id", "period"]).sort_index()
+
+
+@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
+def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size: int):
+    """Splaying the passive AIME combo axis moves the values by at most a few ULP.
+
+    `batch_size` on the passive `aime` grid only changes how the combo product
+    is scheduled (per-axis `productmap` blocks instead of one fused vmap). The
+    canonical layout reorders the continuous axes (batched ahead of unbatched,
+    matching the brute solver), so the comparison moves the Euler axis last. The
+    reduction is repartitioned, not redefined: which cells are feasible is
+    unchanged, and the surviving values agree to the working precision at every
+    period, including a block size that does not divide the AIME grid.
+    """
+    reference = _model("dcegm").solve(params=_params(), log_level="debug")
+    splayed = _model_with_aime_batch(aime_batch_size).solve(
+        params=_params(), log_level="debug"
+    )
+    # `working_life` is the asset-row regime carrying the splayed AIME axis;
+    # it is inactive in the terminal period, so exclude that period.
+    for period in sorted(reference)[:-1]:
+        got = _euler_last_flat(np.asarray(splayed[period]["working_life"]))
+        want = _euler_last_flat(np.asarray(reference[period]["working_life"]))
+        # Feasibility is structural, so it is owed exact agreement: an
+        # infeasible cell carries `-inf`, and a tolerance cannot adjudicate it.
+        np.testing.assert_array_equal(
+            np.isfinite(got),
+            np.isfinite(want),
+            err_msg=f"feasibility differs: period={period}, bs={aime_batch_size}",
+        )
+        rtol, atol = _invariance_tolerances(want)
+        np.testing.assert_allclose(
+            got,
+            want,
+            rtol=rtol,
+            atol=atol,
+            err_msg=f"period={period}, bs={aime_batch_size}",
+        )
+
+
+@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
+def test_passive_aime_batch_size_leaves_the_discrete_choices_unchanged(
+    aime_batch_size: int,
+):
+    """Splaying the passive AIME combo axis does not move a single discrete choice.
+
+    Batch size partitions a computation whose result does not depend on the
+    partition, so the discrete objects are owed exact equality rather than a
+    tolerance: a labor-supply choice or a regime that flips is a defect, not
+    rounding. Simulating the same subject panel under both schedules with the
+    same seed reproduces the same choice for every subject in every period.
+    """
+    reference_model = _model("dcegm")
+    reference = _simulated_choices(
+        reference_model, reference_model.solve(params=_params(), log_level="debug")
+    )
+    splayed_model = _model_with_aime_batch(aime_batch_size)
+    splayed = _simulated_choices(
+        splayed_model, splayed_model.solve(params=_params(), log_level="debug")
+    )
+
+    assert list(splayed.index) == list(reference.index), (
+        f"subject/period panel differs, bs={aime_batch_size}"
+    )
+    for column in ("labor_supply", "regime_name"):
+        np.testing.assert_array_equal(
+            splayed[column].to_numpy(),
+            reference[column].to_numpy(),
+            err_msg=f"{column} differs, bs={aime_batch_size}",
+        )

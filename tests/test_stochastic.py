@@ -24,7 +24,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import X64_ENABLED
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -33,6 +33,9 @@ from tests.test_models.stochastic import (
     retirement,
     working_life,
 )
+
+# Splayed and unsplayed solves agree to float eps at the active precision.
+_SPLAY_ATOL = 1e-10 if X64_ENABLED else 1e-5
 
 
 def test_model_simulate_with_stochastic_model():
@@ -381,10 +384,8 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
         log_level="debug", params=params
     )
 
-    assert_array_almost_equal(
-        V_splayed[0]["working_life"],
-        V_unsplayed[0]["working_life"],
-        decimal=DECIMAL_PRECISION,
+    assert_allclose(
+        V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=_SPLAY_ATOL
     )
 
 
