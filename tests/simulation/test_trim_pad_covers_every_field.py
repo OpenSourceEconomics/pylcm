@@ -1,16 +1,8 @@
-"""`trim_pad_from_raw_results` must trim EVERY per-subject field, not a fixed list.
+"""`trim_pad_from_raw_results` trims every per-subject dataclass field.
 
-The simulate dispatch pads the subject axis up to a multiple of the batch size and
-trims the pad rows off once, at the end. That trim used to enumerate the fields it
-knew about — `V_arr`, `actions`, `states`, `in_regime` — which is a second, silent
-copy of `PeriodRegimeSimulationData`'s definition. When `nested_policy_fallback` was
-added to the structure, the enumeration was not, so `dataclasses.replace` carried the
-untrimmed field through: a leaf padded to 24 rows against a 21-row `_in_regime` mask,
-and `to_dataframe` died on `column[mask]` with an `IndexError`.
-
-These tests are written against the structure's own field list, so a field added
-tomorrow is covered without editing this file. That is the point — the defect was not
-"one field was forgotten" but "the list can be forgotten".
+Simulation pads the subject axis to a multiple of the batch size and removes the
+pad rows once at the end. The tests derive their expectations from the dataclass,
+so coverage remains complete as the result schema evolves.
 """
 
 import dataclasses

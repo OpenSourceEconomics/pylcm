@@ -60,9 +60,8 @@ _MARGIN_SAFETY = 10.0
 # a neighbor of a marked interval is co-marked (transitively) while its own
 # normalized error exceeds this fraction of the threshold — a near-threshold
 # region refines together instead of burning one round per interval. The
-# interpolant's 4-point slopes keep the grading amplification bounded
-# (with 3-point slopes it grows like 1/h and a front creeps indefinitely —
-# measured before the upgrade); 1/16 covers one full order of headroom.
+# interpolant's 4-point slopes keep the grading amplification bounded; 1/16
+# covers one full order of headroom.
 _NEIGHBOR_FRACTION = 1.0 / 16.0
 
 # Argmax tie band, in ULPs of the value dtype. This band exists only to absorb

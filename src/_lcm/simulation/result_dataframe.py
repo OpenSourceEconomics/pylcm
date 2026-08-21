@@ -153,12 +153,9 @@ def _extract_period_data(
         "value": result.V_arr,
     }
 
-    # F4: per-subject flag that the continuous-outer off-grid policy read was
-    # refused and the grid-argmax pair kept; inference on that path must refuse
-    # any True. Emitted ONLY for regimes that can publish a nested read (NNBEGM).
-    # Unconditionally it is a constant-False column in every other model's
-    # dataframe -- a silent schema change for every user, which is what it was
-    # from d0d655c until this gate.
+    # Per-subject flag that a continuous-outer off-grid policy read was refused
+    # and the grid-argmax pair retained. Only NNBEGM regimes can publish the flag;
+    # omitting it elsewhere avoids a constant-False column in unrelated results.
     if publishes_nested_policy:
         data["nested_policy_fallback"] = result.nested_policy_fallback
 

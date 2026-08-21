@@ -225,12 +225,10 @@ def build_pilot_objective(
 
         return jnp.diagonal(jax.vmap(one)(f_arr))
 
-    # Deliberately NOT jitted. Forward-differentiating the primitive already
-    # traces this objective at every mesh node into one graph; wrapping it in
-    # an additional jit nests a compiled full-state nested solve inside that
-    # trace and roughly doubled peak memory in practice (a jitted variant was
-    # OOM-killed at ~25 GB). Peak still scales with `n_mesh`, so the pilot
-    # keeps the mesh small and runs the gate without a competing heavy job.
+    # Deliberately not jitted. Forward differentiation already traces the
+    # objective at every mesh node into one graph; an additional jit nests a
+    # compiled full-state solve inside that trace. Peak memory scales with
+    # `n_mesh`, so the pilot keeps the mesh small.
     return objective
 
 

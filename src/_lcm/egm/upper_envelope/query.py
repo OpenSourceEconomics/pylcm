@@ -767,11 +767,9 @@ def _subnormal_operand_present(*, row: tuple[Float1D, ...], query: FloatND) -> B
     query, because which segment a query ends up owned by is not known here and
     the affected link may be any of them.
 
-    Refusing is not the repair. The repair is an arithmetic that reads operands
-    through their significands and exponents rather than as floats, which is a
-    representation change this predicate does not attempt. What it does is make
-    the failure loud, so a wrong number is never published in place of one the
-    format holds perfectly well.
+    This predicate makes the unsupported read explicit. Supporting it requires
+    arithmetic that reads operands through their significands and exponents
+    rather than as working-dtype floats.
     """
     if not backend_flushes_subnormals(row[0].dtype):
         return jnp.zeros_like(jnp.asarray(query), dtype=bool)
@@ -1771,19 +1769,10 @@ def _envelope_blocked(
     )
 
 
-# PARKED -- this branch's envelope-query reduction, deliberately off the code path.
-#
-# `feat/nb-egm` and `feat/continuous-outer` independently rewrote
-# `envelope_at_query`: upstream toward `_envelope_dense` / `_envelope_blocked`
-# (double-double escalation, `1ce705ba`), this branch toward an exactly-certified
-# winner (`_candidate_terms` / `_exactly_maximal`). The two
-# share no helper, so a merge can run one or the other, never both.
-#
-# HMvG's call (2026-08-06): run upstream's path, park this branch's, revisit once
-# upstream is finalized. `_envelope_at_query_407` below is this branch's reduction
-# verbatim, intentionally unreferenced. Every exact-arithmetic primitive it and
-# `nbegm_step.py` depend on stays defined, so nothing importing them breaks:
-# reviving it is a one-line rename back.
+# Alternative exact-arithmetic reduction, intentionally outside the public path.
+# `envelope_at_query` uses `_envelope_dense` / `_envelope_blocked`; the reduction
+# below shares no helpers with that implementation. Its arithmetic primitives
+# remain available to `nbegm_step.py` and other internal callers.
 
 
 def _dekker_split_factor(dtype: jnp.dtype) -> float:
@@ -2026,11 +2015,9 @@ def _exact_difference(a: FloatND, b: FloatND) -> _Dyadic:
 def _framed_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Array]:
     """`(head, tail, exponent)` with `a - b == (head + tail) * 2**exponent`.
 
-    The double-double SCREEN's counterpart to `_exact_difference`, and the answer
-    to the same defect on the public path: `_candidate_terms` formed
-    its grid and value differences in the working dtype after a LIFT-ONLY shift,
-    so two opposite-signed top-binade operands overflowed there exactly as they
-    did in the exact kernel, and the published triple was `(NaN, NaN, NaN)`.
+    This is the double-double screen's counterpart to `_exact_difference`.
+    Forming grid or value differences directly in the working dtype can overflow
+    for opposite-signed top-binade operands.
 
     Both operands are first divided by `2**max(e_a, e_b)` — which is `ldexp` on
     the `frexp` mantissa, hence exact — landing them in `(-1, 1]`. `_two_diff` on
@@ -2138,9 +2125,8 @@ def _dyadic_product(a: _Dyadic, b: _Dyadic, split: float) -> _Dyadic:
     which retires the caveat at the top of this module for the exact path.
 
     The magnitudes ride along in the integer exponents, where nothing rounds.
-    This is the property that matters: the decisive product of a
-    half-minimum-normal numerator term with a half-minimum-normal denominator
-    term used to flush to zero before the exact summation ever saw it.
+    This preserves a decisive product of a half-minimum-normal numerator term
+    with a half-minimum-normal denominator term until exact summation.
     """
     b_parts = [_dyadic_parts(b.mantissa[..., j]) for j in range(b.mantissa.shape[-1])]
     mantissas: list[FloatND] = []
@@ -2178,11 +2164,9 @@ def _accumulator_layout(dtype: jnp.dtype) -> _AccumulatorLayout:
     `log2(_EXACT_TERMS)` guard bits above `limb_bits` to stay exact.
 
     The limb count covers the full exponent span a cross-product term can reach.
-    That span is what the previous nine repairs kept trying to compress into one
-    binade: a value and a grid difference each range over the whole format, and
-    their products then range over twice it. Nothing here compresses it — the
-    accumulator is simply wide enough to hold it, which is why no input scale can
-    make a term vanish before the sign is read.
+    A value and a grid difference each range over the whole format, and their
+    products range over twice it. The accumulator is wide enough to hold that
+    span, so no input scale can make a term vanish before the sign is read.
     """
     info = jnp.finfo(dtype)
     precision = int(info.nmant) + 1
@@ -2225,10 +2209,9 @@ def _exact_sign_of_sum(terms: _Dyadic) -> FloatND:
     a term 3000 binades below the leading one simply lands 3000 binades further
     down the accumulator.
 
-    That is the difference from the expansion this replaces. Shewchuk's
-    GROW-EXPANSION is exact for the terms it RECEIVES, and the loss was always
-    upstream — in forming the terms at all. A fixed-point accumulator has no
-    upstream: the exponent selects a limb, and selecting a limb cannot round.
+    Unlike an expansion, the fixed-point accumulator cannot lose information
+    while forming an input term: the exponent selects a limb, and selecting a
+    limb cannot round.
 
     Carries are then propagated once from the least significant limb upward,
     leaving every limb in `[0, 2**limb_bits)` and the sum equal to
@@ -2359,11 +2342,10 @@ def _exact_ratio(*, cols: FloatND, q: FloatND) -> _ExactRatio:
     # Canonical orientation. Endpoints may be stored in either order within a
     # branch; negating both numerator and denominator leaves `V` unchanged.
     #
-    # Read off the STORED endpoints, not off a leading term. Under the previous
-    # representation the width's first term was the rounded difference, whose
-    # sign was the width's sign; it is now the frexp mantissa of `right_grid`,
-    # whose sign is that endpoint's. A comparison of two finite floats is exact
-    # and needs no difference to be formed at all.
+    # Read off the STORED endpoints, not off a leading term. Here the width's
+    # first term is the frexp mantissa of `right_grid`, whose sign is that
+    # endpoint's rather than necessarily the width's. Comparing finite floats is
+    # exact and needs no difference to be formed at all.
     flip = right_grid < left_grid
     numerator = _dyadic_negate(numerator, flip)
     denominator = _dyadic_negate(width, flip)
@@ -2426,10 +2408,9 @@ def _exact_slope_ratio(*, cols: FloatND) -> _ExactRatio:
     The denominator is canonically positive so a cross-multiplied comparison
     reads its sign off the numerator difference.
 
-    A slope's numerator and denominator scales do NOT cancel within one candidate
-    — they change the ratio — which used to force BOTH on the caller as shared
-    exponents. Carrying the exponent per term removes that coupling: neither
-    scale is chosen at all, so neither can be chosen wrongly.
+    A slope's numerator and denominator scales do not cancel within one candidate;
+    they change the ratio. Carrying an exponent per term keeps the scales
+    independent and avoids choosing a shared frame.
     """
     left_grid, right_grid = cols[..., 0], cols[..., 1]
     left_value, right_value = cols[..., 2], cols[..., 3]
@@ -2464,12 +2445,9 @@ def _exact_slope_compare(*, cols_a: FloatND, cols_b: FloatND) -> FloatND:
     Same cross-multiplied construction as `_exact_compare`, on the slope ratio
     instead of the value.
 
-    This exists because an exact VALUE tie is only half the rule. The
-    right-continuous break then orders slopes, and ordering them on
-    `fl((v1-v0)/(x1-x0))` re-introduces the very defect the exact value predicate
-    removed one operation earlier: two strictly ordered exact slopes can share a
-    single float key, and `argmax` then silently falls back to candidate order,
-    so a pure branch permutation flips the published policy and marginal.
+    An exact value tie is only half the rule: the right-continuous break then
+    orders slopes. Two strictly ordered exact slopes can share the rounded key
+    `fl((v1-v0)/(x1-x0))`, so their ordering must also be exact.
     """
     return _exact_cross_sign(
         a=_exact_slope_ratio(cols=cols_a),
@@ -2550,13 +2528,9 @@ def _exactly_maximal(
     # a node event publishes stored data and performs no arithmetic — so a
     # bitwise-equal `(hi, lo)` pair between two such candidates IS an exact tie.
     #
-    # The previous rule read `radius == 0` as that certificate, and a radius is a
-    # float like any other: near the bottom of the range `eps**2 * |v|` underflows
-    # to zero for interior lanes whose value pair also collapsed, so two candidates
-    # that are NOT tied presented as certifiably tied and `_exact_compare` — which
-    # returns the correct strict sign on exactly that input — was never consulted.
-    # "The radius came out zero" is a statement about
-    # the arithmetic's dynamic range, not about the candidate's value.
+    # A zero radius is not such a certificate: near the bottom of the range,
+    # `eps**2 * |v|` can underflow for an interior lane. The radius then describes
+    # the arithmetic's dynamic range rather than an exact equality of values.
     #
     # The consequence is the invariant the whole selection now rests on: the
     # approximate layer may RESOLVE an ordering, never CERTIFY an equality. It
@@ -2791,15 +2765,10 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
         # compared ACROSS candidates, so every candidate must express it in the
         # same units.
         #
-        # Built from the framed differences rather than from raw subtractions.
-        # "One subtraction over another carries no overflow risk of its own" was
-        # the same false hinge as in `_exact_difference`: with `v0 = -H`,
-        # `v1 = H` the numerator alone is `+inf`, and against an equally
-        # overflowing width it becomes NaN — a key the sentinel repair
-        # in `_right_continuous_winner` then has to demote, losing the ordering
-        # rather than getting it right. Here the mantissa ratio is O(1) and the
-        # magnitude rides in the integer exponent, so the key is finite whenever
-        # the mathematical slope is, and infinite only when it genuinely is.
+        # Built from framed differences rather than raw subtractions. With
+        # `v0 = -H` and `v1 = H`, the raw numerator can overflow before division.
+        # Here the mantissa ratio is O(1) and the magnitude rides in the integer
+        # exponent, so the key is finite exactly when the mathematical slope is.
         slope=jnp.ldexp(jnp.ldexp(dh, d_shift) / jnp.ldexp(wh, w_shift), d_exp - w_exp),
         right_available=q < upper,
     )
@@ -2931,10 +2900,9 @@ class _BlockedCarry(NamedTuple):
     `(value_hi, value_lo, right_available, slope, earliest)`, so a single scan
     can carry the current winner's key components together with its gathered
     value/policy/marginal. Every candidate is evaluated exactly once, inside
-    one compiled scan body; no quantity is ever recomputed in a second program
-    and compared for equality (XLA is free to fuse each lowering differently at
-    the bit level, so a cross-program exact-equality rendezvous would be
-    unsound — an early blocked draft failed exactly there).
+    one compiled scan body; no quantity is recomputed in a second program and
+    compared for equality. XLA may fuse separate lowerings differently at the
+    bit level, so a cross-program exact-equality rendezvous would be unsound.
     """
 
     any_bracket: BoolND

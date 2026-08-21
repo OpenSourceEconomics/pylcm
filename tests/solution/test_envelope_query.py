@@ -251,10 +251,8 @@ def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
 def test_strict_represented_gap_selects_the_higher_branch(dtype, base, gap, block_size):
     """A strict represented gap at a node is decisive — never a tie.
 
-    The strict-gap half of the retired ``test_large_magnitude_value_tie_is_
-    precision_scaled`` (same data: a ~16-ULP gap at large magnitude), with the
-    expectation corrected. The stored node values are
-    candidate DATA, compared exactly: segment A ends at ``q=1`` with value
+    The stored node values are candidate data and are compared exactly. Segment
+    A ends at ``q=1`` with value
     ``base+gap`` (policy 0, marginal 7), strictly above segment B's ``base``
     (policy 1), so A wins outright and value, policy, AND marginal are all
     published from A — right-continuity never enters, and the returned triple
@@ -282,12 +280,9 @@ def test_strict_represented_gap_selects_the_higher_branch(dtype, base, gap, bloc
 def test_common_value_translation_does_not_change_a_strict_winner(block_size):
     """Adding a constant to every branch value cannot flip a strict winner.
 
-    The retired magnitude-proportional tie band
-    grew with ``|value|`` while a genuine represented gap does not, so a common
-    translation flipped the selected branch. Segment A ends at the shared node
-    ``q=1`` with a strict float32 gap of ``1e-5`` (~84 ULPs at 1.0) over the
-    right-extending segment B; A must win at translation 0 and still win after
-    translating every value by 1.0.
+    Segment A ends at the shared node ``q=1`` with a strict float32 gap of
+    ``1e-5`` over the right-extending segment B. A must win both before and
+    after adding 1.0 to every value.
     """
     dtype = jnp.float32
     gap = 1.0e-5
@@ -314,7 +309,7 @@ def test_common_value_translation_does_not_change_a_strict_winner(block_size):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_node_event_selection_matches_the_exact_oracle_across_scales(order, block_size):
-    """Compact mutation battery: node events resolve by exact comparison.
+    """Node events resolve by exact comparison across dtypes and scales.
 
     Two branches share the node ``q=1``: the ending branch carries
     ``base + multiple*ULP(base)`` there (policy 0), the right-extending branch
@@ -386,11 +381,9 @@ def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_
 
     Branch H sits exactly one ULP above branch L at both stored endpoints of the
     shared span ``[0, 2]``, so the true piecewise-linear gap at any interior
-    query is ~1 ULP — far below the retired magnitude-proportional tie band but
-    strictly positive. The double-double interior evaluation carries each
-    candidate to O(eps^2) relative accuracy, so H must win at an off-node query
-    in both branch orders and both execution paths (the retired band declared a
-    tie and let branch order pick the winner).
+    query is approximately one ULP and strictly positive. The double-double
+    interior evaluation carries each candidate to O(eps^2) relative accuracy,
+    so H must win in both branch orders and both execution paths.
     """
     lo0 = np.asarray(1.0, dtype=dtype)
     lo1 = np.asarray(3.0, dtype=dtype)
@@ -455,13 +448,9 @@ def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
     """A value tie between two branches with near-equal slopes must resolve to the
     larger-slope branch in BOTH the dense and blocked paths.
 
-    The tie-break folded the
-    right-extends bit and the value-slope into one scalar
-    (``arctan(slope)/pi + right_available``). For two genuinely-distinct but
-    near-equal small slopes that fold rounds to the SAME value in float32, so
-    ``argmax`` fell back to the lower index — the smaller-slope branch — reversing
-    right-continuity. Comparing the slope directly at native precision picks the
-    larger-slope branch.
+    The two genuinely distinct slopes share the same rounded scalar key
+    ``arctan(slope)/pi + right_available`` in float32. Direct native-precision
+    slope comparison must therefore decide the tie.
 
     Both segments span ``[1, 2]`` and cross to ~0 at ``q=1.5``; segment A (policy
     20) carries the SMALLER slope, segment B (policy 10) the LARGER. Right-continuity
@@ -581,12 +570,9 @@ def test_exact_interior_tie_takes_the_right_continuous_branch(
 
     `1/d` is not representable, so each branch's double-double pair carries a
     low word that depends on how ITS segment is parameterized: the two low
-    words differ even though the exact values coincide. A selector that orders
-    candidates lexicographically on `(hi, lo)` reads that difference as strict
-    order, hands the query to B, and never runs the right-continuous rule,
-    which produced 672 wrong policy/marginal choices in 1,680 such ties. Only
-    an exact comparison can classify this correctly, so this test is a direct
-    check that one is being made.
+    words differ even though the exact values coincide. Ordering candidates
+    lexicographically on `(hi, lo)` would therefore misclassify the tie. The
+    expected policy and marginal require an exact comparison.
     """
     end = np.asarray(denominator, dtype=dtype).item()
     far = np.asarray(2 * denominator - 1, dtype=dtype).item()
@@ -669,7 +655,6 @@ def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
 ):
     """An exact VALUE tie must be broken by the exact slope, not a rounded key.
 
-    Making the value comparison exact reopened the class one operation later.
     Both branches leave the stored node `(1, 0)`,
     so the values are exactly tied and right-continuity decides — and the rule is
     "larger value-slope, then earliest candidate". The selector computed that
@@ -792,8 +777,8 @@ def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block
 
 # Operand magnitude above which Dekker's TwoProd splitting itself overflows: the
 # split multiplies by `2**s + 1`, so it needs `|a| < 2**(emax - s)`. These are the
-# thresholds the selector silently crossed, and a scale test that stays
-# below them cannot detect the defect at all.
+# thresholds the selector must respect; a scale test that stays below them does
+# not exercise splitting overflow.
 _SPLIT_OVERFLOW_EXPONENT = {np.float32: 127 - 12, np.float64: 1023 - 27}
 
 
@@ -879,13 +864,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
 
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_both_exact_predicates_match_a_rational_oracle_at_every_scale(dtype):
-    """The VALUE predicate is rescaled too, and needs its own evidence.
-
-    The audit's artifacts exercise the slope comparator only. The repair changed
-    the value comparator as well, and a regression covering only the half that
-    was reported is how this class has already come back twice. This drives both
-    predicates directly against `Fraction` across the same ladder.
-    """
+    """Value and slope predicates match `Fraction` across the same scale ladder."""
     (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][0]
     one = dtype(1.0)
     low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
@@ -1110,16 +1089,9 @@ def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
 ):
     """A subnormal `q - x0` must not be flushed away before it is used.
 
-    The mirror image of the wide-segment case, and a defect this repair
-    introduced: "the difference of two finite floats cannot overflow" is true,
-    but it can UNDERFLOW. At the bottom of the range the difference of two
-    distinct normals is subnormal, XLA flushes it to zero, and the interpolant
-    collapses onto its left value exactly as it did when the operands were
-    pre-scaled DOWN (48/144 mismatches).
-
-    The two cases together pin the asymmetry the repair rests on: operands may be
-    lifted UP before differencing, because a power of two is exact and injective,
-    but never lowered, because lowering can merge two distinct floats.
+    At the bottom of the range, the difference between two distinct normals can
+    be subnormal and flush to zero. Framing must preserve the interpolation
+    fraction without mapping distinct operands to the same working value.
     """
     x0, q, x1 = _smallest_scale_case(dtype)
     # Values, policies and marginals chosen so the exact answer at the midpoint
@@ -1266,10 +1238,7 @@ def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_si
     That is a property of the model, not of the arithmetic, which is what makes
     it the right acceptance statement for this class: no scale is privileged.
 
-    The unscaled leg runs at `1`, the rescaled leg at `tiny`. Both legs are
-    asserted, so the test fails whether the defect is at the bottom of the range
-    or -- were a future repair to trade one end for the other, which is how this
-    class has moved twice -- at the top.
+    The test asserts both the unit-scale and smallest-normal-scale results.
     """
     tiny = np.finfo(dtype).tiny
     results = {}
@@ -1339,11 +1308,8 @@ def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
     assert bool(np.asarray(tied)[0, 1]), (
         f"the strict winner must be selected: {context}"
     )
-    # Pin WHICH repair is load bearing here. The interior lane's radius still
-    # underflows to zero at this scale -- that is a fact about the format, not a
-    # defect -- so the assertions above hold only because the certificate stopped
-    # being numerical. If an interpolated lane ever reports itself structurally
-    # exact, the shortcut is back, whatever the radius happens to be.
+    # The interior lane's radius underflows to zero at this scale, so exactness
+    # must remain structural rather than inferred from that radius.
     assert not bool(np.asarray(terms.exact)[0, 1]), (
         f"an interpolated interior lane must NOT be structurally exact: {context}"
     )
@@ -1394,8 +1360,7 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
         assert np.isfinite(val), name
         assert abs(val) >= info.tiny, f"{name} must be finite NORMAL"
     assert exact > Fraction(float(competitor)), "the witness needs a strict ordering"
-    # The collision that used to cause the defect, asserted so the case cannot
-    # quietly stop exercising it.
+    # Assert the scale collision so the case cannot silently become vacuous.
     wide_exp = int(np.frexp(x1)[1])
     assert dtype(np.ldexp(np.float64(x0), -wide_exp)) == dtype(
         np.ldexp(np.float64(q), -wide_exp)
@@ -1433,12 +1398,8 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
     """The certified comparator must not need the screen's help to order these.
 
-    Probes `_exact_compare` DIRECTLY, because the public path passes this witness
-    for the wrong reason: the value screen resolves the gap before the comparator
-    is consulted, so a comparator that reports a tie where the exact ordering is
-    strict stays invisible there. Two successive repairs passed the
-    public test with this one still returning `0` (it was pinned `xfail(strict)`
-    in between). A screen that rescues a broken comparator hides it.
+    The direct probe isolates `_exact_compare`; the public path can resolve the
+    gap in its value screen without exercising the comparator.
     """
     x0, q, x1, competitor, exact = _wide_segment_case(dtype)
     cols_wide = jnp.asarray(
@@ -1466,8 +1427,8 @@ def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):
     `A` runs from `+a/2` to `-a/2` across the segment, so its exact value at the
     midpoint is zero — its two numerator products cancel COMPLETELY, which is
     what makes the comparison hinge entirely on `B`'s terms. `B` is the constant
-    `-a * tiny`, a strictly lower finite normal whose cross products used to
-    flush to zero before the exact summation saw them.
+    `-a * tiny`, a strictly lower finite normal whose cross products must reach
+    the exact summation without flushing to zero.
     """
     info = np.finfo(dtype)
     tiny = dtype(info.tiny)
@@ -1514,11 +1475,8 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
 
     Branch A's numerator cancels to exactly zero, so its own terms carry no
     information about the answer and the entire comparison rests on branch B's,
-    which live `~2 * precision + emax` binades further down. Every normalization
-    tried before this one pushed those terms out of the format — the products
-    came back as `(-0.0, 0.0)` and `_exact_compare` reported a TIE where the
-    exact ordering is strict, so the right-continuity rule handed value, policy
-    and marginal to the lower branch.
+    which live `~2 * precision + emax` binades further down. The accumulator must
+    retain those terms and report the strict exact ordering.
 
     Carrying each term's exponent as an integer and depositing it into a
     fixed-point accumulator removes the frame the terms were falling out of.
@@ -1645,8 +1603,7 @@ def test_no_finite_input_overflows_the_exact_accumulator(dtype):
     The accumulator is sized from the format, and a term that fell off its end
     would surface as a NaN sign rather than a wrong one — this asserts neither
     happens. Grid points, query and endpoint values are drawn from binades
-    spanning most of the representable range, which is the regime every previous
-    repair broke in.
+    spanning most of the representable range.
     """
     info = np.finfo(dtype)
     limit = int(info.maxexp) - 8
