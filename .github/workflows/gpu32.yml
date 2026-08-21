@@ -1,7 +1,7 @@
 ---
-name: gpu32
+name: gpu
 concurrency:
-  group: gpu32-${{ github.head_ref || github.run_id }}
+  group: gpu-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 on:
   push:
@@ -82,7 +82,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail unless the fp32 policy succeeded
+      - name: Fail unless the bounded GPU policy succeeded
         run: test "${{ needs.tests.result }}" = "success"
   gpu64:
     name: gpu64
@@ -91,5 +91,5 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail unless the fp64 policy succeeded
+      - name: Fail unless the bounded GPU policy succeeded
         run: test "${{ needs.tests.result }}" = "success"
