@@ -54,7 +54,7 @@ outer_unchanged: FunctionName = "__outer_unchanged__"
 class NetOfAdjustmentCost:
     """A resources node composed by pylcm as ``before_cost - cost``."""
 
-    name_in_dag: FunctionName
+    output: FunctionName
     """Name assigned to the composed post-cost resources node."""
 
     before_cost: FunctionName
@@ -67,7 +67,7 @@ class NetOfAdjustmentCost:
         self._fail_if_names_are_not_pairwise_distinct()
 
     def _fail_if_names_are_not_pairwise_distinct(self) -> None:
-        duplicates = _repeated_names((self.name_in_dag, self.before_cost, self.cost))
+        duplicates = _repeated_names((self.output, self.before_cost, self.cost))
         if duplicates:
             raise RegimeInitializationError(
                 "NetOfAdjustmentCost names must be pairwise distinct; repeated "
@@ -99,7 +99,7 @@ class LiquidMargin:
     def resources_name(self) -> FunctionName:
         """Return the DAG name every downstream resources reader consumes."""
         if isinstance(self.resources, NetOfAdjustmentCost):
-            return self.resources.name_in_dag
+            return self.resources.output
         return self.resources
 
     def _fail_if_names_are_not_pairwise_distinct(self) -> None:
@@ -526,7 +526,7 @@ def _bound_liquid_margin(liquid: LiquidMargin) -> _BoundLiquidMargin:
         return _BoundLiquidMargin(
             state=liquid.state,
             action=liquid.action,
-            resources=resources.name_in_dag,
+            resources=resources.output,
             post_decision_state=liquid.post_decision_state,
             before_cost=resources.before_cost,
             cost=resources.cost,
@@ -550,9 +550,9 @@ def _composition_rule_message(
     *, resources: NetOfAdjustmentCost, prefix: str = ""
 ) -> str:
     return (
-        f"{prefix}With NetOfAdjustmentCost, functions[{resources.name_in_dag!r}] "
+        f"{prefix}With NetOfAdjustmentCost, functions[{resources.output!r}] "
         f"must not exist, functions[{resources.before_cost!r}] and "
         f"functions[{resources.cost!r}] must exist, and pylcm composes "
-        f"{resources.name_in_dag!r} = {resources.before_cost!r} - "
+        f"{resources.output!r} = {resources.before_cost!r} - "
         f"{resources.cost!r}."
     )

@@ -119,7 +119,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
             state="wealth",
             action="consumption",
             resources=NetOfAdjustmentCost(
-                name_in_dag="resources",
+                output="resources",
                 before_cost="resources_before_outer_cost",
                 cost="credited",
             ),

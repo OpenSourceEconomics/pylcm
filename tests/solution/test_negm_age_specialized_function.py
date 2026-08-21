@@ -126,7 +126,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             state="wealth",
             action="consumption",
             resources=NetOfAdjustmentCost(
-                name_in_dag="resources",
+                output="resources",
                 before_cost="resources_before_outer_cost",
                 cost="credited",
             ),

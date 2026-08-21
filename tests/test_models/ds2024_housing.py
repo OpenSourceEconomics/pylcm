@@ -456,7 +456,7 @@ def build_model(
             state="liquid",
             action="consumption",
             resources=NetOfAdjustmentCost(
-                name_in_dag="resources",
+                output="resources",
                 before_cost="resources_before_outer_cost",
                 cost="housing_cost",
             ),
