@@ -921,20 +921,23 @@ def _build_solution_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    routing = _route_constraints(
+        constraints=spec.solution.constraints,
+        solver=solver,
+        regime_name=regime_name,
+        phase="solve",
+        functions=spec.solution.functions,
+        variables=variables,
+        flat_param_names=flat_param_names,
+        active_periods=regimes_to_active_periods[regime_name],
+        grids=all_grids[regime_name],
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
-        constraints=_constraints_the_solver_evaluates(
-            constraints=spec.solution.constraints,
-            solver=solver,
-            regime_name=regime_name,
-            phase="solve",
-            functions=spec.solution.functions,
-            variables=variables,
-            flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
-            grids=all_grids[regime_name],
-        ),
+        constraints=spec.solution.constraints,
+        evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.solution.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -1066,7 +1069,9 @@ def _build_solution_phase(
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,
         constraints=core.constraints,
+        constraint_functions=core.constraint_functions,
         processed_constraints=core.processed_constraints,
+        constraint_plan=routing.plan,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1510,20 +1515,23 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    routing = _route_constraints(
+        constraints=spec.simulation.constraints,
+        solver=solver,
+        regime_name=regime_name,
+        phase="simulate",
+        functions=MappingProxyType(decision_functions),
+        variables=variables,
+        flat_param_names=flat_param_names,
+        active_periods=regimes_to_active_periods[regime_name],
+        grids=all_grids[regime_name],
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
-        constraints=_constraints_the_solver_evaluates(
-            constraints=spec.simulation.constraints,
-            solver=solver,
-            regime_name=regime_name,
-            phase="simulate",
-            functions=MappingProxyType(decision_functions),
-            variables=variables,
-            flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
-            grids=all_grids[regime_name],
-        ),
+        constraints=spec.simulation.constraints,
+        evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.simulation.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -1871,6 +1879,17 @@ def regime_declares_phased(user_regime: UserRegime) -> bool:
 
 
 @dataclass(frozen=True)
+class _ConstraintRoutingResult:
+    """The retained route ledger and the constraints evaluated numerically."""
+
+    plan: ConstraintPlan | None
+    """Complete route ledger, or `None` when the solver declares no routes."""
+
+    evaluated_names: frozenset[FunctionName]
+    """Constraint names every applicable route evaluates."""
+
+
+@dataclass(frozen=True)
 class _CoreResult:
     """Result of core regime function processing for one phase."""
 
@@ -1878,14 +1897,17 @@ class _CoreResult:
     """User functions (utility, helpers) with params renamed to qnames."""
 
     constraints: ConstraintFunctionsMapping
-    """Constraint functions with params renamed to qnames."""
+    """Constraint callables retained in the numerical feasibility kernel."""
+
+    constraint_functions: ConstraintFunctionsMapping
+    """Every declared constraint callable, including compiled and proved ones."""
 
     processed_constraints: ProcessedConstraintsMapping
-    """The same constraints in normalized form, for a solver to reason about.
+    """Every declared constraint in normalized form, for solver reasoning.
 
-    Not a second source of truth: `constraints` is built from this mapping at
-    one site, so what a solver proves and what the engine evaluates come from
-    the same declaration."""
+    Not a second source of truth: `constraint_functions` is built from this
+    mapping at one site, so compiled structure and executable predicates cannot
+    disagree about what was declared."""
 
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
@@ -1910,6 +1932,7 @@ def _process_regime_core(
     *,
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, ProcessedConstraint],
+    evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
@@ -1930,6 +1953,8 @@ def _process_regime_core(
     Args:
         functions: Phase-resolved regime functions for this build.
         constraints: The regime's normalized constraints for this phase.
+        evaluated_constraint_names: Names whose callables remain in the numerical
+            feasibility kernel after routing.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -2188,8 +2213,11 @@ def _process_regime_core(
         for func_name in flat_nested_transitions
     } | {key: processed_functions[key] for key in process_transition_keys}
 
-    processed_constraints: ConstraintFunctionsMapping = MappingProxyType(
+    all_constraint_functions: ConstraintFunctionsMapping = MappingProxyType(
         {func_name: processed_functions[func_name] for func_name in constraints}
+    )
+    evaluated_constraints: ConstraintFunctionsMapping = MappingProxyType(
+        {name: all_constraint_functions[name] for name in evaluated_constraint_names}
     )
     excluded_from_functions = (
         set(flat_nested_transitions) | set(constraints) | process_transition_keys
@@ -2241,7 +2269,8 @@ def _process_regime_core(
 
     return _CoreResult(
         functions=phase_functions,
-        constraints=processed_constraints,
+        constraints=evaluated_constraints,
+        constraint_functions=all_constraint_functions,
         processed_constraints=normalized_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
@@ -4113,7 +4142,7 @@ def _fail_if_action_has_batch_size(
                 raise ValueError(msg)
 
 
-def _constraints_the_solver_evaluates(
+def _route_constraints(
     *,
     constraints: ProcessedConstraintsMapping,
     solver: Solver,
@@ -4124,8 +4153,8 @@ def _constraints_the_solver_evaluates(
     flat_param_names: frozenset[str],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
-) -> ProcessedConstraintsMapping:
-    """Narrow a phase's constraints to those the solver's routes evaluate.
+) -> _ConstraintRoutingResult:
+    """Retain a route plan and identify constraints every route evaluates.
 
     Every constraint reaches a terminal disposition on every route the solver
     walks in this phase, and only those a route evaluates are handed to the
@@ -4150,7 +4179,7 @@ def _constraints_the_solver_evaluates(
         grids: Immutable mapping of the regime's state and action grids.
 
     Returns:
-        Immutable mapping of the constraints the kernel evaluates.
+        The complete plan and the names retained in the numerical kernel.
 
     Raises:
         ModelInitializationError: If a route can meet a constraint at none of
@@ -4169,7 +4198,9 @@ def _constraints_the_solver_evaluates(
         )
     )
     if routes is None:
-        return constraints
+        return _ConstraintRoutingResult(
+            plan=None, evaluated_names=frozenset(constraints)
+        )
     plan = plan_constraints(
         constraints=constraints,
         routes=routes,
@@ -4183,13 +4214,7 @@ def _constraints_the_solver_evaluates(
     )
     _fail_if_a_constraint_cannot_be_met(plan=plan)
     evaluated = _names_every_route_evaluates(plan=plan, regime_name=regime_name)
-    return MappingProxyType(
-        {
-            name: constraint
-            for name, constraint in constraints.items()
-            if name in evaluated
-        }
-    )
+    return _ConstraintRoutingResult(plan=plan, evaluated_names=evaluated)
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:

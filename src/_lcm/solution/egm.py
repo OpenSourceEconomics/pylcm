@@ -590,7 +590,12 @@ class _EGMPeriodKernel:
     bound_params: Mapping[str, FloatND] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
 
-    def _law_readings(self, *, flat_params: FlatParams) -> tuple[Float1D, Float1D]:
+    def _law_readings(
+        self,
+        *,
+        flat_params: FlatParams,
+        next_breakpoints: FloatND | None,
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
         """Read the declared law on the savings grid and check it can be inverted.
 
         Evaluated here rather than inside the compiled core: the readings depend
@@ -598,25 +603,67 @@ class _EGMPeriodKernel:
         no traced value can make. The check therefore has to see concrete
         numbers, which is exactly what this side of the boundary has.
         """
-        from _lcm.egm.declared_law import (  # noqa: PLC0415
-            fail_if_declared_law_is_not_increasing,
-        )
-
-        next_liquid, marginal_return = self.declared_law(
-            savings_grid=self.savings_grid,
+        law_params = {
             **self.bound_params,
             **_union_free_params(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 transition_target_names=self.transition_target_names,
             ),
+        }
+        from _lcm.egm.declared_law import (  # noqa: PLC0415
+            fail_if_declared_law_is_not_increasing,
+        )
+
+        next_liquid, marginal_return = self.declared_law(
+            savings_grid=self.savings_grid,
+            **law_params,
         )
         fail_if_declared_law_is_not_increasing(
             next_liquid=next_liquid,
             regime_name=self.regime_name,
             target=self.continuation_target,
         )
-        return next_liquid, marginal_return
+        if next_breakpoints is None:
+            empty = jnp.zeros((0,), dtype=self.savings_grid.dtype)
+            return (
+                self.savings_grid,
+                next_liquid,
+                marginal_return,
+                empty,
+                empty,
+            )
+
+        boundary_targets = _one_sided_boundary_savings_targets(
+            savings_grid=self.savings_grid,
+            next_liquid=next_liquid,
+            breakpoints=jnp.ravel(next_breakpoints),
+            declared_law=self.declared_law,
+            law_params=law_params,
+        )
+        safe_boundary_targets = jnp.where(
+            jnp.isfinite(boundary_targets),
+            boundary_targets,
+            self.savings_grid[0],
+        )
+        effective_savings_grid = jnp.sort(
+            jnp.concatenate((self.savings_grid, safe_boundary_targets))
+        )
+        next_liquid, marginal_return = self.declared_law(
+            savings_grid=effective_savings_grid,
+            **law_params,
+        )
+        boundary_next_liquid, _ = self.declared_law(
+            savings_grid=boundary_targets,
+            **law_params,
+        )
+        return (
+            effective_savings_grid,
+            next_liquid,
+            marginal_return,
+            boundary_targets,
+            boundary_next_liquid,
+        )
 
     def cores(self) -> Mapping[str, Callable]:
         """Return the single EGM-step core under the `"main"` key."""
@@ -642,23 +689,34 @@ class _EGMPeriodKernel:
         *,
         core_key: str = "main",  # noqa: ARG002
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG002
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
     ) -> Mapping[str, object]:
         """Build the core's lowering arguments: state, continuation, law, params."""
-        next_liquid, marginal_return = self._law_readings(flat_params=flat_params)
+        next_carry = next_regime_to_continuation[self.continuation_target]
+        (
+            effective_savings_grid,
+            next_liquid,
+            marginal_return,
+            boundary_savings_targets,
+            boundary_next_liquid,
+        ) = self._law_readings(
+            flat_params=flat_params,
+            next_breakpoints=next_carry.breakpoints,
+        )
         return {
             "liquid": state_action_space.states[self.liquid_state],
-            "next_liquid_grid": self.next_liquid_grid,
+            "next_liquid_grid": next_carry.endog_grid,
             "next_liquid": next_liquid,
             "marginal_return": marginal_return,
-            "next_value": next_regime_to_V_arr[self.continuation_target],
-            "next_marginal": next_regime_to_continuation[
-                self.continuation_target
-            ].marginal_utility,
+            "effective_savings_grid": effective_savings_grid,
+            "boundary_savings_targets": boundary_savings_targets,
+            "boundary_next_liquid": boundary_next_liquid,
+            "next_value": next_carry.value,
+            "next_marginal": next_carry.marginal_utility,
             **_union_free_params(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
@@ -671,23 +729,34 @@ class _EGMPeriodKernel:
         *,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG002
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
     ) -> KernelResult:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
-        next_liquid, marginal_return = self._law_readings(flat_params=flat_params)
+        next_carry = next_regime_to_continuation[self.continuation_target]
+        (
+            effective_savings_grid,
+            next_liquid,
+            marginal_return,
+            boundary_savings_targets,
+            boundary_next_liquid,
+        ) = self._law_readings(
+            flat_params=flat_params,
+            next_breakpoints=next_carry.breakpoints,
+        )
         V_arr, carry = compiled_cores["main"](
             liquid=state_action_space.states[self.liquid_state],
-            next_liquid_grid=self.next_liquid_grid,
+            next_liquid_grid=next_carry.endog_grid,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
-            next_value=next_regime_to_V_arr[self.continuation_target],
-            next_marginal=next_regime_to_continuation[
-                self.continuation_target
-            ].marginal_utility,
+            effective_savings_grid=effective_savings_grid,
+            boundary_savings_targets=boundary_savings_targets,
+            boundary_next_liquid=boundary_next_liquid,
+            next_value=next_carry.value,
+            next_marginal=next_carry.marginal_utility,
             **_union_free_params(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
@@ -695,6 +764,48 @@ class _EGMPeriodKernel:
             ),
         )
         return KernelResult(V_arr=V_arr, continuation=carry)
+
+
+def _one_sided_boundary_savings_targets(
+    *,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    breakpoints: Float1D,
+    declared_law: Callable[..., tuple[Float1D, Float1D]],
+    law_params: Mapping[str, object],
+) -> Float1D:
+    """Map child boundaries to exact and adjacent savings candidates."""
+    finite = jnp.isfinite(breakpoints)
+    safe_breakpoints = jnp.where(finite, breakpoints, next_liquid[0])
+    roots = jnp.interp(safe_breakpoints, next_liquid, savings_grid)
+    for _ in range(8):
+        landed, slope = declared_law(savings_grid=roots, **law_params)
+        safe_slope = jnp.where(slope > 0.0, slope, 1.0)
+        roots = jnp.clip(
+            roots - (landed - safe_breakpoints) / safe_slope,
+            savings_grid[0],
+            savings_grid[-1],
+        )
+
+    landed, slope = declared_law(savings_grid=roots, **law_params)
+    local_intercept = landed - slope * roots
+    rounding = jnp.finfo(savings_grid.dtype).eps * (
+        jnp.abs(slope * roots) + jnp.abs(local_intercept)
+    )
+    margin = 4.0 * rounding / jnp.where(slope > 0.0, slope, 1.0)
+    candidates = jnp.stack((roots - margin, roots, roots + margin), axis=-1)
+    in_law_range = (
+        finite
+        & (breakpoints >= next_liquid[0])
+        & (breakpoints <= next_liquid[-1])
+        & (slope > 0.0)
+    )
+    valid = (
+        in_law_range[:, None]
+        & (candidates >= savings_grid[0])
+        & (candidates <= savings_grid[-1])
+    )
+    return jnp.where(valid, candidates, jnp.nan).reshape(-1)
 
 
 def _build_egm_core(
@@ -747,6 +858,9 @@ def _build_egm_core(
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
+        boundary_savings_targets: Float1D,  # noqa: ARG001
+        boundary_next_liquid: Float1D,  # noqa: ARG001
+        effective_savings_grid: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         step = egm_one_asset_step(
@@ -754,7 +868,7 @@ def _build_egm_core(
             next_marginal=next_marginal,
             liquid_grid=liquid,
             next_liquid_grid=next_liquid_grid,
-            savings_grid=savings_grid,
+            savings_grid=effective_savings_grid,
             discount_factor=read_discount_factor(params),
             preferences=build_preferences(params),
             next_liquid=next_liquid,
