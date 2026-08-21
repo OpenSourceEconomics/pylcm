@@ -33,6 +33,7 @@ from dags import concatenate_functions
 import lcm.typing as lcm_typing
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.constraints.dispositions import CompileBoundary
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
@@ -48,6 +49,7 @@ from _lcm.egm.fixed_width_map import (
     map_partitioned,
 )
 from _lcm.egm.nbegm import NBEGMRegistry
+from _lcm.egm.nbegm_constraint_boundaries import NBEGMFeasibilityBoundaryProgram
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
@@ -354,12 +356,26 @@ class NBEGM(OneMarginSolver):
         wrong one here, where the description is available and says that no
         name is readable anywhere along the pipeline.
         """
+        from _lcm.egm.nbegm_constraint_boundaries import (  # noqa: PLC0415
+            build_nbegm_feasibility_boundary_compiler,
+        )
         from _lcm.egm.nbegm_routes import case_piece_routes  # noqa: PLC0415
 
+        bound = cast("_BoundNBEGM", self)
+        boundary_compilers = (
+            ()
+            if context.phase == "simulate"
+            else (
+                build_nbegm_feasibility_boundary_compiler(
+                    liquid_state=bound.continuous_state
+                ),
+            )
+        )
         return case_piece_routes(
             context=context,
             post_decision_function=proved_post_decision_of(solver=self),
             solver_path=("nbegm",),
+            boundary_compilers=boundary_compilers,
         )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
@@ -421,6 +437,10 @@ class NBEGM(OneMarginSolver):
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         bound = cast("_BoundNBEGM", self)
+        _feasibility_constraints = _consume_nbegm_feasibility_constraints(
+            context=context,
+            solver_path=("nbegm",),
+        )
         savings_grid = self.savings_grid.to_jax()
 
         functions = cast(
@@ -925,6 +945,79 @@ class NBEGM(OneMarginSolver):
             ),
             param_checks=tuple(param_checks),
         )
+
+
+@dataclass(frozen=True)
+class _NBEGMFeasibilityConstraint:
+    """One compiled boundary paired with its phase-processed predicate."""
+
+    program: NBEGMFeasibilityBoundaryProgram
+    """Solver-facing boundary geometry."""
+
+    predicate: Callable[..., BoolND]
+    """Executable predicate generated from the same declaration."""
+
+
+def _consume_nbegm_feasibility_constraints(
+    *,
+    context: SolverBuildContext,
+    solver_path: tuple[str, ...],
+) -> tuple[_NBEGMFeasibilityConstraint, ...]:
+    """Pair every compiled program for one builder with its predicate exactly once."""
+    plan = context.constraint_plan
+    if plan is None:
+        return ()
+
+    selected = plan.for_solver_path(solver_path=solver_path).compiled_boundaries
+    all_compiled = plan.compiled_boundaries
+    if len(selected) != len(all_compiled):
+        msg = (
+            f"NBEGM for regime {context.regime_name!r} received compiled "
+            "constraint boundaries belonging to another solver route; filter the "
+            "constraint plan before constructing the inner solver context."
+        )
+        raise RegimeInitializationError(msg)
+
+    names = tuple(disposition.constraint.name for disposition in selected)
+    if len(names) != len(set(names)):
+        msg = (
+            f"NBEGM for regime {context.regime_name!r} would consume a compiled "
+            f"constraint more than once; got route entries {names}."
+        )
+        raise RegimeInitializationError(msg)
+
+    consumed: list[_NBEGMFeasibilityConstraint] = []
+    for disposition in selected:
+        if not isinstance(disposition, CompileBoundary):
+            msg = "Internal error: selected a non-boundary constraint disposition."
+            raise TypeError(msg)
+        payload = disposition.program.payload
+        if not isinstance(payload, NBEGMFeasibilityBoundaryProgram):
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received an unsupported "
+                f"compiled payload for constraint {disposition.constraint.name!r}."
+            )
+            raise RegimeInitializationError(msg)
+        if payload.constraint_name != disposition.constraint.name:
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received a boundary "
+                f"program named {payload.constraint_name!r} for constraint "
+                f"{disposition.constraint.name!r}."
+            )
+            raise RegimeInitializationError(msg)
+        predicate = context.constraint_functions.get(payload.constraint_name)
+        if predicate is None:
+            msg = (
+                f"NBEGM for regime {context.regime_name!r} received compiled "
+                f"constraint {payload.constraint_name!r} without its executable "
+                "phase-processed predicate."
+            )
+            raise RegimeInitializationError(msg)
+        consumed.append(
+            _NBEGMFeasibilityConstraint(program=payload, predicate=predicate)
+        )
+
+    return tuple(consumed)
 
 
 @dataclass(frozen=True, kw_only=True)

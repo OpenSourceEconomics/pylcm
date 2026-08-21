@@ -105,6 +105,19 @@ def test_nbegm_compiles_a_conjunction_in_declaration_order() -> None:
     assert disposition.program.surfaces == disposition.constraint.boundary_surfaces
 
 
+def test_nbegm_qualifies_a_constraint_parameter_threshold() -> None:
+    """A declared parameter is stored under its processed callable's flat name."""
+    disposition = _compile(
+        ref("liquid") >= ref("limit"),
+        param_names=frozenset({"eligible__limit"}),
+    )
+
+    assert isinstance(disposition, CompileBoundary)
+    payload = disposition.program.payload
+    assert isinstance(payload, NBEGMFeasibilityBoundaryProgram)
+    assert payload.surfaces[0].threshold == Ref("eligible__limit")
+
+
 @pytest.mark.parametrize(
     "declaration",
     [

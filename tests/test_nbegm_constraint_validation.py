@@ -12,11 +12,14 @@ than the one declared, silently and with no diagnostic.
 """
 
 from collections.abc import Callable, Mapping
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+import _lcm.solution.nbegm as nbegm_module
+import lcm
 from lcm import LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
@@ -85,6 +88,52 @@ def test_nbegm_refuses_a_constraint_its_kernel_cannot_evaluate():
         match=r"`nbegm solve` route.*nothing is evaluated",
     ):
         _build_model(variant="nbegm", constraints={"rationing": rationing})
+
+
+def test_nbegm_builder_consumes_each_compiled_boundary_once(monkeypatch):
+    """The builder pairs one planned boundary with its processed predicate."""
+    consumed = []
+    original = nbegm_module._consume_nbegm_feasibility_constraints
+
+    def recording_consumer(*, context, solver_path):
+        result = original(context=context, solver_path=solver_path)
+        consumed.extend((context, item) for item in result)
+        return result
+
+    monkeypatch.setattr(
+        nbegm_module,
+        "_consume_nbegm_feasibility_constraints",
+        recording_consumer,
+    )
+    lower = cast("Callable[..., object]", lcm.ref("liquid") >= 4.0)
+    upper = cast("Callable[..., object]", lcm.ref("liquid") < 16.0)
+
+    _build_model(
+        variant="nbegm",
+        constraints={"lower_asset_test": lower, "upper_asset_test": upper},
+    )
+
+    assert len(consumed) == 2
+    assert [
+        (
+            item.program.constraint_name,
+            item.predicate
+            is context.constraint_functions[item.program.constraint_name],
+        )
+        for context, item in consumed
+    ] == [("lower_asset_test", True), ("upper_asset_test", True)]
+
+
+def test_nbegm_compiles_a_constraint_parameter_threshold():
+    """A declared threshold parameter is resolved in the engine's flat namespace."""
+    declaration = cast(
+        "Callable[..., object]",
+        lcm.ref("liquid") >= lcm.ref("asset_limit"),
+    )
+
+    model = _build_model(variant="nbegm", constraints={"asset_test": declaration})
+
+    assert "alive" in model.user_regimes
 
 
 def test_grid_search_accepts_the_same_constraint():

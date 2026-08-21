@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from dags.tree import qname_from_tree_path
+
 from _lcm.constraints.dispositions import (
     BoundaryProgram,
     CompileBoundary,
@@ -79,6 +81,7 @@ def build_nbegm_feasibility_boundary_compiler(
         for surface in surfaces:
             result = _compile_surface(
                 surface=surface,
+                constraint_name=bound.constraint.name,
                 liquid_state=liquid_state,
                 flat_param_names=context.param_names,
             )
@@ -102,6 +105,7 @@ def build_nbegm_feasibility_boundary_compiler(
 def _compile_surface(
     *,
     surface: Compare,
+    constraint_name: FunctionName,
     liquid_state: StateName,
     flat_param_names: frozenset[str],
 ) -> NBEGMFeasibilitySurface | str:
@@ -129,10 +133,13 @@ def _compile_surface(
     if not isinstance(threshold, Ref | Const):
         return "the threshold must be a literal or flat parameter"
     if isinstance(threshold, Ref) and threshold.name not in flat_param_names:
-        return (
-            f"threshold reference {threshold.name!r} is not a flat parameter; "
-            "the threshold must be a literal or flat parameter"
-        )
+        qualified_name = qname_from_tree_path((constraint_name, threshold.name))
+        if qualified_name not in flat_param_names:
+            return (
+                f"threshold reference {threshold.name!r} is not a flat parameter; "
+                "the threshold must be a literal or flat parameter"
+            )
+        threshold = Ref(qualified_name)
 
     return NBEGMFeasibilitySurface(
         threshold=threshold,
