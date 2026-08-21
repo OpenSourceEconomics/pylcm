@@ -11,6 +11,7 @@ from lcm import (
     Model,
     categorical,
     fixed_transition,
+    post_decision_lower_bound,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
@@ -150,6 +151,23 @@ def test_egm_rejects_a_continuous_constraint_during_model_construction() -> None
     """
     with pytest.raises(ModelInitializationError, match="'cap'"):
         _model(constraint=consumption_cap)
+
+
+def test_egm_accepts_a_lower_bound_enforced_by_its_savings_grid() -> None:
+    """A declared borrowing limit builds when the EGM grid proves the same bound."""
+    model = _model(
+        constraint=post_decision_lower_bound(
+            margin=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+            lower=0.0,
+        )
+    )
+
+    assert "saving" in model.user_regimes
 
 
 def test_egm_rejects_an_incompatible_post_decision_identity() -> None:
