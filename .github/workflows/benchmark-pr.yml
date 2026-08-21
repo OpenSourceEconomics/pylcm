@@ -52,6 +52,10 @@ jobs:
           fetch-depth: 0
       - name: Ensure main ref exists
         run: git fetch origin main:main || true
+      - name: Regenerate version.py
+        run: >-
+          echo "__version__ = '$(git describe --tags --always)'"
+          > src/_lcm/version.py
       - name: Select the runner's actual CUDA architecture
         shell: bash
         run: |
@@ -82,10 +86,6 @@ jobs:
           elif test "$status" -ne 0; then
             exit "$status"
           fi
-      - name: Regenerate version.py
-        run: >-
-          echo "__version__ = '$(git describe --tags --always)'"
-          > src/_lcm/version.py
       - name: Setup ASV machine
         run: pixi run -e benchmarks-cuda12 asv machine --yes
       - name: Run benchmarks and post PR comment
