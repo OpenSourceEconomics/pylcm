@@ -1,376 +1,366 @@
+"""Piecewise continuous grids with explicit interior-boundary ownership."""
+
 import dataclasses
+import operator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import jax.numpy as jnp
-import portion
 from beartype import beartype
 
+from _lcm.axis_boundaries import BoundaryOwner, effective_segment_bounds
 from _lcm.beartype_conf import GRID_CONF
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
 from _lcm.grids.base import _fail_if_continuous_grid_distributed
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
-from lcm.typing import (
-    Float1D,
-    FloatND,
-    Int1D,
-    ScalarFloat,
-    ScalarInt,
-)
+from lcm.typing import Float1D, FloatND, Int1D, ScalarFloat, ScalarInt
+
+if TYPE_CHECKING:
+    PiecewisePointCounts: TypeAlias = tuple[int | ScalarInt, ...]  # noqa: UP040
+else:
+    # The constructor's validator owns element errors and maps them to the
+    # public GridInitializationError. The runtime alias keeps the package claw
+    # from sampling an invalid tuple element before that validator runs.
+    PiecewisePointCounts = tuple[Any, ...]
+
+
+@beartype(conf=GRID_CONF)
+@dataclass(frozen=True, kw_only=True)
+class GridBreakpoint:
+    """An interior grid boundary and the segment that owns equality."""
+
+    value: float
+    """Interior boundary value."""
+
+    owner: BoundaryOwner = "right"
+    """Segment containing the exact value: `"left"` or `"right"`."""
 
 
 @dataclass(frozen=True, kw_only=True, init=False)
-class PiecewiseGridSegment:
-    """A segment of a piecewise grid.
+class _PiecewiseGrid(ContinuousGrid):
+    """Common storage and coordinate geometry for piecewise continuous grids."""
 
-    `n_points` is stored as a `jnp.int32` JAX scalar, converted from the
-    Python literal supplied at construction.
-    """
+    start: ScalarFloat
+    """Closed lower endpoint at pylcm's canonical floating dtype."""
 
-    interval: str | portion.Interval
-    """The interval for this segment.
+    stop: ScalarFloat
+    """Closed upper endpoint at pylcm's canonical floating dtype."""
 
-    Can be a string like "[1, 4)" or a `portion.Interval`.
-    """
+    breakpoints: tuple[GridBreakpoint, ...]
+    """Strictly increasing interior boundaries and their equality owners."""
 
-    n_points: ScalarInt
-    """The number of grid points in this segment (`jnp.int32` JAX scalar)."""
+    points_per_segment: tuple[ScalarInt, ...]
+    """Output-node count contributed by each nominal segment."""
 
-    @beartype(conf=GRID_CONF)
+    _breakpoint_values: Float1D = dataclasses.field(init=False, repr=False)
+    _segment_selection_thresholds: Float1D = dataclasses.field(init=False, repr=False)
+    _segment_starts: Float1D = dataclasses.field(init=False, repr=False)
+    _segment_stops: Float1D = dataclasses.field(init=False, repr=False)
+    _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
+    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
+
     def __init__(
         self,
         *,
-        interval: str | portion.Interval,
-        n_points: int | ScalarInt,
+        start: float | ScalarFloat,
+        stop: float | ScalarFloat,
+        breakpoints: tuple[GridBreakpoint, ...],
+        points_per_segment: PiecewisePointCounts,
+        batch_size: int = 0,
+        distributed: bool = False,
     ) -> None:
-        object.__setattr__(self, "interval", interval)
-        object.__setattr__(self, "n_points", jnp.int32(n_points))
-
-
-@beartype(conf=GRID_CONF)
-@dataclass(frozen=True, kw_only=True)
-class PiecewiseLinSpacedGrid(ContinuousGrid):
-    """A piecewise linearly spaced grid with multiple segments.
-
-    This grid type is useful for representing grids that need specific breakpoints,
-    such as eligibility thresholds for programs. Each segment has its own linear
-    spacing.
-
-    Example:
-    --------
-    A grid from 1 to 10 with a breakpoint at 4 (e.g., an eligibility threshold):
-
-        PiecewiseLinSpacedGrid(segments=(
-            PiecewiseGridSegment(interval="[1, 4)", n_points=30),
-            PiecewiseGridSegment(interval="[4, 10]", n_points=60),
-        ))
-
-    Notes:
-        - Open boundaries (e.g., `4)` in `[1, 4)`) exclude that exact point from
-          the grid. The last point will be slightly before the boundary.
-        - Segments must be adjacent: the upper bound of each segment must equal the
-          lower bound of the next segment, with compatible open/closed boundaries.
-
-    """
-
-    segments: tuple[PiecewiseGridSegment, ...]
-    """Tuple of `PiecewiseGridSegment` objects. Segments must be adjacent."""
-
-    # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
-    _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_starts: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_stops: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
-    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        _fail_if_continuous_grid_distributed(
-            grid_kind="PiecewiseLinSpacedGrid", distributed=self.distributed
+        _init_piecewise_grid(
+            self,
+            start=start,
+            stop=stop,
+            breakpoints=breakpoints,
+            points_per_segment=points_per_segment,
+            batch_size=batch_size,
+            distributed=distributed,
+            requires_positive_bounds=isinstance(self, PiecewiseLogSpacedGrid),
         )
-        _validate_piecewise_lin_spaced_grid(self.segments)
-        _init_piecewise_grid_cache(self)
 
     @property
     def n_points(self) -> ScalarInt:
-        """Return the total number of points in the grid."""
+        """Return the number of output nodes contributed by all segments."""
         return self._segment_n_points.sum(dtype=jnp.int32)
 
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        segment_arrays = [
-            jnp.linspace(self._segment_starts[i], self._segment_stops[i], s.n_points)  # ty: ignore[no-matching-overload]
-            for i, s in enumerate(self.segments)
-        ]
-        return jnp.concatenate(segment_arrays)
-
-    def get_coordinate(self, value: FloatND) -> FloatND:
-        """Return the generalized coordinate of a value in the grid."""
-        segment_idx = jnp.searchsorted(self._breakpoints, value, side="right")
-        local_coord = grid_coordinates.get_linspace_coordinate(
-            value=value,
-            start=self._segment_starts[segment_idx],
-            stop=self._segment_stops[segment_idx],
-            n_points=self._segment_n_points[segment_idx],
-        )
-        return self._cumulative_offsets[segment_idx] + local_coord
-
-
-@beartype(conf=GRID_CONF)
-@dataclass(frozen=True, kw_only=True)
-class PiecewiseLogSpacedGrid(ContinuousGrid):
-    """A piecewise logarithmically spaced grid with multiple segments.
-
-    This grid type is useful for wealth grids where you want more granularity at
-    lower values. Each segment has its own logarithmic spacing.
-
-    Example:
-    --------
-    A wealth grid with denser points at lower values:
-
-        PiecewiseLogSpacedGrid(segments=(
-            PiecewiseGridSegment(interval="[0.1, 10)", n_points=50),
-            PiecewiseGridSegment(interval="[10, 1000]", n_points=30),
-        ))
-
-    Notes:
-        - All boundary values must be positive (required for logarithmic spacing).
-        - Open boundaries exclude the exact endpoint using nextafter.
-        - Segments must be adjacent: the upper bound of each segment must equal the
-          lower bound of the next segment, with compatible open/closed boundaries.
-
-    """
-
-    segments: tuple[PiecewiseGridSegment, ...]
-    """Tuple of `PiecewiseGridSegment` objects. All boundaries must be positive."""
-
-    # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
-    _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_starts: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_stops: Float1D = dataclasses.field(init=False, repr=False)
-    _segment_n_points: Int1D = dataclasses.field(init=False, repr=False)
-    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        _fail_if_continuous_grid_distributed(
-            grid_kind="PiecewiseLogSpacedGrid", distributed=self.distributed
-        )
-        _validate_piecewise_log_spaced_grid(self.segments)
-        _init_piecewise_grid_cache(self)
-
-    @property
-    def n_points(self) -> ScalarInt:
-        """Return the total number of points in the grid."""
-        return self._segment_n_points.sum(dtype=jnp.int32)
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        segment_arrays = [
-            grid_coordinates.logspace(
-                start=self._segment_starts[i],
-                stop=self._segment_stops[i],
-                n_points=s.n_points,
+    def _to_jax(self, *, logarithmic: bool) -> Float1D:
+        """Construct and concatenate every segment's output nodes."""
+        segments = [
+            (
+                grid_coordinates.logspace(
+                    start=self._segment_starts[i],
+                    stop=self._segment_stops[i],
+                    n_points=self._segment_n_points[i],
+                )
+                if logarithmic
+                else grid_coordinates.linspace(
+                    start=self._segment_starts[i],
+                    stop=self._segment_stops[i],
+                    n_points=self._segment_n_points[i],
+                )
             )
-            for i, s in enumerate(self.segments)
+            for i in range(len(self.points_per_segment))
         ]
-        return jnp.concatenate(segment_arrays)
+        return jnp.concatenate(segments)
 
-    def get_coordinate(self, value: FloatND) -> FloatND:
-        """Return the generalized coordinate of a value in the grid."""
-        segment_idx = jnp.searchsorted(self._breakpoints, value, side="right")
-        local_coord = grid_coordinates.get_logspace_coordinate(
+    def _get_coordinate(self, *, value: FloatND, logarithmic: bool) -> FloatND:
+        """Return the ownership-aware generalized coordinate of `value`."""
+        segment_idx = jnp.searchsorted(
+            self._segment_selection_thresholds,
+            value,
+            side="right",
+        )
+        coordinate_function = (
+            grid_coordinates.get_logspace_coordinate
+            if logarithmic
+            else grid_coordinates.get_linspace_coordinate
+        )
+        local_coordinate = coordinate_function(
             value=value,
             start=self._segment_starts[segment_idx],
             stop=self._segment_stops[segment_idx],
             n_points=self._segment_n_points[segment_idx],
         )
-        return self._cumulative_offsets[segment_idx] + local_coord
+        return self._cumulative_offsets[segment_idx] + local_coordinate
 
 
-def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
-    """Parse an interval from a string or return it if already a portion.Interval."""
-    if isinstance(interval, str):
-        return portion.from_string(interval, conv=float)
-    return interval
+class PiecewiseLinSpacedGrid(_PiecewiseGrid):
+    """A linearly spaced grid split at explicitly owned breakpoints.
 
-
-def _get_effective_bounds(
-    interval: portion.Interval,
-) -> tuple[ScalarFloat, ScalarFloat]:
-    """Return effective bounds for an interval, adjusting for open boundaries.
-
-    Uses jnp.nextafter with the correct dtype based on JAX's x64 setting to compute
-    the next representable floating-point value for open boundaries.
+    Each entry of `points_per_segment` is the number of output nodes contributed
+    by that nominal segment. Every breakpoint appears exactly once, in the segment
+    selected by its `GridBreakpoint.owner`.
     """
-    # Use the dtype that matches JAX's current precision setting
-    dtype = jnp.result_type(1.0)
 
-    lower = jnp.array(interval.lower, dtype=dtype)
-    upper = jnp.array(interval.upper, dtype=dtype)
+    def to_jax(self) -> Float1D:
+        """Return all segment nodes in ascending order."""
+        return self._to_jax(logarithmic=False)
 
-    effective_lower = (
-        lower if interval.left == portion.CLOSED else jnp.nextafter(lower, jnp.inf)
-    )
-    effective_upper = (
-        upper if interval.right == portion.CLOSED else jnp.nextafter(upper, -jnp.inf)
-    )
-    return effective_lower, effective_upper
+    def get_coordinate(self, value: FloatND) -> FloatND:
+        """Return the ownership-aware generalized coordinate of a value."""
+        return self._get_coordinate(value=value, logarithmic=False)
 
 
-def _init_piecewise_grid_cache(
-    grid: PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid,
+class PiecewiseLogSpacedGrid(_PiecewiseGrid):
+    """A logarithmically spaced grid split at explicitly owned breakpoints.
+
+    The complete domain and every breakpoint must be strictly positive. Ownership
+    and contributed-node semantics are identical to `PiecewiseLinSpacedGrid`.
+    """
+
+    def to_jax(self) -> Float1D:
+        """Return all segment nodes in ascending order."""
+        return self._to_jax(logarithmic=True)
+
+    def get_coordinate(self, value: FloatND) -> FloatND:
+        """Return the ownership-aware generalized coordinate of a value."""
+        return self._get_coordinate(value=value, logarithmic=True)
+
+
+def _init_piecewise_grid(
+    grid: _PiecewiseGrid,
+    *,
+    start: float | ScalarFloat,
+    stop: float | ScalarFloat,
+    breakpoints: tuple[GridBreakpoint, ...],
+    points_per_segment: PiecewisePointCounts,
+    batch_size: int,
+    distributed: bool,
+    requires_positive_bounds: bool,
 ) -> None:
-    """Initialize cached JAX arrays for efficient coordinate computation.
-
-    Precomputes and stores:
-    - _breakpoints: effective starts of segments 1..k-1 for searchsorted
-    - _segment_starts: effective start for each segment
-    - _segment_stops: effective stop for each segment
-    - _segment_n_points: n_points for each segment
-    - _cumulative_offsets: cumulative sum of n_points
-
-    The breakpoints use effective starts (accounting for open/closed boundaries)
-    to ensure correct segment selection for both [a,x)+[x,b] and [a,x]+(x,b] cases.
-    """
-    parsed = [_parse_interval(s.interval) for s in grid.segments]
-    bounds = [_get_effective_bounds(interval) for interval in parsed]
-
-    starts = jnp.array([b[0] for b in bounds])
-    stops = jnp.array([b[1] for b in bounds])
-
-    # Breakpoints are the effective starts of segments 1..k-1
-    breakpoints = starts[1:] if len(starts) > 1 else jnp.array([])
-
-    n_points = jnp.array([s.n_points for s in grid.segments], dtype=jnp.int32)
-    cumulative = jnp.concatenate(
-        [jnp.array([0], dtype=jnp.int32), jnp.cumsum(n_points[:-1])]
+    """Cast, validate, and cache one breakpoint-first grid declaration."""
+    _fail_if_continuous_grid_distributed(
+        grid_kind=type(grid).__name__, distributed=distributed
     )
-
-    object.__setattr__(grid, "_breakpoints", breakpoints)
-    object.__setattr__(grid, "_segment_starts", starts)
-    object.__setattr__(grid, "_segment_stops", stops)
-    object.__setattr__(grid, "_segment_n_points", n_points)
-    object.__setattr__(grid, "_cumulative_offsets", cumulative)
-
-
-def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
-    segments: tuple[PiecewiseGridSegment, ...],
-) -> None:
-    """Validate the piecewise linearly spaced grid parameters.
-
-    Args:
-        segments: The segments defining the grid.
-
-    Raises:
-        GridInitializationError: If the grid parameters are invalid.
-
-    """
-    error_messages = []
-
-    if not isinstance(segments, tuple):
-        error_messages.append(
-            "segments must be a tuple of PiecewiseGridSegment objects, but is "
-            f"{type(segments).__name__}"
+    dtype = canonical_float_dtype()
+    start_jax = jnp.asarray(start, dtype=dtype)
+    stop_jax = jnp.asarray(stop, dtype=dtype)
+    breakpoint_values = jnp.asarray(
+        tuple(declaration.value for declaration in breakpoints),
+        dtype=dtype,
+    )
+    owners = tuple(declaration.owner for declaration in breakpoints)
+    integer_counts = _integer_point_counts(points_per_segment=points_per_segment)
+    segment_n_points = jnp.asarray(integer_counts, dtype=jnp.int32)
+    segment_starts, segment_stops = effective_segment_bounds(
+        start=start_jax,
+        stop=stop_jax,
+        breakpoints=breakpoint_values,
+        owners=owners,
+    )
+    _validate_piecewise_grid(
+        start=start_jax,
+        stop=stop_jax,
+        breakpoint_values=breakpoint_values,
+        owners=owners,
+        segment_n_points=segment_n_points,
+        n_declared_point_counts=len(points_per_segment),
+        segment_starts=segment_starts,
+        segment_stops=segment_stops,
+        requires_positive_bounds=requires_positive_bounds,
+    )
+    cumulative_offsets = jnp.concatenate(
+        (
+            jnp.asarray((0,), dtype=jnp.int32),
+            jnp.cumsum(segment_n_points[:-1], dtype=jnp.int32),
         )
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+    )
 
-    if len(segments) < 1:
-        error_messages.append("segments must have at least 1 element")
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+    object.__setattr__(grid, "start", start_jax)
+    object.__setattr__(grid, "stop", stop_jax)
+    object.__setattr__(grid, "breakpoints", breakpoints)
+    object.__setattr__(
+        grid,
+        "points_per_segment",
+        tuple(jnp.int32(count) for count in integer_counts),
+    )
+    object.__setattr__(grid, "batch_size", batch_size)
+    object.__setattr__(grid, "distributed", distributed)
+    object.__setattr__(grid, "_breakpoint_values", breakpoint_values)
+    object.__setattr__(
+        grid,
+        "_segment_selection_thresholds",
+        segment_starts[1:],
+    )
+    object.__setattr__(grid, "_segment_starts", segment_starts)
+    object.__setattr__(grid, "_segment_stops", segment_stops)
+    object.__setattr__(grid, "_segment_n_points", segment_n_points)
+    object.__setattr__(grid, "_cumulative_offsets", cumulative_offsets)
 
-    # Validate each segment
-    parsed_intervals: list[portion.Interval] = []
-    for i, segment in enumerate(segments):
-        if not isinstance(segment, PiecewiseGridSegment):
-            error_messages.append(
-                f"segments[{i}] must be a PiecewiseGridSegment object, but is "
-                f"{type(segment).__name__}"
+
+def _integer_point_counts(
+    *, points_per_segment: PiecewisePointCounts
+) -> tuple[int, ...]:
+    """Return exact Python integer counts, refusing lossy numeric coercion."""
+    counts: list[int] = []
+    errors: list[str] = []
+    for index, value in enumerate(points_per_segment):
+        if isinstance(value, bool):
+            errors.append(
+                f"points_per_segment[{index}] must be an integer >= 2, but is bool"
             )
             continue
-
-        if segment.n_points < 2:  # noqa: PLR2004
-            error_messages.append(
-                f"segments[{i}].n_points must be an int >= 2, but is {segment.n_points}"
-            )
-
-        # Try to parse the interval
         try:
-            interval = _parse_interval(segment.interval)
-            parsed_intervals.append(interval)
-
-            # Check interval is valid (lower < upper)
-            if interval.lower >= interval.upper:
-                error_messages.append(
-                    f"segments[{i}].interval must have lower < upper, but got "
-                    f"{interval}"
-                )
-        except (ValueError, TypeError) as e:
-            error_messages.append(
-                f"segments[{i}].interval is invalid: {segment.interval}. Error: {e}"
+            count = operator.index(value)
+        except TypeError:
+            errors.append(
+                f"points_per_segment[{index}] must be an integer >= 2, but is "
+                f"{type(value).__name__}"
             )
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
-
-    # Check that segments are adjacent (no gaps or overlaps)
-    for i in range(len(parsed_intervals) - 1):
-        current = parsed_intervals[i]
-        next_interval = parsed_intervals[i + 1]
-
-        if not current.adjacent(next_interval):
-            # Provide detailed error message about what's wrong
-            if current.upper < next_interval.lower:
-                error_messages.append(
-                    f"Gap between segments[{i}] and segments[{i + 1}]: "
-                    f"{current} and {next_interval} are not adjacent. "
-                    f"There is a gap between {current.upper} and {next_interval.lower}."
-                )
-            elif current.upper > next_interval.lower:
-                error_messages.append(
-                    f"Overlap between segments[{i}] and segments[{i + 1}]: "
-                    f"{current} and {next_interval} overlap."
-                )
-            else:
-                # Same boundary value but incompatible open/closed
-                error_messages.append(
-                    f"segments[{i}] and segments[{i + 1}] are not adjacent: "
-                    f"{current} and {next_interval}. "
-                    f"The boundary at {current.upper} must be closed on exactly "
-                    f"one side (e.g., '[a, x)' followed by '[x, b]')."
-                )
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+            continue
+        counts.append(count)
+    if errors:
+        raise GridInitializationError(format_messages(errors))
+    return tuple(counts)
 
 
-def _validate_piecewise_log_spaced_grid(
-    segments: tuple[PiecewiseGridSegment, ...],
+_MIN_POINTS_PER_SEGMENT = 2
+
+
+def _validate_piecewise_grid(
+    *,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    breakpoint_values: Float1D,
+    owners: tuple[BoundaryOwner, ...],
+    segment_n_points: Int1D,
+    n_declared_point_counts: int,
+    segment_starts: Float1D,
+    segment_stops: Float1D,
+    requires_positive_bounds: bool,
 ) -> None:
-    """Validate the piecewise logarithmically spaced grid parameters.
+    """Validate a canonical breakpoint-first piecewise-grid declaration."""
+    errors = _boundary_validation_errors(
+        start=start,
+        stop=stop,
+        breakpoint_values=breakpoint_values,
+        requires_positive_bounds=requires_positive_bounds,
+    )
+    errors.extend(
+        _segment_validation_errors(
+            breakpoint_values=breakpoint_values,
+            owners=owners,
+            segment_n_points=segment_n_points,
+            n_declared_point_counts=n_declared_point_counts,
+            segment_starts=segment_starts,
+            segment_stops=segment_stops,
+        )
+    )
+    if errors:
+        raise GridInitializationError(format_messages(errors))
 
-    Runs the standard piecewise validation, then additionally checks that all
-    boundary values are positive (required for logarithmic spacing).
-    """
-    _validate_piecewise_lin_spaced_grid(segments)
 
-    error_messages: list[str] = []
-    for i, segment in enumerate(segments):
-        interval = _parse_interval(segment.interval)
-        if interval.lower <= 0:
-            error_messages.append(
-                f"segments[{i}].interval lower bound must be positive for logspace, "
-                f"but got {interval.lower}"
+def _boundary_validation_errors(
+    *,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    breakpoint_values: Float1D,
+    requires_positive_bounds: bool,
+) -> list[str]:
+    """Return endpoint and nominal-breakpoint validation messages."""
+    errors: list[str] = []
+    finite_outer = bool(jnp.isfinite(start) & jnp.isfinite(stop))
+    finite_breakpoints = bool(jnp.all(jnp.isfinite(breakpoint_values)))
+
+    if not finite_outer:
+        errors.append("start and stop must be finite")
+    elif not bool(start < stop):
+        errors.append(f"start < stop is required, but got {start} and {stop}")
+
+    if not finite_breakpoints:
+        errors.append("all breakpoint values must be finite")
+    elif finite_outer and breakpoint_values.size:
+        if not bool(jnp.all((start < breakpoint_values) & (breakpoint_values < stop))):
+            errors.append(
+                "all breakpoint values must lie strictly between start and stop"
             )
-        if interval.upper <= 0:
-            error_messages.append(
-                f"segments[{i}].interval upper bound must be positive for logspace, "
-                f"but got {interval.upper}"
-            )
+        if not bool(jnp.all(jnp.diff(breakpoint_values) > 0)):
+            errors.append("breakpoint values must be strictly increasing")
 
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+    if requires_positive_bounds:
+        all_bounds = jnp.concatenate((start[None], breakpoint_values, stop[None]))
+        if not bool(jnp.all(all_bounds > 0)):
+            errors.append("all log-grid boundaries must be strictly positive")
+
+    return errors
+
+
+def _segment_validation_errors(
+    *,
+    breakpoint_values: Float1D,
+    owners: tuple[BoundaryOwner, ...],
+    segment_n_points: Int1D,
+    n_declared_point_counts: int,
+    segment_starts: Float1D,
+    segment_stops: Float1D,
+) -> list[str]:
+    """Return point-count, ownership, and effective-bound validation messages."""
+    errors: list[str] = []
+    expected_counts = int(breakpoint_values.size) + 1
+    if n_declared_point_counts != expected_counts:
+        errors.append(
+            "points_per_segment must contain one count per segment: "
+            f"expected {expected_counts}, got {n_declared_point_counts}"
+        )
+    if segment_n_points.size and not bool(
+        jnp.all(segment_n_points >= _MIN_POINTS_PER_SEGMENT)
+    ):
+        errors.append("every points_per_segment count must be an integer >= 2")
+
+    if any(owner not in ("left", "right") for owner in owners):
+        errors.append("every breakpoint owner must be exactly 'left' or 'right'")
+
+    finite_bounds = bool(
+        jnp.all(jnp.isfinite(segment_starts)) & jnp.all(jnp.isfinite(segment_stops))
+    )
+    if finite_bounds and not bool(jnp.all(segment_starts < segment_stops)):
+        errors.append(
+            "every segment must retain distinct representable bounds after "
+            "applying breakpoint ownership"
+        )
+    return errors

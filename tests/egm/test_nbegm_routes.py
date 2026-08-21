@@ -20,6 +20,7 @@ import pytest
 
 import lcm
 from _lcm.constraints.dispositions import (
+    CompileBoundary,
     ConstraintContext,
     Evaluate,
     ProvedByConstruction,
@@ -125,11 +126,7 @@ def _dispositions(constraints):
     """Plan a constraint pool against the case-piece route, keyed by name."""
     plan = plan_constraints(
         constraints=normalize_constraints(constraints=constraints),
-        routes=case_piece_routes(
-            context=_route_context(),
-            post_decision_function="savings",
-            solver_path=("nbegm",),
-        ),
+        routes=_bound_nbegm().build_constraint_routes(context=_route_context()),
         context=_constraint_context(),
     )
     return {entry.constraint_name: entry.disposition for entry in plan.entries}
@@ -139,10 +136,8 @@ def _simulate_dispositions(constraints):
     """Plan a constraint pool against the simulate-phase route, keyed by name."""
     plan = plan_constraints(
         constraints=normalize_constraints(constraints=constraints),
-        routes=case_piece_routes(
-            context=_route_context(phase="simulate"),
-            post_decision_function="savings",
-            solver_path=("nbegm",),
+        routes=_bound_nbegm().build_constraint_routes(
+            context=_route_context(phase="simulate")
         ),
         context=_constraint_context(phase="simulate"),
     )
@@ -201,6 +196,20 @@ def test_a_bound_on_a_name_the_grid_does_not_span_is_not_proved():
     got = _dispositions({"borrowing_limit": lcm.ref("wealth") >= 0.0})
 
     assert isinstance(got["borrowing_limit"], Reject)
+
+
+def test_a_liquid_state_half_space_is_compiled_on_the_solve_route():
+    """NBEGM retains a declarative liquid boundary as a solver program."""
+    got = _dispositions({"asset_test": lcm.ref("liquid") < 4.0})
+
+    assert isinstance(got["asset_test"], CompileBoundary)
+
+
+def test_a_compiled_solve_boundary_is_evaluated_during_simulation():
+    """Simulation calls the original declaration on its complete candidates."""
+    got = _simulate_dispositions({"asset_test": lcm.ref("liquid") < 4.0})
+
+    assert isinstance(got["asset_test"], Evaluate)
 
 
 def test_a_general_predicate_is_rejected():

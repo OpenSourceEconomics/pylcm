@@ -59,7 +59,6 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, AdaptiveOuterMesh, UniformObservedFixedCost
 from lcm.typing import (
-    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
@@ -77,7 +76,6 @@ from lcm_examples.mahler_yum_2024 import (
     RegimeId,
     _load_survival_probs,
     ages,
-    alive_is_active,
     base_income,
     benefits,
     college_coefficient,
@@ -93,17 +91,23 @@ from lcm_examples.mahler_yum_2024 import (
     income,
     lagged_health_effort_coefficient,
     legacy,
-    net_income,
     next_health,
-    next_regime,
     pension,
     prod_shock_grid,
     productivity_type_multiplier,
-    retirement_constraint,
+    retirement_is_active,
+    retirement_net_income,
+    retirement_to_dead_probability,
+    retirement_to_retirement_probability,
     risk_aversion,
     scaled_productivity_shock,
     taxed_income,
     work_disutility,
+    working_is_active,
+    working_net_income,
+    working_to_dead_probability,
+    working_to_retirement_probability,
+    working_to_working_probability,
 )
 
 # Streaming knobs for the paper-mode configuration.
@@ -184,15 +188,18 @@ def next_lagged_effort(new_lagged_effort: ContinuousState) -> ContinuousState:
     return new_lagged_effort
 
 
-def utility(
+def working_utility(
     effort_cost: FloatND,
     work_disutility: FloatND,
     consumption_utility: FloatND,
-    retirement_is_feasible: BoolND,
 ) -> FloatND:
-    """Flow utility, with mandatory retirement enforced on discrete choices."""
-    flow = consumption_utility - work_disutility - effort_cost
-    return jnp.where(retirement_is_feasible, flow, -jnp.inf)
+    """Flow utility while working."""
+    return consumption_utility - work_disutility - effort_cost
+
+
+def retirement_utility(effort_cost: FloatND, consumption_utility: FloatND) -> FloatND:
+    """Flow utility after the work-only margin has disappeared."""
+    return consumption_utility - effort_cost
 
 
 def raw_cash_on_hand(
@@ -302,13 +309,17 @@ def build_paper_solver(
     )
 
 
-def build_alive_regime(
+def build_working_regime(
     *, outer_search: AdaptiveOuterMesh | None = None
 ) -> NestedConsumptionSavingsRegime:
-    """The paper-mode alive regime (continuous effort and habit)."""
+    """The paper-mode working regime with continuous effort and habit."""
     return NestedConsumptionSavingsRegime(
-        transition=MarkovTransition(next_regime),
-        active=partial(alive_is_active, final_age_alive=int(ages.values[-2])),
+        transition={
+            "working": MarkovTransition(working_to_working_probability),
+            "retirement": MarkovTransition(working_to_retirement_probability),
+            "dead": MarkovTransition(working_to_dead_probability),
+        },
+        active=working_is_active,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "health": DiscreteGrid(Health),
@@ -336,7 +347,7 @@ def build_alive_regime(
             "effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_EFFORT_GRID),
         },
         functions={
-            "utility": utility,
+            "utility": working_utility,
             "new_lagged_effort": new_lagged_effort,
             "effort_value": effort_value,
             "lagged_effort_value": lagged_effort_value,
@@ -350,12 +361,75 @@ def build_alive_regime(
             "base_income": base_income,
             "income": income,
             "benefits": benefits,
-            "net_income": net_income,
+            "net_income": working_net_income,
             "taxed_income": taxed_income,
-            "pension": pension,
             "scaled_productivity_shock": scaled_productivity_shock,
             "adjustment_cost_scale": adjustment_cost_scale,
-            "retirement_is_feasible": retirement_constraint,
+            "discount_factor": discount_factor,
+        },
+        constraints={},
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="cash_on_hand",
+            post_decision_state="saving",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="lagged_effort",
+            action="effort",
+            post_decision_state="new_lagged_effort",
+            no_adjustment="keep_effort",
+        ),
+        solver=build_paper_solver(outer_search=outer_search),
+    )
+
+
+def build_retirement_regime(
+    *, outer_search: AdaptiveOuterMesh | None = None
+) -> NestedConsumptionSavingsRegime:
+    """The paper-mode retirement regime without work-only dimensions."""
+    return NestedConsumptionSavingsRegime(
+        transition={
+            "retirement": MarkovTransition(retirement_to_retirement_probability),
+            "dead": MarkovTransition(retirement_to_dead_probability),
+        },
+        active=partial(retirement_is_active, final_age_alive=int(ages.values[-2])),
+        states={
+            "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            "health": DiscreteGrid(Health),
+            "lagged_effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_HABIT_GRID),
+            "education": DiscreteGrid(Education),
+            "health_type": DiscreteGrid(HealthType),
+            "discount_type": DiscreteGrid(DiscountType),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": MarkovTransition(next_health),
+            "lagged_effort": next_lagged_effort,
+            "education": fixed_transition("education"),
+            "health_type": fixed_transition("health_type"),
+            "discount_type": fixed_transition("discount_type"),
+        },
+        actions={
+            "consumption": LinSpacedGrid(
+                start=0.01, stop=30.0, n_points=N_CONSUMPTION_GRID
+            ),
+            "effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_EFFORT_GRID),
+        },
+        functions={
+            "utility": retirement_utility,
+            "new_lagged_effort": new_lagged_effort,
+            "effort_value": effort_value,
+            "lagged_effort_value": lagged_effort_value,
+            "keep_effort": keep_effort,
+            "effort_cost": effort_cost,
+            "consumption_utility": consumption_utility,
+            "cash_on_hand": cash_on_hand,
+            "raw_cash_on_hand": raw_cash_on_hand,
+            "saving": saving,
+            "net_income": retirement_net_income,
+            "pension": pension,
+            "adjustment_cost_scale": adjustment_cost_scale,
             "discount_factor": discount_factor,
         },
         constraints={},
@@ -430,48 +504,28 @@ def create_mahler_yum_model(
         raise ValueError(msg)
     return Model(
         regimes={
-            "alive": build_alive_regime(outer_search=outer_search),
+            "working": build_working_regime(outer_search=outer_search),
+            "retirement": build_retirement_regime(outer_search=outer_search),
             "dead": build_dead_regime(),
         },
         ages=ages,
         regime_id_class=RegimeId,
-        # AOT-compiled cores cannot be crossed by JAX transformations; the
-        # implicit-derivative pilot builds with `enable_jit=False` to keep the
-        # kernel cores traceable under vmap/jvp.
         enable_jit=enable_jit,
         fixed_params={
-            "alive": {
-                "productivity_type_multiplier": productivity_type_multiplier,
-                "consumption_utility": {"sigma": risk_aversion},
-                "next_health": {
-                    "health_intercept": health_intercept,
-                    "health_age_effects": health_age_effects,
-                    "good_health_coefficient": good_health_coefficient,
-                    "health_type_coefficient": health_type_coefficient,
-                    "college_coefficient": college_coefficient,
-                    "health_effort_coefficient": health_effort_coefficient,
-                    "lagged_health_effort_coefficient": (
-                        lagged_health_effort_coefficient
-                    ),
-                },
-                "next_regime": {"transition_probs": _load_survival_probs()},
-            },
+            "productivity_type_multiplier": productivity_type_multiplier,
+            "sigma": risk_aversion,
+            "health_intercept": health_intercept,
+            "health_age_effects": health_age_effects,
+            "good_health_coefficient": good_health_coefficient,
+            "health_type_coefficient": health_type_coefficient,
+            "college_coefficient": college_coefficient,
+            "health_effort_coefficient": health_effort_coefficient,
+            "lagged_health_effort_coefficient": (lagged_health_effort_coefficient),
+            "survival_probs": _load_survival_probs(),
         },
     )
 
 
 def adapt_params_to_paper_mode(model_params: dict) -> dict:
-    """Rewrite brute-mode `create_inputs` params for the paper configuration.
-
-    One mechanical change: the adjustment-cost envelope moves from the
-    dropped `adjustment_cost_penalty` function to `adjustment_cost_scale`.
-    Everything else — including `min_consumption`, consumed here by the
-    floored `cash_on_hand` schedule — passes through unchanged.
-    """
-    adapted = dict(model_params)
-    penalty = adapted.pop("adjustment_cost_penalty", None)
-    if penalty is not None:
-        adapted["adjustment_cost_scale"] = {
-            "adjustment_cost_envelope": penalty["adjustment_cost_envelope"],
-        }
-    return adapted
+    """Copy the optimized model parameter mapping for paper mode."""
+    return dict(model_params)

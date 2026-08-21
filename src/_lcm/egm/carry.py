@@ -57,15 +57,15 @@ class EGMCarry:
     """EV1 taste-shock scale of the regime as a 0-d array; `0.0` = hard max."""
 
     breakpoints: FloatND | None = None
-    """Per-row value-jump locations in the child's liquid state, NaN-padded.
+    """Per-row one-sided boundary locations in the child's liquid state.
 
-    Published only by solvers whose value rows carry declared jumps (a NBEGM
-    schedule regime); `None` for smooth-valued regimes. The jumps themselves
-    ride inside `endog_grid` as duplicated abscissae holding the one-sided
-    value and marginal limits, so the ordinary padded-row read is one-sided
-    by construction; this field marks the rows' topology for the
-    stochastic-dim fold, which must not average rows whose jump locations
-    differ across the folded nodes.
+    NaN-padded and published by solvers whose value rows carry a declared jump
+    or a finite-to-infeasible boundary; `None` for smooth-valued regimes.
+    One-sided values and marginals ride inside `endog_grid` as exact/adjacent
+    or duplicated abscissae. This field marks the rows' topology for the
+    stochastic-dimension fold, which must not average rows whose boundary
+    locations differ across the folded nodes, and lets an EGM parent add the
+    fixed-savings candidate where the child boundary binds.
     """
 
     policy: FloatND | None = None

@@ -39,8 +39,9 @@ from lcm_examples.mahler_yum_2024 import (
 )
 from lcm_examples.mahler_yum_2024.paper import (
     adapt_params_to_paper_mode,
-    build_alive_regime,
     build_paper_solver,
+    build_retirement_regime,
+    build_working_regime,
     cash_on_hand,
     create_mahler_yum_model,
     dead_utility,
@@ -49,7 +50,8 @@ from lcm_examples.mahler_yum_2024.paper import (
     new_lagged_effort,
     next_lagged_effort,
     raw_cash_on_hand,
-    utility,
+    retirement_utility,
+    working_utility,
 )
 
 _CAPTURE_PERIOD = 36
@@ -105,17 +107,20 @@ def test_effort_identities_hold() -> None:
     np.testing.assert_array_equal(keep_effort(lagged_effort=values), values)
 
 
-def test_utility_enforces_mandatory_retirement() -> None:
-    """Paper flow utility excludes an infeasible discrete retirement choice."""
-    common = {
-        "effort_cost": jnp.asarray(0.3),
-        "work_disutility": jnp.asarray(0.2),
-        "consumption_utility": jnp.asarray(1.5),
-    }
-    feasible = utility(**common, retirement_is_feasible=jnp.ones((), dtype=bool))
-    infeasible = utility(**common, retirement_is_feasible=jnp.zeros((), dtype=bool))
-    np.testing.assert_allclose(np.asarray(feasible), 1.0)
-    assert bool(jnp.isneginf(infeasible))
+def test_split_regime_utilities_remove_work_disutility_in_retirement() -> None:
+    """Retirement removes work utility terms instead of masking a work choice."""
+    consumption_utility = jnp.asarray(1.5)
+    effort_cost = jnp.asarray(0.3)
+    working = working_utility(
+        effort_cost=effort_cost,
+        work_disutility=jnp.asarray(0.2),
+        consumption_utility=consumption_utility,
+    )
+    retired = retirement_utility(
+        effort_cost=effort_cost, consumption_utility=consumption_utility
+    )
+    np.testing.assert_allclose(np.asarray(working), 1.0)
+    np.testing.assert_allclose(np.asarray(retired), 1.2)
 
 
 def test_dead_utility_is_identically_zero_on_the_wealth_axis() -> None:
@@ -124,33 +129,47 @@ def test_dead_utility_is_identically_zero_on_the_wealth_axis() -> None:
     np.testing.assert_array_equal(np.asarray(out), np.zeros(12))
 
 
-def test_params_adapter_keeps_the_floor_and_renames_the_penalty() -> None:
+def test_params_adapter_preserves_the_flat_calibration() -> None:
+    """Paper mode consumes the optimized model's flat parameter vocabulary."""
     model_params, _ = create_inputs(
         seed=0, n_simulation_subjects=10, params=START_PARAMS
     )
     adapted = adapt_params_to_paper_mode(model_params)
-    assert "min_consumption" in adapted
+    assert set(adapted) == set(model_params)
     assert adapted["min_consumption"] == model_params["min_consumption"]
-    assert "adjustment_cost_penalty" not in adapted
     np.testing.assert_array_equal(
-        np.asarray(adapted["adjustment_cost_scale"]["adjustment_cost_envelope"]),
-        np.asarray(model_params["adjustment_cost_penalty"]["adjustment_cost_envelope"]),
+        np.asarray(adapted["adjustment_cost_envelope"]),
+        np.asarray(model_params["adjustment_cost_envelope"]),
     )
 
 
 def test_paper_solver_wiring_matches_the_plan_interface() -> None:
-    """The DAG names live on the regime's outer margin, the numerics on the solver."""
-    outer = build_alive_regime().outer_continuous
-    assert outer.action == "effort"
-    assert outer.state == "lagged_effort"
-    assert outer.post_decision_state == "new_lagged_effort"
-    assert outer.no_adjustment == "keep_effort"
+    """Both living regimes use the same continuous outer-margin vocabulary."""
+    for regime in (build_working_regime(), build_retirement_regime()):
+        outer = regime.outer_continuous
+        assert outer.action == "effort"
+        assert outer.state == "lagged_effort"
+        assert outer.post_decision_state == "new_lagged_effort"
+        assert outer.no_adjustment == "keep_effort"
 
     solver = build_paper_solver()
     aggregator = solver.branch_aggregator
     assert isinstance(aggregator, UniformObservedFixedCost)
     assert aggregator.scale_function == "adjustment_cost_scale"
     assert (aggregator.lower, aggregator.upper) == (0.0, 1.0)
+
+
+def test_paper_model_has_separate_working_and_retirement_regimes() -> None:
+    """The paper model drops work-only variables on entry into retirement."""
+    model = create_mahler_yum_model()
+
+    assert set(model.user_regimes) == {"working", "retirement", "dead"}
+    working = model.user_regimes["working"]
+    retirement = model.user_regimes["retirement"]
+    assert "labor_supply" in working.actions
+    assert "labor_supply" not in retirement.actions
+    assert "productivity_shock" in working.states
+    assert "productivity_shock" not in retirement.states
 
 
 class _StopAfterCaptureError(Exception):
@@ -213,7 +232,7 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
     patcher.setattr(_solvers, "collapse_continuous_candidate_bank", capturing_collapse)
     try:
         with pytest.raises(_StopAfterCaptureError):
-            model.solve(params={"alive": params}, log_level="debug")
+            model.solve(params=params, log_level="debug")
     finally:
         patcher.undo()
     return captured

@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_ch
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.constraints.routes import (
+    ConstraintPlan,
     ConstraintRoute,
     ConstraintRouteKey,
     ConstraintSite,
@@ -227,14 +228,21 @@ class SolverBuildContext:
     """
 
     constraints: ConstraintFunctionsMapping
-    """Immutable mapping of the regime's constraint names to functions."""
+    """Constraint callables the solver evaluates in its numerical kernel."""
+
+    constraint_functions: ConstraintFunctionsMapping
+    """Every declared constraint callable, including compiled and proved ones."""
 
     processed_constraints: ProcessedConstraintsMapping
-    """The same constraints in the form a solver can reason about.
+    """Every declared constraint in the form a solver can reason about.
 
     Read this to ask what a constraint *says* — whether it bounds a state, which
-    names it reads — and `constraints` to evaluate one. The callables are built
-    from these, so the two cannot disagree about what was declared."""
+    names it reads — and `constraint_functions` to obtain its callable. The
+    callables are built from these, so the two cannot disagree about what was
+    declared."""
+
+    constraint_plan: ConstraintPlan | None
+    """Complete route ledger, or `None` when the solver declares no routes."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""

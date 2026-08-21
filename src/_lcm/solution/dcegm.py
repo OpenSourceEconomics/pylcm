@@ -301,8 +301,8 @@ class DCEGM(OneMarginSolver):
             msg = (
                 f"Regime {context.regime_name!r} selects ExactEnvelope, but "
                 "the native exact-affine library is unavailable or unloadable. "
-                "Install a pylcm build carrying the library or build it with "
-                "`pixi run build-exact-affine`; select another envelope only "
+                "Install a pylcm build carrying the library or reinstall it with "
+                "`pixi reinstall pylcm`; select another envelope only "
                 "when its documented approximation contract is acceptable."
             )
             raise ExactAffineKernelUnavailableError(msg)

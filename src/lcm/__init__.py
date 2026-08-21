@@ -123,10 +123,10 @@ from lcm.fixed_forms import (  # noqa: E402
 )
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
+    GridBreakpoint,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
@@ -197,6 +197,7 @@ __all__ = [
     "EdgeLeg",
     "ExtremeValueTasteShocks",
     "GatedEdge",
+    "GridBreakpoint",
     "IrregSpacedGrid",
     "JointTransition",
     "LinSpacedGrid",
@@ -213,7 +214,6 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "Phased",
-    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "PowerMean",
