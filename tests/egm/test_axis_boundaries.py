@@ -10,6 +10,7 @@ from _lcm.axis_boundaries import (
     axis_interval_indices,
     boundary_owner_for_feasible_region,
     effect_code,
+    feasibility_region_indices,
     partition_effect_for_schedule_kind,
     resolve_axis_partition,
 )
@@ -156,4 +157,34 @@ def test_partition_interval_lookup_supports_jit_and_vmap() -> None:
     np.testing.assert_array_equal(
         lookup(jnp.array([3.0, 4.0, 5.0])),
         np.array([0, 0, 1]),
+    )
+
+
+def test_feasibility_regions_ignore_budget_partition_refinements() -> None:
+    """Kinks and floors refine intervals without splitting an envelope branch."""
+    partition = resolve_axis_partition(
+        start=jnp.float32(0.0),
+        stop=jnp.float32(8.0),
+        boundaries=(
+            AxisBoundary(
+                value=jnp.float32(2.0),
+                owner="right",
+                effect="continuous_kink",
+            ),
+            AxisBoundary(value=jnp.float32(4.0), owner="right", effect="feasibility"),
+            AxisBoundary(value=jnp.float32(6.0), owner="left", effect="flat_budget"),
+        ),
+    )
+    lookup = jax.jit(
+        jax.vmap(
+            lambda value: feasibility_region_indices(
+                partition=partition,
+                values=value,
+            )
+        )
+    )
+
+    np.testing.assert_array_equal(
+        lookup(jnp.array([1.0, 3.0, 5.0, 7.0])),
+        np.array([0, 0, 1, 1]),
     )

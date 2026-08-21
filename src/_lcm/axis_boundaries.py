@@ -138,6 +138,26 @@ def axis_interval_indices(
     ).astype(jnp.int32)
 
 
+def feasibility_region_indices(
+    *, partition: ResolvedAxisPartition, values: FloatND
+) -> IntND:
+    """Classify coordinates by the feasibility boundaries they have crossed.
+
+    Non-feasibility boundaries refine the shared axis partition but do not split
+    an envelope branch. This region label therefore advances only at boundaries
+    owned by a feasibility constraint.
+    """
+    interval_indices = axis_interval_indices(partition=partition, values=values)
+    is_feasibility = partition.effect_codes == effect_code("feasibility")
+    region_by_interval = jnp.concatenate(
+        (
+            jnp.zeros((1,), dtype=jnp.int32),
+            jnp.cumsum(is_feasibility, dtype=jnp.int32),
+        )
+    )
+    return region_by_interval[interval_indices]
+
+
 def effective_segment_bounds(
     *,
     start: ScalarFloat,
