@@ -7,6 +7,12 @@ title: Defining Models
 A `Model` ties together regimes, an age grid, and a regime ID class into a solvable
 lifecycle model.
 
+> **Choose the solver-facing regime first.** The general `Regime` used below is the
+> `GridSearch` baseline. A model intended for EGM should start with
+> `ConsumptionSavingsRegime`; a nested liquid/outer problem should start with
+> `NestedConsumptionSavingsRegime`. See
+> [Choose your starting declaration](../getting_started/next_steps.md).
+
 ## The Model Constructor
 
 ```python
@@ -236,84 +242,15 @@ model = Model(
 )
 ```
 
-## Correlated State Transitions
+## Correlated state transitions
 
-Use `MarkovTransition` when one state has its own stochastic law. When several target
-states must use the same realization, declare one edge-owned `JointTransition` instead.
-The outer key is the target regime; the inner key is the transition-local node name
-supplied to every output law.
+Use `JointTransition` when several next states must share one stochastic draw. It owns a
+joint support, one probability function, and one output projection per affected state.
+Do not also declare separate transition laws for those outputs.
 
-```python
-import jax.numpy as jnp
-
-from lcm import JointTransition, MarkovTransition, Regime, fixed_transition
-from lcm.typing import FloatND, IntND
-
-
-MATCH_SUPPORT = {
-    "partner_wealth": jnp.asarray([0.5, 2.0]),
-    "partner_health": jnp.asarray([0, 1], dtype=jnp.int32),
-}
-
-
-def match_probabilities(match_type: IntND, match_weights: FloatND) -> FloatND:
-    return match_weights[match_type]
-
-
-def next_wealth(wealth, partner_match):
-    return wealth + partner_match["partner_wealth"]
-
-
-def next_partner_health(partner_match):
-    return partner_match["partner_health"].astype(jnp.int32)
-
-
-single = Regime(
-    transition={"couple": MarkovTransition(probability_of_couple)},
-    states={"wealth": wealth_grid, "match_type": match_type_grid},
-    state_transitions={"match_type": fixed_transition("match_type")},
-    joint_transitions={
-        "couple": {
-            "partner_match": JointTransition(
-                support_size=2,
-                support=MATCH_SUPPORT,
-                probabilities=match_probabilities,
-                outputs={
-                    "wealth": next_wealth,
-                    "partner_health": next_partner_health,
-                },
-            ),
-        },
-    },
-    actions=single_actions,
-    functions={"utility": single_utility},
-)
-```
-
-Every support leaf has leading axis `support_size`; one aligned row is enumerated in
-solve and sampled in simulation. The latent `partner_match` is not a state or grid, adds
-no value-function axis, and never appears in initial conditions or simulation results.
-The expectation over its nodes is formed inside the action value before the source
-action is maximized.
-
-A callable support may read only `period`, `age`, and parameters. Probabilities may also
-read source states, actions, and helpers. Output laws may transform the shared node
-using source values and may read already-resolved `next_<state>` outputs on the same
-target edge. Invalid support shapes and probabilities are rejected during the
-params-bound runtime preflight; probabilities are never silently normalized.
-
-Parameters for support and probabilities live below the kernel name, while output
-parameters keep the ordinary target-local `next_<state>` paths:
-
-```text
-params[source][target][kernel]["support"]
-params[source][target][kernel]["probabilities"]
-params[source][target]["next_wealth"]
-```
-
-Use `Phased(solve=JointTransition(...), simulate=JointTransition(...))` around the whole
-kernel for perceived versus realized dynamics. Both variants must retain the same output
-names, support size, and literal support schema.
+See [Transitions](transitions.ipynb) for the workflow and
+[Transitions and phase specialization](../reference/transitions.md#joint-transitions)
+for the exact support and output contract.
 
 ## See Also
 

@@ -8,6 +8,10 @@ Parameters are the numerical inputs to your model — discount factors, wages, r
 aversion coefficients, and so on. pylcm discovers parameters automatically from function
 signatures.
 
+Always start from `model.get_params_template()`. Specialized solver declarations,
+certainty equivalents, collective value constraints, and per-target transitions add
+branches that are easy to miss in a hand-written parameter dictionary.
+
 ## Getting the Parameter Template
 
 ```python

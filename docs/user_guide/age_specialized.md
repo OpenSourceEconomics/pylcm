@@ -4,131 +4,69 @@ title: Age-specialized functions and grids
 
 # Age-specialized functions and grids
 
-Some model functions do not just take the agent's age as an argument — their whole body
-changes with it. The canonical case is a tax-transfer system that changes as a cohort
-ages through calendar time. With each age, the laws that apply to the cohort change, so
-the function computing net income at age 58 is a *different closure* from the one at age
-63, not the same closure with a different `age` argument.
+Use age specialization when a function implementation or continuous-state grid changes
+with age. If an ordinary function can simply take `age`, prefer that simpler form.
 
-`AgeSpecializedFunction` marks such a function. At model build, pylcm resolves the
-marker **per period**: each period's age gets its own concrete function, compiled into
-that period's programs. There is no runtime dispatch on age or calendar year.
+A typical use is a cohort moving through different policy years: the net-income function
+at age 58 closes over a different tax system from the function at age 63.
+
+## Age-specialized functions
+
+`AgeSpecializedFunction(build, signature)` resolves one concrete function per active age
+when the model is built.
 
 ```python
 from lcm import AgeSpecializedFunction
 
 
-def make_net_income(age: float):
-    """Build the net-income closure for the policy year this age falls in."""
-    policy_env = load_policy_environment(year_for(age))
+def make_net_income(age):
+    policy = load_policy_environment(year_for(age))
 
     def net_income(gross_income):
-        return policy_env.apply(gross_income)
+        return policy.apply(gross_income)
 
     return net_income
 
 
-def policy_key(age: float):
-    """Identify the closure: ages in the same policy year share a program."""
-    return year_for(age)
-
-
 functions = {
-    "net_income": AgeSpecializedFunction(build=make_net_income, signature=policy_key),
-    # ... other regime functions ...
+    "net_income": AgeSpecializedFunction(
+        build=make_net_income,
+        signature=lambda age: year_for(age),
+    )
 }
 ```
 
-## The two contracts
+The two user obligations are:
 
-`AgeSpecializedFunction(build, signature)` places two obligations on the user; pylcm
-cannot verify either automatically.
+1. every function returned by `build(age)` has the same call signature;
+1. equal `signature(age)` values imply identical closure behavior.
 
-1. **Invariant call signature.** Every concrete function `build(age)` returns must
-   expose the *same* argument list at every age. Only the constants the closure binds
-   may differ. pylcm's static passes (the parameter template, used-variable validation)
-   read the function at one representative age and rely on this.
+The signature is a correctness precondition and a compilation-reuse key. Include every
+varying ingredient when in doubt.
 
-1. **`signature` is a correctness precondition, not a performance hint.** Periods whose
-   `signature(age)` values are equal share a single compiled program. An equal signature
-   must therefore imply *identical closure behavior* — same policy date, same price
-   level, same overrides, same everything the closure binds. If two ages collide to one
-   signature but `build` returns different closures, the solve is silently wrong. When
-   in doubt, put more into the signature (a tuple of every varying ingredient), never
-   less.
-
-Deduplication is what keeps this affordable: an age-invariant `signature` collapses to
-one program for the whole horizon (identical to not using the wrapper), and a
-policy-date signature compiles one program per distinct policy year, not per period.
-
-## Where it is allowed
-
-`AgeSpecializedFunction` is accepted in `functions` and `constraints` of
-**non-terminal** regimes. Everything else is rejected at `Regime` construction, loudly:
-
-- **the regime `transition`**, bare or wrapped in `MarkovTransition` — periodizing the
-  regime-transition probability path is not supported;
-- **a regime transition that _reads_ an `AgeSpecializedFunction`**, directly or through
-  plain helper functions — regime-transition probabilities are built once, so a
-  policy-specialized value flowing into them would reuse one age's closure everywhere;
-- **`MarkovTransition(AgeSpecializedFunction(...))`** — policy-specialized stochastic
-  transitions are not supported;
-- **a direct `state_transitions` value** — see the pattern below instead;
-- **anything in a terminal regime** — the terminal value program is built once and
-  shared across all periods.
-
-## Policy-dependent laws of motion
-
-A state transition whose content depends on the policy year is written as a **plain
-transition reading an age-specialized helper function**:
+A policy-dependent law of motion remains a plain transition and reads an age-specialized
+helper:
 
 ```python
 functions = {
     "new_pension_points": AgeSpecializedFunction(
-        build=make_points, signature=policy_key
-    ),
-    # ... other regime functions ...
+        build=make_points,
+        signature=lambda age: policy_year(age),
+    )
 }
-
 state_transitions = {
-    # A plain function — the policy content lives in the helper it reads.
     "pension_points": lambda pension_points, new_pension_points: (
         pension_points + new_pension_points
-    ),
+    )
 }
 ```
 
-The simulate-phase next-state programs are built per period, so the helper resolves to
-the *current period's* closure inside every transition — the law of motion tracks the
-policy year without the transition itself carrying a marker.
+Do not place the marker directly in `state_transitions`.
 
-## What is resolved when
+## Age-specialized grids
 
-- **Per period (exact):** the solve `Q_and_F` programs, the simulate decision programs,
-  and the simulate next-state programs. These are what determine model behavior, and
-  they always use each period's own closure.
-- **At one representative age (the regime's first active age):** the parameter template,
-  used-variable validation, and the *published* function sets
-  (`regime.solution.functions`, `regime.simulation.functions`). These consumers only
-  need the (age-invariant) call signature — except one:
-
-`to_dataframe(additional_targets=...)` computes targets from the published simulation
-functions. A target that depends on an age-specialized function would therefore be
-evaluated under the representative age's policy, not each row's period — so pylcm
-**rejects** such targets with `InvalidAdditionalTargetsError`. Quantities you need per
-period from a specialized function should be carried inside the model (for example as a
-state fed by a plain transition reading the helper).
-
-Age-specialized functions **and grids** are fully resolved during model creation; solve
-and simulation only select the prebuilt period-specific objects — no `build(age)`
-factory is ever called from backward induction, simulation, AOT compilation, or
-diagnostics.
-
-## Age-specialized continuous-state grids
-
-`AgeSpecializedGrid` is the grid counterpart of `AgeSpecializedFunction`. Use it when a
-continuous state's grid bounds or nodes are known from age at model creation, for
-example an age-dependent borrowing limit.
+`AgeSpecializedGrid(build, signature)` varies a continuous state's numerical grid with
+age:
 
 ```python
 from lcm import AgeSpecializedGrid, LinSpacedGrid
@@ -141,69 +79,25 @@ states = {
             n_points=40,
         ),
         signature=lambda age: borrowing_floor(age),
-    ),
+    )
 }
 ```
 
-pylcm builds the concrete grid for every active age during model creation. The grid
-class, number of points, node-array shape, and dtype must stay fixed; only bounds or
-node values may change. Equal `signature(age)` values must identify identical grids,
-because those periods may share a compiled program; pylcm cross-checks a shared group's
-resolved nodes at build time and raises if an equal signature turns out to hide
-genuinely different grids.
+The grid class, number of nodes, shape, and dtype remain fixed; bounds or node values
+may change. Equal signatures must resolve to identical grids.
 
-`AgeSpecializedGrid` is currently supported for continuous **states**, not actions,
-discrete states, or stochastic-process grids. A grid whose points depend on model
-parameters should use the ordinary runtime-points `IrregSpacedGrid` mechanism instead;
-an `AgeSpecializedGrid` that resolves to a runtime-points grid is rejected at model
-creation.
+Use an age-specialized grid only for a continuous state whose points are known at model
+construction. Runtime-supplied points use `IrregSpacedGrid(n_points=...)` instead.
 
-### A marker goes in `states`, never inside `Phased`
+## Before using it
 
-pylcm looks for grid markers among a regime's top-level `states` values, and resolves
-each one it finds to that period's concrete grid. A marker nested inside a `Phased`
-variant is never reached by that resolution, so both such declarations are rejected at
-`Regime` construction:
+Age specialization creates period-specific programs. Use it only when the economic
+implementation changes, and keep the number of distinct signatures as small as
+correctness permits. If the regime uses a specialized solver, verify that every
+age-specific function and grid still satisfies that solver's assumptions.
 
-```python
-# Rejected: a marker cannot be a carried state's solve-phase imputation.
-states = {"assets": Phased(solve=AgeSpecializedGrid(...), simulate=LinSpacedGrid(...))}
-
-# Rejected: a carried state's simulate-phase domain may not be age-specialized.
-states = {"assets": Phased(solve=impute_assets, simulate=AgeSpecializedGrid(...))}
-```
-
-An age-specialized state is a plain `states` entry: a genuine grid axis in both phases,
-with its law of motion in `state_transitions` like any other state's.
-
-### Gate references and leg fallbacks on an age-specialized regime
-
-A `GatedEdge` reads other regimes' values within one period — its `gate_refs` read a
-reference regime's value function, and a shut gate reads the leg's `fallback` regime's
-value at a projected coordinate. Either regime may hold its states on an
-`AgeSpecializedGrid`.
-
-Every such read is measured against the grid of **the period whose value is being
-folded**, not against some other age at which that regime is also active. This is worth
-stating explicitly because nothing in the arrays would reveal a mistake: `n_points` is
-fixed across ages while the bounds move, so every period's value array has the same
-shape, and a read against another age's nodes lands on a different point of an otherwise
-correctly shaped array.
-
-A leg's `fallback` projection owes one coordinate function per state the fallback regime
-carries **in simulation**, and an age-specialized state is one of those like any other:
-
-```python
-EdgeLeg(
-    fallback=SamePeriodRef(
-        regime="annuity",
-        # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection
-        # owes a coordinate on it exactly as it would on a plain grid state.
-        projection={"principal": principal_from_balance},
-    )
-)
-```
-
-A `gate_refs` projection instead owes one coordinate per state of the reference regime's
-*value function*, i.e. its solve states. The two sets differ only by the states a regime
-carries in simulation alone.
+Exact placement rules—including terminal regimes, `Phased`, transition restrictions,
+DataFrame targets, and age-specific projections—are in
+[Transitions and phase specialization](../reference/transitions.md). See
+[Scaling, memory, and hardware](../methods/performance_scaling.md) for the compilation
+consequences.

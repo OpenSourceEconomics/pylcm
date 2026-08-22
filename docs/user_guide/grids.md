@@ -12,6 +12,12 @@ A grid is ordinarily the same for every period the regime is active. For a conti
 state, see [Age-specialized functions and grids](age_specialized.md) to let the grid's
 bounds or node values vary with age instead (e.g., an age-dependent borrowing limit).
 
+> **Grid breakpoints are numerical, not economic metadata.** A piecewise grid places
+> nodes around a known location. It does not tell `NBEGM` that the budget has a kink,
+> jump, or hard constraint. Declare that structure separately with
+> [case pieces](../reference/case_pieces.md) or a
+> [piecewise-affine schedule](../reference/piecewise_affine.md).
+
 ## Quick Reference
 
 | Grid Type                | Use Case                  | Key Parameters                                       |
