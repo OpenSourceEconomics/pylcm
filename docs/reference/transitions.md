@@ -38,12 +38,40 @@ probability in an all-regime vector.
 `JointTransition(support_size, support, probabilities, outputs)` declares several next
 states driven by one shared draw. `support` describes the literal joint nodes,
 `probabilities` returns a vector of length `support_size`, and each `outputs` entry
-projects a joint node into one state.
+projects a sampled joint node into one target state.
 
-The declaration occupies one edge in `state_transitions`. Every output name is owned by
-that edge and must not also have an independent law. Use `Phased` around the entire
-`JointTransition` for perceived and realized variants; both variants keep the same
-output names, support size, and literal support schema.
+Joint laws occupy the separate `Regime.joint_transitions` slot. Its public shape is a
+mapping from target regime, to local joint-node name, to the `JointTransition`:
+
+```python
+source = Regime(
+    transition={"target_regime": MarkovTransition(target_probability)},
+    joint_transitions={
+        "target_regime": {
+            "joint_draw": JointTransition(
+                support_size=2,
+                support={
+                    "wealth": wealth_nodes,
+                    "health": health_nodes,
+                },
+                probabilities=joint_probabilities,
+                outputs={
+                    "wealth": next_wealth,
+                    "health": next_health,
+                },
+            )
+        }
+    },
+    functions={"utility": utility},
+)
+```
+
+The outer key names the reachable target regime. The inner key names the sampled joint
+node that output functions may read. Every output state is owned by that joint law and
+must not also have an independent entry in `state_transitions`.
+
+Use `Phased` around the entire `JointTransition` for perceived and realized variants;
+both variants keep the same output names, support size, and literal support schema.
 
 ## Age specialization
 

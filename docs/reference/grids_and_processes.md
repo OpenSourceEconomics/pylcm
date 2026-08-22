@@ -27,7 +27,7 @@ when the economics declares it.
 | `IrregSpacedGrid(points)`                                              | Explicit sorted nodes                                 |
 | `PiecewiseLinSpacedGrid(start, stop, breakpoints, points_per_segment)` | Linear segments with independently controlled density |
 | `PiecewiseLogSpacedGrid(start, stop, breakpoints, points_per_segment)` | Log-spaced segments                                   |
-| `GridBreakpoint(value, ownership=...)`                                 | Interior boundary and which adjacent segment owns it  |
+| `GridBreakpoint(value, owner=...)`                                     | Interior boundary and which adjacent segment owns it  |
 
 Piecewise grids control **grid density** at known locations. They do not declare an
 economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) or a

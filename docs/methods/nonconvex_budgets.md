@@ -62,3 +62,14 @@ Exact decorator contracts are split into [Case pieces](../reference/case_pieces.
 [Piecewise-affine schedules](../reference/piecewise_affine.md). Feasibility boundaries
 belong to [Constraints and structured Conditions](../reference/conditions.md), not to
 either budget declaration.
+
+## Related pages
+
+- **Guide:** [Choosing a solver](../user_guide/choosing_a_solver.md) and
+  [Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md)
+- **Methods:** [Solver families](solver_families.md) and
+  [The endogenous-grid method](egm_foundations.md)
+- **Example:** [Mahler & Yum (2024)](../examples/mahler_yum_2024.md)
+- **Reference:** [Case pieces](../reference/case_pieces.md),
+  [Piecewise-affine schedules](../reference/piecewise_affine.md), and
+  [Solvers and capabilities](../reference/solvers.md)

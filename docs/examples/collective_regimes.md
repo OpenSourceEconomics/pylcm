@@ -11,8 +11,9 @@ This example asks two related questions:
 
 The importable definitions live in
 [`lcm_examples.collective_regimes`](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/collective_regimes.py).
-Both models use tiny grids and `GridSearch` so the values and routing can be checked by
-hand.
+Both models use deliberately tiny grids and `GridSearch` so the values and routing can
+be checked by hand. Those grids are curated for exposition and tests; they are not
+production recommendations.
 
 ## Stage 1: one action, two values
 

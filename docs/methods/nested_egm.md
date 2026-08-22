@@ -35,8 +35,10 @@ levels. This is nesting, not a coupled two-dimensional Euler inversion
 
 `NEGM(inner=DCEGM(...), outer_grid=...)` performs one complete inner `DCEGM` solve for
 each outer-grid node and compares those candidates with the keeper. The outer solution
-is exact relative to that finite candidate set. `outer_batch_size` changes retained
-memory, not the candidate set.
+is exact relative to that finite candidate set. `outer_batch_size` limits how many
+candidate values are evaluated at once. It can reduce temporary evaluation memory, but
+it does not cap the candidate bank retained for the exact later comparison. Peak memory
+can therefore still grow with the complete outer candidate set.
 
 Use it when the liquid problem has ordinary discrete-continuous non-concavity and the
 outer action can be represented by a fixed grid.
@@ -88,3 +90,15 @@ permits.
 See [Scaling, memory, and hardware](performance_scaling.md). Empirical break-even points
 remain model- and hardware-dependent; the external benchmark suite is the evolving
 evidence source.
+
+## Related pages
+
+- **Guide:**
+  [Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md)
+- **Methods:** [Solver families](solver_families.md) and
+  [The endogenous-grid method](egm_foundations.md)
+- **Example:** [Mahler & Yum (2024)](../examples/mahler_yum_2024.md)
+- **Reference:**
+  [Consumption-saving regimes and margins](../reference/consumption_savings.md),
+  [Solvers and capabilities](../reference/solvers.md), and
+  [Outer search and branch aggregation](../reference/outer_search.md)

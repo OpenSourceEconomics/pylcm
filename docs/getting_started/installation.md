@@ -35,44 +35,44 @@ uv add pylcm --git https://github.com/OpenSourceEconomics/pylcm.git --rev main
 
 ## The compiled kernel, and installing without a C++ compiler
 
-Installing pylcm compiles a small C++ library, the *exact-affine kernel*. It backs the
-`"exact"` upper envelope, which is the **default** for DC-EGM — so this is not an
-optional extra: without it, DC-EGM cannot run on its defaults. Brute-force backward
-induction never touches it and is unaffected.
+The certified upper envelopes use pylcm's *exact-affine kernel*: a small native payload
+built from source maintained in this repository. It is part of the pylcm installation,
+not an arbitrary shared library downloaded or discovered at runtime.
 
-The build needs a C++ compiler: `c++` or `g++` on the path on Linux and macOS, `cl.exe`
-from an activated MSVC developer environment on Windows, or `CXX` set to one (on Windows
-that must be `cl` or `clang-cl`, since the compile uses MSVC flags). It also builds a
-CUDA variant when `nvcc` is present; where it is not, the certified envelope runs on CPU
-only, and the build says so as it runs. Windows builds the CPU kernel and, finding no
-compiler, fails the install exactly as the other platforms do.
+How the payload arrives depends on how pylcm is installed:
 
-If no compiler is found, **the install fails with a message naming what is missing.**
-That is deliberate: an install that quietly dropped the kernel would look fine and then
-fail hours later inside a solve.
+- a compatible binary wheel already contains the CPU and, where that wheel was built
+  with CUDA support, CUDA libraries for its platform and toolchain;
+- a source or editable install runs pylcm's build hook locally. It requires `c++` or
+  `g++` on Linux/macOS, an activated MSVC `cl.exe` or `clang-cl` environment on Windows,
+  or an appropriate `CXX`; it adds a CUDA library only when `nvcc` is available at build
+  time.
 
-To install without a compiler on purpose, say so:
+A CPU library does not satisfy a solve whose current JAX backend is a GPU. Likewise, a
+payload built for another platform, Python ABI, toolchain, or JAX installation is not a
+portable substitute. If no compatible wheel exists, the package manager performs the
+source build and therefore needs the local toolchain.
+
+If the required compiler is missing, a source install fails with a message naming it. To
+install without the certified capability on purpose, set the explicit build flag:
 
 ```bash
 LCM_SKIP_EXACT_AFFINE=1 pip install pylcm
 ```
 
-The build then compiles nothing and prints which capability the install will not have.
-Any other value, including `0`, builds the kernel as usual. You can check afterwards
-whether an install has one:
+The build then compiles no exact-affine payload and reports the omitted capability. Any
+other value, including `0`, requests the normal build. A skipped installation still
+imports and can use `GridSearch` or a typed approximate envelope.
 
-```python
-from _lcm.egm.upper_envelope._exact_affine.ffi import kernel_built
+Constructing a model that selects `ExactEnvelope`—directly or inside `NEGM`—checks that
+the current backend has a compatible loadable payload and raises immediately when it
+does not. It never silently falls back to ordinary floating arithmetic. To restore the
+capability after changing the toolchain or native sources, reinstall pylcm in the target
+environment; for a pixi development checkout use:
 
-print(kernel_built())  # False in a skipped install
+```bash
+pixi reinstall pylcm
 ```
-
-A skipped install still imports. Constructing a `Model` whose `DCEGM` regime selects
-`ExactEnvelope` — directly, or as the inner solver of a `NEGM` regime — then raises
-immediately, before compilation or `solve()`, rather than returning a silently different
-answer. Grid-search models and endogenous-grid models selecting a different typed
-envelope remain usable. To get the certified capability back, unset the variable and
-reinstall.
 
 ## GPU Acceleration (optional, but then this is the whole point of it)
 

@@ -21,7 +21,9 @@ node is “resources” or that a hidden `where` encodes a policy cliff. pylcm a
 name those roles and boundaries so it can validate the solver's assumptions before it
 runs.
 
-Use [Choosing a solver](../user_guide/choosing_a_solver.md) for the full correctness and
+Use [Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md)
+for complete executable declarations, and
+[Choosing a solver](../user_guide/choosing_a_solver.md) for the full correctness and
 performance decision. Then continue with
 [Defining models](../user_guide/defining_models.md) or select a model with related
 features from the [Examples](../examples/index.md).

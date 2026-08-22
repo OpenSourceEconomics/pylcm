@@ -35,8 +35,8 @@ project:
     - file: getting_started/index.md
       title: Getting Started
       children:
-        - file: user_guide/installation.md
-        - file: user_guide/tiny_example.ipynb
+        - file: getting_started/installation.md
+        - file: getting_started/tiny_example.ipynb
         - file: getting_started/model_vocabulary.md
         - file: getting_started/next_steps.md
     - file: user_guide/index.md
@@ -53,6 +53,7 @@ project:
         - file: user_guide/pandas_interop.md
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/choosing_a_solver.md
+        - file: user_guide/authoring_specialized_solvers.md
         - file: user_guide/tuning.md
         - file: user_guide/debugging.md
     - file: methods/index.md

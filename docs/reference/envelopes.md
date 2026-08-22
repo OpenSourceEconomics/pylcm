@@ -5,7 +5,13 @@ title: Upper envelopes
 # Upper envelopes
 
 `DCEGM` produces competing value branches and needs an upper-envelope configuration.
-Pass a typed configuration through `DCEGM(envelope=...)`.
+Pass a typed configuration through `DCEGM(envelope=...)`:
+
+```python
+from lcm.solvers import DCEGM, LTMEnvelope
+
+solver = DCEGM(savings_grid=..., envelope=LTMEnvelope())
+```
 
 | Configuration   | Contract                                                                               | Main controls                                    |
 | --------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -15,18 +21,30 @@ Pass a typed configuration through `DCEGM(envelope=...)`.
 | `LTMEnvelope`   | Query-side line/segment evaluation                                                     | none                                             |
 | `MSSEnvelope`   | Multi-segment scan approximation                                                       | none                                             |
 
-`EnvelopeConfig` is the union accepted by `DCEGM`.
+These five typed objects are the supported strategies. `EnvelopeConfig` is their union;
+string selectors are invalid.
 
 ## Exact envelope availability
 
-`ExactEnvelope` is the default. Its certified ownership decision relies on the native
-exact-affine extension built and packaged with pylcm. It is not an unrelated library
-downloaded at runtime. If that extension is missing or cannot be loaded, model
-construction raises rather than falling back to ordinary floating-point comparisons that
-cannot provide the same guarantee.
+`ExactEnvelope` is the default. Its ownership decision relies on the exact-affine native
+payload installed as part of pylcm. pylcm neither downloads nor discovers an unrelated
+shared library at runtime.
 
-`max_runs` bounds supported envelope topology. `cell_batch_size` streams independent
-state cells to reduce retained memory.
+A binary wheel contains the payload built for that wheel's platform and toolchain. A
+source or editable install runs pylcm's build hook locally: it builds the CPU library
+with the available C++ compiler and also builds the CUDA library when `nvcc` is
+available. A CPU payload does not provide a CUDA capability, and a payload built for a
+different platform, ABI, toolchain, or JAX backend is not interchangeable.
+
+If the selected backend has no compatible loadable payload, model construction raises
+rather than falling back to ordinary floating-point comparisons. Reinstall pylcm in the
+target environment after supplying the required compiler; source-install details and the
+explicit no-kernel installation option are in
+[Installation](../getting_started/installation.md#the-compiled-kernel-and-installing-without-a-c-compiler).
+
+`max_runs` bounds supported envelope topology. `cell_batch_size` sets how many
+independent state cells the exact native operation resolves in parallel; `None` selects
+serial resolution.
 
 ## Approximate backends
 
@@ -41,7 +59,7 @@ Switch backends only with model-specific validation:
 - inspect crossings and borrowing corners;
 - repeat at both numerical precisions;
 - measure cold compile, warm execution, and peak memory;
-- record the configuration with benchmark results.
+- record the typed configuration with benchmark results.
 
 The method background is in
 [Discrete choice and upper envelopes](../explanations/iskhakov_et_al_2017.ipynb) and

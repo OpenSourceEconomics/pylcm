@@ -8,11 +8,40 @@ Choose a solver before you write the detailed model. Solver selection determines
 economic roles and structural boundaries the model must declare; it is not a performance
 switch to flip after an arbitrary `Regime` has been assembled.
 
+::::\{important} Choose the declaration before the specialized solver. EGM-family
+solvers are not drop-in replacements for `GridSearch`: a model intended for one should
+use `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` and name its margins
+from the outset. Start from
+[Authoring for EGM-family solvers](authoring_specialized_solvers.md). ::::
+
 Make the decision in two passes:
 
 1. keep only solvers whose assumptions represent the economic problem;
 1. benchmark those candidates for accuracy, compilation, memory, and wall time on the
    target hardware.
+
+## Before choosing an EGM-family solver
+
+An EGM-family route is available only when the model exposes the structure the numerical
+method consumes. Check these gates before selecting a solver:
+
+- the declaration is `ConsumptionSavingsRegime` for one liquid margin or
+  `NestedConsumptionSavingsRegime` for a liquid margin inside one outer continuous
+  choice;
+- each margin names its state, action, post-decision state, and resources or
+  no-adjustment role;
+- the savings grid begins at the declared `post_decision_lower_bound`;
+- every additional constraint, discrete choice, stochastic object, boundary, and
+  preference recursion is supported by the particular solver;
+- kinks, jumps, and hard boundaries are declared with case pieces or a piecewise-affine
+  schedule rather than hidden inside an opaque function.
+
+Plain `EGM` has the narrowest gate: exactly one continuous state and action, no discrete
+or process states/actions, liquid resources equal to the liquid state, savings equal to
+state minus action, utility independent of the liquid state, the default Koopmans
+aggregator, and no solve-time constraint except a provable savings lower bound. `DCEGM`,
+`NBEGM`, and the nested solvers each add specific structure; they do not relax every
+gate at once.
 
 ## Pass 1: represent the problem
 
@@ -29,6 +58,15 @@ flowchart TD
     two -->|"No"| ne["NEGM + NestedConsumptionSavingsRegime"]
     two -->|"Yes"| nn["NNBEGM + NestedConsumptionSavingsRegime"]
 ```
+
+| Solver path                               | Problem shape and declaration                                                                        | Constraint shape                                                | Main tradeoff                                                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `GridSearch + Regime`                     | General discrete-continuous action product                                                           | Ordinary callable constraints                                   | Broadest representation; cost grows with the full action product                                      |
+| `EGM + ConsumptionSavingsRegime`          | Smooth, concave, one-state/one-action cash-on-hand problem                                           | Declared savings lower bound only                               | Fastest and simplest EGM route; very narrow contract                                                  |
+| `DCEGM + ConsumptionSavingsRegime`        | One liquid margin with competing discrete-continuous branches                                        | Intrinsic budget and declared savings lower bound               | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
+| `NBEGM + ConsumptionSavingsRegime`        | One liquid margin with supported declared kinks, jumps, hard boundaries, or smooth discrete branches | Supported structured boundary declarations; no EV1 taste shocks | Preserves topology that ordinary DCEGM cannot; more validation and candidate geometry                 |
+| `NEGM + NestedConsumptionSavingsRegime`   | A DCEGM liquid solve conditional on a finite outer candidate grid                                    | Inner DCEGM contract plus declared outer roles                  | Exact relative to the outer candidate set; work scales with its size                                  |
+| `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus supported outer search/aggregation    | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
 
 Use `GridSearch` for genuinely coupled multi-dimensional choices, unsupported
 constraints, or any problem whose required structure cannot be declared honestly. It is
