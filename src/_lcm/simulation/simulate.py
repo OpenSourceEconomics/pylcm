@@ -770,18 +770,15 @@ def _replace_continuous_action_with_policy_read(
             period=period,
             age=age,
         )
-        nested_actions, nested_value, nested_feasible = (
-            _canonically_refine_nested_inner_action(
-                payload=sim_policy,
-                proposed_actions=nested_actions,
-                regime=regime,
-                canonical_states=canonical_states,
-                action_names=action_names,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                flat_params=flat_params,
-                period=period,
-                age=age,
-            )
+        nested_actions, nested_value, nested_feasible = _score_nested_action_pair(
+            proposed_actions=nested_actions,
+            regime=regime,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+            age=age,
         )
         nested_admissible = _nested_actions_are_intrinsically_admissible(
             payload=sim_policy,
@@ -1830,9 +1827,8 @@ def _canonical_Q_at_actions(
     return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
 
 
-def _canonically_refine_nested_inner_action(
+def _score_nested_action_pair(
     *,
-    payload: NestedEGMSimPolicy,
     proposed_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
     canonical_states: Mapping[StateName, FloatND | IntND],
@@ -1842,65 +1838,16 @@ def _canonically_refine_nested_inner_action(
     period: int,
     age: ScalarFloat | ScalarInt,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-    """Re-optimize the inner action at the proposed continuous outer action.
+    """Score the published nested action pair once through canonical Q.
 
-    Interpolating the conditional inner policies across outer nodes does not
-    generally preserve the pair's canonical value. Keep the proposed outer
-    action, evaluate canonical Q on every exact inner-action node, refine every
-    node-local maximum with the global safeguard, and return the attained
-    action, value, and feasibility together. Exact inner nodes always compete,
-    so this search cannot lose the best inner grid action conditional on the
-    proposed outer action.
+    The nested policy already publishes the solution-phase inner policy
+    conditional on outer nodes. Simulation interpolates that policy and verifies
+    the resulting pair against canonical Q; it does not solve another inner
+    optimization problem per subject. The caller accepts only finite, feasible,
+    intrinsically admissible pairs that weakly improve on the safe baseline.
     """
-    inner_name = payload.inner_action_name
-    inner_nodes = jnp.asarray(regime.simulation.grids[inner_name].to_jax())
-    subject_shape = jnp.asarray(proposed_actions[inner_name]).shape
-
-    def score(inner_action: FloatND) -> FloatND:
-        target_shape = jnp.broadcast_shapes(subject_shape, inner_action.shape)
-        candidate_actions = MappingProxyType(
-            {
-                name: (
-                    jnp.broadcast_to(jnp.asarray(inner_action), target_shape)
-                    if name == inner_name
-                    else jnp.broadcast_to(jnp.asarray(action), target_shape)
-                )
-                for name, action in proposed_actions.items()
-            }
-        )
-        candidate_states = MappingProxyType(
-            {
-                name: jnp.broadcast_to(jnp.asarray(state), target_shape)
-                for name, state in canonical_states.items()
-            }
-        )
-        values, feasible = _canonical_Q_at_actions(
-            candidate_actions=candidate_actions,
-            regime=regime,
-            canonical_states=candidate_states,
-            action_names=action_names,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-        )
-        return jnp.where(feasible, values, -jnp.inf)
-
-    node_values = vmap(score)(inner_nodes)
-    search = safeguarded_continuous_argmax(
-        score,
-        nodes=inner_nodes,
-        node_values=node_values,
-        golden_iterations=payload.golden_iterations,
-    )
-    refined_actions = MappingProxyType(
-        {
-            name: search.x if name == inner_name else action
-            for name, action in proposed_actions.items()
-        }
-    )
     values, feasible = _canonical_Q_at_actions(
-        candidate_actions=refined_actions,
+        candidate_actions=proposed_actions,
         regime=regime,
         canonical_states=canonical_states,
         action_names=action_names,
@@ -1909,7 +1856,7 @@ def _canonically_refine_nested_inner_action(
         period=period,
         age=age,
     )
-    return refined_actions, values, feasible & search.valid
+    return proposed_actions, values, feasible
 
 
 def _resources_at_subjects(

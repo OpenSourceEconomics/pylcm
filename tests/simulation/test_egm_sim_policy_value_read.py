@@ -198,7 +198,7 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             jnp.array([7.0, 4.0, 9.0, 8.0]),
@@ -252,6 +252,86 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
     )
 
 
+def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
+    monkeypatch,
+) -> None:
+    """Simulation scores the published pair and keeps it when it beats the baseline."""
+    proposed_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.4]),
+            "investment": jnp.asarray([0.5]),
+        }
+    )
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.2]),
+            "investment": jnp.asarray([0.0]),
+        }
+    )
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "inner_action_name", "consumption")
+    object.__setattr__(payload, "golden_iterations", 24)
+    regime = _StubRegime(
+        simulation=SimpleNamespace(
+            grids={
+                "consumption": SimpleNamespace(
+                    to_jax=lambda: jnp.asarray([0.0, 0.5, 1.0])
+                )
+            }
+        )
+    )
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_kwargs: (proposed_actions, jnp.asarray([False])),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_canonical_Q_at_actions",
+        lambda *, candidate_actions, **_kwargs: (
+            2.0 - (jnp.asarray(candidate_actions["consumption"]) - 0.7) ** 2,
+            jnp.asarray([True]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_actions_are_intrinsically_admissible",
+        lambda **_kwargs: jnp.asarray([True]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_grid_baseline",
+        lambda **_kwargs: (grid_actions, jnp.asarray([1.0]), jnp.asarray([True])),
+    )
+
+    actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
+        optimal_actions=grid_actions,
+        regime=regime,
+        sim_policy=payload,
+        states=MappingProxyType({"wealth": jnp.ones(1)}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+        canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        grid_values=jnp.asarray([1.0]),
+        in_regime=jnp.asarray([True]),
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(actions["consumption"]),
+        np.asarray(proposed_actions["consumption"]),
+    )
+    aaae(
+        np.asarray(reported_value),
+        np.asarray([1.91]),
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_equal(np.asarray(fallback), np.asarray([False]))
+
+
 def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
     """Every accepted pair is safe.
 
@@ -287,7 +367,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             jnp.asarray([cell["nested_value"]]),
@@ -458,7 +538,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             proposed_values_arr,
@@ -528,7 +608,7 @@ def test_nested_policy_accepts_improvement_over_a_canonically_unsafe_grid_pair(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             jnp.asarray([-10.75]),
@@ -603,7 +683,7 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             proposed_actions,
             jnp.asarray([-8.0]),
@@ -700,7 +780,7 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             grid_actions,
             jnp.asarray([-jnp.inf]),
@@ -809,7 +889,7 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             grid_actions,
             jnp.asarray([-jnp.inf]),
@@ -1016,7 +1096,7 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             jnp.asarray([-jnp.inf]),
@@ -1088,7 +1168,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
     )
     monkeypatch.setattr(
         simulation_module,
-        "_canonically_refine_nested_inner_action",
+        "_score_nested_action_pair",
         lambda **_kwargs: (
             nested_actions,
             jnp.where(in_regime, 2.0, -jnp.inf),
@@ -1140,20 +1220,9 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
     )
 
 
-def test_nested_inner_action_is_refined_under_canonical_q(monkeypatch) -> None:
-    """The inner action maximizes canonical Q at the proposed outer action."""
-    payload = object.__new__(NestedEGMSimPolicy)
-    object.__setattr__(payload, "inner_action_name", "consumption")
-    object.__setattr__(payload, "golden_iterations", 48)
-    regime = _StubRegime(
-        simulation=SimpleNamespace(
-            grids={
-                "consumption": SimpleNamespace(
-                    to_jax=lambda: jnp.asarray([0.0, 0.5, 1.0])
-                )
-            }
-        )
-    )
+def test_nested_action_pair_is_scored_without_changing_actions(monkeypatch) -> None:
+    """Canonical scoring leaves the published nested action pair unchanged."""
+    regime = _StubRegime(simulation=SimpleNamespace())
     targets = jnp.asarray([0.27, 0.73])
     proposed_actions = MappingProxyType(
         {
@@ -1171,30 +1240,29 @@ def test_nested_inner_action_is_refined_under_canonical_q(monkeypatch) -> None:
 
     monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", score)
 
-    actions, values, feasible = (
-        simulation_module._canonically_refine_nested_inner_action(
-            payload=payload,
-            proposed_actions=proposed_actions,
-            regime=regime,
-            canonical_states=MappingProxyType({"wealth": jnp.ones(2)}),
-            action_names=("consumption", "investment"),
-            next_regime_to_V_arr=MappingProxyType({}),
-            flat_params=MappingProxyType({}),
-            period=0,
-            age=jnp.asarray(40.0),
-        )
+    actions, values, feasible = simulation_module._score_nested_action_pair(
+        proposed_actions=proposed_actions,
+        regime=regime,
+        canonical_states=MappingProxyType({"wealth": jnp.ones(2)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
     )
 
-    dtype = np.asarray(actions["consumption"]).dtype
-    location_atol = 8 * np.sqrt(np.finfo(dtype).eps)
-    np.testing.assert_allclose(
+    np.testing.assert_array_equal(
         np.asarray(actions["consumption"]),
-        np.asarray(targets),
-        atol=location_atol,
+        np.asarray(proposed_actions["consumption"]),
     )
     np.testing.assert_array_equal(
         np.asarray(actions["investment"]),
         np.asarray(proposed_actions["investment"]),
     )
-    np.testing.assert_allclose(np.asarray(values), np.full(2, 2.0))
+    expected_values = 2.0 - (np.asarray([0.1, 0.9]) - np.asarray(targets)) ** 2
+    aaae(
+        np.asarray(values),
+        expected_values,
+        decimal=DECIMAL_PRECISION,
+    )
     assert bool(jnp.all(feasible))
