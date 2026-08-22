@@ -7,7 +7,6 @@ never compile the wide ride tile.
 """
 
 import ast
-from collections import Counter
 from pathlib import Path
 
 import jax
@@ -113,17 +112,130 @@ def test_wide_branch_axis_admits_distinct_commit_strides(
     assert calls == [(20, requested, expected, 4, 64)]
 
 
-def test_all_five_production_sites_use_the_axis_specific_wrappers() -> None:
-    """The source contains exactly three ride and two branch routing calls."""
+def test_public_partition_requests_reach_all_five_production_maps() -> None:
+    """Each public request reaches every production role through bound statics."""
     tree = ast.parse(Path(nbegm.__file__).read_text(encoding="utf-8"))
-    names = Counter(
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    )
 
-    assert names["_map_ride_partitioned"] == 3
-    assert names["_map_branch_partitioned"] == 2
+    routes: list[tuple[str, str, str, str]] = []
+
+    class RouteCollector(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.function_stack: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.function_stack.append(node.name)
+            self.generic_visit(node)
+            self.function_stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if self.function_stack and isinstance(node.func, ast.Name):
+                callee = node.func.id
+                routes.extend(
+                    (
+                        self.function_stack[-1],
+                        callee,
+                        keyword.arg,
+                        ast.unparse(keyword.value),
+                    )
+                    for keyword in node.keywords
+                    if keyword.arg is not None
+                )
+            self.generic_visit(node)
+
+    RouteCollector().visit(tree)
+
+    expected = {
+        # Public solver fields -> ride-along statics builder.
+        (
+            "_build_ride_along_kernels",
+            "_nbegm_ride_along_statics",
+            "cell_block_size",
+            "self.cell_block_size",
+        ),
+        (
+            "_build_ride_along_kernels",
+            "_nbegm_ride_along_statics",
+            "interval_batch_size",
+            "self.interval_batch_size",
+        ),
+        (
+            "_build_ride_along_kernels",
+            "_nbegm_ride_along_statics",
+            "branch_batch_size",
+            "self.branch_batch_size",
+        ),
+        # Builder arguments -> bound statics.
+        (
+            "_nbegm_ride_along_statics",
+            "_NBEGMRideAlongStatics",
+            "cell_block_size",
+            "cell_block_size",
+        ),
+        (
+            "_nbegm_ride_along_statics",
+            "_NBEGMRideAlongStatics",
+            "interval_batch_size",
+            "interval_batch_size",
+        ),
+        (
+            "_nbegm_ride_along_statics",
+            "_NBEGMRideAlongStatics",
+            "branch_batch_size",
+            "branch_batch_size",
+        ),
+        # Bound statics -> the five production maps.
+        (
+            "cell_continuation",
+            "_map_branch_partitioned",
+            "requested_block_size",
+            "statics.branch_batch_size",
+        ),
+        (
+            "_cell_rows_for_pool",
+            "_map_ride_partitioned",
+            "requested_block_size",
+            "statics.interval_batch_size",
+        ),
+        (
+            "_solve_inner_mesh",
+            "_map_ride_partitioned",
+            "requested_block_size",
+            "statics.cell_block_size",
+        ),
+        (
+            "solve_one_cell",
+            "_map_branch_partitioned",
+            "requested_block_size",
+            "statics.branch_batch_size",
+        ),
+        (
+            "envelope_core",
+            "_map_ride_partitioned",
+            "requested_block_size",
+            "statics.cell_block_size",
+        ),
+    }
+
+    observed = {
+        route
+        for route in routes
+        if route[1]
+        in {
+            "_nbegm_ride_along_statics",
+            "_NBEGMRideAlongStatics",
+            "_map_ride_partitioned",
+            "_map_branch_partitioned",
+        }
+        and route[2]
+        in {
+            "cell_block_size",
+            "interval_batch_size",
+            "branch_batch_size",
+            "requested_block_size",
+        }
+    }
+
+    assert observed == expected
 
 
 def test_production_ride_and_branch_geometries_are_independent() -> None:
