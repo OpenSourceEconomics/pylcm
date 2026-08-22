@@ -19,6 +19,11 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 - `*IIDProcess` — independent draws each period.
 - `*AR1Process` — an AR(1) process with a chosen discretization scheme.
 
+> **Check solver support before adding the shock.** A process can enlarge the
+> continuation-node product or change stored value-array topology when `fold=True`.
+> EGM-family and collective regimes support narrower combinations than `GridSearch`;
+> build the intended specialized regime early and let model validation check it.
+
 ## IID Processes
 
 Processes whose draws are independent across periods.

@@ -7,6 +7,11 @@ title: Solving and Simulating
 Once you have defined a `Model` and prepared your parameters, pylcm solves via backward
 induction and simulates forward.
 
+This page covers the common workflow. Solver-specific return artifacts and collective
+dissolution routing are specified exactly in
+[Runtime, results, and persistence](../reference/runtime_and_results.md) and
+[Collective regimes](../reference/collective_regimes.md).
+
 ## Solving
 
 ```python
@@ -15,6 +20,28 @@ period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
 Performs backward induction using dynamic programming. Returns an immutable mapping of
 `period -> regime_name -> value_function_array`.
+
+### Optional solve artifacts
+
+Most users need only value functions. Request additional artifacts explicitly:
+
+```python
+value_functions, policies = model.solve(
+    params=params,
+    log_level="debug",
+    return_simulation_policy=True,
+)
+
+value_functions, dissolution_flags = collective_model.solve(
+    params=params,
+    log_level="debug",
+    return_dissolution_flags=True,
+)
+```
+
+Simulation policies are for inspection; a fresh simulation obtains supported policy
+artifacts internally. Dissolution flags are required when a collective `GatedEdge` reads
+`D_target` during simulation.
 
 ### Log levels and runtime validation
 
@@ -286,15 +313,17 @@ model = Model(regimes={...}, ages=..., regime_id_class=...)
 params = {
     "discount_factor": 0.95,
     "interest_rate": 0.03,
-    ...
+    # Add the model-specific parameter branches from the template.
 }
 
 # 3. Prepare initial conditions as a DataFrame
-initial_df = pd.DataFrame({
-    "regime_name": "working_life",
-    "age": model.ages.values[0],
-    "wealth": np.linspace(1, 50, 100),
-})
+initial_df = pd.DataFrame(
+    {
+        "regime_name": "working_life",
+        "age": model.ages.values[0],
+        "wealth": np.linspace(1, 50, 100),
+    }
+)
 
 # 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
 result = model.simulate(

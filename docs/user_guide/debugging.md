@@ -377,3 +377,10 @@ pylcm raises specific exceptions to help you diagnose problems:
 - **`ModelInitializationError`**: Something is wrong with the model definition
   (mismatched regime names, unused variables, etc.). Read the message carefully --- it
   usually lists all issues found.
+
+## See also
+
+- [Solving and simulating](solving_and_simulating.md) for the common runtime workflow.
+- [Runtime, results, and persistence](../reference/runtime_and_results.md) for exact
+  logging and snapshot contracts.
+- [Performance and memory tuning](tuning.md) after the model is correct.
