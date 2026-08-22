@@ -832,6 +832,7 @@ def _simulate_regime_in_period(
             action_names=state_action_space.action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
             grid_values=V_arr,
+            in_regime=subject_ids_in_regime,
         )
     )
     # Store results for this regime-period
@@ -937,6 +938,7 @@ def _replace_continuous_action_with_policy_read(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
+    in_regime: BoolND,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
@@ -975,8 +977,10 @@ def _replace_continuous_action_with_policy_read(
       on every other path. The caller resolves `None` to all-False where
       the regime's subject count is known.
 
-    A nested read for which neither the proposal nor either baseline is safe
-    raises `InvalidSimulationInputError`.
+    For subjects assigned to this regime, a nested read for which neither the
+    proposal nor either baseline is safe raises `InvalidSimulationInputError`.
+    Out-of-regime rows are placeholders and do not participate in that failure
+    decision.
     """
     if sim_policy is None:
         return optimal_actions, grid_values, None
@@ -1018,7 +1022,6 @@ def _replace_continuous_action_with_policy_read(
         baseline_actions, baseline_value, baseline_admissible = _nested_grid_baseline(
             payload=sim_policy,
             grid_actions=optimal_actions,
-            grid_values=grid_values,
             regime=regime,
             states=states,
             canonical_states=canonical_states,
@@ -1035,7 +1038,8 @@ def _replace_continuous_action_with_policy_read(
             & jnp.isfinite(nested_value)
             & ((~baseline_admissible) | (nested_value >= baseline_value))
         )
-        if bool(jnp.any(~accepted & ~baseline_admissible)):
+        fatal = in_regime & ~accepted & ~baseline_admissible
+        if bool(jnp.any(fatal)):
             msg = (
                 "For at least one simulated subject, neither the nested policy replay "
                 "nor the canonical grid baseline is feasible."
@@ -1606,7 +1610,6 @@ def _nested_grid_baseline(
     *,
     payload: NestedEGMSimPolicy,
     grid_actions: MappingProxyType[ActionName, FloatND | IntND],
-    grid_values: FloatND,
     regime: Regime,
     states: Mapping[StateOrActionName, FloatND | IntND],
     canonical_states: Mapping[StateName, FloatND | IntND],
@@ -1618,25 +1621,26 @@ def _nested_grid_baseline(
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return an admissible baseline for the nested no-degradation check.
 
-    The grid score has already been masked by canonical feasibility. Keep the
-    pair when it also lies in the nested replay domain. Otherwise project it to
-    both published outer endpoints, trim the inner action to each endpoint's
-    resources, and choose the higher-valued intrinsically and canonically
-    admissible pair. Each endpoint is checked separately because projection
-    changes resources. When neither endpoint nor the refined proposal is safe,
-    the caller fails rather than publishing an infeasible decision.
+    Score the raw grid pair through canonical Q and retain it whenever it is
+    feasible, irrespective of whether it lies inside the nested interpolation
+    domain. The replay domain limits interpolation; it does not invalidate an
+    already-solved grid decision. Only when the raw pair is canonically unsafe
+    do we project it to both published outer endpoints, trim the inner action
+    to each endpoint's resources, and choose the higher-valued intrinsically
+    and canonically admissible pair. When no candidate is safe, the caller
+    fails rather than publishing an infeasible decision.
     """
-    grid_admissible = jnp.isfinite(
-        grid_values
-    ) & _nested_actions_are_intrinsically_admissible(
-        payload=payload,
-        actions=grid_actions,
+    grid_value, grid_q_feasible = _canonical_Q_at_actions(
+        candidate_actions=grid_actions,
         regime=regime,
-        states=states,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
         period=period,
         age=age,
     )
+    grid_admissible = grid_q_feasible & jnp.isfinite(grid_value)
 
     def endpoint_baseline(
         endpoint: Literal["lower", "upper"],
@@ -1704,7 +1708,7 @@ def _nested_grid_baseline(
     )
     return (
         baseline_actions,
-        jnp.where(grid_admissible, grid_values, projected_value),
+        jnp.where(grid_admissible, grid_value, projected_value),
         grid_admissible | projected_admissible,
     )
 

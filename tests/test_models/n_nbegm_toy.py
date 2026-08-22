@@ -233,6 +233,7 @@ def build_model(
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
+    terminal_active_from_start: bool = False,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -253,6 +254,10 @@ def build_model(
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
+    `terminal_active_from_start=True` also activates the terminal regime before
+    the lifecycle transition. This supports simulations seeded with subjects in
+    both regimes at the same age; the default keeps the terminal regime active
+    only after the final alive age.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -354,7 +359,7 @@ def build_model(
         )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility},
     )

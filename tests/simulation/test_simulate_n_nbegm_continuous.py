@@ -34,13 +34,32 @@ _INITIAL = {
     "age": jnp.full(5, 20.0),
     "regime_id": jnp.zeros(5, dtype=jnp.int32),
 }
+_MIXED_INITIAL = {
+    "wealth": jnp.array([4.3, 11.7]),
+    "illiquid": jnp.array([1.37, 6.6]),
+    "age": jnp.full(2, 20.0),
+    "regime_id": jnp.array(
+        [toy.RegimeId.alive, toy.RegimeId.dead],
+        dtype=jnp.int32,
+    ),
+}
 
 
-def _simulate(*, seed: int) -> pd.DataFrame:
-    model = toy.build_model(variant="n_nbegm", n_periods=3, outer_search=_MESH)
+def _simulate(
+    *,
+    seed: int,
+    initial_conditions=_INITIAL,
+    terminal_active_from_start: bool = False,
+) -> pd.DataFrame:
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=3,
+        outer_search=_MESH,
+        terminal_active_from_start=terminal_active_from_start,
+    )
     return model.simulate(
         params=_PARAMS,
-        initial_conditions=dict(_INITIAL),
+        initial_conditions=dict(initial_conditions),
         period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=seed,
@@ -108,6 +127,28 @@ def test_nested_policy_fallback_column_is_published(simulated: pd.DataFrame) -> 
     flags = alive["nested_policy_fallback"]
     assert flags.notna().all()
     assert set(np.unique(np.asarray(flags))) <= {False, True}
+
+
+def test_mixed_regime_placeholders_do_not_abort_nested_replay() -> None:
+    """Only the subjects currently alive govern nested-policy replay safety."""
+    mixed = _simulate(
+        seed=42,
+        initial_conditions=_MIXED_INITIAL,
+        terminal_active_from_start=True,
+    )
+    period0 = mixed[mixed["period"] == 0].sort_values("subject_id")
+
+    assert list(zip(period0["subject_id"], period0["regime_name"], strict=True)) == [
+        (0, "alive"),
+        (1, "dead"),
+    ]
+    alive = period0.iloc[0]
+    resources = (
+        float(alive["wealth"]) + toy.LABOUR_INCOME - float(alive["illiquid_investment"])
+    )
+    assert 0.0 < float(alive["consumption"]) <= resources
+    assert pd.notna(alive["nested_policy_fallback"])
+    assert pd.isna(period0.iloc[1]["nested_policy_fallback"])
 
 
 def test_simulation_is_deterministic(simulated: pd.DataFrame) -> None:
