@@ -250,39 +250,35 @@ class NBEGM(OneMarginSolver):
       their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
-    """Intervals committed per fixed-window continuation iteration.
+    """Accepted interval request under the fixed 256-row ride geometry.
 
     When a carry target's next-state law reads the current liquid state, the
     continuation core evaluates the continuation DAG once per declared liquid
-    interval. Every iteration evaluates the same static profile window, so this
-    value changes the commit stride and iteration count, not compiled width or peak
-    workspace. `0` selects the largest admitted stride, capped by that window, and
-    is one whole-axis iteration only when the interval axis fits. A positive request
-    is rounded up to a microtile and capped by the window. All admitted values use
-    one executable and publish bit-identical values.
+    interval. The ride microtile and profile window are both 256, so every
+    nonnegative request admits the same stride of 256. This field therefore has no
+    current effect on iteration count, scheduling, compiled width, or workspace.
+    It remains accepted so profiles can state the request explicitly.
     """
     cell_block_size: int = 0
-    """Ride cells committed per fixed-window ride-along iteration.
+    """Accepted cell request under the fixed 256-row ride geometry.
 
     Both ride-along cores fan out per cell — the continuation core's transition/
     child-interpolation read and the envelope core's candidate solve. Every
-    iteration evaluates the same static profile window, so this value changes the
-    commit stride and iteration count, not compiled width or peak workspace. `0`
-    selects the largest admitted stride, capped by that window, and is one
-    whole-mesh iteration only when the cell axis fits. A positive request is rounded
-    up to a microtile and capped by the window. All admitted values use one
-    executable and publish bit-identical values.
+    nonnegative request admits the same 256-row stride because the ride microtile
+    equals its profile window. This field therefore has no current effect on
+    iteration count, scheduling, compiled width, or workspace. It remains accepted
+    so profiles can state the request explicitly.
     """
     branch_batch_size: int = 0
-    """Discrete-action branches committed per fixed-window iteration.
+    """Requested commit stride for the fixed-window discrete branch axis.
 
     Both ride-along cores evaluate one instance per discrete-action branch. Every
-    iteration evaluates the same static profile window, so this value changes the
-    commit stride and iteration count, not compiled width or peak workspace. `0`
-    selects the largest admitted stride, capped by that window, and is one
-    whole-axis iteration only when the branch axis fits. A positive request is
-    rounded up to a microtile and capped by the window. All admitted values use one
-    executable and publish bit-identical values.
+    request is rounded up to a multiple of the four-row microtile and capped by
+    the axis's static window (at most 64 rows); `0` selects the largest admitted
+    stride. The request changes scheduling and iteration count only when the branch
+    axis exceeds four rows and two requests admit distinct strides. It never changes
+    compiled width or fixed workspace. All admitted values use one executable and
+    publish bit-identical values.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -317,10 +313,16 @@ class NBEGM(OneMarginSolver):
                         "Use 0 for the dense one-shot path, or a positive value "
                         "to stream blocks of that many entries."
                     )
-                else:
+                elif name in {"interval_batch_size", "cell_block_size"}:
+                    guidance = (
+                        "Use a non-negative compatibility request; the current "
+                        "ride geometry admits stride 256 for every value."
+                    )
+                else:  # branch_batch_size
                     guidance = (
                         "Use 0 for the largest admitted fixed-window commit "
-                        "stride, or a positive requested commit stride."
+                        "stride, or a positive request that rounds up to a "
+                        "multiple of four."
                     )
                 msg = f"NBEGM.{name} must be non-negative, got {size}. {guidance}"
                 raise RegimeInitializationError(msg)
@@ -4366,16 +4368,17 @@ class _NBEGMRideAlongStatics:
     continuation is piecewise-constant across declared intervals and the per-interval
     path applies."""
     interval_batch_size: int
-    """Requested commit stride for the fixed-window interval read.
+    """Accepted request for the fixed-window interval read.
 
-    `0` selects the largest admitted stride, capped by the static profile window;
-    a positive value requests that many rows before rounding and capping.
+    The current ride geometry admits stride 256 for every nonnegative value; see
+    `NBEGM.interval_batch_size`.
     """
     branch_batch_size: int
     """Requested commit stride for the fixed-window branch axis in both cores.
 
-    `0` selects the largest admitted stride, capped by the static profile window;
-    a positive value requests that many rows before rounding and capping.
+    `0` selects the largest admitted stride. A positive value rounds up to a
+    multiple of four and changes scheduling only when the branch axis exceeds
+    four rows and the admitted stride differs.
     """
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
@@ -4400,10 +4403,10 @@ class _NBEGMRideAlongStatics:
     """Which arithmetic decides envelope ownership (see
     `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
-    """Requested commit stride for both fixed-window ride-along cores.
+    """Accepted request for both fixed-window ride-along cores.
 
-    `0` selects the largest admitted stride, capped by the static profile window;
-    see `NBEGM.cell_block_size`.
+    The current ride geometry admits stride 256 for every nonnegative value; see
+    `NBEGM.cell_block_size`.
     """
     n_action_branches: int
     """Number of discrete-action branches the continuation carries a leading axis
@@ -4857,8 +4860,9 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                 # branch axis is added over the product of the declared grids; when
                 # the actions do not feed the continuation the branch rows are
                 # identical, matching the shared-continuation case. The branch body
-                # compiles once and runs at a fixed vector width, so per-branch
-                # intermediates never all sit in flight whatever the partition.
+                # compiles once at a fixed static window. When the branch axis fits
+                # in one microtile, every real branch shares one iteration; a
+                # distinct admitted stride can partition only a wider branch axis.
                 def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
                     binding = {
                         name: codes_row[position]
@@ -5378,9 +5382,10 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             if branch_action_names:
                 # The fixed-width map compiles the branch subproblem once. Every
                 # iteration evaluates the static profile window and commits the
-                # admitted `branch_batch_size` stride; smaller strides add
-                # iterations without reducing that fixed workspace. The branch
-                # axis is never Python-unrolled. Optional
+                # admitted `branch_batch_size` stride. A request changes iteration
+                # count only when the branch axis exceeds one four-row microtile and
+                # admits a stride below the static maximum; it never reduces fixed
+                # workspace. The branch axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
                 branch_inputs = _branch_inputs(
                     codes=_stacked_branch_codes(

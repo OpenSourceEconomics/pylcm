@@ -44,7 +44,7 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## Stream work—or change only the commit stride
+## Stream work—or understand an admitted request
 
 Some controls reduce live intermediates. Grid `batch_size`,
 `stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
@@ -54,17 +54,25 @@ downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evalu
 memory without capping the retained candidate bank.
 
 NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are different.
-Their production kernels evaluate a fixed profile window on every loop iteration. The
-fields select how many completed rows are committed before the next iteration; they do
-not change the compiled vector width or establish a peak-memory ceiling. `0` selects the
-largest admitted commit stride, capped by the fixed profile window, and is a
-one-iteration whole-axis pass only when the axis fits in that window. A smaller stride
-can increase iteration count without reducing the fixed per-iteration workspace.
+Their production kernels evaluate a fixed profile window rather than compiling the
+requested width. Under the currently shipped geometry, `interval_batch_size` and
+`cell_block_size` are accepted compatibility requests but operationally inert: the ride
+microtile and profile window are both 256 rows, so every nonnegative request is admitted
+as a stride of 256. These two fields therefore have no current effect on iteration
+count, compiled width, or workspace.
+
+`branch_batch_size` can change scheduling only when the branch axis exceeds its four-row
+microtile. Positive requests are rounded up to a multiple of four and capped by the
+axis's static window (at most the 64-row profile window); `0` selects the largest
+admitted stride. When the branch axis has four or fewer rows, every request admits the
+same four-row stride. Distinct admitted branch strides change iteration count and
+scheduling, not compiled width or fixed per-iteration workspace.
 
 First identify which contract the field has in Reference. For a true streaming control,
 choose the largest chunk that meets the measured memory target and verify values. For a
-commit-stride control, tune only after measuring scheduling and runtime; do not use it
-as a memory budget.
+fixed-window request, inspect the admitted stride before measuring scheduling and
+runtime. Do not tune an inert ride request, and do not use any fixed-window request as a
+memory budget.
 
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
@@ -140,8 +148,8 @@ the [Development](../development/benchmarking.md) chapter.
 - Validate at `log_level="debug"` before tuning.
 - Make solver choice an economic-representation decision.
 - Refine grids against an accuracy target.
-- Distinguish true streaming controls, retained banks, and fixed-window commit strides
-  before tuning a memory limit.
+- Distinguish true streaming controls, retained banks, inert requests, and active
+  admitted branch strides before tuning.
 - Shard only supported discrete axes and verify device visibility.
 - Measure compilation separately from execution.
 - Treat large-GPU speedups and solver break-even points as empirical.

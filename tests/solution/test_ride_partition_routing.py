@@ -98,18 +98,19 @@ def test_a_short_ride_axis_admits_one_ride_microtile_whatever_is_requested(
     assert calls[0][2:] == (256, 256, 256)
 
 
-def test_branch_batch_size_keeps_the_narrow_geometry(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(("requested", "expected"), [(4, 4), (8, 8)])
+def test_wide_branch_axis_admits_distinct_commit_strides(
+    monkeypatch: pytest.MonkeyPatch, requested: int, expected: int
 ) -> None:
-    """Widening ride rows does not widen the independent branch axis."""
+    """A 20-row branch axis retains distinct four- and eight-row requests."""
     calls = _record_partitions(monkeypatch)
     nbegm._map_branch_partitioned(
         func=_identity,
         xs=jnp.arange(20),
-        requested_block_size=4,
+        requested_block_size=requested,
     )
 
-    assert calls == [(20, 4, 4, 4, 64)]
+    assert calls == [(20, requested, expected, 4, 64)]
 
 
 def test_all_five_production_sites_use_the_axis_specific_wrappers() -> None:

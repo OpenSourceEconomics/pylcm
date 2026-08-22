@@ -129,6 +129,9 @@ def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> 
         (_DOCS / "reference" / "solvers.md").read_text().split()
     )
     tuning = " ".join((_DOCS / "user_guide" / "tuning.md").read_text().split())
+    paper_source = (
+        _ROOT / "src" / "lcm_examples" / "mahler_yum_2024" / "paper.py"
+    ).read_text()
 
     assert 'NBEGM(envelope_arithmetic="ordinary")' in installation
     assert "fails before returning a certified result" in installation
@@ -137,6 +140,11 @@ def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> 
     assert "ExactAffineKernelUnavailableError" in installation
     assert "installed exact-affine CPU/CUDA payload" in solver_reference
     assert "fixed profile window" in tuning
+    assert "operationally inert" in tuning
+    assert "every nonnegative request is admitted as a stride of 256" in tuning
+    assert "only when the branch axis exceeds its four-row microtile" in tuning
+    assert "explicit paper-mode scheduling profile" not in paper_source
+    assert "Commit one `labor_supply` branch" not in paper_source
     assert "value-invariant memory knobs" not in tuning
 
 

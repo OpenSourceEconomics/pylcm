@@ -13,16 +13,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
-from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_along_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
-
-# Blocking the ride-cell mesh leaves every operation and its operand order
-# untouched, so the two solves differ only by the vectorized kernel XLA emits for
-# each block width — a gap of a few ULP, not of an economic magnitude.
-_BLOCKING_ULP = 16
 
 
 def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
@@ -79,36 +73,6 @@ def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
             np.asarray(distributed[period]["alive"]),
             np.asarray(plain[period]["alive"]),
         )
-
-
-def test_value_is_invariant_to_cell_commit_stride():
-    """The solved value does not depend on the envelope's ride-cell block size.
-
-    `cell_block_size` changes how many completed ride cells the fixed-window
-    loop commits before advancing. Every iteration evaluates the same static
-    window, and padded cells are discarded, so every admitted stride solves the
-    same problem — including one requested at a non-divisor of the cell count.
-    """
-    reference = _solve("nbegm")
-    for block_size in (1, 3):
-        model = toy.build_model(
-            variant="nbegm",
-            n_liquid=120,
-            liquid_max=30.0,
-            n_savings=180,
-            savings_max=28.0,
-            nbegm_overrides={"cell_block_size": block_size},
-        )
-        blocked = model.solve(params=toy.build_params(), log_level="debug")
-        for period in reference:
-            if "alive" not in reference[period]:
-                continue
-            assert_agrees_to_ulp(
-                blocked[period]["alive"],
-                reference[period]["alive"],
-                n_ulp=_BLOCKING_ULP,
-                err_msg=f"period={period} block_size={block_size}",
-            )
 
 
 def test_nbegm_matches_brute_with_per_kind_utility_curvature():
