@@ -1,8 +1,8 @@
-"""Memory knobs are validated where they are declared, not inside `lax.map`.
+"""NBEGM batching controls are validated where they are declared.
 
-Every batch/block size is `0` for "the whole axis at once" and a positive count
-otherwise. A negative value is truthy, so it slips past the `or`-defaults and
-reaches `lax.map(batch_size=...)` as a nonsense chunk length.
+Zero selects either a dense one-shot path for true streaming controls or the
+largest admitted stride for fixed-window controls. Every control rejects negative
+values before they can reach numerical lowering.
 """
 
 from typing import Any
@@ -26,15 +26,15 @@ SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
         "branch_batch_size",
     ],
 )
-def test_a_negative_nbegm_memory_knob_is_named_and_rejected(knob: str) -> None:
-    """Each NB-EGM streaming knob names itself when given a negative size."""
+def test_a_negative_nbegm_batching_control_is_named_and_rejected(knob: str) -> None:
+    """Each NBEGM batching control names itself when given a negative size."""
     negative: dict[str, Any] = {knob: -1}
     with pytest.raises(RegimeInitializationError, match=rf"NBEGM\.{knob}"):
         NBEGM(savings_grid=SAVINGS_GRID, **negative)
 
 
-def test_zero_is_the_accepted_whole_axis_setting() -> None:
-    """`0` is the documented "one vectorized pass" setting, not an error."""
+def test_zero_is_the_accepted_default_batching_setting() -> None:
+    """`0` selects the documented default for either batching contract."""
     assert NBEGM(savings_grid=SAVINGS_GRID, branch_batch_size=0).branch_batch_size == 0
 
 

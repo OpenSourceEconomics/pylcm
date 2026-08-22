@@ -238,9 +238,11 @@ class NBEGM(OneMarginSolver):
     Every case, corner, and node candidate is read at each liquid query point and
     the largest owns it. How that comparison is made is this knob:
 
-    - `"certified"` compares in double-double precision and publishes NaN wherever
-      no candidate is separated, so a reported winner is one the arithmetic could
-      prove. Ordering survives the cancellation a nearly-tied crossing produces.
+    - `"certified"` delegates ownership to the installed exact-affine kernel. It
+      decodes stored IEEE operands as exact dyadics and orders candidates by exact
+      affine value, right extension, exact slope, and stable stored index. Non-finite
+      or invalid geometry, or a failed exact channel read, refuses the query and
+      publishes NaN in all channels.
     - `"ordinary"` takes the largest read in the working format. It decides every
       bracketed query and costs a small fraction of the certified read, which is
       the dominant per-cell arithmetic in a case-piece solve. Adequate wherever
@@ -248,43 +250,39 @@ class NBEGM(OneMarginSolver):
       their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
-    """Intervals committed per iteration of the per-interval continuation read.
+    """Intervals committed per fixed-window continuation iteration.
 
     When a carry target's next-state law reads the current liquid state, the
     continuation core evaluates the continuation DAG once per declared liquid
-    interval. The body runs at a fixed vector width, so peak intermediates
-    follow that width and not this value. `0` commits the whole axis in one
-    iteration, which is the fewest iterations and so the least work; a positive
-    value commits that many intervals per iteration, rounded up to a multiple of
-    the vector width. Every admitted value runs one executable and
-    publishes bit-identical values, because the partition is a loop stride
-    rather than part of the compilation key.
+    interval. Every iteration evaluates the same static profile window, so this
+    value changes the commit stride and iteration count, not compiled width or peak
+    workspace. `0` selects the largest admitted stride, capped by that window, and
+    is one whole-axis iteration only when the interval axis fits. A positive request
+    is rounded up to a microtile and capped by the window. All admitted values use
+    one executable and publish bit-identical values.
     """
     cell_block_size: int = 0
-    """Ride cells committed per iteration of the ride-along solve.
+    """Ride cells committed per fixed-window ride-along iteration.
 
     Both ride-along cores fan out per cell — the continuation core's transition/
-    child-interpolation read and the envelope core's candidate solve. Each
-    evaluates cells at a fixed vector width, so no cell's buffers wait on the
-    whole mesh and peak intermediates follow that width rather than this value.
-    `0` commits the whole mesh in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many cells per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    child-interpolation read and the envelope core's candidate solve. Every
+    iteration evaluates the same static profile window, so this value changes the
+    commit stride and iteration count, not compiled width or peak workspace. `0`
+    selects the largest admitted stride, capped by that window, and is one
+    whole-mesh iteration only when the cell axis fits. A positive request is rounded
+    up to a microtile and capped by the window. All admitted values use one
+    executable and publish bit-identical values.
     """
     branch_batch_size: int = 0
-    """Discrete-action branches committed per iteration.
+    """Discrete-action branches committed per fixed-window iteration.
 
-    Both ride-along cores evaluate one instance per discrete-action branch — the
-    continuation core one continuation row per branch, the envelope core one
-    continuous subproblem per branch. Each evaluates branches at a fixed vector
-    width, so per-branch intermediates follow that width rather than this value.
-    `0` commits the whole axis in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many branches per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    Both ride-along cores evaluate one instance per discrete-action branch. Every
+    iteration evaluates the same static profile window, so this value changes the
+    commit stride and iteration count, not compiled width or peak workspace. `0`
+    selects the largest admitted stride, capped by that window, and is one
+    whole-axis iteration only when the branch axis fits. A positive request is
+    rounded up to a microtile and capped by the window. All admitted values use one
+    executable and publish bit-identical values.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -311,11 +309,20 @@ class NBEGM(OneMarginSolver):
         ):
             size = getattr(self, name)
             if size < 0:
-                msg = (
-                    f"NBEGM.{name} must be non-negative, got {size}. Use 0 to run "
-                    "the whole axis in one vectorized pass, or a positive value "
-                    "to stream it in blocks of that many entries."
-                )
+                if name in {
+                    "stochastic_node_batch_size",
+                    "envelope_segment_block_size",
+                }:
+                    guidance = (
+                        "Use 0 for the dense one-shot path, or a positive value "
+                        "to stream blocks of that many entries."
+                    )
+                else:
+                    guidance = (
+                        "Use 0 for the largest admitted fixed-window commit "
+                        "stride, or a positive requested commit stride."
+                    )
+                msg = f"NBEGM.{name} must be non-negative, got {size}. {guidance}"
                 raise RegimeInitializationError(msg)
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundNBEGM:
@@ -2412,9 +2419,9 @@ def _stacked_branch_codes(
 ) -> IntND:
     """Stack the branch bindings into a `(n_branches, n_actions)` code array.
 
-    The branch axis is streamed by `lax.map`, so every branch has to present the
-    same pytree: one row of codes, ordered by `action_names`, rather than a
-    per-action entry whose presence varies.
+    The fixed-width branch map requires every branch to present the same pytree:
+    one row of codes, ordered by `action_names`, rather than a per-action entry
+    whose presence varies.
     """
     return jnp.asarray(
         [[binding[name] for name in action_names] for binding in branch_bindings],
@@ -2430,7 +2437,7 @@ def _branch_inputs(
     extra_cont_value: FloatND | None,
     cliff_savings: FloatND | None,
 ) -> dict[str, Any]:
-    """Assemble the pytree `lax.map` streams over the branch axis.
+    """Assemble the pytree consumed by the fixed-width branch map.
 
     The optional continuations enter only where the regime supplies them, so a
     regime without child cliffs or an extra continuation maps a narrower tree
@@ -4359,13 +4366,17 @@ class _NBEGMRideAlongStatics:
     continuation is piecewise-constant across declared intervals and the per-interval
     path applies."""
     interval_batch_size: int
-    """Batch size for the per-interval continuation read: `0` evaluates all
-    intervals in one vectorized pass, a positive size runs sequential chunks of
-    that many intervals."""
+    """Requested commit stride for the fixed-window interval read.
+
+    `0` selects the largest admitted stride, capped by the static profile window;
+    a positive value requests that many rows before rounding and capping.
+    """
     branch_batch_size: int
-    """Block size for the discrete-action branch axis in both cores: `0` runs the
-    whole axis in one vectorized pass, a positive size scans it in blocks of that
-    many branches."""
+    """Requested commit stride for the fixed-window branch axis in both cores.
+
+    `0` selects the largest admitted stride, capped by the static profile window;
+    a positive value requests that many rows before rounding and capping.
+    """
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
     utility_param_names: tuple[str, ...]
@@ -4389,8 +4400,11 @@ class _NBEGMRideAlongStatics:
     """Which arithmetic decides envelope ownership (see
     `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
-    """Block size for streaming both ride-along cores over ride cells; `0` vmaps
-    the whole flattened mesh at once (see `NBEGM.cell_block_size`)."""
+    """Requested commit stride for both fixed-window ride-along cores.
+
+    `0` selects the largest admitted stride, capped by the static profile window;
+    see `NBEGM.cell_block_size`.
+    """
     n_action_branches: int
     """Number of discrete-action branches the continuation carries a leading axis
     over; `0` when the regime carries no discrete action (no branch axis). A branch
@@ -5362,10 +5376,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 name for name, _ in schedule_spec.discrete_actions
             )
             if branch_action_names:
-                # `lax.map` compiles the branch subproblem once and streams it in
-                # `branch_batch_size` blocks (the whole axis in one vectorized pass
-                # by default) — per-branch EGM intermediates never all sit in
-                # flight, and the branch axis is never Python-unrolled. Optional
+                # The fixed-width map compiles the branch subproblem once. Every
+                # iteration evaluates the static profile window and commits the
+                # admitted `branch_batch_size` stride; smaller strides add
+                # iterations without reducing that fixed workspace. The branch
+                # axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
                 branch_inputs = _branch_inputs(
                     codes=_stacked_branch_codes(

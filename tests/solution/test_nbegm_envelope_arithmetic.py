@@ -1,12 +1,10 @@
 """`NBEGM.envelope_arithmetic` reaches the envelope every solve path ends in.
 
 The merged upper envelope decides which candidate owns each liquid query point.
-The certified (double-double) comparison is exact and can abstain; the ordinary
-comparison reads each candidate in the working format and always decides, at a
-small fraction of the arithmetic. The solver-level setting selects between them,
-so a solve configured for the ordinary read must actually get it — and must
-reproduce the certified value function wherever the candidates are well
-separated, which is the regime the setting is meant for.
+Certified ownership delegates the stored operands to the exact-affine kernel's
+deterministic total order; ordinary ownership reads them in the working format.
+The solver-level setting selects between them, so an ordinary solve must avoid the
+native call and reproduce the certified value where crossings are well separated.
 """
 
 import jax

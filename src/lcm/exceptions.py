@@ -116,13 +116,13 @@ class NBEGMCaseError(PyLCMError):
 
 
 class ExactAffineKernelUnavailableError(PyLCMError):
-    """Raised when `ExactEnvelope` cannot load its exact-affine kernel.
+    """Raised when a certified exact-affine operation cannot load its kernel.
 
-    `ExactEnvelope` uses exact arithmetic to determine which candidate delivers the
-    highest value. This calculation is performed by the compiled exact-affine kernel
-    shipped as part of pylcm. If that kernel is missing or cannot be loaded, pylcm
-    raises this error instead of silently using approximate floating-point
-    comparisons.
+    DCEGM's `ExactEnvelope` and NBEGM's `"certified"` ownership mode use exact
+    arithmetic to determine which candidate delivers the highest value. The compiled
+    exact-affine kernel ships as part of pylcm. If the compatible CPU or CUDA payload
+    is missing or cannot be loaded for the active JAX backend, pylcm raises this error
+    instead of silently using approximate floating-point comparisons.
     """
 
 

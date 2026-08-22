@@ -61,14 +61,20 @@ LCM_SKIP_EXACT_AFFINE=1 pip install pylcm
 ```
 
 The build then compiles no exact-affine payload and reports the omitted capability. Any
-other value, including `0`, requests the normal build. A skipped installation still
-imports and can use `GridSearch` or a typed approximate envelope.
+other value, including `0`, requests the normal build. A skipped installation can use
+`GridSearch`, a typed approximate DCEGM envelope, or
+`NBEGM(envelope_arithmetic="ordinary")`—including as the inner solver of `NNBEGM`—under
+that mode's approximation contract.
 
-Constructing a model that selects `ExactEnvelope`—directly or inside `NEGM`—checks that
-the current backend has a compatible loadable payload and raises immediately when it
-does not. It never silently falls back to ordinary floating arithmetic. To restore the
-capability after changing the toolchain or native sources, reinstall pylcm in the target
-environment; for a pixi development checkout use:
+Defaults that request certified arithmetic require a compatible payload and never
+silently fall back: DCEGM's `ExactEnvelope` checks the active backend during
+`Model(...)`, while NBEGM's default `envelope_arithmetic="certified"` requests the
+payload at its first certified envelope evaluation, normally during solve or tracing.
+Either path raises `ExactAffineKernelUnavailableError` if the payload is absent or
+unloadable. The same NBEGM requirement applies when it is the inner solver of `NNBEGM`.
+
+To restore the capability after changing the toolchain or native sources, reinstall
+pylcm in the target environment; for a pixi development checkout use:
 
 ```bash
 pixi reinstall pylcm
@@ -195,11 +201,16 @@ import lcm
 - **`No C++ compiler found` during install** (`No MSVC C++ compiler found` on Windows):
   install one — on Windows, activate an MSVC developer environment so `cl.exe` is on the
   path — or install without the certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1`
-  (see above), accepting that DC-EGM will not run on its defaults.
+  (see above), accepting that DCEGM and NBEGM will not run on their certified defaults.
 - **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
   kernel, or carries one built by a different toolchain. Rebuild in the current
   environment with `pixi reinstall pylcm`, or explicitly select another typed envelope
   under its approximation contract.
+- **An `ExactAffineKernelUnavailableError` during an NBEGM solve**: certified NBEGM has
+  reached its first exact-affine verdict without a compatible payload for the active JAX
+  backend. Reinstall pylcm in that environment, or select
+  `NBEGM(envelope_arithmetic="ordinary")` only after validating its working-format
+  ownership near model-specific crossings.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).
