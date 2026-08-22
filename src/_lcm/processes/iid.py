@@ -9,6 +9,7 @@ from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import (
+    StateConditioned,
     _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -83,13 +84,19 @@ class NormalIIDProcess(_IIDProcess):
     mu: float | int | None = None
     """Mean of the distribution."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the distribution."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the distribution.
+
+    A `StateConditioned` here conditions the innovation scale on a discrete state
+    of the same regime; `__post_init__` then leaves this holding the scalar that
+    places the nodes.
+    """
 
     n_std: float | int | None = None
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
         )
@@ -151,13 +158,18 @@ class LogNormalIIDProcess(_IIDProcess):
     mu: float | int | None = None
     """Mean of the underlying normal distribution ($E[\\ln X]$)."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the underlying normal distribution."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the underlying normal distribution.
+
+    A `StateConditioned` is accepted so that declaring one is refused with an
+    explanation when the model is built, rather than by the type checker alone.
+    """
 
     n_std: float | int | None = None
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
         )

@@ -184,6 +184,30 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   other model-level slots: a name declared at model level and regime level is
   an ambiguity error, also when the grids match.
 
+### State-conditioned stochastic processes
+
+- A continuous stochastic process may condition its `sigma` on a discrete regime
+  state via `sigma=StateConditioned(on="<discrete state>", by={<category>: sigma})`.
+  The declaration stands where the scalar would, so which parameter is conditioned
+  is explicit and there is no way to give that parameter twice.
+
+  Every category shares one set of nodes, placed from the widest value in `by` —
+  the narrowest axis that still covers all of them. The per-category values move no
+  nodes; each row is evaluated directly at the from-value with the value for the
+  time-$t$ category, with no precomputed-row interpolation. This expresses
+  regime-switching income risk and stochastic volatility.
+
+  Supported for the CDF-binned `NormalIIDProcess` (`gauss_hermite=False`) and
+  `TauchenAR1Process`, whose transition probabilities carry `sigma`. Gauss-Hermite
+  node placement and Rouwenhorst are refused when the model is built, their
+  fixed-node kernels having no channel to carry it. A `by` whose values are not all
+  finite and positive is refused at construction.
+
+  Solving and simulating use the same conditioned law. Every grid parameter must be
+  fixed at construction, and the conditioning state must map its categories to the
+  same integer codes in every regime that carries it. Current-regime conditioning
+  only. See `lcm_examples/stochastic_volatility.py`.
+
 ### Discrete-continuous choice: DC-EGM, NEGM, and taste shocks
 
 - Adds the DC-EGM solver (Iskhakov, Jørgensen, Rust & Schjerning 2017) as a

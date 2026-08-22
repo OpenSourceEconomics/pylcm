@@ -24,6 +24,7 @@ from _lcm.params.processing import (
     materialize_granular_transition_params,
 )
 from _lcm.params.sequence_leaf import SequenceLeaf
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_building.age_normalization import (
     _regime_has_markers,
     normalize_age_specialization,
@@ -46,6 +47,7 @@ from _lcm.typing import (
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
 )
 from _lcm.utils.containers import get_field_names_and_values
 from _lcm.utils.error_messages import format_messages
@@ -338,6 +340,30 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
         raise ValueError(msg)
 
 
+def _model_wide_conditioning_names(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> frozenset[StateName]:
+    """Every conditioning state read by any state-conditioned process in the model.
+
+    `state_conditioned.on` is a real dependency of the generated weights/draw functions,
+    but it lives in grid metadata rather than in a user function, so a callable-DAG scan
+    misses it. A conditioned process's transition weight is also built into the Q of
+    every *source* regime that can reach the process's regime, evaluated at that
+    source's current `on` state — so the dependency is not local to the process's regime
+    We collect the conditioners model-wide and, at the call site,
+    credit each regime for those it actually carries: a conservative over-approximation
+    of reachability whose only cost is not flagging a genuinely unused state, never a
+    wrong policy.
+    """
+    return frozenset(
+        grid.state_conditioned.on
+        for user_regime in user_regimes.values()
+        for grid in user_regime.states.values()
+        if isinstance(grid, _ContinuousStochasticProcess)
+        and grid.state_conditioned is not None
+    )
+
+
 def _validate_all_variables_used(
     user_regimes: Mapping[RegimeName, UserRegime],
     *,
@@ -369,6 +395,7 @@ def _validate_all_variables_used(
 
     """
     error_messages = []
+    conditioning_names = _model_wide_conditioning_names(user_regimes)
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
@@ -430,6 +457,14 @@ def _validate_all_variables_used(
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False
         )
+        # A state-conditioned process reads `state_conditioned.on`: the generated solve
+        # weights and the simulation draw both take it as an argument. But it is
+        # declared as grid *metadata* rather than in a user function, so the ancestry
+        # above cannot see it. A process conditioned in one regime is also drawn into a
+        # *source* regime's Q when that source can reach it, evaluated at the source's
+        # own `on` state — so a conditioner is credited to every regime that carries it,
+        # not only the process's own regime.
+        reachable = set(reachable) | (conditioning_names & variable_names)
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:

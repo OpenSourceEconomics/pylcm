@@ -1,5 +1,7 @@
+import math
 from abc import abstractmethod
-from dataclasses import dataclass, fields
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import ClassVar
 
@@ -10,7 +12,63 @@ from jax.scipy.stats.norm import cdf
 from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
 from lcm.exceptions import GridInitializationError
-from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+
+
+@dataclass(frozen=True, kw_only=True)
+class StateConditioned:
+    r"""A shock parameter conditioned on a discrete state of the same regime.
+
+    Write it in place of the parameter it conditions. Use it when the size of a shock
+    depends on where the subject currently is — the variance of the earnings innovation
+    differing by employment status, with
+    $\sigma_\text{employed} < \sigma_\text{unemployed}$:
+
+        NormalIIDProcess(
+            n_points=7,
+            gauss_hermite=False,
+            mu=0.0,
+            n_std=3.0,
+            sigma=StateConditioned(
+                on="employment_status",
+                by={"employed": 0.2, "unemployed": 0.5},
+            ),
+        )
+
+    Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an
+    AR(1) process transitions as
+
+    ```{math}
+    y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
+    ```
+
+    an IID process dropping the $\rho y_t$ term. The row is binned on one set of nodes,
+    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$.
+    Standing where the scalar would go, it says which parameter is conditioned and
+    leaves no way to give that parameter twice.
+
+    The conditioning value is dated $t$, so the variance of the innovation realized
+    between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
+    against is the *target* regime's declaration, so a process declared with different
+    values in the source and target regimes takes the target's.
+
+    `on` must name a `DiscreteGrid` state the regime carries. Build that grid from the
+    same `@categorical` class in every regime that carries it: the per-category value is
+    selected by the category's integer code, so regimes that encode the same categories
+    in a different order would draw each other's values.
+
+    All of it is fixed at build time. Neither `by` nor the process's own parameters
+    reach the params template, so none of them can be estimated.
+
+    Defined in this leaf module so the process base class can annotate the field without
+    an import cycle; re-exported from `_lcm.processes.state_conditioned`.
+    """
+
+    on: StateName
+    """Name of the `DiscreteGrid` state whose time-$t$ value selects the parameter."""
+
+    by: Mapping[str, float]
+    """Mapping of that state's category names to the value used for each."""
 
 
 def _gauss_hermite_normal(
@@ -44,14 +102,60 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     n_points: int
     """The number of points for the discretization of the process."""
 
+    state_conditioned: StateConditioned | None = field(init=False, default=None)
+    """The conditioning declaration, when `sigma` was given as one.
+
+    Not an argument of its own: conditioning is expressed on the parameter it
+    applies to, as `sigma=StateConditioned(...)`, which is what makes a scalar and
+    a conditioned `sigma` mutually exclusive by construction. `__post_init__` moves
+    the declaration here and leaves `sigma` holding the scalar that places the
+    nodes.
+
+    The per-category values enter only the transition CDF, evaluated directly at
+    the time-$t$ value. Available for the CDF-binned IID normal and Tauchen AR(1)
+    processes, whose transition CDFs carry `sigma`. A Rouwenhorst transition depends
+    on `rho` alone, so fixing the nodes would leave `sigma` no channel at all.
+    """
+
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "batch_size", "distributed"}
+        {"n_points", "batch_size", "distributed", "state_conditioned"}
     )
     """Dataclass field names that are not distribution parameters.
 
     Subclasses extend this via `cls._NON_PARAM_FIELDS | {...}` when they
     introduce further non-parameter fields (e.g. `gauss_hermite`).
     """
+
+    def __post_init__(self) -> None:
+        self._resolve_conditioned_sigma()
+
+    def _resolve_conditioned_sigma(self) -> None:
+        """Split a conditioned `sigma` into its declaration and its node-placing value.
+
+        A conditioned process bins every category on one set of nodes, so the axis has
+        to cover the widest of them. That value is not free information, which is why
+        it is read off `by` rather than asked for separately.
+        """
+        declaration = getattr(self, "sigma", None)
+        if not isinstance(declaration, StateConditioned):
+            return
+        values = tuple(declaration.by.values())
+        unusable = {
+            category: value
+            for category, value in declaration.by.items()
+            if not isinstance(value, float | int)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or value <= 0.0
+        }
+        if not values or unusable:
+            msg = (
+                f"a conditioned `sigma` needs finite positive values for every "
+                f"category, but got {unusable or declaration.by}."
+            )
+            raise GridInitializationError(msg)
+        object.__setattr__(self, "state_conditioned", declaration)
+        object.__setattr__(self, "sigma", max(values))
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:

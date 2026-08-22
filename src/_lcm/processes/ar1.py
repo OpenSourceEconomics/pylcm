@@ -10,6 +10,7 @@ from jax.scipy.stats.norm import cdf
 
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.processes.base import (
+    StateConditioned,
     _ContinuousStochasticProcess,
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -56,8 +57,13 @@ class TauchenAR1Process(_AR1Process):
     rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the innovation."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the innovation.
+
+    A `StateConditioned` here conditions the innovation scale on a discrete state
+    of the same regime; `__post_init__` then leaves this holding the scalar that
+    places the nodes.
+    """
 
     mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
@@ -66,6 +72,7 @@ class TauchenAR1Process(_AR1Process):
     """Number of standard deviations for the grid boundary."""
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         _validate_gauss_hermite_grid(
             n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
@@ -111,7 +118,7 @@ class TauchenAR1Process(_AR1Process):
 
         # CDF at midpoints for each source state: (n_points, n_points - 1)
         # Denominator is sigma (innovation std), not std_y (unconditional std),
-        # because the conditional distribution y'|y has variance sigma^2.
+        # because the conditional distribution y_{t+1} | y_t has variance sigma^2.
         cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
         first_col = cdf_vals[:, :1]
         last_col = 1 - cdf_vals[:, -1:]
@@ -148,8 +155,13 @@ class RouwenhorstAR1Process(_AR1Process):
     rho: float | int | None = None
     """Persistence parameter of the AR(1) process."""
 
-    sigma: float | int | None = None
-    """Standard deviation of the innovation."""
+    sigma: float | int | StateConditioned | None = None
+    """Standard deviation of the innovation.
+
+    A `StateConditioned` is accepted so that declaring one is refused with an
+    explanation when the model is built: a Rouwenhorst transition depends on `rho`
+    alone, so fixing the nodes would leave a conditioned `sigma` no channel.
+    """
 
     mu: float | int | None = None
     """Intercept (drift) of the AR(1) process."""
