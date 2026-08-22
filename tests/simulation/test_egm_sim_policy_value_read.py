@@ -614,10 +614,10 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     "raw_outer",
     np.concatenate((np.linspace(-5.0, -0.1, 25), np.linspace(1.1, 6.0, 25))),
 )
-def test_nested_policy_rejection_retains_a_safer_raw_grid_pair(
+def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
     monkeypatch, raw_outer
 ) -> None:
-    """Replay-domain limits do not disqualify a canonically safe grid decision."""
+    """Canonical Q alone cannot admit a pair outside the solver's domain."""
     payload = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(payload, "outer_action_name", "investment")
     object.__setattr__(payload, "inner_action_name", "consumption")
@@ -689,19 +689,27 @@ def test_nested_policy_rejection_retains_a_safer_raw_grid_pair(
         in_regime=jnp.ones(1, dtype=bool),
     )
 
+    expected_actions = MappingProxyType(
+        {
+            "consumption": grid_actions["consumption"],
+            "investment": jnp.clip(jnp.asarray([raw_outer]), 0.0, 1.0),
+        }
+    )
+    expected_value, expected_feasible = canonical_q(candidate_actions=expected_actions)
+    assert bool(expected_feasible[0])
     aaae(
         np.asarray(actions["consumption"]),
-        np.asarray(grid_actions["consumption"]),
+        np.asarray(expected_actions["consumption"]),
         decimal=DECIMAL_PRECISION,
     )
     aaae(
         np.asarray(actions["investment"]),
-        np.asarray(grid_actions["investment"]),
+        np.asarray(expected_actions["investment"]),
         decimal=DECIMAL_PRECISION,
     )
     aaae(
         np.asarray(reported_value),
-        np.asarray(grid_value),
+        np.asarray(expected_value),
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_equal(np.asarray(fallback), np.asarray([True]))
@@ -889,6 +897,64 @@ def test_nested_grid_baseline_chooses_the_best_safe_endpoint(monkeypatch) -> Non
         np.asarray(admissible),
         np.asarray([True]),
     )
+
+
+def test_nested_grid_baseline_enforces_the_solver_owned_budget(monkeypatch) -> None:
+    """A grid pair above resources is unsafe even when canonical Q admits it."""
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "outer_action_name", "investment")
+    object.__setattr__(payload, "inner_action_name", "consumption")
+    object.__setattr__(payload, "savings_lower_bound", 0.0)
+    object.__setattr__(
+        payload,
+        "adjuster",
+        SimpleNamespace(outer_nodes=jnp.asarray([0.0, 1.0])),
+    )
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([3.0]),
+            "investment": jnp.asarray([0.5]),
+        }
+    )
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_outer_transition_offset_and_slope",
+        lambda **_kwargs: (
+            jnp.zeros(1),
+            jnp.ones(1, dtype=bool),
+            jnp.asarray,
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_resources",
+        lambda *, outer_action, **_kwargs: jnp.asarray(outer_action) + 2.0,
+    )
+
+    def canonical_q(*, candidate_actions, **_kwargs):
+        investment = jnp.asarray(candidate_actions["investment"])
+        return investment, jnp.ones_like(investment, dtype=bool)
+
+    monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
+
+    actions, value, admissible = simulation_module._nested_grid_baseline(
+        payload=payload,
+        grid_actions=grid_actions,
+        regime=_StubRegime(simulation=SimpleNamespace()),
+        states=MappingProxyType({"wealth": jnp.ones(1)}),
+        canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+    )
+
+    np.testing.assert_array_equal(np.asarray(actions["consumption"]), [3.0])
+    np.testing.assert_array_equal(np.asarray(actions["investment"]), [1.0])
+    np.testing.assert_array_equal(np.asarray(value), [1.0])
+    np.testing.assert_array_equal(np.asarray(admissible), [True])
 
 
 def test_nested_policy_rejection_fails_when_no_candidate_is_safe(

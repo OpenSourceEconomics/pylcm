@@ -1621,12 +1621,12 @@ def _nested_grid_baseline(
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return an admissible baseline for the nested no-degradation check.
 
-    Score the raw grid pair through canonical Q and retain it whenever it is
-    feasible, irrespective of whether it lies inside the nested interpolation
-    domain. The replay domain limits interpolation; it does not invalidate an
-    already-solved grid decision. Only when the raw pair is canonically unsafe
-    do we project it to both published outer endpoints, trim the inner action
-    to each endpoint's resources, and choose the higher-valued intrinsically
+    Score the raw grid pair through canonical Q and retain it only when it also
+    respects the nested solver's outer domain and consumption budget. Canonical
+    Q does not own those restrictions for an NNBEGM regime without explicit user
+    constraints. When the raw pair is unsafe, project it to both published
+    outer endpoints, trim the inner action to each endpoint's resources, and
+    choose the higher-valued intrinsically
     and canonically admissible pair. When no candidate is safe, the caller
     fails rather than publishing an infeasible decision.
     """
@@ -1640,7 +1640,18 @@ def _nested_grid_baseline(
         period=period,
         age=age,
     )
-    grid_admissible = grid_q_feasible & jnp.isfinite(grid_value)
+    grid_intrinsically_admissible = _nested_actions_are_intrinsically_admissible(
+        payload=payload,
+        actions=grid_actions,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    grid_admissible = (
+        grid_q_feasible & grid_intrinsically_admissible & jnp.isfinite(grid_value)
+    )
 
     def endpoint_baseline(
         endpoint: Literal["lower", "upper"],
