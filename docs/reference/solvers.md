@@ -145,11 +145,16 @@ The memory controls do not all mean “compiled batch width”:
 
 - `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
   intermediate axes;
-- `interval_batch_size`, `cell_block_size`, and `branch_batch_size` control how many
-  items are committed per loop iteration, while production execution uses fixed internal
-  vector windows. They change iteration count and scheduling, not the compiled
-  evaluation width, and do not by themselves guarantee a corresponding peak-memory
-  ceiling.
+- `interval_batch_size` and `cell_block_size` are accepted fixed-window compatibility
+  requests. In the current 256-row ride geometry, every nonnegative request admits the
+  same stride of 256, so neither field changes iteration count, scheduling, compiled
+  width, or workspace;
+- `branch_batch_size` is an active commit-stride request only when the branch axis
+  exceeds one four-row microtile. Positive requests round up to a multiple of four and
+  are capped by the axis's static window (at most 64 rows); `0` selects the largest
+  admitted stride. On an axis of four or fewer branches, every request admits the same
+  four-row stride. Distinct admitted strides change scheduling and iteration count, not
+  compiled width or fixed workspace.
 
 ### `NNBEGM`
 

@@ -110,21 +110,6 @@ from lcm_examples.mahler_yum_2024 import (
     working_to_working_probability,
 )
 
-# Fixed-window commit strides for the paper-mode configuration.
-#
-# These values affect scheduling, not the static vector window or its peak workspace.
-# Every iteration evaluates the same profile window and commits the requested stride;
-# smaller strides can therefore add iterations without reducing fixed intermediates.
-# They are retained as an explicit execution profile, not as memory ceilings.
-# `test_nbegm_partition_bit_identity.py` pins the result-preserving contract.
-_PAPER_CELL_BLOCK_SIZE = 256
-
-# Commit one `labor_supply` branch before advancing the loop. The full static branch
-# window is still evaluated on every iteration.
-_PAPER_BRANCH_BATCH_SIZE = 1
-
-# `interval_batch_size=0` selects the largest stride admitted by the interval profile.
-
 N_HABIT_GRID = 17
 N_EFFORT_GRID = 17
 N_CONSUMPTION_GRID = 50
@@ -253,16 +238,18 @@ def build_dead_regime() -> Regime:
 def build_paper_solver(
     *,
     outer_search: AdaptiveOuterMesh | None = None,
-    cell_block_size: int = _PAPER_CELL_BLOCK_SIZE,
-    branch_batch_size: int = _PAPER_BRANCH_BATCH_SIZE,
+    cell_block_size: int = 0,
+    branch_batch_size: int = 0,
     interval_batch_size: int = 0,
 ) -> NNBEGM:
     """Construct the paper-mode NNBEGM solver.
 
-    The three fields are fixed-window commit-stride requests, not memory ceilings.
-    `0` selects the largest stride admitted by each static profile; smaller values
-    can add iterations but do not reduce the fixed per-iteration workspace. See the
-    constants above for the explicit paper-mode scheduling profile.
+    The fixed-window requests retain their ordinary defaults because this model has
+    no distinct paper-specific scheduling profile. The ride geometry admits stride
+    256 for every `cell_block_size` and `interval_batch_size` request. `LaborSupply`
+    has only three branches, so every `branch_batch_size` request admits the same
+    four-row stride. The arguments remain exposed to make that accepted-request
+    contract explicit, not as memory or runtime controls for this model.
     """
     return NNBEGM(
         inner=NBEGM(
