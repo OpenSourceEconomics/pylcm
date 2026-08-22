@@ -10,8 +10,8 @@ DAG, or pylcm knowledge.
 
 Follow the pages in order:
 
-1. [Install pylcm](../user_guide/installation.md).
-1. [Solve the tiny model](../user_guide/tiny_example.ipynb).
+1. [Install pylcm](installation.md).
+1. [Solve the tiny model](tiny_example.ipynb).
 1. [Learn the model vocabulary](model_vocabulary.md).
 1. [Choose the right starting declaration](next_steps.md) before adapting the example to
    your own economics.

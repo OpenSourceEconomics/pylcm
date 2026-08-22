@@ -24,6 +24,20 @@ declared on the regime.
 Collective regimes currently require `GridSearch`. `NBEGM` and `NNBEGM` reject EV1 taste
 shocks. Model construction validates the concrete solver's remaining prerequisites.
 
+## Capability table
+
+| Solver       | Required declaration                                           | Problem shape                                                                 | Hard prerequisites and supported constraints                                                                                                                                                                                                                                                          | Main tradeoff                                                                                    |
+| ------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                    | Ordinary callable constraints; no EGM structure required                                                                                                                                                                                                                                              | Broadest representation; work and memory grow with the action product                            |
+| `EGM`        | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Smooth, concave one-state/one-action cash-on-hand problem                     | Exactly one continuous state and action; no discrete/process states or actions; resources equal the liquid state; post-decision state equals state minus action; utility does not read the liquid state; default Koopmans aggregator; only a provable post-decision lower bound as a solve constraint | Narrowest contract and no upper envelope                                                         |
+| `DCEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | One liquid Euler margin with competing discrete-continuous branches           | Valid liquid resources and post-decision roles; declared lower bound; solver-supported discrete/passive dimensions and continuation layout                                                                                                                                                            | Adds constrained candidates and an upper envelope; simulation may re-optimize on the action grid |
+| `NBEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Supported declared kinks, jumps, hard boundaries, or smooth discrete branches | Supported case-piece or piecewise-affine declaration; solver-proven constraint routes; no EV1 taste shocks                                                                                                                                                                                            | Preserves declared topology; structural probes and candidate geometry add cost                   |
+| `NEGM`       | `NestedConsumptionSavingsRegime` with liquid and outer margins | A `DCEGM` inner solve conditional on a finite outer grid                      | Full inner `DCEGM` contract plus outer state, action, post-decision, no-adjustment, and cost roles                                                                                                                                                                                                    | Exact relative to the outer candidate set; candidate retention can dominate memory               |
+| `NNBEGM`     | `NestedConsumptionSavingsRegime` with liquid and outer margins | An `NBEGM` inner solve inside a finite or adaptive outer search               | Full inner `NBEGM` contract plus a compatible outer search and branch aggregator                                                                                                                                                                                                                      | Most expressive EGM route and the highest structural/computational burden                        |
+
+A valid declaration is part of the model, not a hint. Start with
+[Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md).
+
 ## Constructors
 
 ### `GridSearch`
@@ -41,26 +55,42 @@ broadest route and the default solver on `Regime`.
 EGM(savings_grid=...)
 ```
 
-Plain one-margin EGM. The liquid state is cash-on-hand and the post-decision function
-must implement the validated identity between liquid state, consumption, and savings. No
-upper envelope is taken.
+Plain one-margin EGM. It validates the exact cash-on-hand identity summarized in the
+capability table and takes no upper envelope.
 
 ### `DCEGM`
 
 ```python
-DCEGM(
+from lcm.solvers import DCEGM, LTMEnvelope
+
+solver = DCEGM(
     savings_grid=...,
-    envelope=ExactEnvelope(),
+    envelope=LTMEnvelope(),
     refined_grid_factor=2.0,
     n_constrained_points=20,
     stochastic_node_batch_size=0,
 )
 ```
 
-Solves a liquid margin conditional on discrete choices and takes an upper envelope.
+The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
+`RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
+public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
+
 `refined_grid_factor` controls policy read-out density, `n_constrained_points` the
-borrowing-corner segment, and `stochastic_node_batch_size` bounds stochastic-node
-workspace. Envelope options are documented in [Upper envelopes](envelopes.md).
+borrowing-corner segment, and `stochastic_node_batch_size` the stochastic-node
+workspace.
+
+::::\{important} Solved and simulated continuous actions A solve can expose an off-grid
+DCEGM policy for inspection when `return_simulation_policy=True`. No envelope shipped
+with pylcm currently passes the conservative off-grid policy-read gate, so ordinary
+simulation recomputes the action argmax on the regime's declared action grid. Simulation
+also uses that gridded argmax when supplied value arrays carry no policy.
+
+The simulated continuous action can therefore differ from the off-grid solve policy.
+With taste shocks, simulated choice frequencies follow the grid-restricted
+choice-specific values rather than necessarily matching the solve's off-grid choice
+probabilities. The intrinsic budget is still applied as a simulation feasibility mask.
+::::
 
 ### `NEGM`
 
@@ -69,8 +99,11 @@ NEGM(inner=..., outer_grid=..., outer_batch_size=0)
 ```
 
 Runs the bound `DCEGM` inner solve for every finite outer-grid node and includes the
-keeper. A positive `outer_batch_size` folds candidates in chunks; zero processes the
-full outer grid at once.
+keeper. `outer_batch_size` limits how many candidate values are evaluated at once. It
+can reduce temporary evaluation memory, but it does not in general cap the size of the
+candidate bank retained for later envelope or ordered-fold operations. Peak memory can
+therefore continue to grow with the full candidate set. Measure both temporary and
+retained arrays for the exact model and solver profile.
 
 ### `NBEGM`
 
@@ -88,12 +121,27 @@ NBEGM(
 )
 ```
 
-Solves supported declared non-convex budgets and smooth discrete branches. `jump_read`
-selects one-sided topology-preserving continuation reads or a faster bridged finite-grid
-read. The batching fields stream distinct numerical axes without changing the result.
-`envelope_arithmetic` selects certified or ordinary candidate ownership.
-`probe_failure="assume_declared"` turns an unexecutable structural probe into an author
-assertion and warning; it does not relax the mathematical prerequisite.
+`jump_read` selects topology-preserving one-sided continuation reads or a faster bridged
+finite-grid read. `probe_failure="assume_declared"` turns an unexecutable structural
+probe into an author assertion and warning; it does not relax the mathematical
+prerequisite.
+
+With `envelope_arithmetic="certified"`, candidate ownership is ordered from the stored
+floating-point operands using fixed-width integer arithmetic. Exact affine value comes
+first, followed by deterministic geometric and stable-index tie-breaks. NaNs and other
+non-finite or invalid geometry are not ordinary ordered values: the query is rejected
+and remains uncovered/NaN so runtime validation can surface it. `"ordinary"` compares in
+the working floating format and requires model-specific validation near crossings.
+
+The memory controls do not all mean “compiled batch width”:
+
+- `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
+  intermediate axes;
+- `interval_batch_size`, `cell_block_size`, and `branch_batch_size` control how many
+  items are committed per loop iteration, while production execution uses fixed internal
+  vector windows. They change iteration count and scheduling, not the compiled
+  evaluation width, and do not by themselves guarantee a corresponding peak-memory
+  ceiling.
 
 ### `NNBEGM`
 

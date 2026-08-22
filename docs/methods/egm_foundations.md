@@ -86,3 +86,14 @@ institutional cliff changes how candidates are generated and compared:
 
 Use [Choosing a solver](../user_guide/choosing_a_solver.md) rather than treating these
 classes as interchangeable performance switches.
+
+## Related pages
+
+- **Guide:**
+  [Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md)
+- **Methods:** [Solver families](solver_families.md) and
+  [Nested endogenous-grid methods](nested_egm.md)
+- **Example:** [Iskhakov et al. (2017)](../examples/iskhakov_et_al_2017.md)
+- **Reference:**
+  [Consumption-saving regimes and margins](../reference/consumption_savings.md) and
+  [Solvers and capabilities](../reference/solvers.md)

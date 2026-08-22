@@ -19,6 +19,16 @@ pylcm exposes one broad solver and a family of structural specializations.
 
 The table is not a ranking. Each row solves a different declared problem class.
 
+## EGM-family glossary
+
+| Acronym  | Problem shape                                               | Required regime                  | Main algorithmic device                                                |
+| -------- | ----------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| `EGM`    | Smooth one-margin consumption-saving                        | `ConsumptionSavingsRegime`       | Euler inversion on a savings grid                                      |
+| `DCEGM`  | One liquid margin with competing discrete branches          | `ConsumptionSavingsRegime`       | EGM by branch plus an upper envelope                                   |
+| `NBEGM`  | One liquid margin with declared non-convex budget structure | `ConsumptionSavingsRegime`       | EGM by smooth run/case plus a topology-aware envelope                  |
+| `NEGM`   | DCEGM liquid problem conditional on a finite outer choice   | `NestedConsumptionSavingsRegime` | Complete inner DCEGM solves followed by an outer maximum               |
+| `NNBEGM` | NBEGM liquid problem inside an outer choice                 | `NestedConsumptionSavingsRegime` | Complete inner NBEGM solves plus configurable outer search/aggregation |
+
 ## Grid search is the baseline
 
 If there are $n_j$ nodes for continuous action $j$, grid search evaluates a candidate
@@ -69,3 +79,13 @@ Read the detailed method pages:
 
 For exact constructors and prerequisites, see
 [Solvers and capabilities](../reference/solvers.md).
+
+## Related pages
+
+- **Guide:** [Choosing a solver](../user_guide/choosing_a_solver.md) and
+  [Authoring for EGM-family solvers](../user_guide/authoring_specialized_solvers.md)
+- **Methods:** [The endogenous-grid method](egm_foundations.md),
+  [Nested endogenous-grid methods](nested_egm.md), and
+  [Declared non-convex budgets](nonconvex_budgets.md)
+- **Examples:** [Curated examples](../examples/index.md)
+- **Reference:** [Solvers and capabilities](../reference/solvers.md)

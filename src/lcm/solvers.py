@@ -20,7 +20,7 @@ backward induction:
 - `NBEGM(...)`: the non-convex-budget endogenous grid method for a 1-D
   consumption-savings regime whose budget carries declared breakpoints — a
   means-tested cliff split into case pieces, or a piecewise-affine schedule of
-  kinks, jumps, and floors. See `docs/user_guide/nbegm.md`.
+  kinks, jumps, and floors. See `docs/methods/nonconvex_budgets.md`.
 - `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
   `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
   their exact NB-EGM treatment inside every outer candidate.

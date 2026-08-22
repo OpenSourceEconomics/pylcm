@@ -4,8 +4,10 @@ title: Public API index
 
 # Public API index
 
-This index accounts for every name exported by `lcm` and `lcm.solvers`. It points to
-canonical documentation; it is not a generated signature catalogue.
+This curated index covers the names exported from the top-level `lcm` and `lcm.solvers`
+namespaces. It is a navigation-completeness check, not an exhaustive semantic
+specification: submodule-only public objects, constructor fields, behavioral contracts,
+and the correctness of destinations require page-specific documentation and tests.
 
 ## Model and economic declarations
 
@@ -84,6 +86,20 @@ canonical documentation; it is not a generated signature catalogue.
 | [`lcm.SimulateSnapshot`](runtime_and_results.md#standalone-persistence) | Simulation diagnostic snapshot |
 | [`lcm.load_snapshot`](runtime_and_results.md#standalone-persistence)    | Load diagnostic snapshot       |
 | [`lcm.__version__`](public_api.md)                                      | Installed pylcm version        |
+
+## Explicit public submodule surfaces
+
+Most user-facing names are re-exported from `lcm`. Two deliberately public submodule
+surfaces remain outside that top-level namespace:
+
+| Public name                                                                | Canonical documentation         |
+| -------------------------------------------------------------------------- | ------------------------------- |
+| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                    | Mapping parameter leaf          |
+| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                   | Sequence parameter leaf         |
+| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                | User mapping parameter leaf     |
+| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)               | User sequence parameter leaf    |
+| [`lcm.params.as_leaf`](../user_guide/parameters.md)                        | Explicit parameter-leaf wrapper |
+| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md) | Koopmans-form base contract     |
 
 ## Collective regimes
 

@@ -30,6 +30,8 @@ If you have not solved the tiny model yet, start with
 
 - [Choosing a solver](choosing_a_solver.md) starts from economic structure and then
   compares scaling and hardware.
+- [Authoring for EGM-family solvers](authoring_specialized_solvers.md) gives complete
+  one-margin and nested declarations.
 - [Solving and simulating](solving_and_simulating.md) runs backward induction and
   forward simulation.
 - [Working with DataFrames and Series](pandas_interop.md) moves between pylcm and data
