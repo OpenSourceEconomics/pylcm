@@ -110,27 +110,20 @@ from lcm_examples.mahler_yum_2024 import (
     working_to_working_probability,
 )
 
-# Streaming knobs for the paper-mode configuration.
+# Fixed-window commit strides for the paper-mode configuration.
 #
-# `NBEGM`'s three streaming knobs all default to `0`, meaning every ride cell,
-# discrete branch and liquid interval has its buffers in flight simultaneously.
-# This model's product of non-liquid state axes and outer-mesh nodes makes that
-# allocation impractical, so cells and discrete branches are streamed.
-#
-# Blocking is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,
-# `test_nbegm_branch_batch_size.py` and `test_nbegm_interval_batch.py` pin the
-# solved value against the unstreamed reference to `atol=rtol=1e-10` -- agreement
-# at that tolerance, not bit-for-bit, because blocking changes the XLA reduction
-# order.
+# These values affect scheduling, not the static vector window or its peak workspace.
+# Every iteration evaluates the same profile window and commits the requested stride;
+# smaller strides can therefore add iterations without reducing fixed intermediates.
+# They are retained as an explicit execution profile, not as memory ceilings.
+# `test_nbegm_partition_bit_identity.py` pins the result-preserving contract.
 _PAPER_CELL_BLOCK_SIZE = 256
 
-# `labor_supply` is a branch axis of the large candidate array. Streaming it
-# reduces peak memory while the branch body remains compiled once.
+# Commit one `labor_supply` branch before advancing the loop. The full static branch
+# window is still evaluated on every iteration.
 _PAPER_BRANCH_BATCH_SIZE = 1
 
-# `interval_batch_size` is left at `0`: the per-interval continuation buffers are
-# not the binding term here, and streaming a dimension that is not the problem
-# only costs time.
+# `interval_batch_size=0` selects the largest stride admitted by the interval profile.
 
 N_HABIT_GRID = 17
 N_EFFORT_GRID = 17
@@ -266,9 +259,10 @@ def build_paper_solver(
 ) -> NNBEGM:
     """Construct the paper-mode NNBEGM solver.
 
-    The three streaming knobs are set rather than left at their `0` default;
-    see `_PAPER_CELL_BLOCK_SIZE` for why. Pass `0` explicitly to restore the
-    unstreamed behaviour (every cell and branch buffer in flight at once).
+    The three fields are fixed-window commit-stride requests, not memory ceilings.
+    `0` selects the largest stride admitted by each static profile; smaller values
+    can add iterations but do not reduce the fixed per-iteration workspace. See the
+    constants above for the explicit paper-mode scheduling profile.
     """
     return NNBEGM(
         inner=NBEGM(

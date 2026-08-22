@@ -232,10 +232,11 @@ def admitted_block_size(
     """Round a requested partition up to the nearest admitted one.
 
     A partition that is not a microtile multiple would move rows to different
-    lanes for different requests, so requests are coarsened rather than
-    refused: the caller's value is a memory ceiling, and the nearest admitted
-    partition at or above it honours that reading while keeping every request
-    on one executable. A non-positive request means the whole axis.
+    lanes for different requests, so requests are coarsened rather than refused.
+    The caller's value is a requested commit stride; the nearest admitted stride
+    at or above it keeps every request on one executable. A non-positive request
+    selects `max_block_size`, the largest stride admitted by this static profile.
+    It covers the whole axis in one iteration only when the axis fits that window.
     """
     if requested <= 0:
         return max_block_size

@@ -133,6 +133,14 @@ non-finite or invalid geometry are not ordinary ordered values: the query is rej
 and remains uncovered/NaN so runtime validation can surface it. `"ordinary"` compares in
 the working floating format and requires model-specific validation near crossings.
 
+**Native capability.** `"certified"` uses pylcm's installed exact-affine CPU/CUDA
+payload; it is not a pure-JAX numerical option. A compatible payload must exist for the
+active JAX backend. NBEGM never silently falls back: if the payload is absent or
+unloadable, the first certified envelope evaluation raises
+`ExactAffineKernelUnavailableError`. Select `envelope_arithmetic="ordinary"` only when
+working-format ownership is acceptable under model-specific crossing checks. The same
+requirement applies when this NBEGM is the inner solver of `NNBEGM`.
+
 The memory controls do not all mean “compiled batch width”:
 
 - `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named

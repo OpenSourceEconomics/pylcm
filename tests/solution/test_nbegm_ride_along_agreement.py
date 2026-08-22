@@ -81,14 +81,13 @@ def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
         )
 
 
-def test_value_is_invariant_to_envelope_cell_blocking():
+def test_value_is_invariant_to_cell_commit_stride():
     """The solved value does not depend on the envelope's ride-cell block size.
 
-    `cell_block_size` streams both ride-along cores (continuation fan-out and
-    envelope solve) over blocks of ride cells instead of vmapping the whole
-    flattened mesh at once; padding cells are discarded after the scan, so every
-    block size solves the same problem — including one that does not divide the
-    cell count.
+    `cell_block_size` changes how many completed ride cells the fixed-window
+    loop commits before advancing. Every iteration evaluates the same static
+    window, and padded cells are discarded, so every admitted stride solves the
+    same problem — including one requested at a non-divisor of the cell count.
     """
     reference = _solve("nbegm")
     for block_size in (1, 3):

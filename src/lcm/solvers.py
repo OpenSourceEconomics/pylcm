@@ -35,10 +35,12 @@ numerical configuration only, so one of these regimes is required to use them;
 plain `Regime` stays the form for `GridSearch`.
 
 `DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
-requires pylcm's native exact-affine library. Selecting it on an installation
-without a loadable library fails during `Model(...)`; choose another typed envelope
-configuration only under its documented approximation contract. Solvers specialized
-to one paper's accounting remain published alongside that paper rather than here.
+requires pylcm's installed exact-affine payload. Selecting it without a compatible
+payload for the active JAX backend fails during `Model(...)`. Certified `NBEGM` uses the
+same installed capability but requests it at the first certified envelope evaluation;
+`envelope_arithmetic="ordinary"` is the explicit no-kernel route under its documented
+approximation contract. Neither solver silently falls back. Solvers specialized to one
+paper's accounting remain published alongside that paper rather than here.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and

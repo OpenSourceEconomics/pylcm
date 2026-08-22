@@ -44,23 +44,27 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## Stream work to reduce peak memory
+## Stream work—or change only the commit stride
 
-Grid `batch_size=k` processes an axis in chunks. Solver-specific controls stream
-stochastic nodes, cells, branches, envelope segments, intervals, or outer candidates.
-`subject_batch_size` does the same for simulated people.
+Some controls reduce live intermediates. Grid `batch_size`,
+`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
+any solver field whose Reference contract explicitly says it streams an evaluation axis
+can lower temporary workspace. The exact effect still depends on retained banks and
+downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
+memory without capping the retained candidate bank.
 
-These controls are **value-invariant memory knobs**, not time-neutral promises. Smaller
-chunks retain fewer intermediates but add loop or dispatch overhead and may underfill an
-accelerator. Use the largest chunk that fits and remeasure wall time.
+NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are different.
+Their production kernels evaluate a fixed profile window on every loop iteration. The
+fields select how many completed rows are committed before the next iteration; they do
+not change the compiled vector width or establish a peak-memory ceiling. `0` selects the
+largest admitted commit stride, capped by the fixed profile window, and is a
+one-iteration whole-axis pass only when the axis fits in that window. A smaller stride
+can increase iteration count without reducing the fixed per-iteration workspace.
 
-Typical order:
-
-1. leave batching at zero for the baseline;
-1. identify the intermediate or axis causing the memory limit;
-1. split that axis into the fewest chunks that fit;
-1. verify values are unchanged;
-1. measure the new compile and execution time.
+First identify which contract the field has in Reference. For a true streaming control,
+choose the largest chunk that meets the measured memory target and verify values. For a
+commit-stride control, tune only after measuring scheduling and runtime; do not use it
+as a memory budget.
 
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
@@ -136,7 +140,8 @@ the [Development](../development/benchmarking.md) chapter.
 - Validate at `log_level="debug"` before tuning.
 - Make solver choice an economic-representation decision.
 - Refine grids against an accuracy target.
-- Use the fewest chunks that meet the memory budget.
+- Distinguish true streaming controls, retained banks, and fixed-window commit strides
+  before tuning a memory limit.
 - Shard only supported discrete axes and verify device visibility.
 - Measure compilation separately from execution.
 - Treat large-GPU speedups and solver break-even points as empirical.

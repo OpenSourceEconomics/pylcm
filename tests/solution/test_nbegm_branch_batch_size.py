@@ -1,9 +1,8 @@
-"""NBEGM's branch axis streams in blocks without changing the solution.
+"""NBEGM's branch commit stride does not change the solution.
 
-`branch_batch_size` bounds how many discrete-action branches the two ride-along
-cores hold in flight at once: `0` runs the whole branch axis in one vectorized
-pass, `1` runs branch-by-branch (memory-minimal). The knob trades peak memory
-against sequential execution and changes no arithmetic.
+Every iteration evaluates the same static branch window. `branch_batch_size`
+changes only how many completed rows are committed before the loop advances, so a
+smaller stride adds iterations without reducing the fixed workspace.
 """
 
 from collections.abc import Mapping
@@ -11,17 +10,9 @@ from collections.abc import Mapping
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_discrete_toy as toy
 
-# Partitioning the branch axis leaves every operation and its operand order
-# untouched, so the two solves differ only by the vectorized kernel XLA emits for
-# each block width — a gap of a few ULP, not of an economic magnitude. The band
-# is wider here than for the shallower partitions elsewhere in the suite because
-# the branch axis accumulates over every declared discrete-action combination.
-# Measured over the 3120 compared cells: at float32 the worst gap is 18 ULP with
-# five cells above 16, at float64 it is 12 with none; both precisions leave
-# everything else at or below 3 ULP and nothing anywhere near 64. The bound keeps
-# headroom over that band while staying orders of magnitude below what a
-# partition-dependent *reduction* — a sum or max taken over a block instead of
-# the whole branch axis — would cost.
+# This solve-level assertion retains the shared ULP diagnostic and its helpful
+# period/regime context. `test_nbegm_partition_bit_identity.py` pins the stronger
+# fixed-window guarantee that every published floating value is bit-identical.
 _PARTITION_ULP = 32
 
 
@@ -41,17 +32,16 @@ def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
     return model.solve(params=toy.build_params(), log_level="debug")
 
 
-def test_branch_batch_size_one_matches_whole_axis() -> None:
-    """Streaming the branch axis one branch at a time yields the same `V` as the
-    whole-axis pass, with the action feeding co-state, utility, and transition."""
-    whole = _solve(branch_batch_size=0)
-    streamed = _solve(branch_batch_size=1)
-    assert whole.keys() == streamed.keys()
-    for period in whole:
-        for regime in whole[period]:
+def test_branch_commit_stride_one_matches_default() -> None:
+    """The branch commit stride preserves `V` across all branch dependencies."""
+    default = _solve(branch_batch_size=0)
+    stride_one = _solve(branch_batch_size=1)
+    assert default.keys() == stride_one.keys()
+    for period in default:
+        for regime in default[period]:
             assert_agrees_to_ulp(
-                streamed[period][regime],
-                whole[period][regime],
+                stride_one[period][regime],
+                default[period][regime],
                 n_ulp=_PARTITION_ULP,
                 err_msg=f"period={period} regime={regime}",
             )

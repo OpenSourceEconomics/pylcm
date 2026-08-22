@@ -1,6 +1,7 @@
 """Executable contracts for claims made by the reorganized documentation."""
 
 import importlib
+import json
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -117,3 +118,32 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
             "working",
             "dead",
         ]
+
+
+def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> None:
+    """User docs separate native capability from fixed-window scheduling."""
+    installation = " ".join(
+        (_DOCS / "getting_started" / "installation.md").read_text().split()
+    )
+    solver_reference = " ".join(
+        (_DOCS / "reference" / "solvers.md").read_text().split()
+    )
+    tuning = " ".join((_DOCS / "user_guide" / "tuning.md").read_text().split())
+
+    assert 'NBEGM(envelope_arithmetic="ordinary")' in installation
+    assert "first certified envelope evaluation" in installation
+    assert "ExactAffineKernelUnavailableError" in installation
+    assert "installed exact-affine CPU/CUDA payload" in solver_reference
+    assert "fixed profile window" in tuning
+    assert "value-invariant memory knobs" not in tuning
+
+
+def test_dcegm_methods_notebook_ends_with_counterpart_links() -> None:
+    """The DCEGM Methods notebook links to every neighboring documentation role."""
+    notebook = json.loads(
+        (_DOCS / "explanations" / "iskhakov_et_al_2017.ipynb").read_text()
+    )
+    final_source = "".join(notebook["cells"][-1]["source"])
+
+    for label in ("Guide", "Methods", "Example", "Reference"):
+        assert f"**{label}:**" in final_source

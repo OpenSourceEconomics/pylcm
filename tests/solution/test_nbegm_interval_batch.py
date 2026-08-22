@@ -2,9 +2,9 @@
 
 When a carry target's next-state law reads the current liquid state, the
 continuation core evaluates the continuation DAG once per declared liquid
-interval. `NBEGM.interval_batch_size` controls how those evaluations run —
-all intervals in one vectorized pass (`0`), or in sequential chunks of the
-given size — and the merged value function must not depend on the choice.
+interval. Every iteration evaluates the same static interval window.
+`NBEGM.interval_batch_size` changes only the commit stride and iteration count,
+and the merged value function must not depend on that scheduling choice.
 """
 
 import numpy as np
@@ -32,11 +32,11 @@ def _solve_v(interval_batch_size: int) -> dict[int, np.ndarray]:
 def test_interval_batch_size_leaves_the_value_function_unchanged(
     interval_batch_size: int,
 ) -> None:
-    """`V` is identical whether intervals solve vectorized or in chunks."""
-    vectorized = _solve_v(0)
-    chunked = _solve_v(interval_batch_size)
-    assert vectorized.keys() == chunked.keys()
-    for period in vectorized:
+    """`V` is identical across admitted interval commit strides."""
+    default = _solve_v(0)
+    requested = _solve_v(interval_batch_size)
+    assert default.keys() == requested.keys()
+    for period in default:
         np.testing.assert_allclose(
-            chunked[period], vectorized[period], rtol=1e-12, atol=1e-12
+            requested[period], default[period], rtol=1e-12, atol=1e-12
         )
