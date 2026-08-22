@@ -50,6 +50,31 @@ def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
     return max(period for period in solution if "alive" in solution[period])
 
 
+def test_grid_search_executes_the_output_declared_by_case_pieces() -> None:
+    """Case pieces generate their split output without a second user combiner."""
+    params = toy.build_params(final_age_alive=1.0)
+    generated = toy.build_model(
+        variant="brute",
+        n_periods=2,
+        n_liquid=30,
+        liquid_max=15.0,
+        n_consumption=300,
+        include_split_output=False,
+    ).solve(params=params, log_level="debug")
+    explicit = toy.build_model(
+        variant="brute",
+        n_periods=2,
+        n_liquid=30,
+        liquid_max=15.0,
+        n_consumption=300,
+        include_split_output=True,
+    ).solve(params=params, log_level="debug")
+
+    np.testing.assert_allclose(
+        np.asarray(generated[0]["alive"]), np.asarray(explicit[0]["alive"])
+    )
+
+
 def test_nbegm_matches_brute_through_a_recurring_jump_every_age():
     """The case-piece solve equals brute at every working age, jump and all.
 

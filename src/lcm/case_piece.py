@@ -2,11 +2,11 @@
 
 A *case* is a region of the state space carved out by a Boolean predicate (e.g.
 Medicaid eligibility); a *piece* is the smooth formula a DAG output takes inside
-one side of that predicate. The decorators here only attach metadata to a user's
-existing DAG functions and return them unchanged — they never wrap or alter
-runtime behavior, so a model still solves identically under `GridSearch`. NBEGM
-reads the metadata to lower each case to a smooth per-case DAG and to apply
-open/closed endpoint eligibility at the exact boundary query.
+one side of that predicate. The decorators attach metadata and return each user
+function unchanged. Model finalization composes every complete pair into its
+declared output with ``where(predicate, when, otherwise)``, so all solvers read
+the same executable function; NBEGM additionally lowers the pieces separately
+and applies open/closed ownership at the exact boundary query.
 """
 
 from collections.abc import Callable
@@ -17,6 +17,7 @@ from lcm.exceptions import NBEGMCaseError
 
 type BoundaryKind = Literal["continuous_kink", "jump", "hard_constraint"]
 type EqualityOwner = Literal["when", "otherwise"]
+type CoordinateEqualityOwner = Literal["below", "above"]
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,8 @@ class AffineBreakpoint:
     `threshold_subkey` selects the entry within it."""
     kind: BoundaryKind
     """Discontinuity kind at the threshold (a bracket edge is a continuous kink)."""
+    equality_owner: CoordinateEqualityOwner = "above"
+    """Side of the schedule coordinate containing the exact threshold."""
     indexed_by: str | None = None
     """Name of the ride-along state indexing the threshold table, or `None` for a
     scalar threshold. When set, the threshold parameter is a table read per
@@ -208,6 +211,7 @@ def affine_breakpoint(
     *,
     threshold: str,
     kind: BoundaryKind = "continuous_kink",
+    equality: CoordinateEqualityOwner = "above",
     indexed_by: str | None = None,
     static_index: int | None = None,
 ) -> AffineBreakpoint:
@@ -220,6 +224,7 @@ def affine_breakpoint(
             within its `.data`.
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
+        equality: Side of the schedule coordinate that owns the exact threshold.
         indexed_by: Name of the ride-along state indexing the threshold table. When
             given, the threshold parameter is a table and NBEGM reads each cell's
             threshold as `threshold[cell_state, static_index]`; the bare scalar
@@ -246,6 +251,7 @@ def affine_breakpoint(
     return AffineBreakpoint(
         threshold=leaf,
         kind=kind,
+        equality_owner=equality,
         indexed_by=indexed_by,
         static_index=static_index,
         threshold_subkey=subkey or None,

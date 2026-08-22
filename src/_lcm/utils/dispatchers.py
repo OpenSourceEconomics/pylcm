@@ -28,6 +28,32 @@ FunctionWithArrayReturn = TypeVar(
 )
 
 
+def map_over_leading_axis[InputTree, OutputTree](
+    *,
+    func: Callable[[InputTree], OutputTree],
+    xs: InputTree,
+    batch_size: int,
+) -> OutputTree:
+    """Map one row body over a pytree leading axis, optionally in real batches.
+
+    A positive batch size smaller than the axis is passed directly to
+    ``jax.lax.map`` and therefore sets the compiled evaluation window. ``0``
+    and values covering the axis use one vectorized pass. This is the common
+    scheduling contract for EGM-family memory controls.
+    """
+    leaves = jax.tree.leaves(xs)
+    if not leaves:
+        raise ValueError("xs must contain at least one array")
+    n_rows = int(leaves[0].shape[0])
+    if any(int(leaf.shape[0]) != n_rows for leaf in leaves):
+        raise ValueError("every leaf of xs must share a leading row count")
+    if batch_size < 0:
+        raise ValueError(f"batch_size must be non-negative, got {batch_size}")
+    if 0 < batch_size < n_rows:
+        return jax.lax.map(func, xs, batch_size=batch_size)
+    return jax.vmap(func)(xs)
+
+
 def simulation_spacemap(
     *,
     func: FunctionWithArrayReturn,

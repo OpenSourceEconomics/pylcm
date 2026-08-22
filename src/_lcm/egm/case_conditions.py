@@ -68,7 +68,7 @@ def condition_of_breakpoint(*, edge: AffineBreakpoint, variable: str) -> Conditi
     return _threshold_condition(
         variable=variable,
         threshold=edge.threshold,
-        equality_owner="otherwise",
+        equality_owner=("when" if edge.equality_owner == "below" else "otherwise"),
     )
 
 

@@ -50,11 +50,6 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.declared_law import build_declared_liquid_law
-from _lcm.egm.fixed_width_map import (
-    FixedWidthMapGeometry,
-    PyTree,
-    map_partitioned,
-)
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
@@ -84,7 +79,10 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
 )
-from _lcm.solution.dcegm import _carry_subset
+from _lcm.solution.dcegm import (
+    _carry_subset,
+    _fail_if_exact_affine_kernel_unavailable,
+)
 from _lcm.solution.egm import _EGMPeriodKernel
 from _lcm.typing import (
     EconFunctionsMapping,
@@ -92,13 +90,11 @@ from _lcm.typing import (
     RegimeName,
     TransitionFunctionsMapping,
 )
+from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.ages import AgeGrid
 from lcm.case_piece import EqualityOwner
 from lcm.exceptions import RegimeInitializationError
-from lcm.fixed_forms import (
-    FIXED_FORM_ATTRIBUTE,
-    cash_on_hand_with_subsidy,
-)
+from lcm.fixed_forms import cash_on_hand_with_subsidy
 from lcm.phased import Phased
 from lcm.typing import (
     ActionName,
@@ -123,45 +119,24 @@ type _RideAlongGroupKey = tuple[RegimeName | Hashable, ...]
 type DiscreteActionCodes = tuple[tuple[ActionName, tuple[int, ...]], ...]
 
 
-# A reference sweep on A100 hardware selected one 256-row ride microtile against
-# a four-row branch microtile.  The fixed-width production map carries no GPU
-# timing of its own, so these constants record that measured geometry without
-# claiming a production speedup.  One ride microtile is also one ride window, so
-# a request below the microtile is served by the admitted 256-row partition
-# rather than by evaluating a wider block than it commits.  Branches keep the
-# bounded 64-row window.
-_RIDE_MAP_GEOMETRY = FixedWidthMapGeometry(
-    microtile_width=256,
-    profile_window=256,
-)
-_BRANCH_MAP_GEOMETRY = FixedWidthMapGeometry(
-    microtile_width=4,
-    profile_window=64,
-)
+def _map_ride_partitioned[InputTree, OutputTree](
+    *,
+    func: Callable[[InputTree], OutputTree],
+    xs: InputTree,
+    requested_block_size: int,
+) -> OutputTree:
+    """Map a ride/cell axis using the requested production batch window."""
+    return map_over_leading_axis(func=func, xs=xs, batch_size=requested_block_size)
 
 
-def _map_ride_partitioned(
-    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
-) -> PyTree:
-    """Route one ride/cell axis through the wide ride geometry."""
-    return map_partitioned(
-        func=func,
-        xs=xs,
-        requested_block_size=requested_block_size,
-        geometry=_RIDE_MAP_GEOMETRY,
-    )
-
-
-def _map_branch_partitioned(
-    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
-) -> PyTree:
-    """Route one case/discrete branch axis through the narrow branch geometry."""
-    return map_partitioned(
-        func=func,
-        xs=xs,
-        requested_block_size=requested_block_size,
-        geometry=_BRANCH_MAP_GEOMETRY,
-    )
+def _map_branch_partitioned[InputTree, OutputTree](
+    *,
+    func: Callable[[InputTree], OutputTree],
+    xs: InputTree,
+    requested_block_size: int,
+) -> OutputTree:
+    """Map a case/discrete branch axis using its requested batch window."""
+    return map_over_leading_axis(func=func, xs=xs, batch_size=requested_block_size)
 
 
 @beartype(conf=REGIME_CONF)
@@ -248,43 +223,25 @@ class NBEGM(OneMarginSolver):
       their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
-    """Intervals committed per iteration of the per-interval continuation read.
+    """Compiled batch width for the per-interval continuation read.
 
-    When a carry target's next-state law reads the current liquid state, the
-    continuation core evaluates the continuation DAG once per declared liquid
-    interval. The body runs at a fixed vector width, so peak intermediates
-    follow that width and not this value. `0` commits the whole axis in one
-    iteration, which is the fewest iterations and so the least work; a positive
-    value commits that many intervals per iteration, rounded up to a multiple of
-    the vector width. Every admitted value runs one executable and
-    publishes bit-identical values, because the partition is a loop stride
-    rather than part of the compilation key.
+    A positive value smaller than the interval axis is the actual ``lax.map``
+    batch size and bounds the intervals evaluated together. ``0`` or a value
+    covering the axis uses one vectorized pass.
     """
     cell_block_size: int = 0
-    """Ride cells committed per iteration of the ride-along solve.
+    """Compiled batch width for ride cells in both ride-along cores.
 
-    Both ride-along cores fan out per cell — the continuation core's transition/
-    child-interpolation read and the envelope core's candidate solve. Each
-    evaluates cells at a fixed vector width, so no cell's buffers wait on the
-    whole mesh and peak intermediates follow that width rather than this value.
-    `0` commits the whole mesh in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many cells per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    A positive value smaller than the flattened ride-cell axis is the actual
+    ``lax.map`` batch size for both continuation fan-out and envelope solving.
+    ``0`` or a value covering the axis uses one vectorized pass.
     """
     branch_batch_size: int = 0
-    """Discrete-action branches committed per iteration.
+    """Compiled batch width for discrete-action branches in both cores.
 
-    Both ride-along cores evaluate one instance per discrete-action branch — the
-    continuation core one continuation row per branch, the envelope core one
-    continuous subproblem per branch. Each evaluates branches at a fixed vector
-    width, so per-branch intermediates follow that width rather than this value.
-    `0` commits the whole axis in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many branches per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    A positive value smaller than the joint branch axis is the actual
+    ``lax.map`` batch size. ``0`` or a value covering the axis uses one
+    vectorized pass.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -411,33 +368,16 @@ class NBEGM(OneMarginSolver):
             solver=bound,
             solver_name="NBEGM",
         )
+        _validate_nbegm_case_piece_declarations(context=context, solver=self)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
-        """Check case coverage and reject hidden branching in user pieces.
-
-        Collecting the metadata enforces strict coverage (each split output has a
-        `when` and an `otherwise` piece, every boundary declares a surface). Two
-        complementary gates then run on the user pieces:
-
-        - AST: rejects Python branching / hidden comparisons in a smooth piece and
-          any non-comparison branching in the boundary predicate.
-        - JAXPR: traces each smooth piece and rejects piecewise primitives
-          (`select_n`, `lt`, …) hidden inside a called helper that the AST cannot
-          see. A piece attested with `lcm.smooth_helper` is exempt.
-
-        The boundary predicate is meant to compare, so only the AST gate runs on
-        it; the JAXPR gate runs on the smooth pieces alone. Declared EV1 taste
-        shocks are refused here too — the kernels solve the hard maximum.
-        """
-        bound = cast("_BoundNBEGM", self)
+        """Check build-only capabilities after declaration validation."""
+        if self.envelope_arithmetic == "certified":
+            _fail_if_exact_affine_kernel_unavailable(
+                regime_name=context.regime_name,
+                selection="certified NBEGM envelope arithmetic",
+            )
         fail_if_taste_shocks_declared(context=context)
-        validate_case_piece_smoothness(
-            context=context,
-            liquid_state_name=resolve_liquid_state_name(
-                context=context, declared=bound.continuous_state
-            ),
-            probe_failure=self.probe_failure,
-        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
@@ -491,6 +431,7 @@ class NBEGM(OneMarginSolver):
                 budget_target=bound.budget_target,
                 continuous_state=bound.continuous_state,
                 post_decision_function=bound.post_decision_function,
+                probe_failure=self.probe_failure,
             )
             if is_schedule_discrete
             else None
@@ -558,6 +499,7 @@ class NBEGM(OneMarginSolver):
                 budget_target=bound.budget_target,
                 post_decision_function=bound.post_decision_function,
                 continuous_state=bound.continuous_state,
+                probe_failure=self.probe_failure,
             )
             if is_discrete
             else None
@@ -677,7 +619,13 @@ class NBEGM(OneMarginSolver):
                 ),
             ),
             param_checks=(
-                schedule_spec.param_checks if schedule_spec is not None else ()
+                schedule_spec.param_checks
+                if schedule_spec is not None
+                else schedule_discrete_spec.param_checks
+                if schedule_discrete_spec is not None
+                else discrete_spec.param_checks
+                if discrete_spec is not None
+                else ()
             ),
         )
 
@@ -1627,11 +1575,10 @@ def fail_if_taste_shocks_declared(*, context: SolverBuildContext) -> None:
         raise RegimeInitializationError(msg)
 
 
-def validate_case_piece_smoothness(
+def _validate_nbegm_case_piece_declarations(
     *,
-    context: SolverBuildContext,
-    liquid_state_name: StateName,
-    probe_failure: Literal["reject", "assume_declared"] = "reject",
+    context: SolverModelContext,
+    solver: NBEGM,
 ) -> None:
     """Check case coverage and reject hidden branching in a regime's pieces.
 
@@ -1640,13 +1587,9 @@ def validate_case_piece_smoothness(
     bare `NBEGM` would.
 
     Args:
-        context: The regime's solver build context.
-        liquid_state_name: The state the case boundaries are declared on. Named
-            explicitly rather than taken as the regime's first state, because a
-            nested regime carries an outer margin the pieces never see.
-        probe_failure: What to do with a piece the build-time scalar fills
-            cannot trace — `"reject"` refuses the build, `"assume_declared"`
-            warns and leaves the smoothness claim to the model author.
+        context: Finalized declarations for the regime and its model.
+        solver: Bound inner NB-EGM configuration whose liquid role and tracing
+            policy govern the declarations.
 
     Raises:
         NBEGMCaseError: A split output is not fully covered, a boundary declares
@@ -1665,16 +1608,21 @@ def validate_case_piece_smoothness(
         is_smooth_helper,
     )
 
+    user_regime = context.user_regimes[context.regime_name]
+    bound = cast("_BoundNBEGM", solver)
     functions = cast(
-        "Mapping[FunctionName, Callable[..., object]]",
-        context.user_regimes[context.regime_name].functions,
+        "Mapping[FunctionName, Callable[..., object]]", user_regime.functions
     )
     registry = collect_nbegm_metadata(functions=functions)
-    space = context.state_action_space
-    if registry.piece_sets and space.discrete_actions:
+    discrete_actions = frozenset(
+        name
+        for name, grid in user_regime.actions.items()
+        if isinstance(grid, DiscreteGrid)
+    )
+    if registry.piece_sets and discrete_actions:
         msg = (
             f"Regime '{context.regime_name}' declares case pieces alongside the "
-            f"discrete action(s) {sorted(space.discrete_actions)}. The "
+            f"discrete action(s) {sorted(discrete_actions)}. The "
             "case-piece kernels solve a one-asset consumption-saving problem "
             "and maximize over the continuous action only, so the discrete "
             "choice would never enter the published value and simulation would "
@@ -1686,17 +1634,18 @@ def validate_case_piece_smoothness(
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
-        liquid_state_name=liquid_state_name,
-        reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
+        liquid_state_name=bound.continuous_state,
+        reserved_names=frozenset(user_regime.states) | frozenset(user_regime.actions),
     )
     violations: list[str] = []
     for predicate_name in registry.boundaries:
         violations += find_ast_violations(functions[predicate_name], mode="boundary")
     for piece_set in registry.piece_sets:
         for piece_name in (piece_set.when_func, piece_set.otherwise_func):
-            piece = functions[piece_name]
-            if is_smooth_helper(piece):
+            declared_piece = functions[piece_name]
+            if is_smooth_helper(declared_piece):
                 continue
+            piece = inspect.unwrap(declared_piece)
             violations += find_ast_violations(piece, mode="smooth_user")
             n_params = len(inspect.signature(piece).parameters)
             abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
@@ -1704,7 +1653,7 @@ def validate_case_piece_smoothness(
                 piece,
                 abstract_args=abstract_args,
                 mode="smooth_user",
-                probe_failure=probe_failure,
+                probe_failure=solver.probe_failure,
             )
     if violations:
         from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
@@ -1776,25 +1725,6 @@ def _validate_nbegm_boundary_scope(
                     f"{surface.variable!r}."
                 )
                 raise NBEGMCaseError(msg)
-
-
-# The cash-on-hand the case-piece kernels form themselves, rather than calling
-# the regime's declared budget node.
-_KERNEL_BUDGET_NODES = frozenset({cash_on_hand_with_subsidy.__name__})
-
-
-def _declares_fixed_form(func: object, *, allowed: frozenset[str]) -> bool:
-    """Report whether `func` is one of `allowed`, seen through the DAG's wrappers.
-
-    The declaration reaches the solver wrapped, so the marker is followed along
-    the `__wrapped__` chain rather than compared by identity.
-    """
-    seen: object | None = func
-    while seen is not None:
-        if getattr(seen, FIXED_FORM_ATTRIBUTE, None) in allowed:
-            return True
-        seen = getattr(seen, "__wrapped__", None)
-    return False
 
 
 _KERNEL_LIQUID_STATE = "liquid"
@@ -1918,7 +1848,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
             "use `GridSearch` for this regime."
         )
         raise RegimeInitializationError(msg)
-    if not _declares_fixed_form(budget_node, allowed=_KERNEL_BUDGET_NODES):
+    if budget_node is not cash_on_hand_with_subsidy:
         msg = (
             f"NBEGM's case-piece kernels add the split output to the liquid state "
             f"themselves rather than calling the declared budget node, so this "
@@ -2177,6 +2107,8 @@ class _NBEGMSource:
     """Qualified parameter name of this breakpoint's threshold."""
     kind: str
     """Discontinuity kind: `continuous_kink`, `jump`, or `hard_constraint`."""
+    equality_owner: Literal["below", "above"]
+    """Side of the schedule coordinate containing the exact threshold."""
     derived_of_liquid_dag: Callable | None
     """Composed schedule variable as a function of the liquid state, or `None`
     when the schedule varies in the liquid state directly (no preimage needed)."""
@@ -2454,6 +2386,38 @@ def _branch_bindings(
     )
 
 
+def _liquid_affinity_samples(
+    *, context: SolverBuildContext, liquid_state_name: StateName
+) -> Float1D:
+    """Return liquid-grid nodes and cell interiors for affinity checks."""
+    grid = context.grids[liquid_state_name].to_jax()
+    midpoints = 0.5 * (grid[:-1] + grid[1:])
+    return jnp.sort(jnp.concatenate([grid, midpoints]))
+
+
+def _budget_affinity_check(
+    *,
+    context: SolverBuildContext,
+    coh_dag: Callable[..., object],
+    liquid_state_name: StateName,
+    require_unit_slope: bool,
+    probe_failure: Literal["reject", "assume_declared"],
+) -> ParamCheck:
+    """Configure the shared all-branch, full-liquid-domain affinity preflight."""
+    return _deferred_probe(
+        _fail_if_budget_nonaffine_in_liquid,
+        regime_name=context.regime_name,
+        probe_arguments=_probe_arguments(context=context),
+        coh_dag=coh_dag,
+        liquid_name=liquid_state_name,
+        liquid_samples=_liquid_affinity_samples(
+            context=context, liquid_state_name=liquid_state_name
+        ),
+        require_unit_slope=require_unit_slope,
+        probe_failure=probe_failure,
+    )
+
+
 def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     *,
     coh_dag: Callable[..., object],
@@ -2461,6 +2425,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     require_unit_slope: bool,
     regime_name: str,
     probe_arguments: _ProbeArguments,
+    liquid_samples: Float1D,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -2572,7 +2537,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 for overrides in _int_code_sweeps(
                     arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
                 )
-                for sample in (0.37, 1.63, 2.71)
+                for sample in liquid_samples
             ]
 
         try:
@@ -3638,6 +3603,7 @@ def _collect_nbegm_schedule_spec(
                 variable=schedule.variable,
                 threshold_param_name=f"{schedule.output}__{bracket.threshold}",
                 kind=bracket.kind,
+                equality_owner=bracket.equality_owner,
                 derived_of_liquid_dag=dag,
                 derived_param_names=params,
                 derived_state_names=states_read,
@@ -3679,14 +3645,11 @@ def _collect_nbegm_schedule_spec(
     )
     breakpoint_kinds = tuple(bp.kind for bp in first_breakpoints)
     all_kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
-    affinity_check = _deferred_probe(
-        _fail_if_budget_nonaffine_in_liquid,
-        regime_name=context.regime_name,
-        probe_arguments=_probe_arguments(context=context),
+    affinity_check = _budget_affinity_check(
+        context=context,
         coh_dag=coh_dag,
-        liquid_name=liquid_state_name,
-        # The pure-jump step (liquid-direct, non-ride, all-jump) reads only
-        # intercepts and assumes unit slope; every other path recovers the slope.
+        liquid_state_name=liquid_state_name,
+        # The pure-jump step reads only intercepts and assumes unit slope.
         require_unit_slope=(
             not ride_along_state_names
             and not has_derived
@@ -4370,8 +4333,7 @@ class _NBEGMRideAlongStatics:
     """Which arithmetic decides envelope ownership (see
     `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
-    """Block size for streaming both ride-along cores over ride cells; `0` vmaps
-    the whole flattened mesh at once (see `NBEGM.cell_block_size`)."""
+    """Batch width for both ride-along cores; `0` vmaps the whole cell mesh."""
     n_action_branches: int
     """Number of discrete-action branches the continuation carries a leading axis
     over; `0` when the regime carries no discrete action (no branch axis). A branch
@@ -4567,7 +4529,7 @@ def _nbegm_cell_breakpoints(
 
     from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         clamp_breakpoints_to_grid,
-        linear_asset_preimage,
+        linear_asset_selection_preimage,
     )
 
     liquid_name = statics.liquid_name
@@ -4582,7 +4544,11 @@ def _nbegm_cell_breakpoints(
         )
         threshold = jnp.asarray(threshold_value, dtype=dtype)
         if source.derived_of_liquid_dag is None:
-            return threshold
+            return jnp.where(
+                source.equality_owner == "above",
+                threshold,
+                jnp.nextafter(threshold, jnp.inf),
+            )
         dag = source.derived_of_liquid_dag
         derived_params = {name: kwargs[name] for name in source.derived_param_names}
         cell_for_dag = {name: cell[name] for name in source.derived_state_names}
@@ -4601,7 +4567,11 @@ def _nbegm_cell_breakpoints(
                 **dag_action_binding,
             )
 
-        return linear_asset_preimage(derived_of_liquid, threshold=threshold)
+        return linear_asset_selection_preimage(
+            derived_of_liquid,
+            threshold=threshold,
+            equality_owner=source.equality_owner,
+        )
 
     # Zero declared breakpoints ⇒ an empty partition (one interval per cell).
     preimages = (
@@ -5343,10 +5313,9 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 name for name, _ in schedule_spec.discrete_actions
             )
             if branch_action_names:
-                # `lax.map` compiles the branch subproblem once and streams it in
-                # `branch_batch_size` blocks (the whole axis in one vectorized pass
-                # by default) — per-branch EGM intermediates never all sit in
-                # flight, and the branch axis is never Python-unrolled. Optional
+                # The shared EGM dispatcher batches the branch subproblem at
+                # `branch_batch_size`, or vectorizes the whole axis when it is 0.
+                # The branch axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
                 branch_inputs = _branch_inputs(
                     codes=_stacked_branch_codes(
@@ -5454,6 +5423,8 @@ class _NBEGMDiscreteSpec:
     """Name of the liquid state the budget varies in."""
     discrete_actions: DiscreteActionCodes
     """Each discrete action enveloped over, paired with its grid codes."""
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Parameter-dependent preconditions for every discrete budget branch."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -5467,6 +5438,7 @@ def _collect_nbegm_discrete_spec(
     budget_target: FunctionName,
     post_decision_function: FunctionName,
     continuous_state: StateName,
+    probe_failure: Literal["reject", "assume_declared"],
 ) -> _NBEGMDiscreteSpec:
     """Collect the discrete actions of a smooth regime and their grid codes."""
     import inspect  # noqa: PLC0415
@@ -5492,11 +5464,19 @@ def _collect_nbegm_discrete_spec(
         for name in coh_args
         if name != liquid_state_name and name not in action_names
     )
+    affinity_check = _budget_affinity_check(
+        context=context,
+        coh_dag=coh_dag,
+        liquid_state_name=liquid_state_name,
+        require_unit_slope=False,
+        probe_failure=probe_failure,
+    )
     return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
         discrete_actions=discrete_actions,
+        param_checks=(affinity_check,),
     )
 
 
@@ -5525,6 +5505,8 @@ class _NBEGMScheduleDiscreteSpec:
     """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Parameter-dependent preconditions for every schedule-action branch."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -5538,6 +5520,7 @@ def _collect_nbegm_schedule_discrete_spec(
     budget_target: FunctionName,
     continuous_state: StateName,
     post_decision_function: FunctionName,
+    probe_failure: Literal["reject", "assume_declared"],
 ) -> _NBEGMScheduleDiscreteSpec:
     """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -5589,6 +5572,15 @@ def _collect_nbegm_schedule_discrete_spec(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
+    affinity_check = _budget_affinity_check(
+        context=context,
+        coh_dag=coh_dag,
+        liquid_state_name=liquid_state_name,
+        require_unit_slope=(
+            bool(breakpoint_kinds) and all(kind == "jump" for kind in breakpoint_kinds)
+        ),
+        probe_failure=probe_failure,
+    )
     return _NBEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
@@ -5596,6 +5588,7 @@ def _collect_nbegm_schedule_discrete_spec(
         discrete_actions=discrete_actions,
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
+        param_checks=(affinity_check,),
     )
 
 
@@ -5681,7 +5674,6 @@ def _build_nbegm_schedule_discrete_core(
         marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in spec.coh_param_names}
         breakpoints = _sorted_thresholds(
             jnp.stack([params[name] for name in spec.threshold_param_names]),
@@ -5691,6 +5683,7 @@ def _build_nbegm_schedule_discrete_core(
         values: list[Float1D] = []
         marginals: list[Float1D] = []
         for binding in spec.branch_bindings:
+            preferences = build_preferences({**params, **binding})
 
             def coh_of_liquid(
                 scalar_liquid: FloatND,
@@ -5786,8 +5779,11 @@ def _build_nbegm_discrete_core(
         marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in discrete_spec.coh_param_names}
+        branch_preferences = tuple(
+            build_preferences({**params, **binding})
+            for binding in discrete_spec.branch_bindings
+        )
         empty_breakpoints = jnp.zeros((0,), dtype=liquid.dtype)
         choices: list[dict[str, Float1D]] = []
         for binding in discrete_spec.branch_bindings:
@@ -5817,7 +5813,7 @@ def _build_nbegm_discrete_core(
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
-            preferences=preferences,
+            preferences=branch_preferences,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
             choices=tuple(choices),

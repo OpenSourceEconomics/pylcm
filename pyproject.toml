@@ -403,23 +403,13 @@ ini_options.addopts = [
   "loadfile",
 ]
 ini_options.markers = [
-  "ci(tier, paths): bounded CI policy tier and relevant source paths",
+  "ci(tier): bounded CI policy tier",
   "coverage(backends, precisions): backend and precision coverage obligations",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
-  """\
-  isolation(process, gpu, cache, env_group, serial_group): process/device/cache \
-  isolation contract\
-  """,
-  """\
-  requires(device, native, min_devices, min_compute_capability, min_gpu_mem_gb, os, \
-  arch): hard execution capabilities\
-  """,
+  "isolation(process): fresh or shared pytest-process contract",
+  "requires(device, min_devices): hard execution capabilities",
   "requires_exact_affine_kernel: requires the selected backend's exact-affine kernel",
-  """\
-  resources(wall, wall_seconds, host_mem_gb, gpu_mem_gb, cpu_cores, compile): measured \
-  resource contract\
-  """,
   "skipif_cpu: skip test when the JAX backend is CPU",
   "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]

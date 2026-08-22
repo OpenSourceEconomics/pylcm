@@ -156,6 +156,26 @@ def _outer_law_reading_the_inner_savings(
     return new_illiquid + 0.01 * liquid_savings
 
 
+def _outer_law_reading_the_removed_action(
+    illiquid_investment: ContinuousAction,
+) -> ContinuousState:
+    """A carried stock law that still asks for the enumerated action."""
+    return illiquid_investment
+
+
+def test_a_law_reading_the_removed_outer_action_is_rejected() -> None:
+    """Inner solves bind the post-decision stock, never the generating action."""
+    regime = _VALID.replace(
+        state_transitions={
+            "wealth": n_nbegm_toy.next_wealth,
+            "illiquid": _outer_law_reading_the_removed_action,
+        },
+    )
+
+    with pytest.raises(ModelInitializationError, match="illiquid_investment"):
+        _validate(regime)
+
+
 def test_an_outer_law_reading_the_inner_savings_margin_is_rejected() -> None:
     """Direct dependence on the inner post-decision axis breaks nesting."""
     regime = _VALID.replace(

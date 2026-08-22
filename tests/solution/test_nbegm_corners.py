@@ -14,8 +14,12 @@ shortcut misses:
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
-from _lcm.egm.nbegm_step import _case_step, _kink_aware_interp
+from _lcm.egm.nbegm_step import (
+    _case_step,
+    _kink_aware_interp,
+)
 from tests.solution._crra_preferences import crra_preferences
 
 
@@ -100,4 +104,38 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
         np.asarray(brute)[interior],
         atol=2e-2,
         rtol=5e-3,
+    )
+
+
+@pytest.mark.parametrize(
+    ("savings_grid", "next_value", "expected_savings"),
+    [
+        ([-1.0, 0.0, 1.0], [1000.0, -1000.0, -1000.0], -1.0),
+        ([0.0, 5.0, 10.0], [-1000.0, -1000.0, 1000.0], 10.0),
+    ],
+)
+def test_direct_route_offers_both_declared_savings_endpoints(
+    savings_grid, next_value, expected_savings
+):
+    """A direct route admits both finite endpoints of its savings grid."""
+    liquid = jnp.linspace(20.0, 30.0, 20)
+    savings = jnp.asarray(savings_grid)
+    _value, _marginal, consumption = _case_step(
+        next_value=jnp.asarray(next_value),
+        next_marginal=jnp.zeros_like(savings),
+        liquid_grid=liquid,
+        next_liquid_grid=savings,
+        savings_grid=savings,
+        discount_factor=0.95,
+        preferences=crra_preferences(2.0),
+        next_liquid=savings,
+        marginal_return=jnp.ones_like(savings),
+        subsidy=0.0,
+        asset_limit=savings[1],
+        equality_owner="otherwise",
+        arithmetic="ordinary",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(liquid - consumption), expected_savings, atol=1e-6
     )

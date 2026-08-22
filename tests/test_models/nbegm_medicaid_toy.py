@@ -88,6 +88,8 @@ def build_model(
     savings_max: float = 20.0,
     liquid_grid: Grid | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
+    include_split_output: bool = True,
+    envelope_arithmetic: str = "certified",
 ) -> Model:
     """Create the two-regime (alive, dead) Medicaid one-asset toy.
 
@@ -117,7 +119,7 @@ def build_model(
             "medicaid_eligible": medicaid_eligible,
             "subsidy_medicaid": subsidy_medicaid,
             "subsidy_private": subsidy_private,
-            "subsidy": subsidy,
+            **({"subsidy": subsidy} if include_split_output else {}),
             "resources": resources,
             "savings": savings,
         },
@@ -125,6 +127,7 @@ def build_model(
         alive_solver=resolve_solver(
             variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+            envelope_arithmetic=envelope_arithmetic,
         ),
         constraints=(
             constraints

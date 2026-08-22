@@ -108,7 +108,7 @@ def find_ast_violations(func: Callable[..., object], *, mode: CheckMode) -> list
 
     """
     try:
-        source = textwrap.dedent(inspect.getsource(func))
+        source = textwrap.dedent(inspect.getsource(inspect.unwrap(func)))
     except (OSError, TypeError) as exc:
         name = getattr(func, "__name__", "<unknown>")
         return [f"source unavailable for AST validation of {name!r}: {exc}"]

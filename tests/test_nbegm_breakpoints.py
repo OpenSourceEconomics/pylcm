@@ -15,6 +15,7 @@ from _lcm.egm.nbegm_breakpoints import (
     interval_midpoints,
     interval_segment_coefficients,
     linear_asset_preimage,
+    linear_asset_selection_preimage,
 )
 
 
@@ -116,6 +117,23 @@ def test_linear_asset_preimage_inverts_a_decreasing_boundary_variable():
 
     asset_value = linear_asset_preimage(countable, threshold=jnp.asarray(1_000.0))
     np.testing.assert_allclose(asset_value, 4_000.0, atol=1e-6)
+
+
+def test_decreasing_coordinate_maps_above_equality_to_the_left_liquid_interval():
+    """Equality ownership reverses when an affine coordinate decreases in liquid."""
+
+    def debt(liquid):
+        return 10.0 - liquid
+
+    selection = linear_asset_selection_preimage(
+        debt, threshold=jnp.asarray(5.0), equality_owner="above"
+    )
+    exact = jnp.asarray(5.0)
+    next_liquid = jnp.nextafter(exact, jnp.inf)
+    intervals = jnp.searchsorted(
+        jnp.asarray([selection]), jnp.asarray([exact, next_liquid]), side="right"
+    )
+    np.testing.assert_array_equal(np.asarray(intervals), np.asarray([0, 1]))
 
 
 def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():

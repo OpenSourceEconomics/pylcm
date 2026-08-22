@@ -39,6 +39,12 @@ def test_a_multi_dotted_breakpoint_threshold_is_rejected() -> None:
         lcm.affine_breakpoint(threshold="schedule.bracket.upper")
 
 
+def test_an_affine_breakpoint_records_which_coordinate_side_owns_equality() -> None:
+    """Schedule equality ownership is explicit in the schedule coordinate."""
+    declared = lcm.affine_breakpoint(threshold="limit", equality="below")
+    assert declared.equality_owner == "below"
+
+
 def test_a_single_dotted_breakpoint_threshold_splits_leaf_and_subkey() -> None:
     """`leaf.subkey` reads `subkey` out of the `MappingLeaf` param `leaf`."""
     declared = lcm.affine_breakpoint(threshold="schedule.upper")

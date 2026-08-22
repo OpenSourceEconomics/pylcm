@@ -15,6 +15,7 @@ build with the offending name rather than dying inside a traced kernel:
 """
 
 import copy
+import functools
 
 import numpy as np
 import pytest
@@ -235,7 +236,18 @@ def _rescaled_budget(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     return (1.0 + 9e-6) * (liquid + subsidy)
 
 
-@pytest.mark.parametrize("budget_node", [_hand_written_budget, _rescaled_budget])
+@functools.wraps(resources)
+def _wrapped_behavior_changing_budget(
+    liquid: ContinuousState, subsidy: FloatND
+) -> FloatND:
+    """A wrapped declaration whose behavior differs from the supplied form."""
+    return resources(liquid, subsidy) + 1.0
+
+
+@pytest.mark.parametrize(
+    "budget_node",
+    [_hand_written_budget, _rescaled_budget, _wrapped_behavior_changing_budget],
+)
 def test_a_hand_written_budget_node_is_refused_by_the_case_piece_route(
     budget_node,
 ) -> None:
