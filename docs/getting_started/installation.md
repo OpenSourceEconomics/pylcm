@@ -68,10 +68,11 @@ that mode's approximation contract.
 
 Defaults that request certified arithmetic require a compatible payload and never
 silently fall back: DCEGM's `ExactEnvelope` checks the active backend during
-`Model(...)`, while NBEGM's default `envelope_arithmetic="certified"` requests the
-payload at its first certified envelope evaluation, normally during solve or tracing.
-Either path raises `ExactAffineKernelUnavailableError` if the payload is absent or
-unloadable. The same NBEGM requirement applies when it is the inner solver of `NNBEGM`.
+`Model(...)`, while NBEGM's default `envelope_arithmetic="certified"` requires the same
+installed payload. If it is absent or unloadable, certified mode fails before returning
+a certified result and raises `ExactAffineKernelUnavailableError`. The validation
+boundary may move earlier; NBEGM never silently falls back. The same requirement applies
+when it is the inner solver of `NNBEGM`.
 
 To restore the capability after changing the toolchain or native sources, reinstall
 pylcm in the target environment; for a pixi development checkout use:
@@ -206,11 +207,10 @@ import lcm
   kernel, or carries one built by a different toolchain. Rebuild in the current
   environment with `pixi reinstall pylcm`, or explicitly select another typed envelope
   under its approximation contract.
-- **An `ExactAffineKernelUnavailableError` during an NBEGM solve**: certified NBEGM has
-  reached its first exact-affine verdict without a compatible payload for the active JAX
-  backend. Reinstall pylcm in that environment, or select
-  `NBEGM(envelope_arithmetic="ordinary")` only after validating its working-format
-  ownership near model-specific crossings.
+- **An `ExactAffineKernelUnavailableError` for certified NBEGM**: no compatible payload
+  is available for the active JAX backend. Reinstall pylcm in that environment, or
+  select `NBEGM(envelope_arithmetic="ordinary")` only after validating its
+  working-format ownership near model-specific crossings.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).

@@ -136,10 +136,10 @@ the working floating format and requires model-specific validation near crossing
 **Native capability.** `"certified"` uses pylcm's installed exact-affine CPU/CUDA
 payload; it is not a pure-JAX numerical option. A compatible payload must exist for the
 active JAX backend. NBEGM never silently falls back: if the payload is absent or
-unloadable, the first certified envelope evaluation raises
-`ExactAffineKernelUnavailableError`. Select `envelope_arithmetic="ordinary"` only when
-working-format ownership is acceptable under model-specific crossing checks. The same
-requirement applies when this NBEGM is the inner solver of `NNBEGM`.
+unloadable, certified mode raises `ExactAffineKernelUnavailableError` before returning a
+certified result. Select `envelope_arithmetic="ordinary"` only when working-format
+ownership is acceptable under model-specific crossing checks. The same requirement
+applies when this NBEGM is the inner solver of `NNBEGM`.
 
 The memory controls do not all mean “compiled batch width”:
 

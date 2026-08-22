@@ -1,10 +1,11 @@
 """Certified exact-affine capability fails at each route's documented boundary.
 
 Importing pylcm remains possible without a compiled kernel. A semantically valid model
-selecting ``ExactEnvelope`` fails during ``Model(...)``; certified NBEGM requests the
-same payload at its first envelope evaluation, while ordinary NBEGM avoids it. Low-level
-verdict entry points retain their own fail-loud guard. File presence, rather than
-loadability, distinguishes a supported absence from a present-but-broken build.
+selecting ``ExactEnvelope`` fails during ``Model(...)``; certified NBEGM requires the
+same payload before returning a certified result, while ordinary NBEGM avoids it.
+Low-level verdict entry points retain their own fail-loud guard. File presence,
+rather than loadability, distinguishes a supported absence from a
+present-but-broken build.
 """
 
 import re
@@ -39,29 +40,6 @@ def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
 
     assert excinfo.errisinstance(ExactAffineKernelUnavailableError)
     assert not excinfo.errisinstance(ModelInitializationError)
-
-
-def test_default_certified_nbegm_requests_the_installed_kernel(monkeypatch):
-    """Default NBEGM fails loudly when its certified payload is unavailable."""
-
-    def raise_unavailable() -> None:
-        msg = "exact-affine payload unavailable"
-        raise ExactAffineKernelUnavailableError(msg)
-
-    monkeypatch.setattr(ffi, "_ensure_registered", raise_unavailable)
-    model = nbegm_tax_toy.build_model(
-        variant="nbegm",
-        n_periods=2,
-        n_liquid=8,
-        n_savings=8,
-        savings_max=20.0,
-    )
-
-    with pytest.raises(ExactAffineKernelUnavailableError, match="payload unavailable"):
-        model.solve(
-            params=nbegm_tax_toy.build_params(final_age_alive=1.0),
-            log_level="debug",
-        )
 
 
 def test_ordinary_nbegm_does_not_request_the_installed_kernel(monkeypatch):

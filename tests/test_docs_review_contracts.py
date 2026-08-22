@@ -131,7 +131,9 @@ def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> 
     tuning = " ".join((_DOCS / "user_guide" / "tuning.md").read_text().split())
 
     assert 'NBEGM(envelope_arithmetic="ordinary")' in installation
-    assert "first certified envelope evaluation" in installation
+    assert "fails before returning a certified result" in installation
+    assert "first certified envelope evaluation" not in installation
+    assert "during an NBEGM solve" not in installation
     assert "ExactAffineKernelUnavailableError" in installation
     assert "installed exact-affine CPU/CUDA payload" in solver_reference
     assert "fixed profile window" in tuning
