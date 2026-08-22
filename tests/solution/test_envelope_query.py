@@ -317,7 +317,8 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
     block-size combination the backend must agree with the exact host oracle at
     ``tol=0``: any strict represented gap (``multiple >= 1``) selects the higher
     ending branch; only the exact stored tie (``multiple == 0``) resolves
-    right-continuously to the extending branch. This compact grid pins the class.
+    right-continuously to the extending branch. This compact grid pins the
+    class; the full battery runs 800 cases.
     """
     # The dtypes are looped over inside the body rather than parametrized, so the
     # float64 scales cannot be marked; they are dropped instead when the suite runs
@@ -828,7 +829,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     assert reached > _SPLIT_OVERFLOW_EXPONENT[dtype], (
         f"the ladder tops out at 2**{reached}, below the "
         f"2**{_SPLIT_OVERFLOW_EXPONENT[dtype]} splitting edge, so it could not "
-        "have caught the defect"
+        "have caught a splitting-overflow defect"
     )
 
     tiny = np.finfo(dtype).tiny

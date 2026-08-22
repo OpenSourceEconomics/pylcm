@@ -1,12 +1,18 @@
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import dags.tree as dt
-from dags.tree import tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.gated_edges import (
+    EDGE_GATE_ENTRY,
+    edge_gate_ref_entry,
+    edge_leg_fallback_entry,
+    is_target_value_operand,
+)
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import (
     FunctionName,
@@ -18,7 +24,7 @@ from _lcm.typing import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import MarkovTransition
+from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
 
 
@@ -57,6 +63,14 @@ def create_regime_params_template(
     entries to the template under pseudo-function keys matching the state or
     action name.
 
+    A gated edge's gate predicate and its gate-reference / leg-fallback
+    projections are user callables like any other, so their free scalars are
+    parameters too. They nest under the edge's target regime
+    (`template[target][<edge callable>]`), next to that target's per-target
+    transition cell. The names they read on the target regime's grid — the
+    target's states, its `V_target` value components and `D_target` flag, and
+    the edge's own gate-reference keys — are engine-wired and never surface.
+
     Args:
         user_regime: User-form `Regime` instance.
         other_regime_state_names: State names declared by any other regime of the
@@ -76,6 +90,21 @@ def create_regime_params_template(
         "age",
         "CE",
     }
+    if user_regime.stakeholders is not None:
+        # A collective regime carries per-stakeholder
+        # `utility_<s>` functions instead of a singleton `utility`, but the
+        # Bellman aggregator H still takes a `utility` argument — engine-wired
+        # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
+        # so the name must not surface as a user-facing param.
+        variables.add("utility")
+        # Value-constraint predicates read the
+        # engine-computed per-stakeholder action values `Q_<s>` and the
+        # interpolated same-period reference values (keyed by the
+        # `same_period_refs` names) as named arguments — engine-wired, never
+        # user-facing params.
+        variables.update(f"Q_{s}" for s in user_regime.stakeholders)
+        variables.update(user_regime.same_period_refs)
+
     # `next_<state>` names a value, never a parameter. Whether a consumer may
     # read it is a question of whether that value exists where the consumer runs.
     #
@@ -94,6 +123,7 @@ def create_regime_params_template(
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     _fail_if_a_next_name_is_read_outside_a_transition(user_regime)
+    _fail_if_a_joint_node_is_read_outside_its_transition(user_regime)
 
     # Every illegitimate read is already rejected, so the subtraction below only
     # has to be permissive enough for the legitimate ones: a name in transition
@@ -101,55 +131,69 @@ def create_regime_params_template(
     transition_role = _function_names_in_transition_role(
         user_regime, phase="solve"
     ) | _function_names_in_transition_role(user_regime, phase="simulate")
-    variables_in_transition_role = variables | {
-        f"next_{name}"
-        for name in (
-            *user_regime.states,
-            *user_regime.state_transitions,
-            *other_regime_state_names,
-        )
-    }
+    variables_in_transition_role = (
+        variables
+        | _joint_transition_node_names(user_regime)
+        | {
+            f"next_{name}"
+            for name in (
+                *user_regime.states,
+                *user_regime.state_transitions,
+                *other_regime_state_names,
+            )
+        }
+    )
     function_params: dict[FunctionName, dict[str, str]] = {}
-    per_target_params: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
+    per_target_params: dict[RegimeName, dict[str, Any]] = {}
+
+    # A gated edge's callables run on the target regime's grid, so they are
+    # collected one per callable and filed under the template entry that names
+    # them within the edge — the same entry `_lcm.regime_building.gated_edges`
+    # qualifies their parameters with.
+    edge_template_keys = {
+        name: template_key
+        for name, (template_key, _func) in _gated_edge_entries(user_regime).items()
+    }
+    edge_non_params = variables | _gated_edge_wired_names(
+        user_regime=user_regime, other_regime_state_names=other_regime_state_names
+    )
 
     for name, func in _collect_all_functions_for_template(user_regime).items():
-        if isinstance(func, Phased):
-            tree_solve = dt.create_tree_with_input_types({name: func.solve})
-            tree_sim = dt.create_tree_with_input_types({name: func.simulate})
-            tree = dict(tree_solve) | dict(tree_sim)
-        else:
-            tree = dt.create_tree_with_input_types({name: func})
-
         # State and action names appearing in a function's signature are
         # exempt from param-template extraction: pylcm wires those values
         # through `states_actions_params` at call time, so they must not
-        # surface as user-facing params in the template.
-        non_params = (
-            variables_in_transition_role
-            if tree_path_from_qname(name)[0] in transition_role
-            else variables
+        # surface as user-facing params in the template. A gated edge's
+        # callables run on the TARGET regime's grid, so their exempt set is a
+        # different one.
+        is_edge_entry = name in edge_template_keys
+        if is_edge_entry:
+            non_params = edge_non_params
+        elif tree_path_from_qname(name)[0] in transition_role:
+            non_params = variables_in_transition_role
+        else:
+            non_params = variables
+        params = _discovered_params(
+            name=name,
+            func=func,
+            non_params=non_params,
+            strip_target_value_operands=is_edge_entry,
         )
-        params = {k: v for k, v in sorted(tree.items()) if k not in non_params}
 
         _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
 
-        # A dotted qname (`<func>__<target>`) marks a per-target function — a
-        # transition cell whose parameters must nest under the target regime
-        # (`template[target][func]`), so each target's cell keeps its own params.
-        # A bare name is a plain regime-level function whose params sit at the
-        # top level.
-        path = tree_path_from_qname(name)
-        if len(path) > 1:
-            func_name, target_regime_name = path[0], path[1]
-            target_branch = per_target_params.setdefault(target_regime_name, {})
-            if func_name in target_branch:
-                target_branch[func_name] |= params
-            else:
-                target_branch[func_name] = params
-        elif name in function_params:
-            function_params[name] |= params
-        else:
-            function_params[name] = params
+        _record_params(
+            name=edge_template_keys.get(name, name),
+            params=params,
+            function_params=function_params,
+            per_target_params=per_target_params,
+        )
+
+    _add_joint_transition_params(
+        per_target_params=per_target_params,
+        user_regime=user_regime,
+        variables=variables,
+        other_regime_state_names=other_regime_state_names,
+    )
 
     _validate_no_shadowing(
         {**function_params, **{k: {} for k in per_target_params}}, user_regime
@@ -182,11 +226,366 @@ def create_regime_params_template(
             **{k: MappingProxyType(v) for k, v in function_params.items()},
             **{
                 target_regime_name: MappingProxyType(
-                    {k: MappingProxyType(v) for k, v in target_params.items()}
+                    {k: _freeze_template_node(v) for k, v in target_params.items()}
                 )
                 for target_regime_name, target_params in per_target_params.items()
             },
         }
+    )
+
+
+def _record_params(
+    *,
+    name: FunctionName | TransitionFunctionName,
+    params: dict[str, str],
+    function_params: dict[FunctionName, dict[str, str]],
+    per_target_params: dict[RegimeName, dict[str, Any]],
+) -> None:
+    """File one entry's parameters under the branch its key names, in place.
+
+    A dotted qname (`<func>__<target>`) marks a per-target entry — a transition
+    cell or a gated edge's callable — whose parameters nest under the target
+    regime (`template[target][func]`), so each target keeps its own. A bare name
+    is a plain regime-level function whose parameters sit at the top level.
+    Either way an entry met twice unions with what is already filed.
+
+    Args:
+        name: Template key the entry is collected under.
+        params: The entry's discovered parameters.
+        function_params: Top-level entries collected so far.
+        per_target_params: Per-target-regime entries collected so far.
+
+    """
+    path = tree_path_from_qname(name)
+    if len(path) > 1:
+        func_name, target_regime_name = path[0], path[1]
+        target_branch = per_target_params.setdefault(target_regime_name, {})
+        target_branch[func_name] = target_branch.get(func_name, {}) | params
+    else:
+        function_params[name] = function_params.get(name, {}) | params
+
+
+def _freeze_template_node(value: Any) -> Any:  # noqa: ANN401
+    """Recursively freeze a parameter-template branch."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {name: _freeze_template_node(member) for name, member in value.items()}
+        )
+    return value
+
+
+def _add_joint_transition_params(
+    *,
+    per_target_params: dict[RegimeName, dict[str, Any]],
+    user_regime: UserRegime,
+    variables: set[str],
+    other_regime_state_names: frozenset[StateName],
+) -> None:
+    """File joint support, probability, and output params under their owners."""
+    joint_transitions = getattr(user_regime, "joint_transitions", {})
+    joint_node_names = set(_joint_transition_node_names(user_regime))
+    next_state_names = {
+        f"next_{name}"
+        for name in (
+            *user_regime.states,
+            *user_regime.state_transitions,
+            *other_regime_state_names,
+            *(
+                output
+                for kernels in joint_transitions.values()
+                for raw in kernels.values()
+                for kernel in _joint_variants(raw)
+                for output in kernel.outputs
+            ),
+        )
+    }
+    output_non_params = variables | joint_node_names | next_state_names
+    probability_non_params = variables | joint_node_names | next_state_names
+    support_non_params = {"period", "age", *joint_node_names}
+
+    for target_name, kernels in joint_transitions.items():
+        target_branch = per_target_params.setdefault(target_name, {})
+        for kernel_name, raw in kernels.items():
+            variants = _joint_variants(raw)
+            support_functions = [
+                kernel.support for kernel in variants if callable(kernel.support)
+            ]
+            probability_functions = [kernel.probabilities for kernel in variants]
+            kernel_branch = target_branch.setdefault(kernel_name, {})
+            kernel_branch["support"] = _union_callable_params(
+                support_functions, non_params=support_non_params
+            )
+            kernel_branch["probabilities"] = _union_callable_params(
+                probability_functions, non_params=probability_non_params
+            )
+
+            for output_name in variants[0].outputs:
+                params = _union_callable_params(
+                    [kernel.outputs[output_name] for kernel in variants],
+                    non_params=output_non_params,
+                )
+                transition_name = f"next_{output_name}"
+                target_branch[transition_name] = (
+                    target_branch.get(transition_name, {}) | params
+                )
+
+
+def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...]:
+    """Return one or both phase variants of a joint declaration."""
+    if isinstance(raw, Phased):
+        return cast(
+            "tuple[JointTransition, JointTransition]", (raw.solve, raw.simulate)
+        )
+    return (raw,)
+
+
+def _joint_variant_for_phase(
+    raw: JointTransition | Phased,
+    *,
+    phase: Literal["solve", "simulate"],
+) -> JointTransition:
+    """Return the concrete joint declaration used in one phase."""
+    if isinstance(raw, Phased):
+        return cast("JointTransition", raw.solve if phase == "solve" else raw.simulate)
+    return raw
+
+
+def _joint_transition_node_names(user_regime: UserRegime) -> frozenset[str]:
+    """Return every public transition-local node name declared by a regime."""
+    return frozenset(
+        kernel_name
+        for kernels in user_regime.joint_transitions.values()
+        for kernel_name in kernels
+    )
+
+
+def _union_callable_params(
+    functions: list[UserFunction], *, non_params: set[str]
+) -> dict[str, str]:
+    """Union signature-derived parameters over one role's phase variants."""
+    tree: dict[str, str] = {}
+    for index, func in enumerate(functions):
+        tree |= dict(dt.create_tree_with_input_types({f"role_{index}": func}))
+    return {
+        arg_name: annotation
+        for arg_name, annotation in sorted(tree.items())
+        if arg_name not in non_params
+    }
+
+
+def _discovered_params(
+    *,
+    name: FunctionName | TransitionFunctionName,
+    func: UserFunction | Phased,
+    non_params: set[str],
+    strip_target_value_operands: bool,
+) -> dict[str, str]:
+    """Return the parameters one collected template entry contributes.
+
+    Args:
+        name: Template key the entry is collected under.
+        func: The entry's callable, or the `Phased` pair whose two variants'
+            parameters are unioned so one flat params dict satisfies both phases.
+        non_params: Names the engine wires at call time, which never surface as
+            user-facing parameters.
+        strip_target_value_operands: Whether the reserved `V_target` vocabulary
+            is engine-wired here too, which holds for a gated edge's callables.
+
+    Returns:
+        Dictionary of parameter name to type annotation, in name order.
+
+    """
+    if isinstance(func, Phased):
+        tree = dict(dt.create_tree_with_input_types({name: func.solve})) | dict(
+            dt.create_tree_with_input_types({name: func.simulate})
+        )
+    else:
+        tree = dict(dt.create_tree_with_input_types({name: func}))
+    return {
+        arg_name: annotation
+        for arg_name, annotation in sorted(tree.items())
+        if arg_name not in non_params
+        and not (strip_target_value_operands and is_target_value_operand(arg_name))
+    }
+
+
+def _fail_if_a_joint_node_is_read_outside_its_transition(
+    user_regime: UserRegime,
+) -> None:
+    """Reject transition-local nodes outside target-output evaluation.
+
+    A joint node is engine-wired only while one target edge's output DAG is
+    evaluated. It is not a parameter, a current-period payoff input, or an input
+    to support/probability construction. Helpers inherit that permission only on
+    a path feeding a transition output. Target-specific scope is checked again
+    after canonicalization, when the target plans are available.
+    """
+    joint_node_names = _joint_transition_node_names(user_regime)
+    if not joint_node_names:
+        return
+
+    for phase in ("solve", "simulate"):
+        transition_role = _function_names_in_transition_role(user_regime, phase=phase)
+        consumers: dict[str, object] = {
+            name: func
+            for name, func in _collect_all_functions_for_template(user_regime).items()
+            if tree_path_from_qname(name)[0] not in transition_role
+        }
+        if user_regime.koopmans_aggregator is not None:
+            consumers["koopmans_aggregator"] = user_regime.koopmans_aggregator
+        for name, func in consumers.items():
+            _fail_if_a_joint_node_is_read(
+                consumer_name=name,
+                reserved=_joint_nodes_reachable_from(
+                    func,
+                    user_regime.functions,
+                    phase=phase,
+                    joint_node_names=joint_node_names,
+                ),
+                allowed_context="a target transition output and the helpers feeding it",
+            )
+
+        for target, kernels in user_regime.joint_transitions.items():
+            for kernel_name, raw in kernels.items():
+                kernel = _joint_variant_for_phase(raw, phase=phase)
+                roles: dict[str, object] = {
+                    "probabilities": kernel.probabilities,
+                }
+                if callable(kernel.support):
+                    roles["support"] = kernel.support
+                for role, func in roles.items():
+                    consumer_name = (
+                        f"joint transition '{kernel_name}' {role} on target '{target}'"
+                    )
+                    _fail_if_a_joint_node_is_read(
+                        consumer_name=consumer_name,
+                        reserved=_joint_nodes_reachable_from(
+                            func,
+                            user_regime.functions,
+                            phase=phase,
+                            joint_node_names=joint_node_names,
+                        ),
+                        allowed_context=(
+                            "neither support nor probability construction; express "
+                            "correlation through one joint support"
+                        ),
+                    )
+                    _fail_if_joint_role_reads_a_next_output(
+                        consumer_name=consumer_name,
+                        reserved=_next_names_reachable_from(
+                            func, user_regime.functions, phase=phase
+                        ),
+                    )
+                    if role == "support":
+                        _fail_if_joint_support_reads_runtime_names(
+                            consumer_name=consumer_name,
+                            func=func,
+                            phase=phase,
+                            user_regime=user_regime,
+                        )
+
+
+def _fail_if_joint_role_reads_a_next_output(
+    *,
+    consumer_name: str,
+    reserved: Mapping[str, tuple[FunctionName, ...]],
+) -> None:
+    """Reject support or probabilities conditioned on a realized output."""
+    if not reserved:
+        return
+    routes = [
+        f"'{name}' through {' -> '.join(repr(step) for step in chain)}"
+        if chain
+        else f"'{name}'"
+        for name, chain in sorted(reserved.items())
+    ]
+    raise InvalidNameError(
+        f"{consumer_name} reads next-period output(s) {', '.join(routes)}. "
+        "Joint support and probabilities are formed before any target output "
+        "is realized, so they cannot condition on a `next_<state>` value."
+    )
+
+
+def _fail_if_joint_support_reads_runtime_names(
+    *,
+    consumer_name: str,
+    func: object,
+    phase: Literal["solve", "simulate"],
+    user_regime: UserRegime,
+) -> None:
+    """Reject source states, actions, and helpers in a support provider."""
+    forbidden = {
+        *user_regime.states,
+        *user_regime.actions,
+        *user_regime.functions,
+        *user_regime.constraints,
+        *user_regime.value_constraints,
+        "CE",
+    }
+    inputs = {
+        tree_path_from_qname(arg)[-1]
+        for variant in _callables_in(func, phase=phase)
+        for arg in dt.create_tree_with_input_types({"_": variant})
+    }
+    invalid = sorted(inputs & forbidden)
+    if not invalid:
+        return
+    raise InvalidNameError(
+        f"{consumer_name} reads source runtime name(s) {invalid}. A callable "
+        "JointTransition support may read only `period`, `age`, and parameters; "
+        "source states, actions, helpers, constraints, and realized transition "
+        "values are unavailable because support is hoisted outside source-cell "
+        "evaluation."
+    )
+
+
+def _joint_nodes_reachable_from(
+    func: object,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    *,
+    phase: Literal["solve", "simulate"],
+    joint_node_names: frozenset[str],
+) -> dict[str, tuple[FunctionName, ...]]:
+    """Return joint-node names reachable from one consumer, with helper routes."""
+    reached: dict[str, tuple[FunctionName, ...]] = {}
+    walked: set[FunctionName] = set()
+    frontier: list[tuple[UserFunction, tuple[FunctionName, ...]]] = [
+        (variant, ()) for variant in _callables_in(func, phase=phase)
+    ]
+    while frontier:
+        current, chain = frontier.pop()
+        for arg in dt.create_tree_with_input_types({"_": current}):
+            arg_name = tree_path_from_qname(arg)[-1]
+            if arg_name in joint_node_names:
+                reached.setdefault(arg_name, chain)
+            elif arg_name in functions and arg_name not in walked:
+                walked.add(arg_name)
+                frontier.extend(
+                    (variant, (*chain, arg_name))
+                    for variant in _callables_in(functions[arg_name], phase=phase)
+                )
+    return reached
+
+
+def _fail_if_a_joint_node_is_read(
+    *,
+    consumer_name: str,
+    reserved: Mapping[str, tuple[FunctionName, ...]],
+    allowed_context: str,
+) -> None:
+    """Reject a consumer that would reclassify a joint node as a parameter."""
+    if not reserved:
+        return
+    routes = [
+        f"'{name}' through {' -> '.join(repr(step) for step in chain)}"
+        if chain
+        else f"'{name}'"
+        for name, chain in sorted(reserved.items())
+    ]
+    raise InvalidNameError(
+        f"'{consumer_name}' reads transition-local joint node(s) "
+        f"{', '.join(routes)}. A joint node is engine-wired only while evaluating "
+        f"{allowed_context}; it is never a user parameter."
     )
 
 
@@ -546,6 +945,12 @@ def _function_names_in_transition_role(
         for law in user_regime.state_transitions.values()
         for variant in _callables_in(law, phase=phase)
     ]
+    frontier.extend(
+        output
+        for kernels in user_regime.joint_transitions.values()
+        for raw in kernels.values()
+        for output in _joint_variant_for_phase(raw, phase=phase).outputs.values()
+    )
     while frontier:
         func = frontier.pop()
         for arg in dt.create_tree_with_input_types({"_": func}):
@@ -555,8 +960,16 @@ def _function_names_in_transition_role(
             feeders.add(arg_name)
             frontier.extend(_callables_in(functions[arg_name], phase=phase))
 
+    joint_output_names = {
+        f"next_{state_name}"
+        for kernels in user_regime.joint_transitions.values()
+        for raw in kernels.values()
+        for state_name in _joint_variant_for_phase(raw, phase=phase).outputs
+    }
     return frozenset(
-        {f"next_{name}" for name in user_regime.state_transitions} | feeders
+        {f"next_{name}" for name in user_regime.state_transitions}
+        | joint_output_names
+        | feeders
     )
 
 
@@ -578,6 +991,10 @@ def _collect_all_functions_for_template(
     result |= {
         name: func for name, func in user_regime.constraints.items() if func is not None
     }
+    # Value-constraint predicates carry user params exactly like ordinary
+    # constraints; their engine-wired `Q_<s>` / reference-value arguments are
+    # excluded via `variables`.
+    result |= dict(user_regime.value_constraints)
     # A carried state contributes its `solve` variant as a derived function
     # under the state's name (solve-phase imputation), so its parameters
     # surface in the template. Its law of motion is its regular
@@ -586,11 +1003,122 @@ def _collect_all_functions_for_template(
         if isinstance(spec, Phased):
             result[name] = cast("UserFunction", spec.solve)
     if user_regime.transition is not None:
+        joint_output_names = {
+            output_name
+            for kernels in user_regime.joint_transitions.values()
+            for raw in kernels.values()
+            for joint in _joint_variants(raw)
+            for output_name in joint.outputs
+        }
         result |= collect_state_transitions(
-            user_regime.states, user_regime.state_transitions
+            user_regime.states,
+            user_regime.state_transitions,
+            joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(user_regime.transition)
+    result |= {
+        name: func
+        for name, (_template_key, func) in _gated_edge_entries(user_regime).items()
+    }
     return result
+
+
+def _gated_edge_entries(
+    user_regime: UserRegime,
+) -> dict[FunctionName, tuple[FunctionName, UserFunction]]:
+    """Key every gated-edge callable of a regime for parameter discovery.
+
+    A gated edge is declared with three kinds of user callable, each an ordinary
+    DAG function whose free scalars are model parameters:
+
+    - the `gate` predicate;
+    - one projection per state of each gate reference's reference regime;
+    - one projection per state of each leg fallback's reference regime.
+
+    Every template key ends in `__<target>` so the parameters nest under the
+    edge's target regime (`template[target][<edge callable>]`), next to that
+    target's per-target transition cell. The leading segment names the callable
+    within the edge, in the spelling `_lcm.regime_building.gated_edges` builds
+    its signatures from — the two sides read one name for each parameter.
+
+    A leg is named by the regime it falls back to rather than by its `legs` key,
+    because that is the leg identity the simulate-side projector can spell (see
+    `edge_leg_fallback_entry`). Two legs falling back to the same regime
+    therefore share one template entry, and their parameters are unioned there;
+    the returned keys stay one per callable so no projection's parameters are
+    lost on the way.
+
+    Args:
+        user_regime: User-form `Regime` instance.
+
+    Returns:
+        Dictionary of a per-callable key to the pair `(template key, callable)`,
+        empty for a regime declaring no gated edge.
+
+    """
+    entries: dict[FunctionName, tuple[FunctionName, UserFunction]] = {}
+    for target_regime_name, edge in user_regime.gated_edges.items():
+        gate_entry = qname_from_tree_path((EDGE_GATE_ENTRY, target_regime_name))
+        entries[gate_entry] = (gate_entry, edge.gate)
+        for ref_name, ref in edge.gate_refs.items():
+            for state_name, projection in ref.projection.items():
+                entry = qname_from_tree_path(
+                    (
+                        edge_gate_ref_entry(ref_name=ref_name, state_name=state_name),
+                        target_regime_name,
+                    )
+                )
+                entries[entry] = (entry, projection)
+        for leg_name, leg in edge.legs.items():
+            for state_name, projection in leg.fallback.projection.items():
+                entry = qname_from_tree_path(
+                    (
+                        edge_leg_fallback_entry(
+                            fallback_regime=leg.fallback.regime, state_name=state_name
+                        ),
+                        target_regime_name,
+                    )
+                )
+                per_callable = qname_from_tree_path(
+                    (f"leg_fallback_{leg_name}_{state_name}", target_regime_name)
+                )
+                entries[per_callable] = (entry, projection)
+    return entries
+
+
+def _gated_edge_wired_names(
+    *,
+    user_regime: UserRegime,
+    other_regime_state_names: frozenset[StateName],
+) -> set[str]:
+    """Return the names an edge callable reads that the engine binds itself.
+
+    A gate and a projection are evaluated on the TARGET regime's grid, so beyond
+    the source regime's own vocabulary they read names no user ever supplies:
+
+    - the target regime's states, which the fold binds from that regime's grids;
+    - `D_target`, the target's dissolution flag;
+    - each key of the edge's `gate_refs`, bound to that reference's interpolated
+      value.
+
+    The target's own value components enter under the reserved `V_target`
+    vocabulary and are recognised by `is_target_value_operand` instead, since
+    their per-stakeholder spellings depend on the target regime rather than on
+    anything the source declares.
+
+    Args:
+        user_regime: User-form `Regime` instance.
+        other_regime_state_names: State names declared by any other regime of the
+            model, which is where an edge's target states come from.
+
+    Returns:
+        Set of the names an edge callable may read without them being parameters.
+
+    """
+    wired = {"D_target", *other_regime_state_names}
+    for edge in user_regime.gated_edges.values():
+        wired |= set(edge.gate_refs)
+    return wired
 
 
 def _drop_engine_provided_args(

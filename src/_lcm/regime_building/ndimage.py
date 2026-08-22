@@ -25,10 +25,11 @@ from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
-@jit
+@functools.partial(jit, static_argnames=("pinned_axes",))
 def map_coordinates(
     input: FloatND | IntND,  # noqa: A002
     coordinates: Sequence[FloatND | IntND] | FloatND | IntND,
+    pinned_axes: tuple[int, ...] = (),
 ) -> FloatND | IntND:
     """Map the input array to new coordinates using linear interpolation.
 
@@ -37,6 +38,13 @@ def map_coordinates(
     Given an input array and a set of coordinates, this function returns the
     interpolated values of the input array at those coordinates. For coordinates outside
     the input array, linear extrapolation is used.
+
+    An axis named in `pinned_axes` is read at one node instead of two. Nothing
+    lies between two nodes of such an axis — its coordinate already names one
+    exactly — so the second corner would carry weight zero and contribute
+    nothing. Dropping it halves the corners of the interpolation box per pinned
+    axis, and the box is a product over ALL axes, so pinning three of them
+    leaves an eighth of the reads.
 
     A corner whose weight is exactly zero contributes nothing, whatever value
     stands at it. That matters because backward induction writes `-inf` for a
@@ -54,6 +62,9 @@ def map_coordinates(
       input: N-dimensional input array from which values are interpolated.
       coordinates: length-N sequence of arrays specifying the coordinates
         at which to evaluate the interpolated values
+      pinned_axes: Tuple of axis positions whose coordinate names a node
+        exactly, so the axis is read at that one node rather than
+        interpolated between two.
 
     Returns:
       The interpolated (extrapolated) values at the specified coordinates.
@@ -66,8 +77,12 @@ def map_coordinates(
         )
 
     interpolation_data = [
-        _compute_indices_and_weights(coordinate, size)
-        for coordinate, size in zip(coordinates, input.shape, strict=True)
+        _compute_pinned_index_and_weight(coordinate, size)
+        if axis in pinned_axes
+        else _compute_indices_and_weights(coordinate, size)
+        for axis, (coordinate, size) in enumerate(
+            zip(coordinates, input.shape, strict=True)
+        )
     ]
 
     interpolation_values = []
@@ -107,6 +122,23 @@ def _compute_indices_and_weights(
     upper_weight = coordinate - lower_index
     lower_weight = 1 - upper_weight
     return [(lower_index, lower_weight), (lower_index + 1, upper_weight)]
+
+
+def _compute_pinned_index_and_weight(
+    coordinate: FloatND | IntND, input_size: int
+) -> list[tuple[IntND, FloatND]]:
+    """Return the single full-weight corner of an axis read at one node.
+
+    A coordinate that names no node of such an axis arrives as NaN, which no
+    index can represent, so it is replaced by a node the read can land on. The
+    caller is the one that knows the axis, and is where such a read is
+    discarded.
+    """
+    representable = jnp.where(jnp.isfinite(coordinate), coordinate, 0)
+    index = jnp.clip(jnp.round(representable), 0, input_size - 1).astype(jnp.int32)
+    # Shape and dtype as the interpolated weights of any other axis, so a
+    # corner's weight product is formed in the dtype it would be either way.
+    return [(index, jnp.ones_like(coordinate))]
 
 
 def _multiply_all(arrs: Sequence[FloatND | IntND]) -> FloatND | IntND:

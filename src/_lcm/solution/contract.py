@@ -54,7 +54,7 @@ from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -62,6 +62,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
+    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     QAndFFunction,
@@ -72,7 +73,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
 # induction treats `ContinuationPayload` opaquely; EGM solvers additionally
@@ -246,7 +247,7 @@ class SolverBuildContext:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None
@@ -321,6 +322,49 @@ class SolverBuildContext:
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
     """
 
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    When set, the grid-search kernel reads off each
+    stakeholder's own value at the shared household argmax of the Pareto-weighted
+    scalarization, and the regime's value-function array gains a trailing
+    stakeholder axis.
+    """
+
+    weights: Mapping[str, float] | None = None
+    """Household Pareto weights per stakeholder; set together with `stakeholders`."""
+
+    edge_target_regimes: tuple[RegimeName, ...] = ()
+    """Target regimes this regime reaches through a gated edge, or empty.
+
+    Non-empty only for a source regime declaring
+    `gated_edges`. The grid-search kernel then substitutes each such target's
+    gated continuation object `Wbar` (supplied by the solve loop under
+    `edge_regime_to_V_arr`) for the raw target V in the `next_regime_to_V_arr`
+    mapping it reads and lowers against. Empty for every other regime.
+    """
+
+    fold_state_names: tuple[StateName, ...] = ()
+    """IID-process states declared `fold=True`, or empty (the default).
+
+    Only `GridSearch` consumes this: the grid-search kernel weighted-averages
+    each named state's axis out of the stored value immediately after the
+    max-over-actions / collective readout, using the process's own
+    quadrature weights. Empty keeps the default path byte-identical.
+    """
+
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Reference regimes whose SAME-period V this regime's kernels read.
+
+    Non-empty only for a collective regime declaring
+    `same_period_refs`. The grid-search kernel then accepts the extra call
+    argument `same_period_regime_to_V_arr` (the mapping of these regimes to
+    their current-period V arrays, supplied by the solve loop after solving
+    them earlier in the same period) and includes matching zero templates in
+    its lowering arguments. Empty for every other regime, whose kernel
+    signatures are unchanged.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class KernelResult:
@@ -346,6 +390,17 @@ class KernelResult:
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
+    dissolution: BoolND | None = None
+    """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
+
+    Published by every collective regime's kernel:
+    `True` exactly where NO action satisfies the combined (ordinary AND value)
+    constraints, so the household argmax was taken over an empty set. Distinct
+    from a numeric `-inf` value, which occurs on-path; gates must consume this
+    flag, never test `V == -inf`. `None` for singleton regimes (the default
+    path is unchanged).
+    """
+
     diagnostics: SolverDiagnostics | None = None
     """Published numerical diagnostics, or `None`."""
 
@@ -365,6 +420,21 @@ class BackwardInductionResult:
     """Immutable mapping of period to each regime's published simulation policy.
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
+    """
+
+    dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
+    """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
+
+    `True` on the state cells whose action mask is empty
+    (distinct from a numeric `-inf` value); empty inner mappings for models
+    without collective regimes, so the default (singleton) path is unchanged.
+
+    Carries arrays only where something reads them: a gate declaring the
+    `D_target` operand, which forward simulation recomputes from the flag, or a
+    caller asking backward induction to retain them. A collective model whose
+    gates read only value operands gets the same period keys with empty inner
+    mappings, and its flags are freed period by period rather than held for the
+    whole induction.
     """
 
 
@@ -667,6 +737,19 @@ class Solver(ABC):
 
         """
         return None
+
+    @property
+    def supports_transition_local_lotteries(self) -> bool:
+        """Whether this solver consumes transition-local lottery axes.
+
+        A ``JointTransition`` is enumerated inside the source action value.  The
+        grid-search Q kernel implements that dataflow.  Continuation-based
+        solvers must opt in only after their own child-read representation also
+        enumerates the canonical ``TargetTransitionPlan`` lotteries; accepting
+        the declaration without doing so would defer a semantic mismatch to a
+        runtime missing-node failure.
+        """
+        return False
 
     @property
     def requires_continuation(self) -> bool:

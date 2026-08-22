@@ -389,13 +389,13 @@ class NNBEGM(TwoMarginSolver):
         keeper_kernels = bound.inner.build_period_kernels(context=keeper_context)
         keeper_continuation_spec = keeper_kernels.continuation_spec
         # The inner ride-along template may carry the exact-consumption `policy`
-        # leaf so a STANDALONE ride-along NBEGM continuation
-        # matches its policy-carrying runtime carry. NNBEGM,
+        # leaf so a STANDALONE ride-along NBEGM continuation matches its
+        # policy-carrying runtime carry. NNBEGM,
         # though, republishes the BRIDGED outer collapse as its cross-period
         # continuation, and that collapse is policy-free (publication reads the
         # RAW keeper/adjuster carries, not the collapsed one). Strip the leaf from
         # the republished template so the cross-period roll sees the same pytree
-        # as the policy-free continuation — the standalone F1 leaf must not leak
+        # as the policy-free continuation — the standalone leaf must not leak
         # into the NNBEGM continuation template.
         inner_template = (
             None
@@ -611,8 +611,8 @@ class _NNBEGMPeriodKernel:
     a discrete choice whose winning branch is collapsed out of the published
     carry rows (`derive_inner_sim_policy` cannot recover which branch won
     off-grid), so the nested payload is NOT published and simulation keeps the
-    grid-argmax path. Empty for the v1 continuous-only
-    scope, where publication proceeds."""
+    grid-argmax path. Empty for a continuous-only regime, where publication
+    proceeds."""
 
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the

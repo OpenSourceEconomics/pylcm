@@ -63,3 +63,8 @@ def test_consumption_savings_declarations_share_their_own_module():
     assert lcm.ConsumptionSavingsRegime is ConsumptionSavingsRegime
     assert lcm.NestedConsumptionSavingsRegime is NestedConsumptionSavingsRegime
     assert lcm.LiquidMargin is LiquidMargin
+
+
+def test_joint_transition_is_exported_from_lcm() -> None:
+    """`JointTransition` is available from the package's public namespace."""
+    assert lcm.JointTransition.__name__ == "JointTransition"

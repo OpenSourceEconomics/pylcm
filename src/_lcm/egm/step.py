@@ -181,7 +181,7 @@ from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.solution.dcegm import _BoundDCEGM
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -219,7 +219,7 @@ def build_egm_step_functions(
     constraints: ConstraintFunctionsMapping,
     processed_constraints: ProcessedConstraintsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     solution_reachability: PhaseReachability,
@@ -254,7 +254,7 @@ def build_egm_step_functions(
             constraint functions (discrete-only after DC-EGM validation).
         transitions: Immutable mapping of target regime names to their state
             transition functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition
             function names.
         compute_regime_transition_probs: Regime transition probability
@@ -447,7 +447,7 @@ def build_egm_step_functions(
             processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
             transitions=transitions,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=group_v_interp,
             flat_param_names=flat_param_names,
@@ -466,7 +466,7 @@ def build_egm_step_functions(
             koopmans_aggregator=koopmans_aggregator,
             constraints=group_constraints,
             transitions=transitions,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             stateful_targets=stateful_targets,
             scalar_targets=scalar_targets,
@@ -528,7 +528,7 @@ def _get_egm_step(
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -572,7 +572,7 @@ def _get_egm_step(
         koopmans_aggregator=koopmans_aggregator,
         constraints=constraints,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
@@ -831,7 +831,7 @@ def _build_kernel_pieces(
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
@@ -852,7 +852,7 @@ def _build_kernel_pieces(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,

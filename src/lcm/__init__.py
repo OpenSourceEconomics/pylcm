@@ -154,12 +154,18 @@ from lcm.processes import (  # noqa: E402
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm.regime import Regime  # noqa: E402
+from lcm.regime import (  # noqa: E402
+    EdgeLeg,
+    GatedEdge,
+    Regime,
+    SamePeriodRef,
+)
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    JointTransition,
     MarkovTransition,
     fixed_transition,
 )
@@ -188,9 +194,12 @@ __all__ = [
     "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
+    "EdgeLeg",
     "ExtremeValueTasteShocks",
+    "GatedEdge",
     "GridBreakpoint",
     "IrregSpacedGrid",
+    "JointTransition",
     "LinSpacedGrid",
     "LinearAggregator",
     "LinearExpectation",
@@ -211,6 +220,7 @@ __all__ = [
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
+    "SamePeriodRef",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",

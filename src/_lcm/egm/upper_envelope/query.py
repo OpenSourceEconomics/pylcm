@@ -2179,8 +2179,8 @@ def _accumulator_layout(dtype: jnp.dtype) -> _AccumulatorLayout:
 
     # A difference contributes its two OPERANDS as terms (`_exact_difference`
     # performs no subtraction), so each sits in the operand's own binade — inside
-    # `[min_exponent, max_exponent]`. The wider window kept here is the
-    # bound for a rounded head-plus-residual pair; it strictly CONTAINS the
+    # `[min_exponent, max_exponent]`. The wider window kept here is the bound
+    # for a rounded head-plus-residual pair; it strictly CONTAINS the
     # current one, so it stays valid, and holding it fixed keeps the layout the
     # one verified directly at 2,000/2,000 sign matches. A
     # product of two normalized mantissas puts its own residual at most
@@ -2686,7 +2686,7 @@ def _candidate_terms(*, block: FloatND, live: BoolND, flat: Float1D) -> _Candida
     dh, _, d_frame = _framed_difference(right_value, left_value)
 
     # Renormalize each head into `[0.5, 1)` before Dekker sees it, and fold the
-    # shift into the integer exponent. This is the split's own requirement — the
+    # shift into the integer exponent. This is Dekker's own requirement — the
     # split constant `2**s + 1` needs `|a| < 2**(emax - s)` — now applied to a
     # quantity that is already O(1), so it is conditioning rather than rescue.
     t_exp = _binade_exponent(jnp.abs(th)) + t_frame
@@ -2791,8 +2791,8 @@ def _right_continuous_winner(
     `_exact_slope_compare`. Ordering on the rounded key alone is unsound: two
     strictly ordered exact slopes can collapse onto one float key, and `argmax`
     then resolves by candidate order, so permuting the branches flips the
-    published policy and marginal (16 of 16 generated
-    collision classes were order-dependent).
+    published policy and marginal (16 of 16 generated collision classes were
+    order-dependent).
 
     Keeping the two keys separate rather than folding them into one scalar is
     still required: an `arctan(slope)/pi + right_available` rank loses slope
@@ -2814,8 +2814,8 @@ def _right_continuous_winner(
     # a candidate that is not competing at all, which the loop below seeds as
     # the lead and never revisits. The published policy and marginal are then
     # whichever branch happens to sit first, so a pure branch permutation flips
-    # them while the value stays right: exactly that signature, reached
-    # through the sentinel rather than through a shared float key.
+    # them while the value stays right — the same failure as a shared float
+    # key, reached through the sentinel instead.
     #
     # Selecting the first COMPETING candidate that attains the maximum keeps the
     # documented earliest-on-tie rule and makes the sentinel unreachable as an
@@ -2837,7 +2837,7 @@ def _right_continuous_winner(
     # finite normal. `reach` is then infinite, `lead_slope - reach` is NaN,
     # every `>=` is False, and `contends` would be EMPTY: the exact loop never
     # runs and the winner is whatever `argmax` over the rounded key returned,
-    # i.e. candidate order. That is precisely the failure mode — level
+    # i.e. candidate order. That is precisely the collision failure — level
     # tied either way, only the published policy and marginal wrong — and it is
     # reachable at `|Δvalue| / Δgrid > max_float` (probe: float32 values at
     # `2**100` over a width of `2**-60` flip policy 1.0 <-> 2.0 under a branch

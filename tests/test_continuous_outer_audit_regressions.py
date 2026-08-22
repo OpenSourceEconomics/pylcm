@@ -669,8 +669,8 @@ def test_genuine_smooth_optimum_stays_resolved() -> None:
 def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
     """The exact branch-identity certificate catches a sub-heuristic kink.
 
-    The multi-radius slope-jump contraction test is still a
-    value-only HEURISTIC, not a differentiability certificate. A kink whose jump
+    The multi-radius slope-jump contraction test is a value-only HEURISTIC, not
+    a differentiability certificate. A kink whose jump
     is drowned by the smooth curvature at the probe radius passes as stationary,
     yet the IFT tangent `-Q_ftheta/Q_ff = 1` is order-one wrong (`df*/dtheta = 0`
     for the pinned optimum). Here `kink_coef = 1e-7` is far below the radius-scale

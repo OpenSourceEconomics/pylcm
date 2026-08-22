@@ -1,6 +1,6 @@
 """DataFrame assembly for `SimulationResult.to_dataframe`."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -15,6 +15,7 @@ from _lcm.simulation.additional_targets import (
 from _lcm.simulation.result_metadata import ResultMetadata
 from _lcm.typing import ActionName, FlatParams, FlatRegimeParams, RegimeName, StateName
 from lcm.ages import AgeGrid
+from lcm.exceptions import PyLCMError
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -48,6 +49,7 @@ def _create_flat_dataframe(
             regime_actions=metadata.regime_to_actions[name],
             publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=flat_params[name],
+            stakeholders=metadata.regime_to_stakeholders.get(name),
             additional_targets=additional_targets,
             ages=ages,
             subject_batch_size=subject_batch_size,
@@ -60,7 +62,43 @@ def _create_flat_dataframe(
         regime_dfs=regime_dfs,
         state_names=metadata.state_names,
         action_names=metadata.action_names,
+        stakeholder_value_names=_stakeholder_value_column_names(
+            regime_names=metadata.regime_names,
+            regime_to_stakeholders=metadata.regime_to_stakeholders,
+        ),
     )
+
+
+def _stakeholder_value_column_names(
+    *,
+    regime_names: list[RegimeName],
+    regime_to_stakeholders: Mapping[RegimeName, tuple[str, ...] | None],
+) -> list[str]:
+    """Name the per-stakeholder value columns in the order the regimes declare them.
+
+    Each collective regime contributes `value_<stakeholder>` for every entry of
+    its `stakeholders` tuple, in that tuple's order — the same order that fixes
+    the trailing axis of its value function. Regimes are walked in
+    `regime_names` order and a name already contributed by an earlier regime
+    keeps its first position, so two regimes sharing a stakeholder share one
+    column.
+
+    Args:
+        regime_names: Names of all regimes in the model.
+        regime_to_stakeholders: Mapping of regime names to their ordered
+            stakeholder names, `None` for a singleton regime.
+
+    Returns:
+        List of column names, in publication order.
+
+    """
+    names: list[str] = []
+    for regime_name in regime_names:
+        for stakeholder in regime_to_stakeholders.get(regime_name) or ():
+            column = f"value_{stakeholder}"
+            if column not in names:
+                names.append(column)
+    return names
 
 
 def _process_regime(
@@ -72,6 +110,7 @@ def _process_regime(
     regime_actions: tuple[str, ...],
     publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
+    stakeholders: tuple[str, ...] | None,
     additional_targets: list[str] | None,
     ages: AgeGrid,
     subject_batch_size: int | None = None,
@@ -81,7 +120,15 @@ def _process_regime(
     `regime` is required only when `additional_targets` is set. With
     `additional_targets=None`, only `regime_name` is read, so callers
     may pass `regime=None` after dropping compiled `Regime` objects to
-    free device workspaces.
+    free device workspaces. `stakeholders` is read unconditionally (from
+    `ResultMetadata`, computed while `regime` was still guaranteed
+    present) so a COLLECTIVE regime's `value` column can be split even
+    when `regime` itself is `None`.
+
+    Raises:
+        PyLCMError: If the regime's recorded value carries a stakeholder axis
+            but no stakeholder names are available to name its columns.
+
     """
     period_dicts = [
         _extract_period_data(
@@ -97,6 +144,25 @@ def _process_regime(
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = dict(
         _concatenate_and_filter(period_dicts)
     )
+
+    recorded_value = data["value"]
+    if stakeholders is not None:
+        del data["value"]
+        data.update(
+            _split_stakeholder_value(
+                value=np.asarray(recorded_value), stakeholders=stakeholders
+            )
+        )
+    elif np.ndim(recorded_value) > 1:
+        msg = (
+            f"Regime {regime_name!r} recorded a value with a trailing "
+            f"stakeholder axis of length {np.shape(recorded_value)[-1]}, but the "
+            "result carries no `regime_to_stakeholders` entry for it, so its "
+            "per-stakeholder value columns cannot be named. The result was "
+            "written without that metadata; re-simulate to produce a result "
+            "that can be published as a dataframe."
+        )
+        raise PyLCMError(msg)
 
     data["age"] = ages.values[data["period"]]  # noqa: PD011
     data["regime_name"] = [regime_name] * len(data["period"])
@@ -135,6 +201,27 @@ def _process_regime(
             )
 
     return pd.DataFrame(data)
+
+
+def _split_stakeholder_value(
+    *,
+    value: np.ndarray,
+    stakeholders: tuple[str, ...],
+) -> dict[str, np.ndarray]:
+    """Split a COLLECTIVE regime's 2D `value` column into per-stakeholder columns.
+
+    A collective regime's recorded value carries a trailing stakeholder axis
+    (`PeriodRegimeSimulationData.V_arr`, shape `(n_rows, n_stakeholders)`), so
+    `pd.DataFrame` cannot ingest it as a single "value" column the way it does
+    for a singleton regime's 1D array. Naming is deterministic:
+    `value_<stakeholder>`, one 1D column per entry of `stakeholders`, in the
+    same order as the trailing axis (fixed by `Regime.stakeholders` — see
+    `_lcm.regime_building.Q_and_F`).
+    """
+    return {
+        f"value_{stakeholder}": value[:, i]
+        for i, stakeholder in enumerate(stakeholders)
+    }
 
 
 def _extract_period_data(
@@ -237,6 +324,7 @@ def _assemble_dataframe(
     regime_dfs: list[pd.DataFrame],
     state_names: list[StateName],
     action_names: list[ActionName],
+    stakeholder_value_names: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
     if not regime_dfs:
@@ -244,7 +332,12 @@ def _assemble_dataframe(
 
     df = pd.concat(regime_dfs, ignore_index=True)
     df = _add_missing_columns(df=df, state_names=state_names, action_names=action_names)
-    df = _reorder_columns(df=df, state_names=state_names, action_names=action_names)
+    df = _reorder_columns(
+        df=df,
+        state_names=state_names,
+        action_names=action_names,
+        stakeholder_value_names=stakeholder_value_names,
+    )
     return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
@@ -281,12 +374,31 @@ def _reorder_columns(
     df: pd.DataFrame,
     state_names: list[StateName],
     action_names: list[ActionName],
+    stakeholder_value_names: Sequence[str] = (),
 ) -> pd.DataFrame:
-    """Reorder columns: id, period, regime_name, value, states, actions, rest."""
-    base = ["subject_id", "period", "regime_name", "value"]
-    known = set(base) | set(state_names) | set(action_names)
+    """Reorder columns: id, period, regime_name, value, states, actions, rest.
+
+    `subject_id`, `period` and `regime_name` identify a row and are named
+    unconditionally, so a frame that lacks one raises here rather than being
+    published one column narrower. `"value"` is the one conditional entry: an
+    all-collective result has none, because `_process_regime` replaces it with
+    `value_<stakeholder>` columns.
+
+    Those stakeholder columns are named by `stakeholder_value_names`, which
+    carries each collective regime's own `stakeholders` order — the order that
+    also fixes the trailing axis of its value function. Selecting them by name
+    rather than by a `value_` prefix leaves an ordinary computed column such as
+    `value_of_leisure` in the trailing `rest` block where it belongs.
+    """
+    base = ["subject_id", "period", "regime_name"]
+    if "value" in df.columns:
+        base = [*base, "value"]
+    stakeholder_value_cols = [c for c in stakeholder_value_names if c in df.columns]
+    known = (
+        set(base) | set(state_names) | set(action_names) | set(stakeholder_value_cols)
+    )
     rest = [c for c in df.columns if c not in known]
-    return df[base + state_names + action_names + rest]
+    return df[base + stakeholder_value_cols + state_names + action_names + rest]
 
 
 def _convert_to_categorical(

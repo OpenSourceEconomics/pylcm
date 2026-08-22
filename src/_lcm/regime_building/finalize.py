@@ -4,8 +4,9 @@
 runs: model-level `derived_categoricals` are merged in, the model-level
 Koopmans aggregator and certainty equivalent are injected into non-terminal
 regimes that declare none, and completeness is validated (a
-`utility` entry, state-transition coverage, no state/action overlap,
-distributed-grid rules). The result is a plain
+`utility` entry — a per-stakeholder `utility_<s>` and at least one discrete
+action for a collective regime — state-transition coverage, no state/action
+overlap, distributed-grid rules). The result is a plain
 `lcm.regime.Regime`, still in user vocabulary — coarse laws, `Phased`
 containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
@@ -21,7 +22,10 @@ from dags.annotations import ensure_annotations_are_strings
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
-from _lcm.user_regime_validation import _validate_completeness
+from _lcm.user_regime_validation import (
+    _fail_if_collective_regime_folds,
+    _validate_completeness,
+)
 from _lcm.utils.error_messages import format_messages
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
@@ -76,8 +80,17 @@ def finalize_regimes(
             prefixed.
 
     """
+    _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(user_regimes, "koopmans_aggregator")
     _fail_if_continuation_slot_is_mixed(user_regimes, "certainty_equivalent")
+    # The published frame is one table over every regime, so the names its
+    # collective regimes claim are reserved for all of them.
+    reserved_value_columns = frozenset(
+        f"value_{stakeholder}"
+        for regime in user_regimes.values()
+        if regime.stakeholders is not None
+        for stakeholder in regime.stakeholders
+    )
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -115,7 +128,9 @@ def finalize_regimes(
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
         )
-        error_messages = _validate_completeness(finalized)
+        error_messages = _validate_completeness(
+            regime=finalized, reserved_value_columns=reserved_value_columns
+        )
         if error_messages:
             raise RegimeInitializationError(
                 f"In regime '{regime_name}': {format_messages(error_messages)}"

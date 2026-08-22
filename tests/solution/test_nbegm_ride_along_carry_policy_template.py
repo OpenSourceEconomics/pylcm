@@ -1,4 +1,4 @@
-"""The standalone ride-along NBEGM continuation pytree.
+"""The standalone ride-along NBEGM continuation pytree carries its policy leaf.
 
 On the continuous-only, jump-free ride-along path, `_assemble_ride_carry` populates
 the exact-consumption `EGMCarry.policy` leaf, so the runtime carry
@@ -11,8 +11,8 @@ differs from the runtime carry, and the compiled solve rejects it.
 
 These tests pin the template's pytree against the real runtime producer
 (`_assemble_ride_carry`) on both the `carry_policy=True` and `carry_policy=False`
-paths, so a regression to a policy-free template fails structurally
-without needing the full model solve.
+paths, so a regression to a policy-free template fails structurally without
+needing the full model solve.
 """
 
 import jax

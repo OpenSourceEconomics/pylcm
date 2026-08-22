@@ -112,7 +112,7 @@ def test_recorded_pairs_respect_the_intrinsic_budget(simulated: pd.DataFrame) ->
 
 
 def test_nested_policy_fallback_column_is_published(simulated: pd.DataFrame) -> None:
-    """The refused-nested-read flag must be observable.
+    """The refused-nested-read flag is observable in the simulated frame.
 
     A regime that can take the nested continuous-outer policy read must publish
     the per-subject flag saying whether that read was refused and the grid

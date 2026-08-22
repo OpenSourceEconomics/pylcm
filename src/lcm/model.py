@@ -57,15 +57,22 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
-from _lcm.solution.backward_induction import solve
+from _lcm.solution.backward_induction import (
+    _build_base_state_action_spaces,
+    _reject_edge_fold_state_param_collisions,
+    solve,
+)
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.preconditions import check_solver_params
+from _lcm.solution.v_topology import expected_V_rank
 from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
+    ModelSolveReturn,
     ParamsTemplate,
+    PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -418,6 +425,7 @@ class Model:
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[False] = ...,
+        return_dissolution_flags: Literal[False] = ...,
     ) -> PeriodToRegimeToVArr: ...
 
     @overload
@@ -430,6 +438,7 @@ class Model:
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
         return_simulation_policy: Literal[True],
+        return_dissolution_flags: Literal[False] = ...,
     ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
 
     @overload
@@ -441,11 +450,39 @@ class Model:
         max_compilation_workers: int | None = ...,
         log_path: str | Path | None = ...,
         log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[False] = ...,
+        return_dissolution_flags: Literal[True],
+    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
+        return_simulation_policy: Literal[True],
+        return_dissolution_flags: Literal[True],
+    ) -> tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]: ...
+
+    @overload
+    def solve(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        max_compilation_workers: int | None = ...,
+        log_path: str | Path | None = ...,
+        log_keep_n_latest: int = ...,
         return_simulation_policy: bool,
-    ) -> (
-        PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
-    ): ...
+        return_dissolution_flags: bool,
+    ) -> ModelSolveReturn: ...
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -457,10 +494,8 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         return_simulation_policy: bool = False,
-    ) -> (
-        PeriodToRegimeToVArr
-        | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
-    ):
+        return_dissolution_flags: bool = False,
+    ) -> ModelSolveReturn:
         """Solve the model by backward induction, using each regime's solver.
 
         Args:
@@ -501,11 +536,22 @@ class Model:
                 for inspection rather than for handing back. Regimes whose
                 solver publishes no policy have no entry in the policy
                 mapping. Defaults to `False` (value functions only).
+            return_dissolution_flags: When `True`, also return the per-period,
+                per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
+                cells whose action mask is empty; empty inner mappings for
+                models without collective regimes). Pass the result back into
+                `simulate(period_to_regime_to_dissolution_flags=...)` so a
+                dissolution `GatedEdge` whose gate reads `D_target` can be
+                evaluated during forward simulation. Defaults to `False`
+                (value functions only).
 
         Returns:
             Immutable mapping of period to a value function array for each
-            regime; or, when `return_simulation_policy=True`, that mapping
-            paired with the per-period simulation-policy mapping.
+            regime; combined with the per-period simulation-policy
+            mapping when `return_simulation_policy=True` and/or the
+            per-period dissolution-flag mapping when `return_dissolution_flags=True`
+            (in that order: value functions, then simulation policy, then
+            dissolution flags — either or both may be appended).
 
         """
         log = get_logger(log_level=log_level)
@@ -524,9 +570,18 @@ class Model:
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
             collect_simulation_policies=return_simulation_policy,
+            retain_dissolution_flags=return_dissolution_flags,
         )
+        if return_simulation_policy and return_dissolution_flags:
+            return (
+                internal_result.value_functions,
+                internal_result.simulation_policies,
+                internal_result.dissolution_flags,
+            )
         if return_simulation_policy:
             return internal_result.value_functions, internal_result.simulation_policies
+        if return_dissolution_flags:
+            return internal_result.value_functions, internal_result.dissolution_flags
         return internal_result.value_functions
 
     def _solve_compiled(
@@ -539,13 +594,18 @@ class Model:
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
         collect_simulation_policies: bool,
+        retain_dissolution_flags: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        Returns the named backward-induction outputs. Per-period simulation
+        Returns the named backward-induction outputs: value-function arrays,
+        each regime's published per-period simulation policy, and the
+        per-period, per-COLLECTIVE-regime dissolution-flag arrays. Simulation
         policies are retained only when `collect_simulation_policies` is true.
-        With `log_path`
-        set, a snapshot is written at `log_level="debug"` (every solve) and at
+        The dissolution flags are empty for models without collective regimes,
+        and for a collective model whose gates never read `D_target` unless
+        `retain_dissolution_flags` asks for them. With `log_path` set, a
+        snapshot is written at `log_level="debug"` (every solve) and at
         `"warning"` / `"progress"` whenever the returned solution contains
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
@@ -562,6 +622,7 @@ class Model:
                 enable_jit=self.enable_jit,
                 collect_simulation_policies=collect_simulation_policies,
                 max_compilation_workers=max_compilation_workers,
+                retain_dissolution_flags=retain_dissolution_flags,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -638,19 +699,18 @@ class Model:
         A freshly solved value function is correct by construction, so only a
         supplied one is checked. It is the one simulate input nothing else
         validates: a value function of the wrong rank broadcasts rather than
-        raising, so it has to be caught against the declared state space here.
+        raising, so it has to be caught against the produced rank here.
         """
         if period_to_regime_to_V_arr is None or not validation_enabled(log):
             return
         try:
             validate_supplied_V_shapes(
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                # The solve phase, not the user declaration: a carried state is
-                # derived during backward induction and contributes no axis, so
-                # the user's `states` would over-count the ranks it produced.
-                regime_to_state_names=MappingProxyType(
+                # `expected_V_rank` is the same rule the solver sizes V with, so
+                # the rank a solve produces is the rank simulate accepts.
+                regime_to_expected_rank=MappingProxyType(
                     {
-                        name: tuple(regime.solution.state_names)
+                        name: expected_V_rank(regime=regime)
                         for name, regime in self._regimes.items()
                     }
                 ),
@@ -659,18 +719,21 @@ class Model:
             raise_or_warn(logger=log, error=error)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(
+    def simulate(  # noqa: C901
         self,
         *,
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         log_level: LogLevel,
+        period_to_regime_to_dissolution_flags: PeriodToRegimeToDissolutionFlags
+        | None = None,
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
+        own_stakeholder: str | None = None,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -697,6 +760,12 @@ class Model:
                 (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
+            period_to_regime_to_dissolution_flags: Per-period, per-COLLECTIVE-regime
+                dissolution-flag arrays from `solve(return_dissolution_flags=True)`.
+                Required only for a model with a dissolution `GatedEdge` (a gate
+                that reads `D_target`); such a gate raises a clear
+                `NotImplementedError` at simulate time if this is left `None`.
+                `None` (the default) is a no-op for every other model.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -727,6 +796,33 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
+            own_stakeholder: For a collective source `own_stakeholder` is
+                required and names the role the simulated population carries;
+                a singleton source's sole leg carries no role and needs none.
+                A collective source declares one dissolution leg per
+                stakeholder, and each leg sends the row into *that*
+                stakeholder's own continuing regime under *that* stakeholder's
+                own state projection — so the role decides which leg governs
+                every row. A dissolution does not split a row into two
+                independently tracked households: each cohort is single-gender
+                and carries synthetic partners, so `"f"` simulates women and
+                `"m"` men, and a two-sided population is two separate calls. On
+                a collective source, both `None` and a value naming no declared
+                leg raise `ValueError`; a singleton source ignores the
+                argument entirely, so `None` (the default) is right there.
+
+                The requirement is **per call, not per row**: the routing step
+                runs for every ACTIVE collective source, and which rows it
+                would touch is a traced array rather than a Python value. So a
+                cohort initialized entirely into some other regime of a model
+                that merely *contains* a collective source must still declare
+                a role — the alternative, a raise conditioned on occupancy,
+                would cost a device sync and would make the error depend on
+                the seed.
+
+                Genuinely mixed populations with differing per-row roles, or
+                two linked rows that unlink on dissolution, remain the
+                deferred "linked mode".
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -768,6 +864,24 @@ class Model:
             multiple=alignment,
         )
         flat_params = self._process_params(params)
+        # The edge-fold state/source-param collision guard runs on the simulate
+        # entry as well as inside `solve()`. Simulation accepts a precomputed or
+        # cached `period_to_regime_to_V_arr` and then skips `solve()` entirely
+        # (the `period_to_regime_to_V_arr is None` branch below), so a guard
+        # sitting only in `solve()` would let the simulate gate and the
+        # fallback-state projector read a colliding leaf unchecked — a name that
+        # is both a target state of the target regime and a key of
+        # `flat_params[source]`. Running it here, before any simulation
+        # compilation or routing, covers every route to the value arrays.
+        # A cheap no-op when no regime declares gated edges.
+        if any(regime.gated_edges for regime in self._regimes.values()):
+            _reject_edge_fold_state_param_collisions(
+                regimes=self._regimes,
+                base_state_action_spaces=_build_base_state_action_spaces(
+                    regimes=self._regimes, flat_params=flat_params
+                ),
+                flat_params=flat_params,
+            )
         if validation_enabled(log):
             try:
                 validate_initial_conditions(
@@ -802,12 +916,25 @@ class Model:
             period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
         )
         period_to_regime_to_sim_policy = None
+        auto_solved_dissolution_flags: PeriodToRegimeToDissolutionFlags | None = None
         if period_to_regime_to_V_arr is None:
             # A fresh solve also publishes the off-grid DC-EGM policy, which
             # simulation interpolates at each subject's resources where the
             # regime qualifies (`SimulationPhase.egm_policy_read`). With
             # user-supplied V arrays there is no published policy, so the
             # grid-argmax path decides the continuous action.
+            #
+            # The auto-solve also carries each
+            # collective regime's dissolution flag D on the result, so a
+            # dissolution-gated model driven through the auto-solve path
+            # need not re-run `solve(return_dissolution_flags=True)`
+            # separately — the flags are threaded straight into `simulate`
+            # below (still overridable by an explicit caller-supplied
+            # `period_to_regime_to_dissolution_flags`). Nothing is requested
+            # here: a gate reading `D_target` is what makes the flags a
+            # simulate input, and backward induction reads that off the gate
+            # itself, so a model whose gates read only values carries none.
+            #
             # Two signals, because the flat and nested reads qualify
             # differently. The flat endogenous-grid read is announced
             # regime-side by `egm_policy_read`; a self-describing payload
@@ -831,6 +958,7 @@ class Model:
             )
             period_to_regime_to_V_arr = internal_result.value_functions
             period_to_regime_to_sim_policy = internal_result.simulation_policies
+            auto_solved_dissolution_flags = internal_result.dissolution_flags
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -843,12 +971,20 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_dissolution_flags=(
+                period_to_regime_to_dissolution_flags
+                if period_to_regime_to_dissolution_flags is not None
+                else auto_solved_dissolution_flags
+                if auto_solved_dissolution_flags is not None
+                else MappingProxyType({})
+            ),
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
+            own_stakeholder=own_stakeholder,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

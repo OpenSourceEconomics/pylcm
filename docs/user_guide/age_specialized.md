@@ -157,3 +157,53 @@ discrete states, or stochastic-process grids. A grid whose points depend on mode
 parameters should use the ordinary runtime-points `IrregSpacedGrid` mechanism instead;
 an `AgeSpecializedGrid` that resolves to a runtime-points grid is rejected at model
 creation.
+
+### A marker goes in `states`, never inside `Phased`
+
+pylcm looks for grid markers among a regime's top-level `states` values, and resolves
+each one it finds to that period's concrete grid. A marker nested inside a `Phased`
+variant is never reached by that resolution, so both such declarations are rejected at
+`Regime` construction:
+
+```python
+# Rejected: a marker cannot be a carried state's solve-phase imputation.
+states = {"assets": Phased(solve=AgeSpecializedGrid(...), simulate=LinSpacedGrid(...))}
+
+# Rejected: a carried state's simulate-phase domain may not be age-specialized.
+states = {"assets": Phased(solve=impute_assets, simulate=AgeSpecializedGrid(...))}
+```
+
+An age-specialized state is a plain `states` entry: a genuine grid axis in both phases,
+with its law of motion in `state_transitions` like any other state's.
+
+### Gate references and leg fallbacks on an age-specialized regime
+
+A `GatedEdge` reads other regimes' values within one period — its `gate_refs` read a
+reference regime's value function, and a shut gate reads the leg's `fallback` regime's
+value at a projected coordinate. Either regime may hold its states on an
+`AgeSpecializedGrid`.
+
+Every such read is measured against the grid of **the period whose value is being
+folded**, not against some other age at which that regime is also active. This is worth
+stating explicitly because nothing in the arrays would reveal a mistake: `n_points` is
+fixed across ages while the bounds move, so every period's value array has the same
+shape, and a read against another age's nodes lands on a different point of an otherwise
+correctly shaped array.
+
+A leg's `fallback` projection owes one coordinate function per state the fallback regime
+carries **in simulation**, and an age-specialized state is one of those like any other:
+
+```python
+EdgeLeg(
+    fallback=SamePeriodRef(
+        regime="annuity",
+        # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection
+        # owes a coordinate on it exactly as it would on a plain grid state.
+        projection={"principal": principal_from_balance},
+    )
+)
+```
+
+A `gate_refs` projection instead owes one coordinate per state of the reference regime's
+*value function*, i.e. its solve states. The two sets differ only by the states a regime
+carries in simulation alone.

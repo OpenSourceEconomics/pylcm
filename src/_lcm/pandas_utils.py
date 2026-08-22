@@ -29,8 +29,10 @@ from lcm.ages import AgeGrid
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid
+from lcm.transition import AgeSpecializedGrid, JointTransition
 from lcm.typing import Float1D, FloatND, Int1D
+
+_JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
 
 def has_series(params: Mapping) -> bool:
@@ -247,19 +249,23 @@ def convert_series_in_params(
             all_funcs["koopmans_aggregator"] = aggregator_variants[0]
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
+            # Function lookup exists only to infer a Series leaf's indexing axes.
+            # Scalars and already-materialized arrays need no source inspection;
+            # resolving every value would make an unrelated Series elsewhere in
+            # the params tree turn a valid nested joint scalar into a KeyError.
+            if not _value_contains_series(value):
+                converted_regime[func_param] = value
+                continue
+
             parts = tree_path_from_qname(func_param)
             param_name = parts[-1]
-            if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM:
-                # Per-target transition param `target__func__param`; the
-                # engine keys the function `func__target`.
-                resolved_func_name = qname_from_tree_path((parts[1], parts[0]))
-            else:
-                resolved_func_name = parts[0] if len(parts) > 1 else func_param
-
-            if resolved_func_name == "koopmans_aggregator":
-                all_funcs["koopmans_aggregator"] = _variant_declaring(
-                    variants=aggregator_variants, param_name=param_name
-                )
+            func, resolved_func_name = _resolve_param_consumer(
+                parts=parts,
+                param_name=param_name,
+                user_regime=user_regime,
+                all_funcs=all_funcs,
+                aggregator_variants=aggregator_variants,
+            )
 
             # Runtime grid/process params are scalar — no AST inspection.
             # `certainty_equivalent` and `taste_shocks` are pseudo-function keys
@@ -270,19 +276,8 @@ def convert_series_in_params(
                     func_name=resolved_func_name, user_regime=user_regime
                 )
             ):
-                converted_regime[func_param] = _convert_param_value(
-                    value=value,
-                    func=None,
-                    param_name=param_name,
-                    func_name=resolved_func_name,
-                    ages=ages,
-                    user_regimes=user_regimes,
-                    regime_names_to_ids=regime_names_to_ids,
-                    regime_name=regime_name,
-                )
-                continue
+                func = None
 
-            func = all_funcs[resolved_func_name]
             converted_regime[func_param] = _convert_param_value(
                 value=value,
                 func=func,
@@ -298,6 +293,103 @@ def convert_series_in_params(
         "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def _value_contains_series(value: object) -> bool:
+    """Return whether one parameter value contains a pandas Series leaf."""
+    if isinstance(value, pd.Series):
+        return True
+    if isinstance(value, UserMappingLeaf):
+        return any(_value_contains_series(item) for item in value.data.values())
+    if isinstance(value, UserSequenceLeaf):
+        return any(_value_contains_series(item) for item in value.data)
+    if isinstance(value, Mapping):
+        return any(_value_contains_series(item) for item in value.values())
+    return False
+
+
+def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...]:
+    """Return both phase variants of one joint declaration, or its bare value."""
+    if isinstance(raw, Phased):
+        return cast(
+            "tuple[JointTransition, JointTransition]", (raw.solve, raw.simulate)
+        )
+    return (raw,)
+
+
+def _resolve_param_consumer(
+    *,
+    parts: tuple[str, ...],
+    param_name: str,
+    user_regime: UserRegime,
+    all_funcs: dict[str, Callable[..., Any]],
+    aggregator_variants: tuple[Callable[..., Any], ...],
+) -> tuple[Callable[..., Any] | None, FunctionName]:
+    """Resolve a flattened param path to the callable declaring its Series leaf.
+
+    Joint support/probability roles add one qname level, while joint outputs keep
+    the ordinary ``target__next_<state>__param`` path.  Resolve both from the
+    public declaration so Series indexing follows the exact role and phase
+    variant that owns the parameter.
+    """
+    if len(parts) == _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH and parts[2] in {
+        "support",
+        "probabilities",
+    }:
+        target, kernel_name, role, _ = parts
+        raw = user_regime.joint_transitions[target][kernel_name]
+        variants = _joint_variants(raw)
+        role_funcs: tuple[Callable[..., Any], ...]
+        if role == "support":
+            role_funcs = tuple(
+                cast("Callable[..., Any]", variant.support)
+                for variant in variants
+                if callable(variant.support)
+            )
+        else:
+            role_funcs = tuple(variant.probabilities for variant in variants)
+        if not role_funcs:
+            msg = (
+                f"Parameter path {'__'.join(parts)!r} names a callable joint "
+                f"transition {role} role, but the declaration has no callable."
+            )
+            raise KeyError(msg)
+        return (
+            _variant_declaring(variants=role_funcs, param_name=param_name),
+            f"{kernel_name}.{role}",
+        )
+
+    if len(parts) == ParamsQnameDepth.TARGETREGIME__FUNC__PARAM:
+        target, public_func_name, _ = parts
+        if public_func_name.startswith("next_"):
+            state_name = public_func_name.removeprefix("next_")
+            output_variants = tuple(
+                joint.outputs[state_name]
+                for raw in user_regime.joint_transitions.get(target, {}).values()
+                for joint in _joint_variants(raw)
+                if state_name in joint.outputs
+            )
+            if output_variants:
+                return (
+                    _variant_declaring(variants=output_variants, param_name=param_name),
+                    qname_from_tree_path((public_func_name, target)),
+                )
+        # Ordinary per-target transition param: the engine keys the callable
+        # ``func__target`` even though the public params path is target-first.
+        resolved = qname_from_tree_path((public_func_name, target))
+        return all_funcs[resolved], resolved
+
+    resolved = parts[0]
+    if resolved == "koopmans_aggregator":
+        return (
+            _variant_declaring(variants=aggregator_variants, param_name=param_name),
+            cast("FunctionName", resolved),
+        )
+    if resolved in _PSEUDO_KEYS_WITHOUT_A_SIGNATURE or _is_runtime_grid_param(
+        func_name=cast("FunctionName", resolved), user_regime=user_regime
+    ):
+        return None, cast("FunctionName", resolved)
+    return all_funcs[resolved], cast("FunctionName", resolved)
 
 
 def _convert_param_value(

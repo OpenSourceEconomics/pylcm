@@ -16,7 +16,6 @@ from jax import vmap
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.state_action_space import _validate_all_states_present
-from _lcm.transition_laws import is_stochastic
 from _lcm.typing import (
     ActionName,
     FlatRegimeParams,
@@ -27,6 +26,7 @@ from _lcm.typing import (
     StateName,
     StatesPerRegime,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
 
@@ -104,14 +104,14 @@ def calculate_next_states(
         entries for other subjects are left untouched.
 
     """
-    transition_laws = regime.simulation.transition_laws
+    transition_plans = regime.simulation.transition_plans
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
     stochastic_next_function_names = sorted(
         qname_from_tree_path((target_regime_name, transition_name))
         for target_regime_name, bundle in (regime.simulation.transitions.items())
         for transition_name in bundle
-        if is_stochastic(transition_laws, target_regime_name, transition_name)
+        if transition_plans[target_regime_name].is_lottery(transition_name)
     )
 
     key, stochastic_variables_keys = generate_simulation_keys(
@@ -248,6 +248,26 @@ def calculate_next_regime_membership(
             if r in regime_transition_probs
         }
     )
+    if not active_regime_probs:
+        # Declaring a target that is never active in an adjacent period is
+        # legal — the edge retains no period and owes no state handoff. Standing
+        # in such a regime at a period it cannot leave is not: the draw has no
+        # candidate to return. Refused here rather than at model build, because
+        # the topology alone does not say whether any subject reaches it, and
+        # unconditionally rather than under `log_level`, because an empty
+        # candidate set makes the draw impossible rather than merely suspect.
+        msg = (
+            f"Regime '{regime.name}' has no regime to move into at period "
+            f"{period + 1}: none of its declared transition targets "
+            f"({', '.join(repr(name) for name in sorted(regime_transition_probs))}) "
+            f"is active there, and the regimes that are "
+            f"({', '.join(repr(name) for name in sorted(active_regimes_next_period))}) "
+            f"are not among them. Subjects simulated in '{regime.name}' at "
+            f"period {period} (age {age}) have nowhere to go. Either widen a "
+            f"target's `active` to cover that period, or keep '{regime.name}' "
+            f"from being occupied there."
+        )
+        raise InvalidRegimeTransitionProbabilitiesError(msg)
 
     key, regime_transition_key = generate_simulation_keys(
         key=key,

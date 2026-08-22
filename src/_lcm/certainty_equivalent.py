@@ -611,6 +611,22 @@ def _args_for(
     return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}
 
 
+def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> bool:
+    """Whether this certainty equivalent is anything other than the linear one.
+
+    The cut is the type, not whether a value is attached. `LinearExpectation`
+    is a real class with a real `aggregate` and is what a regime that declared
+    nothing receives, so every non-terminal regime carries a certainty
+    equivalent and presence separates nothing. A guard that means "this path
+    does not implement a nonlinear CE" therefore asks whether the certainty
+    equivalent is `LinearExpectation`; an unattached slot carries no nonlinear
+    aggregation of its own and answers False as well.
+    """
+    return certainty_equivalent is not None and not isinstance(
+        certainty_equivalent, LinearExpectation
+    )
+
+
 def _scaled_lottery_terms(
     *, values: FloatND, coefficients: FloatND, shifts: IntND
 ) -> tuple[FloatND, FloatND]:

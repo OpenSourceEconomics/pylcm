@@ -26,7 +26,7 @@ from _lcm.probability import (
     restored_against_a_nonfinite_value,
     scaled_exact_product,
 )
-from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
+from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.zero_safe import scaled_weighted_terms
 
 # A competing continuation the exact lottery loses to and an enlarged one wins.
@@ -145,8 +145,8 @@ def test_the_linear_mean_reads_a_node_at_the_scale_it_carries():
     dtype = jnp.asarray(0.0).dtype
     large = jnp.asarray(2.0**100, dtype=dtype)
 
-    got = _expectation_over_stochastic_nodes(
-        values=jnp.asarray([1.0, large], dtype=dtype),
+    got = zero_safe_average(
+        jnp.asarray([1.0, large], dtype=dtype),
         weights=jnp.ones(2, dtype=dtype),
         shifts=jnp.asarray([0, 300], dtype=jnp.int32),
     )

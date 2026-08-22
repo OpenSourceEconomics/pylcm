@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/mock_regime.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/solution/_|^tests/ci/
+        exclude: tests/mock_regime.py|tests/collective_fixtures.py|tests/envelope_configs.py|^tests/test_models/|^tests/data/|^tests/solution/_|^tests/ci/
       - id: no-commit-to-branch
         args:
           - --branch

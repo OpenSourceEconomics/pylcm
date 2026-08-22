@@ -9,13 +9,21 @@ on it.
 Every target enters the same certainty equivalent, so a NaN from one destroys
 the well-specified targets beside it -- the states that *are* reachable lose
 their value because of one that is not.
+
+`_scalar_target_contribution` hands the stateless targets over UNMULTIPLIED, as
+`(name, prob, V)` mixture terms; `_sum_regime_mixture` forms `p_r · V_r` once,
+zero-safely, inside the single value-ordered contraction. The property under
+test is therefore a property of that pair, and it is exercised through both.
 """
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.Q_and_F import _scalar_target_contribution
+from _lcm.regime_building.Q_and_F import (
+    _scalar_target_contribution,
+    _sum_regime_mixture,
+)
 
 
 @pytest.mark.parametrize("unreachable_value", [-np.inf, np.inf])
@@ -23,7 +31,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
     unreachable_value,
 ):
     """A zero-probability target adds zero, not NaN, beside a reachable one."""
-    CE, _, _, _, mass, _ = _scalar_target_contribution(
+    mixture_terms, _, _, _, mass, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "unreachable"),
         next_regime_to_V_arr={
             "reachable": jnp.asarray(2.0),
@@ -36,6 +44,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
         as_lottery=False,
         zero=jnp.asarray(0.0),
     )
+    CE = _sum_regime_mixture(mixture_terms, like=jnp.asarray(0.0))
 
     np.testing.assert_allclose(np.asarray(CE), 2.0)
     np.testing.assert_allclose(np.asarray(mass), 1.0)
@@ -43,7 +52,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
 
 def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
     """A target that is genuinely reached at `-inf` keeps making the value `-inf`."""
-    CE, _, _, _, _, _ = _scalar_target_contribution(
+    mixture_terms, _, _, _, _, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "infeasible"),
         next_regime_to_V_arr={
             "reachable": jnp.asarray(2.0),
@@ -56,5 +65,6 @@ def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
         as_lottery=False,
         zero=jnp.asarray(0.0),
     )
+    CE = _sum_regime_mixture(mixture_terms, like=jnp.asarray(0.0))
 
     assert np.isneginf(np.asarray(CE))

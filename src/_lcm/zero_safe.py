@@ -72,6 +72,7 @@ from _lcm.probability import (
     is_below_smallest_normal,
     is_represented_zero,
     nonzero_exact_product,
+    scaled_down_by_power_of_two,
     scaled_exact_product,
 )
 from lcm.typing import FloatND, IntND
@@ -251,8 +252,45 @@ def zero_safe_weighted_term(
     return balanced_product(effective_weight, safe_value)
 
 
+#: Longest permutable axis whose reduction order cannot matter: a single entry
+#: has no order, and two entries are one commutative addition.
+_MAX_ORDER_FREE_AXIS_LENGTH = 2
+
+
+def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
+    """Sum `values` after canonicalising the floating-point reduction order.
+
+    Floating-point addition is not associative.  When the entries are keyed by
+    economically inert identifiers (regime labels, stakeholder names), reducing in
+    declaration order can therefore make a value — and even a strict argmax — depend
+    on those identifiers.  Sorting the NUMERIC contributions before the sum makes the
+    reduction order a function of the contribution multiset alone.
+
+    This is not a correctly-rounded summation algorithm; it is the shared invariant
+    used where identifier permutations must not select a different reduction tree.
+
+    Associativity is what fails; commutativity does not. An axis of one entry has
+    no order to canonicalise, and an axis of two is a single addition, which
+    IEEE-754 evaluates to the same bits in either operand order — signed zeros,
+    infinities and NaN included. So the sort provably changes nothing there and is
+    skipped, which is the ordinary path: a model whose regimes reach one or two
+    targets pays for the canonicalisation only where it can matter.
+
+    Args:
+        values: Contributions to sum.
+        axis: Axis containing the permutable contributions.
+
+    Returns:
+        The value-ordered sum over `axis`.
+    """
+    arr = jnp.asarray(values)
+    if arr.shape[axis] <= _MAX_ORDER_FREE_AXIS_LENGTH:
+        return jnp.sum(arr, axis=axis)
+    return jnp.sum(jnp.sort(arr, axis=axis), axis=axis)
+
+
 def scaled_weighted_terms(
-    *, coefficients: FloatND, shifts: IntND, values: FloatND
+    *, coefficients: FloatND, shifts: IntND, values: FloatND, axis: int | None = None
 ) -> FloatND:
     """Return each node's contribution, formed before its scale is applied.
 
@@ -265,11 +303,12 @@ def scaled_weighted_terms(
     contribution is an ordinary number: a probability of `2**-128` against a
     value of `2**126` contributes a quarter, not nothing.
 
-    Multiplying first and scaling the product keeps every intermediate in range,
-    because the scale is only ever applied downwards — `common` is the smallest
-    shift, so no term is scaled up — and `zero_safe_weighted_term` forms the
-    product itself with the exponent moved between its operands, so a large
-    value meeting an ordinary weight cannot overflow on the way.
+    Applying all of it to the product instead fails from the other end: a
+    coefficient of order one meeting a value near the top of the range
+    overflows to infinity, and the downscale that would have brought the
+    contribution back into range never gets to run. Splitting the scale
+    between the two is what holds at both ends, and it costs nothing, because
+    every intermediate is a power of two away from one the format holds.
 
     The non-finite protection that a lowered weight needs is unnecessary here:
     an infinity or a `NaN` at a live node survives the multiplication and no
@@ -281,28 +320,63 @@ def scaled_weighted_terms(
         coefficients: The scaled weights' significands.
         shifts: Each one's own base-two scale.
         values: What each weight stands against.
+        axis: The axis the sum will be taken over, so that each reduced slice
+            is brought onto the scale its own largest node sets, or `None`
+            when the whole array is summed together.
 
     Returns:
         Each node's contribution, on the one scale the sum is taken at.
 
     """
     arr = jnp.asarray(coefficients)
-    shifts = jnp.asarray(shifts)
-    common = jnp.min(shifts)
-    scale = (common - shifts).astype(jnp.int32)
-    # The scale is only ever applied downwards, and neither end of it is safe on
-    # its own: all of it on the weight underflows a rare node before the value
-    # can supply the binades it was holding, and all of it on the product
-    # overflows an ordinary weight meeting a value near the top of the range.
-    # So the weight takes as much as it has room for while staying normal, and
-    # the product takes what is left.
+    scale = relative_scales(shifts=shifts, axis=axis)
+    # Neither end of the scale is safe on its own: all of it on the weight
+    # underflows a rare node before the value can supply the binades it was
+    # holding, and all of it on the product overflows an ordinary weight
+    # meeting a value near the top of the range. So the weight takes as much
+    # as it has room for while staying normal, and the product takes the rest.
     room = binades_above_smallest_normal(arr)
     on_the_weight = jnp.maximum(scale, -room)
-    return jnp.ldexp(
+    return scaled_down_by_power_of_two(
         zero_safe_weighted_term(
-            weight=jnp.ldexp(arr, on_the_weight),
+            weight=scaled_down_by_power_of_two(arr, on_the_weight),
             value=values,
             subnormal_is_accounted_for=False,
         ),
         scale - on_the_weight,
     )
+
+
+def relative_scales(*, shifts: IntND, axis: int | None = None) -> IntND:
+    """Return each node's base-two scale relative to the largest node beside it.
+
+    A node's probability is `coefficient * 2**-shift`, so nodes held at
+    different shifts are not comparable as plain floats and a sum over them
+    needs one scale. That scale is the smallest shift — the largest node —
+    which makes every relative scale non-positive, so bringing a node onto it
+    is a downscale and cannot overflow.
+
+    A weighted mean is invariant to a common factor on its weights, so the
+    numerator and the mass have to be brought onto the *same* scale for the
+    ratio to be the mean. Both read it from here rather than each deriving it,
+    since a disagreement between the two would be a silent power of two in the
+    published value.
+
+    Args:
+        shifts: Each node's own base-two scale.
+        axis: The axis the sum will be taken over, so that each reduced slice
+            is brought onto the scale its own largest node sets, or `None`
+            when the whole array is summed together.
+
+    Returns:
+        The non-positive power of two carrying each node onto the common
+        scale, with the reduced axis kept so it broadcasts against the values.
+
+    """
+    shifts_arr = jnp.asarray(shifts)
+    common = (
+        jnp.min(shifts_arr)
+        if axis is None
+        else jnp.min(shifts_arr, axis=axis, keepdims=True)
+    )
+    return (common - shifts_arr).astype(jnp.int32)

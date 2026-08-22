@@ -42,10 +42,9 @@ class ResultMetadata:
     """Whether each regime can publish a nested continuous-outer policy read.
 
     True exactly for regimes solved by NNBEGM, the only solver that constructs a
-    `NestedEGMSimPolicy`. The `nested_policy_fallback` column
-    is emitted only for those regimes: elsewhere it would be a constant-False
-    column in every user's dataframe, which is what it silently became when the
-    flag was first surfaced.
+    `NestedEGMSimPolicy`. The `nested_policy_fallback` column is emitted only
+    for those regimes: elsewhere it would be a constant-False column in every
+    user's dataframe.
     """
 
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
@@ -58,6 +57,24 @@ class ResultMetadata:
         tuple[RegimeName, str], tuple[str, ...]
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
+
+    regime_to_stakeholders: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
+        MappingProxyType({})
+    )
+    """Immutable mapping of regime names to their ordered stakeholder names.
+
+    `None` for a singleton regime. Captured at `SimulationResult.__init__` time
+    (when `regimes` is always fully populated) so `to_dataframe` can tell a
+    collective regime's recorded `value` apart from a singleton's even after
+    `save()` has dropped the `Regime` objects themselves — see
+    `_lcm.simulation.result_dataframe._process_regime`.
+
+    The default is empty, so a saved artifact whose metadata payload carries no
+    such mapping still loads. Every regime then reads as a singleton, which is
+    the only reading available; a regime whose recorded value does carry a
+    stakeholder axis is reported by `_lcm.simulation.result_dataframe`, naming
+    this field, instead of being published under a wrong column layout.
+    """
 
 
 def _get_output_dtypes(
@@ -146,6 +163,10 @@ def _compute_metadata(
         for var_name, grid in regime.simulation.discrete_grids.items():
             regime_discrete_categories[(regime_name, var_name)] = grid.categories
 
+    regime_to_stakeholders: dict[RegimeName, tuple[str, ...] | None] = {
+        regime_name: regime.stakeholders for regime_name, regime in regimes.items()
+    }
+
     n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
@@ -163,6 +184,7 @@ def _compute_metadata(
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
+        regime_to_stakeholders=MappingProxyType(regime_to_stakeholders),
     )
 
 

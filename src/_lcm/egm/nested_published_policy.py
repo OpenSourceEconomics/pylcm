@@ -100,9 +100,9 @@ def derive_inner_sim_policy(
         row_discrete_state_names=row_discrete_state_names,
         row_passive_state_names=row_passive_state_names,
         # No inner discrete-action provenance rides in the carry: the NNBEGM
-        # kernel gates nested publication off `inner_discrete_action_names`
-        # so this derivation is only ever reached for a
-        # continuous-only inner where there is no discrete branch to record.
+        # kernel gates nested publication off `inner_discrete_action_names`,
+        # so this derivation is only ever reached for a continuous-only inner
+        # where there is no discrete branch to record.
         row_discrete_action_names=(),
     )
 
