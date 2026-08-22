@@ -46,12 +46,7 @@ jobs:
           - os: macos-latest
             pytest_extra: -m "not slow and not manual"
           - os: windows-latest
-            pytest_extra: >-
-              -m "not slow and not manual"
-              --exact-kernel-skip-inventory=reports/exact-kernel-skips-Windows.json
-              --expected-exact-kernel-skip-inventory
-              tests/ci/expected-exact-kernel-skips-windows.json
-              --max-total-skips=25
+            pytest_extra: -m "not slow and not manual"
     steps:
       - uses: actions/checkout@v7
       - name: Activate the MSVC developer environment
