@@ -42,7 +42,7 @@ from lcm.consumption_savings_regime import (
     LiquidMargin,
     post_decision_lower_bound,
 )
-from lcm.solvers import NBEGM, NNBEGM
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import BoolND, ContinuousAction, ContinuousState
 
 _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=10)
@@ -104,7 +104,8 @@ def _bound_nbegm() -> NBEGM:
 def _bound_nnbegm() -> NNBEGM:
     """An NNBEGM whose two margins are resolved, as the engine hands it over."""
     return NNBEGM(
-        inner=NBEGM(savings_grid=_SAVINGS_GRID), outer_grid=_SAVINGS_GRID
+        inner=NBEGM(savings_grid=_SAVINGS_GRID),
+        outer_search=FiniteOuterGrid(grid=_SAVINGS_GRID),
     )._with_margins(
         liquid=_BoundLiquidMargin(
             state="liquid",

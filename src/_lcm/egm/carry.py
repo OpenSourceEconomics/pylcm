@@ -68,6 +68,21 @@ class EGMCarry:
     fixed-savings candidate where the child boundary binds.
     """
 
+    policy: FloatND | None = None
+    """Exact consumption at `endog_grid`, or `None` when not published.
+
+    Populated only by the continuous-only, jump-free ride-along NB-EGM core
+    (`_assemble_ride_carry`), whose per-cell EGM step already computes the
+    optimal consumption on the liquid grid. The continuous-outer simulation
+    replay (`derive_inner_sim_policy`) reads this directly instead of
+    re-inverting `marginal_utility`: the marginal carries the budget's
+    cash-on-hand slope in liquid (`marginal = (d coh/d liquid) * u'(c)`), so
+    inverting it recovers `c` only when that slope is unit — carrying the
+    exact policy is correct for any affine budget slope.
+    `None` for every other carry (cross-period continuations, discrete-branch
+    or jump-schedule rows), whose downstream never reaches that replay.
+    """
+
 
 # Pytree registration with an `__init__`-bypassing unflatten: JAX's transform
 # and AOT-lowering machinery reconstructs pytrees with non-array leaves
@@ -79,6 +94,7 @@ _EGM_CARRY_FIELDS = (
     "marginal_utility",
     "taste_shock_scale",
     "breakpoints",
+    "policy",
 )
 
 

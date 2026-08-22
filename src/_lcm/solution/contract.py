@@ -48,10 +48,12 @@ from _lcm.continuation import (
     EGMContinuationLayout,
     EGMContinuationSpec,
 )
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.transition_laws import TransitionLaws
 from _lcm.typing import (
     ActionName,
@@ -85,7 +87,17 @@ from lcm.typing import Float1D, FloatND
 # a second implementation has to publish both. Any *further* field the engine
 # reaches for is the signal to introduce a protocol rather than to grow this
 # one — the seam is a stated read set, not permission to read whatever is there.
-type SimulationPolicy = EGMSimPolicy
+#
+# The read set says what may be read off a row; this union says which rows
+# exist, and the two are separate rules. The simulation read dispatches on the
+# concrete payload type over this CLOSED union: a
+# `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
+# (`_read_nested_policy`, which the self-describing payload parameterizes), a
+# flat `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
+# a deliberate closed-union dispatch in the engine's simulation loop, not an
+# open solver-owned reader seam; adding a payload class means extending both
+# this union and that dispatch.
+type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -321,6 +333,8 @@ class KernelResult:
       interpolates; `None` for a regime that publishes no continuation.
     - `simulation_policy` is the off-grid policy forward simulation can
       interpolate; `None` for a regime that publishes none.
+    - `diagnostics` is the solver's numerical self-report; `None` for a solver
+      that measures nothing (every finite-grid solver today).
     """
 
     V_arr: FloatND
@@ -331,6 +345,9 @@ class KernelResult:
 
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
+
+    diagnostics: SolverDiagnostics | None = None
+    """Published numerical diagnostics, or `None`."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -588,6 +605,21 @@ class Solver(ABC):
         whose representation differs override this one bundled declaration.
         """
         return EGMContinuationLayout()
+
+    @property
+    def publishes_simulation_policy(self) -> bool:
+        """Whether this solver publishes a policy the regime does not qualify.
+
+        Collecting simulation policies costs a host transfer per regime-period,
+        so a solve only retains them where something will read them. The usual
+        signal is regime-level (`SimulationPhase.egm_policy_read`), which is set
+        exactly when the flat endogenous-grid read applies. A solver publishing a
+        *self-describing* payload — one naming its own actions, states and search
+        settings, and therefore needing no build-time read qualification — has no
+        such signal, and the regime-level test alone would silently drop its
+        policy before simulation ever sees it. Such a solver overrides this.
+        """
+        return False
 
     @property
     def publishes_one_sided_jump_reads(self) -> bool:

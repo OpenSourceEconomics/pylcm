@@ -38,7 +38,17 @@ from lcm.consumption_savings_regime import (
     OuterContinuousMargin,
     outer_unchanged,
 )
-from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, GridSearch, TwoMarginSolver
+from lcm.solvers import (
+    DCEGM,
+    NBEGM,
+    NEGM,
+    NNBEGM,
+    FiniteOuterGrid,
+    GridSearch,
+    OuterBranchAggregator,
+    OuterSearch,
+    TwoMarginSolver,
+)
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -162,10 +172,24 @@ def budget_feasible(liquid_savings: FloatND) -> FloatND:
     return liquid_savings >= 0.0
 
 
+def adjustment_scale(period: int) -> FloatND:
+    """Per-period scale of the uniform observed fixed adjustment cost."""
+    return jnp.asarray(0.3 + 0.05 * period)
+
+
 def build_solver(
-    *, variant: str, outer_batch_size: int = 0
+    *,
+    variant: str,
+    outer_batch_size: int = 0,
+    outer_search: OuterSearch | None = None,
+    branch_aggregator: OuterBranchAggregator | None = None,
 ) -> TwoMarginSolver | GridSearch:
-    """Build the requested solver flavour for the alive regime."""
+    """Build the requested solver flavour for the alive regime.
+
+    `outer_search` (n_nbegm only) replaces the legacy finite `OUTER_GRID`
+    with an explicit strategy — the continuous-outer entry point.
+    `branch_aggregator` (n_nbegm only) selects the keeper/adjuster fold.
+    """
     if variant == "brute":
         return GridSearch()
     if variant == "negm":
@@ -177,12 +201,21 @@ def build_solver(
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
+        aggregator_kwargs = (
+            {}
+            if branch_aggregator is None
+            else {"branch_aggregator": branch_aggregator}
+        )
         return NNBEGM(
             inner=NBEGM(
                 savings_grid=SAVINGS_GRID,
             ),
-            outer_grid=OUTER_GRID,
-            outer_batch_size=outer_batch_size,
+            outer_search=(
+                outer_search
+                if outer_search is not None
+                else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
+            ),
+            **aggregator_kwargs,
         )
     msg = f"unknown variant: {variant}"
     raise ValueError(msg)
@@ -194,10 +227,13 @@ def build_model(
     outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
     illiquid_grid: Grid = ILLIQUID_GRID,
+    outer_search: OuterSearch | None = None,
+    branch_aggregator: OuterBranchAggregator | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
+    terminal_active_from_start: bool = False,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -218,6 +254,10 @@ def build_model(
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
+    `terminal_active_from_start=True` also activates the terminal regime before
+    the lifecycle transition. This supports simulations seeded with subjects in
+    both regimes at the same age; the default keeps the terminal regime active
+    only after the final alive age.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -234,6 +274,8 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
+    if branch_aggregator is not None:
+        functions["adjustment_scale"] = adjustment_scale
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
@@ -259,11 +301,16 @@ def build_model(
         # same before and after, which is what makes the two runs comparable.
         #
         # Dropping `new_illiquid` from the DAG turns its output into an external
-        # input, which the action supplies directly. Every reader — `credited`,
-        # `resources`, the durable law — is unchanged.
+        # input the action supplies; every reader — `credited`, `resources`, the
+        # durable law — is unchanged.
         del functions["new_illiquid"]
         actions = {"consumption": consumption_grid, "new_illiquid": OUTER_GRID}
-    solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
+    solver = build_solver(
+        variant=variant,
+        outer_batch_size=outer_batch_size,
+        outer_search=outer_search,
+        branch_aggregator=branch_aggregator,
+    )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
@@ -312,7 +359,7 @@ def build_model(
         )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility},
     )

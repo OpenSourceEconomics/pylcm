@@ -661,6 +661,38 @@ Choose the instrument by what is being asserted:
   an *absolute* check, so on large-valued arrays prefer `assert_allclose` with an `rtol`
   derived from the same policy.
 
+A reported quantity also has an **error order**, which one number per precision cannot
+express. `DECIMAL_PRECISION` is an *epsilon-order* instrument — 12 and 5 decimals are
+the two machine epsilons with a couple of decades of headroom — and so is
+`assert_agrees_to_ulp`. Not every continuous quantity is epsilon order, and importing
+`DECIMAL_PRECISION` for one that is not produces a test that is red for no defect:
+
+- **Epsilon** — a residual, or a closed form evaluated in the working format.
+  `DECIMAL_PRECISION`, or `assert_agrees_to_ulp` where the comparison is relative.
+- **Square root of epsilon** — the *abscissa* of a smooth interior maximum, and anything
+  proportional to it: an implicit tangent, a marginal evaluated at the selected action,
+  a finite-difference gate such a marginal drives. The objective is flat there to second
+  order, so the location is determined only to `sqrt(eps)` — 1.5e-8 at float64, 3.4e-4
+  at float32. `DECIMAL_PRECISION` is four decades too tight for it at float64 and ~1.4
+  at float32, so **this is not a float32-only gap**.
+- **Cube root of epsilon** — the *step* of a central finite difference, balancing `h**2`
+  truncation against `eps/h` cancellation. A fixed `1e-6` is the float64 optimum and
+  sits three decades below the float32 one, where cancellation makes the reference
+  difference quotient itself wrong by ~4e-2. Derive the step, not only the tolerance.
+
+The order is worth measuring rather than inferring: in
+`collapse_continuous_candidate_bank` the collapsed value is epsilon order (1 ULP at
+float64, ~13 at float32) while its own marginal is square-root order (1.1e-8 and 1.3e-3)
+— one call, two orders, so one shared `atol` cannot be right for both.
+
+Two checks before rescaling any existing constant. A loose float64 constant is **not**
+an epsilon-calibrated bound: `rtol=1e-9` is ~4.5e6 eps, and multiplying it by the
+epsilon ratio yields `rtol=0.5`. Write `max(<old constant>, <epsilon term>)` so the
+float64 leg is provably unchanged, and flag in the source any site where it is not. And
+some constants are not precision bounds at all — the `< 1e-4` envelope-consistency gate
+in `tests/egm/test_outer_carry.py` is a *truncation* bound, `dm**2/6` at `dm = 0.01`,
+with rounding contributing ~1e-14. Establish what a constant *is* before rescaling it.
+
 Which invariances a structural predicate has to satisfy is not uniform, so assert only
 the ones that carry numerical content:
 

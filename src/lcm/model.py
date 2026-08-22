@@ -808,9 +808,17 @@ class Model:
             # regime qualifies (`SimulationPhase.egm_policy_read`). With
             # user-supplied V arrays there is no published policy, so the
             # grid-argmax path decides the continuous action.
+            # Two signals, because the flat and nested reads qualify
+            # differently. The flat endogenous-grid read is announced
+            # regime-side by `egm_policy_read`; a self-describing payload
+            # (N-NB-EGM's `NestedEGMSimPolicy`) is announced solver-side and
+            # deliberately leaves that field unset. Testing only the first drops
+            # the nested payload before simulation sees it, and simulation then
+            # falls back to the grid argmax with nothing reporting that it did.
             collect_simulation_policies = any(
                 regime.simulation.egm_policy_read is not None
-                for regime in self._regimes.values()
+                or self.user_regimes[regime_name].solver.publishes_simulation_policy
+                for regime_name, regime in self._regimes.items()
             )
             internal_result = self._solve_compiled(
                 flat_params=flat_params,

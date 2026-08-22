@@ -26,7 +26,7 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import GridSearch
+from lcm.solvers import FiniteOuterGrid, GridSearch
 from lcm.typing import UserFunction
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)
@@ -103,7 +103,7 @@ def test_one_margin_regime_binds_nbegm_from_liquid_margin() -> None:
 
 def test_public_nnbegm_contains_numerical_configuration_only() -> None:
     names = {item.name for item in fields(NNBEGM)}
-    assert names == {"inner", "outer_grid", "outer_batch_size"}
+    assert names == {"inner", "outer_search", "branch_aggregator"}
 
 
 def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
@@ -111,7 +111,7 @@ def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
     regime = _two_margin(
         solver=NNBEGM(
             inner=NBEGM(savings_grid=_GRID),
-            outer_grid=_GRID,
+            outer_search=FiniteOuterGrid(grid=_GRID),
         )
     )
     solver = cast("_BoundNNBEGM", regime.solver)

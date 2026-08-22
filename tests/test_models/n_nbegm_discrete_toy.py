@@ -29,7 +29,7 @@ from lcm.consumption_savings_regime import (
     OuterContinuousMargin,
     outer_unchanged,
 )
-from lcm.solvers import NBEGM, NNBEGM, GridSearch, TwoMarginSolver
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid, GridSearch, TwoMarginSolver
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -78,7 +78,7 @@ def build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
     if variant == "n_nbegm":
         return NNBEGM(
             inner=NBEGM(savings_grid=smooth.SAVINGS_GRID),
-            outer_grid=smooth.OUTER_GRID,
+            outer_search=FiniteOuterGrid(grid=smooth.OUTER_GRID),
         )
     msg = f"unknown variant: {variant}"
     raise ValueError(msg)

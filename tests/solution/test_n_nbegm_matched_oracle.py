@@ -1,10 +1,10 @@
 """A grid-search oracle that enumerates N-NB-EGM's own outer candidate set.
 
-The default two-asset toy lets the grid search reach durable levels the nested
-solver never considers and miss most of the ones it does, so a nested-vs-brute
-gap measured there is dominated by the candidate-set mismatch. The
-`brute` variant chooses the post-decision durable stock itself, on the
-solver's outer grid, so both arms rank the same candidates.
+Reaching that stock through an investment action would let the grid search hit
+durable levels the nested solver never considers and miss most of the ones it
+does, so a nested-vs-brute gap measured that way is dominated by the
+candidate-set mismatch. The `brute` variant chooses the post-decision durable
+stock itself, on the solver's outer grid, so both arms rank the same candidates.
 """
 
 import numpy as np

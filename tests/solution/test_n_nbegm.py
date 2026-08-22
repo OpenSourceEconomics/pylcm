@@ -11,9 +11,10 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+import _lcm.solution.nnbegm as nnbegm_module
 from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import NBEGM, NNBEGM
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}
@@ -28,11 +29,13 @@ def _nbegm_inner() -> NBEGM:
 
 def test_public_nnbegm_contains_only_numerical_configuration() -> None:
     """DAG role names live on the regime-owned margins, not the solver."""
-    solver = NNBEGM(inner=_nbegm_inner(), outer_grid=toy.OUTER_GRID)
+    solver = NNBEGM(
+        inner=_nbegm_inner(), outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID)
+    )
     assert set(solver.__dataclass_fields__) == {
         "inner",
-        "outer_grid",
-        "outer_batch_size",
+        "outer_search",
+        "branch_aggregator",
     }
 
 
@@ -41,19 +44,9 @@ def test_rejects_stochastic_outer_grid() -> None:
     with pytest.raises(RegimeInitializationError, match="stochastic"):
         NNBEGM(
             inner=_nbegm_inner(),
-            outer_grid=NormalIIDProcess(
-                n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0
+            outer_search=FiniteOuterGrid(
+                grid=NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
             ),
-        )
-
-
-def test_rejects_negative_outer_batch_size() -> None:
-    """`outer_batch_size` is zero or a positive chunk size."""
-    with pytest.raises(RegimeInitializationError, match="outer_batch_size"):
-        NNBEGM(
-            inner=_nbegm_inner(),
-            outer_grid=toy.OUTER_GRID,
-            outer_batch_size=-1,
         )
 
 
@@ -67,7 +60,7 @@ def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
     with pytest.raises((RegimeInitializationError, BeartypeCallHintParamViolation)):
         NNBEGM(
             inner=object(),  # ty: ignore[invalid-argument-type]
-            outer_grid=toy.OUTER_GRID,
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
         )
 
 
@@ -174,3 +167,24 @@ def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
                 np.asarray(chunked[period][regime_name]),
                 err_msg=f"{regime_name} at period {period}",
             )
+
+
+def test_finite_outer_grid_does_not_materialize_a_candidate_bank(monkeypatch) -> None:
+    """Finite batching folds each completed chunk without retaining every node."""
+
+    def fail_if_bank_is_built(**_kwargs):
+        raise AssertionError("FiniteOuterGrid retained a full candidate bank")
+
+    monkeypatch.setattr(
+        nnbegm_module,
+        "build_outer_candidate_bank",
+        fail_if_bank_is_built,
+    )
+
+    solution = toy.build_model(
+        variant="n_nbegm",
+        outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
+        n_periods=2,
+    ).solve(params=_PARAMS, log_level="debug")
+
+    assert np.isfinite(np.asarray(solution[0]["alive"])).all()
