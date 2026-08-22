@@ -1080,8 +1080,11 @@ def _redecide_branch_and_read_policy(
 
 
 # Numerical tolerance certifying the outer transition's unit action slope
-# (the affine inversion contract of the nested policy read).
-_UNIT_SLOPE_ATOL = 1e-8
+# (the affine inversion contract of the nested policy read). The fixed floor
+# preserves the fp64 contract; the ULP allowance covers the two rounded
+# evaluations and their subtraction in fp32.
+_MIN_UNIT_SLOPE_ATOL = 1e-8
+_UNIT_SLOPE_ULPS = 8
 
 # Per-subject residual tolerance (relative to the post-decision scale) certifying
 # that the recovered outer action actually reproduces the winning post-decision
@@ -1686,7 +1689,13 @@ def _outer_transition_offset_and_slope(
     at_one = probe(zeros + 1.0)
     if offset is None or at_one is None:
         return None
-    slope_is_unit = jnp.abs((at_one - offset) - 1.0) <= _UNIT_SLOPE_ATOL
+    slope_error = jnp.abs((at_one - offset) - 1.0)
+    dtype_epsilon = jnp.finfo(offset.dtype).eps
+    slope_atol = jnp.maximum(
+        jnp.asarray(_MIN_UNIT_SLOPE_ATOL, dtype=offset.dtype),
+        jnp.asarray(_UNIT_SLOPE_ULPS * dtype_epsilon, dtype=offset.dtype),
+    )
+    slope_is_unit = slope_error <= slope_atol
 
     def evaluate_at(action: FloatND) -> FloatND:
         # Argument resolvability is already established by the 0/1 probes above,

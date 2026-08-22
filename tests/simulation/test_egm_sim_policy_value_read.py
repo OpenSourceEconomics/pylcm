@@ -41,6 +41,42 @@ class _StubRegime(Regime):
         object.__setattr__(self, "simulation", simulation)
 
 
+@pytest.mark.parametrize("coefficient", [1.0, 1.001])
+def test_outer_transition_unit_slope_check_respects_configured_precision(
+    coefficient: float,
+) -> None:
+    """A unit affine law passes while a materially different slope is refused."""
+
+    def outer_post_decision(outer_state, investment):
+        return outer_state + coefficient * investment
+
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "outer_action_name", "investment")
+    object.__setattr__(
+        payload,
+        "outer_post_decision_name",
+        "outer_post_decision",
+    )
+    regime = _StubRegime(
+        simulation=SimpleNamespace(
+            functions={"outer_post_decision": outer_post_decision},
+        )
+    )
+    result = simulation_module._outer_transition_offset_and_slope(
+        payload=payload,
+        regime=regime,
+        states=MappingProxyType({"outer_state": jnp.asarray([1.37])}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+        n_subjects=1,
+    )
+
+    assert result is not None
+    _, slope_is_unit, _ = result
+    assert bool(slope_is_unit[0]) is (coefficient == 1.0)
+
+
 def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
     """On nodes `(1, 0)`, `(2, log 2)` with slopes `(1, 1/2)`, the read at `1.5`
     is the cubic Hermite value `0.40907`, not the linear chord `0.34657`."""
