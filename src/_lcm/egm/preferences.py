@@ -51,6 +51,43 @@ def newton_action_ceiling(scale_grid: Float1D) -> ScalarFloat:
     return scale_grid[-1] * 1000.0 + 1000.0
 
 
+def get_numeric_inverse_marginal_utility(
+    *,
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+    action_lower: ScalarFloat | float,
+    action_upper: ScalarFloat | float,
+) -> Callable[[ScalarFloat], ScalarFloat]:
+    """Return the bracketed Newton inverse of a marginal felicity — the iEGM path.
+
+    A felicity composed from a regime's DAG has no closed-form Euler inversion, so
+    the root is found numerically inside a bracket that dominates every feasible
+    action. The returned map is scalar-in, scalar-out: callers that carry whole
+    meshes either `jax.vmap` it or lift it elementwise.
+
+    Args:
+        marginal_utility: Marginal felicity `u'(c)` of a scalar action, bound to
+            one parameter set.
+        action_lower: Lower bracket on the action — a small positive floor.
+        action_upper: Upper bracket on the action; must dominate every feasible
+            action.
+
+    Returns:
+        Callable mapping a marginal continuation to the action that equates
+        `u'(c)` with it.
+
+    """
+
+    def scalar_inverse(marginal_continuation: ScalarFloat) -> ScalarFloat:
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=marginal_continuation,
+            marginal_utility=marginal_utility,
+            c_lower=jnp.asarray(action_lower),
+            c_upper=jnp.asarray(action_upper),
+        )
+
+    return scalar_inverse
+
+
 @dataclass(frozen=True)
 class Preferences:
     """Felicity, marginal felicity, and inverse marginal felicity of the action.
@@ -67,6 +104,43 @@ class Preferences:
 
     inverse_marginal_utility: Callable[[FloatND], FloatND]
     """Inverse marginal felicity `(u')^{-1}(m)` — the Euler inversion."""
+
+
+def preferences_from_utility(
+    *,
+    utility_of_action: Callable[[FloatND], FloatND],
+    action_lower: ScalarFloat | float,
+    action_upper: ScalarFloat | float,
+) -> Preferences:
+    """Bundle a felicity with its autodiff marginal and its bracketed Newton inverse.
+
+    For a felicity already bound to its parameters and to whatever states the
+    caller holds fixed — a cell-bound period utility, say — rather than one
+    concatenated from a regime's `functions`. Both maps are lifted elementwise,
+    so the bundle applies to a single node or a whole mesh alike.
+
+    Args:
+        utility_of_action: Felicity `u(c)` of the consumption action, bound.
+        action_lower: Lower bracket on the action — a small positive floor.
+        action_upper: Upper bracket on the action; must dominate every feasible
+            action.
+
+    Returns:
+        The bound `Preferences` bundle.
+
+    """
+    marginal_utility = jax.grad(utility_of_action)
+    return Preferences(
+        utility=_elementwise(utility_of_action),
+        marginal_utility=_elementwise(marginal_utility),
+        inverse_marginal_utility=_elementwise(
+            get_numeric_inverse_marginal_utility(
+                marginal_utility=marginal_utility,
+                action_lower=action_lower,
+                action_upper=action_upper,
+            )
+        ),
+    )
 
 
 def get_preferences_builder(
@@ -121,16 +195,13 @@ def get_preferences_builder(
                     marginal_continuation=marginal_continuation, **params
                 )
         else:
-
-            def scalar_inverse(marginal_continuation: ScalarFloat) -> ScalarFloat:
-                return numeric_inverse_marginal_utility(
-                    marginal_continuation=marginal_continuation,
+            inverse_marginal_utility = _elementwise(
+                get_numeric_inverse_marginal_utility(
                     marginal_utility=jax.grad(utility_of_action),
-                    c_lower=jnp.asarray(action_lower),
-                    c_upper=jnp.asarray(action_upper),
+                    action_lower=action_lower,
+                    action_upper=action_upper,
                 )
-
-            inverse_marginal_utility = _elementwise(scalar_inverse)
+            )
 
         return Preferences(
             utility=utility_of_action,

@@ -13,7 +13,11 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.cell_hull import hull_owners
-from _lcm.egm.upper_envelope.double_double import dd_quotient_bounded, two_prod
+from _lcm.egm.upper_envelope.double_double import (
+    dd_quotient_bounded,
+    normalizing_exponent,
+    two_prod,
+)
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 
@@ -92,6 +96,19 @@ def test_a_reported_bound_covers_the_error_across_scales() -> None:
         if error > Fraction(float(bound)):
             uncovered.append((numerator, denominator))
     assert uncovered == []
+
+
+@pytest.mark.parametrize("unusable", [0.0, float("inf"), -float("inf"), float("nan")])
+def test_a_group_with_no_usable_magnitude_scales_by_one(unusable: float) -> None:
+    """`normalizing_exponent` returns `0` when no term has a magnitude to normalize.
+
+    The exponent is what a caller scales by, so the answer for a group that holds
+    nothing to scale has to be the one that leaves it alone. Zero and non-finite
+    terms are ignored, and a group made only of them is that case.
+    """
+    term = jnp.asarray(unusable, dtype=_dtype())
+
+    assert int(normalizing_exponent(term, term)) == 0
 
 
 def test_a_product_is_exact_up_to_the_top_of_the_range() -> None:

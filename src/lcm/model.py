@@ -59,6 +59,7 @@ from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.preconditions import check_solver_params
 from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -539,6 +540,7 @@ class Model:
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
+        check_solver_params(regimes=self._regimes, flat_params=flat_params)
         try:
             internal_result = solve(
                 flat_params=flat_params,

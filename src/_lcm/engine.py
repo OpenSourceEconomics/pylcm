@@ -57,6 +57,18 @@ if TYPE_CHECKING:
 else:
     PeriodKernelsMapping = Mapping
 
+# A precondition a solver can only check once parameter *values* exist. Kernels
+# are built at `Model` construction, before any params are supplied, so a check
+# that must evaluate or differentiate the model's DAG on real schedules, tables,
+# and coefficients cannot run there. A solver publishes such a check with its
+# kernels; the engine calls it as `check(flat_params=...)` on the first solve
+# and never again, so an estimation loop pays for it once. The check reports by
+# raising; its return value is ignored. Defined here rather than in
+# `_lcm.solution.contract` — which re-exports it — for the same reason as
+# `ContinuationPayload`: the engine stays a leaf of the contract, not a peer in
+# a cycle.
+type ParamCheck = Callable[..., None]
+
 
 @dataclasses.dataclass(frozen=True)
 class VariableInfo:
@@ -362,6 +374,13 @@ class SolutionPhase:
     `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
     scalar means — so full-shape U/F/CE/Q arrays never materialise in
     host-visible memory.
+    """
+
+    param_checks: tuple[ParamCheck, ...] = ()
+    """The regime solver's preconditions that need real parameter values.
+
+    Run once, on the first solve, by `check_solver_params`; empty for a solver
+    whose scope is decided by structure alone.
     """
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

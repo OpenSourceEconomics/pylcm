@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import hatch_build
+from _lcm.egm.upper_envelope._exact_affine import ffi
 
 
 def test_the_default_cuda_build_names_architectures():
@@ -157,15 +158,79 @@ def test_the_build_states_when_it_found_no_cuda_compiler():
     assert "no nvcc" in report
 
 
+def test_native_libraries_are_built_outside_the_checkout(monkeypatch, tmp_path):
+    """A native build writes only to its declared payload directory."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
+    payload_dir = tmp_path / "wheel-payload"
+
+    def fake_compile(*, command, target):
+        assert str(target) in command
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"shared object")
+        return target
+
+    monkeypatch.setattr(hatch_build.sys, "platform", "linux")
+    monkeypatch.delenv("LCM_SKIP_EXACT_AFFINE", raising=False)
+    monkeypatch.setenv("CXX", "/usr/bin/c++")
+    monkeypatch.setattr(hatch_build.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(hatch_build, "_compile", fake_compile)
+
+    written = hatch_build.build_exact_affine(
+        root=tmp_path,
+        output_dir=payload_dir,
+        jax_include_dir="/jax/include",
+    )
+
+    assert written == [payload_dir / hatch_build.CPU_LIBRARY]
+    assert not list(source_dir.glob("*.so"))
+
+
+def test_native_payload_is_force_included_for_wheels_and_editable_installs(tmp_path):
+    """Both install modes receive the same checkout-independent payload."""
+    library = tmp_path / hatch_build.CPU_LIBRARY
+    library.write_bytes(b"shared object")
+
+    build_data = {}
+    hatch_build.include_native_payload(build_data=build_data, libraries=[library])
+
+    expected = {
+        str(library): f"_pylcm_native/{hatch_build.CPU_LIBRARY}",
+    }
+    assert build_data["force_include"] == expected
+    assert build_data["force_include_editable"] == expected
+
+
+def test_native_source_fingerprint_changes_with_the_kernel_source(tmp_path):
+    """A changed kernel source cannot reuse an installed native payload."""
+    source_dir = tmp_path / hatch_build.PACKAGE_DIR
+    source_dir.mkdir(parents=True)
+    source = source_dir / "certified_affine_ffi_cpu.cc"
+    source.write_text("first")
+    (source_dir / "handler_symbols.py").write_text("symbols")
+    (tmp_path / "hatch_build.py").write_text("hook")
+
+    before = hatch_build.native_source_fingerprint(root=tmp_path)
+    source.write_text("second")
+    after = hatch_build.native_source_fingerprint(root=tmp_path)
+
+    assert before != after
+
+
 def test_windows_module_definition_exports_every_handler():
-    """The MSVC linker receives all ten symbols the Python wrapper registers."""
+    """Every name in the export tuple reaches the .def file, in order.
+
+    This compares the generated file against the tuple it is generated from, so
+    it catches a broken generator and nothing else. That the tuple holds the
+    right names is a separate property, pinned against `ffi._TARGETS` below.
+    """
     definition = hatch_build.windows_module_definition().splitlines()
 
     assert definition[:2] == ["LIBRARY certified_affine_ffi_cpu", "EXPORTS"]
     assert definition[2:] == [
         f"    {name}" for name in hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS
     ]
-    assert len(definition[2:]) == 10
 
 
 def test_the_windows_build_uses_msvc_and_the_export_definition(
@@ -192,16 +257,17 @@ def test_the_windows_build_uses_msvc_and_the_export_definition(
     )
     monkeypatch.setattr(hatch_build, "_compile", fake_compile)
 
+    payload_dir = tmp_path / ".pylcm-native-build"
     written = hatch_build.build_exact_affine(
         root=tmp_path, jax_include_dir="C:/jax/include"
     )
 
-    assert written == [source_dir / hatch_build.WINDOWS_CPU_LIBRARY]
+    assert written == [payload_dir / hatch_build.WINDOWS_CPU_LIBRARY]
     assert commands
     assert commands[0][0] == "C:/VC/cl.exe"
     assert "/LD" in commands[0]
     assert f"/Fe:{written[0]}" in commands[0]
-    definition = source_dir / "certified_affine_ffi_cpu.def"
+    definition = payload_dir / "certified_affine_ffi_cpu.def"
     assert f"/DEF:{definition}" in commands[0]
     assert definition.read_text() == hatch_build.windows_module_definition()
     assert "MSVC" in capsys.readouterr().out
@@ -210,7 +276,7 @@ def test_the_windows_build_uses_msvc_and_the_export_definition(
 def test_the_windows_build_writes_its_object_file_beside_the_library(
     monkeypatch, tmp_path
 ):
-    """The intermediate `.obj` lands in the package, not the working directory."""
+    """The intermediate `.obj` lands beside the install payload."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
     source_dir.mkdir(parents=True)
     (source_dir / "certified_affine_ffi_cpu.cc").write_text("// source")
@@ -233,7 +299,8 @@ def test_the_windows_build_writes_its_object_file_beside_the_library(
 
     hatch_build.build_exact_affine(root=tmp_path, jax_include_dir="C:/jax/include")
 
-    assert f"/Fo{source_dir}\\" in commands[0]
+    payload_dir = tmp_path / ".pylcm-native-build"
+    assert f"/Fo{payload_dir}\\" in commands[0]
 
 
 def test_a_non_msvc_cxx_is_refused_on_windows(monkeypatch, tmp_path):
@@ -269,7 +336,9 @@ def test_an_msvc_compatible_cxx_is_accepted_on_windows(monkeypatch, tmp_path):
         root=tmp_path, jax_include_dir="C:/jax/include"
     )
 
-    assert written == [source_dir / hatch_build.WINDOWS_CPU_LIBRARY]
+    assert written == [
+        tmp_path / ".pylcm-native-build" / hatch_build.WINDOWS_CPU_LIBRARY
+    ]
 
 
 def test_the_opt_out_builds_no_kernel(monkeypatch):
@@ -352,3 +421,14 @@ def test_a_compile_failure_reports_diagnostics_written_to_stdout(tmp_path, monke
         hatch_build._compile(command=["cl", "/nologo"], target=target)
 
     assert "error C2065: undeclared" in target.with_suffix(".dll.build.log").read_text()
+
+
+def test_the_export_manifest_names_every_registered_ffi_target():
+    """Every handler the Python wrapper registers is in the Windows export list.
+
+    The two lists are maintained by hand in different files: `hatch_build` owns
+    the export surface the MSVC linker is given, `ffi` owns the targets JAX is
+    told about. A handler added to one and not the other links a DLL missing
+    that export, and no test comparing either manifest to itself can see it.
+    """
+    assert set(hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS) == set(ffi._TARGETS)

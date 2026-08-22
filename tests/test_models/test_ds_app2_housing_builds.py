@@ -25,6 +25,8 @@ import pytest
 from lcm import (
     LinSpacedGrid,
     Model,
+)
+from lcm.consumption_savings_regime import (
     NestedConsumptionSavingsRegime,
     outer_unchanged,
 )
@@ -194,14 +196,29 @@ def test_round_trip_cost_creates_an_inaction_wedge():
     assert float(nudge) > 0.9 * tau * housing
 
 
-@pytest.mark.slow
-@pytest.mark.gpu(reason="2-D+AR1 NEGM solve OOMs a CPU-only box")
-def test_housing_model_solves_on_gpu():
-    """The DS App.2 housing model solves to a finite value function.
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
+def test_reduced_housing_model_solves_on_gpu():
+    """A reduced DS App.2 model exercises the nested solve on every pull request.
 
-    Marked GPU-only: the 2-D-continuous + AR1-process NEGM solve exhausts a
-    small box. Run on gpu-01.
+    The small grids preserve the liquid-inner / housing-outer route while the
+    full lifecycle keeps the model's fixed working, retirement, and terminal
+    transition ages aligned with its active regimes.
     """
+    model = ds_app2_housing.build_model(n_grid=12, n_periods=51)
+    params = ds_app2_housing.build_params(tau=0.05)
+    solution = model.solve(params=params, log_level="debug")
+    working = np.asarray(solution[0]["working"])
+    assert working.size > 0
+    assert np.all(np.isfinite(working))
+
+
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
+@pytest.mark.isolation(process="fresh")
+@pytest.mark.ci(tier="nightly")
+def test_production_housing_model_solves_on_gpu():
+    """The production DS App.2 grid remains available to nightly and full runs."""
     model = ds_app2_housing.build_model(n_grid=250)
     params = ds_app2_housing.build_params(tau=0.05)
     solution = model.solve(params=params, log_level="debug")

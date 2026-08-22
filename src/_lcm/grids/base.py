@@ -55,8 +55,7 @@ def _fail_if_continuous_grid_distributed(
     emitted V-array carries the declared sharding. Natural jit output inference
     reproduces the declared sharding for discrete-axis distribution, but not for
     a sharded continuous axis — there the solved V would otherwise come back on
-    a layout its next-period consumers were not lowered against. The abandoned
-    PR #364 carries a reference implementation of that `out_shardings` path.
+    a layout its next-period consumers were not lowered against.
     """
     if distributed:
         raise GridInitializationError(

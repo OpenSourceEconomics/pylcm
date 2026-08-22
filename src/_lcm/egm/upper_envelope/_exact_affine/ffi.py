@@ -16,13 +16,15 @@ envelope:
   grouping and nothing else.
 
 The kernels live in shared objects built at install time from the C++ and CUDA
-sources beside this module. They are loaded when a verdict is first requested,
-not at import, so a platform that never asks for one needs no kernel; nothing
-here ever compiles.
+sources in the source tree. The installed payload lives outside that tree, so
+replacing an editable checkout does not remove the kernel. They are loaded when
+a verdict is first requested, not at import, so a platform that never asks for
+one needs no kernel; nothing here ever compiles.
 """
 
 import ctypes
 import sys
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import jax
@@ -39,9 +41,27 @@ from lcm.typing import BoolND, FloatND, IntND
 # known.
 UNRESOLVED_STATUS: int = 2
 
+# Batched segment operands carry at least one batch axis ahead of the axis
+# holding the segments themselves.
+_MIN_BATCHED_RANK: int = 2
+
 _TARGETS = EXACT_AFFINE_HANDLER_SYMBOLS
 
-_DIRECTORY = Path(__file__).resolve().parent
+
+def _installed_native_directory() -> Path:
+    """Return pylcm's checkout-independent installed native payload directory."""
+    try:
+        installed = distribution("pylcm")
+    except PackageNotFoundError:
+        # Importing an uninstalled source tree remains legal. The path is
+        # intentionally not the checkout: asking for a certified verdict then
+        # reports the missing installed capability instead of accepting a stale
+        # binary left by an unrelated build.
+        return Path(sys.prefix) / "_pylcm_native"
+    return Path(str(installed.locate_file("_pylcm_native")))
+
+
+_DIRECTORY = _installed_native_directory()
 _CPU_LIBRARY = _DIRECTORY / (
     "certified_affine_ffi_cpu.dll"
     if sys.platform == "win32"
@@ -74,6 +94,15 @@ def cuda_kernel_built() -> bool:
     the library underneath the module produces silently.
     """
     return _CUDA_LIBRARY.is_file()
+
+
+# Backend names that mean "device compiles will look for the CUDA target".
+_GPU_BACKENDS: frozenset[str] = frozenset({"gpu", "cuda"})
+
+
+def _default_backend() -> str:
+    """Return JAX's default backend name, as its own seam so tests can set it."""
+    return jax.default_backend()
 
 
 # Whether the targets have been registered with XLA in this process.
@@ -136,8 +165,9 @@ def _ensure_registered() -> None:
     else.
 
     Raises:
-        ExactAffineKernelUnavailableError: If the CPU library is missing, or is
-            present but cannot be loaded by this interpreter.
+        ExactAffineKernelUnavailableError: If the CPU library is missing, if the
+            default backend is a GPU and the CUDA half was never built, or if a
+            library is present but cannot be loaded by this interpreter.
 
     """
     global _REGISTERED  # noqa: PLW0603
@@ -148,8 +178,23 @@ def _ensure_registered() -> None:
         msg = (
             f"The exact-affine kernel is not built: {_CPU_LIBRARY} is missing. It "
             "is compiled when pylcm is installed; after editing its C++ sources, "
-            "or in a checkout installed before the kernel existed, rebuild it "
-            "with `pixi run build-exact-affine`."
+            "or in an environment installed before the kernel existed, reinstall "
+            "pylcm with `pixi reinstall pylcm`."
+        )
+        raise ExactAffineKernelUnavailableError(msg)
+
+    # The CPU library alone satisfies registration, so a solve on a CUDA backend
+    # would otherwise reach the first compile needing the device target before
+    # anything objects — and on a production mesh that compile is hours in. The
+    # CUDA half is skipped whenever the build ran without `nvcc`, which is a
+    # property of the environment rather than of the run, so it is knowable here.
+    if not cuda_kernel_built() and _default_backend() in _GPU_BACKENDS:
+        msg = (
+            f"The exact-affine kernel has no CUDA half: {_CUDA_LIBRARY} is "
+            "missing while JAX's default backend is a GPU, so every certified "
+            "read would fail at its first device compile. The CUDA half is built "
+            "only where `nvcc` is on PATH at install time; add it to this "
+            "environment and reinstall with `pixi reinstall pylcm`."
         )
         raise ExactAffineKernelUnavailableError(msg)
 
@@ -163,7 +208,7 @@ def _ensure_registered() -> None:
             f"loaded: {error}. Two builds commonly fail this way: one made by a "
             "different toolchain, which is missing that toolchain's runtime, and "
             "one made before a target existed, which loads but does not export "
-            "it. Rebuild in this environment with `pixi run build-exact-affine`."
+            "it. Reinstall in this environment with `pixi reinstall pylcm`."
         )
         raise ExactAffineKernelUnavailableError(msg) from error
 
@@ -292,27 +337,29 @@ def exact_query_winner(
     winner is chosen.
 
     Segment operands are one-dimensional and shared by all elements of
-    `x_query`. An outer `jax.vmap` is supported with
-    ``vmap_method="sequential"``: the transformed program contains one loop
-    around this opaque call rather than exposing the integer representation to
-    XLA, while an unbatched array of queries is resolved by one call.
+    `x_query`, and one call resolves them. An outer `jax.vmap` over the
+    queries is supported with ``vmap_method="sequential"``: the transformed
+    program contains one loop around this opaque call rather than exposing
+    the integer representation to XLA. When each batch element carries its
+    own segment set, `exact_query_winner_batched` is the call that keeps the
+    batch in one program instead of trading it for that loop.
 
     Args:
         left_grid: Stored left abscissa of every segment.
         right_grid: Stored right abscissa of every segment.
-        left_value: Stored value at ``left_grid``.
-        right_value: Stored value at ``right_grid``.
+        left_value: Stored value at `left_grid`.
+        right_value: Stored value at `right_grid`.
         live: Whether each segment participates.
         x_query: Query abscissae, of any shape.
 
     Returns:
         Winner indices and one coupled status per query. Status is zero only
         where at least one valid segment brackets the query and the complete
-        total order was resolved; otherwise it is ``UNRESOLVED_STATUS``.
+        total order was resolved; otherwise it is `UNRESOLVED_STATUS`.
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        TypeError: If floating operands do not share `float32` or `float64`.
         ValueError: If segment operands are not nonempty matching vectors.
 
     """
@@ -337,23 +384,202 @@ def exact_query_winner(
         )
         raise ValueError(msg)
     query = jnp.asarray(x_query)
-    target = _target_for(
-        operands=(*floating, query),
-        f32="ExactQueryWinnerF32",
-        f64="ExactQueryWinnerF64",
-    )
     live_array = jnp.asarray(live, dtype=jnp.int32)
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
+    return _shared_segment_winner(*floating, live_array, query)
+
+
+def exact_query_winner_batched(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Select the exact owner of every query against that query's own segments.
+
+    Each batch element carries an independent segment set, so a microtile of
+    pairs resolves in one custom call whose operand shapes, and therefore whose
+    compilation key, do not depend on the batch size. Ownership follows the same
+    total order as the shared-segment call: exact affine value, whether the
+    segment extends strictly to the right, exact value slope, then the stable
+    segment index.
+
+    Args:
+        left_grid: Stored left abscissa of every segment, with a trailing
+            segment axis behind one or more batch axes.
+        right_grid: Stored right abscissae, with the same shape.
+        left_value: Values at `left_grid`, with the same shape.
+        right_value: Values at `right_grid`, with the same shape.
+        live: Whether each segment participates, with the same shape.
+        x_query: Query abscissae, carrying the segment operands' batch shape
+            ahead of its own trailing query axis.
+
+    Returns:
+        Winner indices and one coupled status per query, both shaped like
+        `x_query`. An index counts from the start of its own batch element's
+        segments. Status is zero only where at least one live segment of that
+        element brackets the query and the complete total order was resolved;
+        otherwise it is `UNRESOLVED_STATUS`.
+
+    Raises:
+        ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
+        TypeError: If floating operands do not share `float32` or `float64`.
+        ValueError: If the segment or query shapes are inconsistent.
+
+    """
+    _ensure_registered()
+    floating = (
+        jnp.asarray(left_grid),
+        jnp.asarray(right_grid),
+        jnp.asarray(left_value),
+        jnp.asarray(right_value),
+    )
+    if any(array.ndim < _MIN_BATCHED_RANK for array in floating):
+        msg = (
+            "batched exact-query segment operands need a batch axis before the "
+            f"segment axis, got {[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    shape = floating[0].shape
+    if shape[-1] == 0 or any(array.shape != shape for array in floating[1:]):
+        msg = (
+            "batched exact-query segment operands must be nonempty and share a "
+            f"shape, got {[array.shape for array in floating]}."
+        )
+        raise ValueError(msg)
+    query = jnp.asarray(x_query)
+    if query.ndim != len(shape) or query.shape[:-1] != shape[:-1]:
+        msg = (
+            f"x_query must carry the batch shape {shape[:-1]} of the segment "
+            f"operands ahead of its query axis, got {query.shape}."
+        )
+        raise ValueError(msg)
+    live_array = jnp.asarray(live, dtype=jnp.int32)
+    if live_array.shape != shape:
+        msg = f"live must have segment shape {shape}, got {live_array.shape}."
+        raise ValueError(msg)
+    return _batched_segment_winner_impl(*floating, live_array, query)
+
+
+def _batched_segment_winner_impl(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Resolve every query against its own batch element's segment set."""
+    target = _target_for(
+        operands=(left_grid, right_grid, left_value, right_value, x_query),
+        f32="ExactQueryWinnerBatchedF32",
+        f64="ExactQueryWinnerBatchedF64",
+    )
     result_shapes = (
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
-        jax.ShapeDtypeStruct(query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+    )
+    winner, status = jax.ffi.ffi_call(
+        target, result_shapes, vmap_method="broadcast_all"
+    )(left_grid, right_grid, left_value, right_value, live, x_query)
+    return winner, status
+
+
+def _shared_segment_winner_impl(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[IntND, IntND]:
+    """Resolve every query against the one segment set they all share."""
+    target = _target_for(
+        operands=(left_grid, right_grid, left_value, right_value, x_query),
+        f32="ExactQueryWinnerF32",
+        f64="ExactQueryWinnerF64",
+    )
+    result_shapes = (
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
+        jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
     )
     winner, status = jax.ffi.ffi_call(target, result_shapes, vmap_method="sequential")(
-        *floating, live_array, query
+        left_grid, right_grid, left_value, right_value, live, x_query
     )
     return winner, status
+
+
+def _with_batch_axis(
+    *, operand: FloatND | IntND, batched: bool, axis_size: int
+) -> FloatND | IntND:
+    """Give an operand shared by the whole batch the batch axis it lacks."""
+    if batched:
+        return operand
+    return jnp.broadcast_to(operand, (axis_size, *operand.shape))
+
+
+def _shared_segment_winner_vmap(
+    axis_size: int,
+    in_batched: list[bool],
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+) -> tuple[tuple[IntND, IntND], tuple[bool, bool]]:
+    """Resolve a whole batch in one call rather than a loop around a scalar one.
+
+    Two shapes reach this rule, and each has a target that consumes it whole:
+
+    - segments shared by every element, only the queries batched ⇒ the
+      shared-segment target already accepts queries of any shape, so the batch
+      axis folds into the query axis and no operand is replicated;
+    - segments varying with the element ⇒ the batch-native target, which reads
+      every element against its own segments. An operand the caller left
+      unbatched is shared by every element and is stacked to say so.
+    """
+    *segments_batched, query_batched = in_batched
+    query = _with_batch_axis(
+        operand=x_query, batched=query_batched, axis_size=axis_size
+    )
+    if any(segments_batched):
+        winner, status = _batched_segment_winner_impl(
+            _with_batch_axis(
+                operand=left_grid, batched=segments_batched[0], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=right_grid, batched=segments_batched[1], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=left_value, batched=segments_batched[2], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=right_value, batched=segments_batched[3], axis_size=axis_size
+            ),
+            _with_batch_axis(
+                operand=live, batched=segments_batched[4], axis_size=axis_size
+            ),
+            query.reshape(axis_size, -1),
+        )
+    else:
+        winner, status = _shared_segment_winner_impl(
+            left_grid, right_grid, left_value, right_value, live, query.reshape(-1)
+        )
+    published = (winner.reshape(query.shape), status.reshape(query.shape))
+    return published, (True, True)
+
+
+# Bound by assignment rather than by decorating the `def`: `custom_vmap` returns
+# a callable instance, and a package-wide beartype claw rebinds such an instance
+# to its own `__call__`, which would leave `def_vmap` unreachable at import.
+_shared_segment_winner = jax.custom_batching.custom_vmap(_shared_segment_winner_impl)
+_shared_segment_winner.def_vmap(_shared_segment_winner_vmap)
 
 
 def exact_affine_handover(
@@ -379,12 +605,12 @@ def exact_affine_handover(
     Args:
         a_x0: Lower endpoint abscissa of the outgoing line.
         a_x1: Upper endpoint abscissa of the outgoing line.
-        a_v0: Outgoing-line value at ``a_x0``.
-        a_v1: Outgoing-line value at ``a_x1``.
+        a_v0: Outgoing-line value at `a_x0`.
+        a_v1: Outgoing-line value at `a_x1`.
         b_x0: Lower endpoint abscissa of the incoming line.
         b_x1: Upper endpoint abscissa of the incoming line.
-        b_v0: Incoming-line value at ``b_x0``.
-        b_v1: Incoming-line value at ``b_x1``.
+        b_v0: Incoming-line value at `b_x0`.
+        b_v1: Incoming-line value at `b_x1`.
         left: Left edge of the interval the outgoing line owns from.
         right: Right edge of the interval in which the handover must lie.
 
@@ -446,11 +672,11 @@ def exact_cell_hull(
     Args:
         left: Left edge of every cell in the batch.
         right: Right edge of every cell in the batch.
-        live: Run mask with shape ``left.shape + (max_runs,)``.
+        live: Run mask with shape `left.shape + (max_runs,)`.
         low: Lower candidate index of each run's covering link.
         high: Upper candidate index of each run's covering link.
         endog_grid: Candidate abscissae, with one trailing candidate axis.
-        value: Candidate values, with the same shape as ``endog_grid``.
+        value: Candidate values, with the same shape as `endog_grid`.
         max_runs: Static owner capacity of every cell.
 
     Returns:
@@ -459,7 +685,7 @@ def exact_cell_hull(
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
-        TypeError: If floating operands do not share ``float32`` or ``float64``.
+        TypeError: If floating operands do not share `float32` or `float64`.
         ValueError: If the batch, run, or candidate shapes are inconsistent.
 
     """
@@ -515,8 +741,13 @@ def exact_cell_hull(
 
 
 def _broadcast(*operands: FloatND) -> tuple[FloatND, ...]:
-    """Broadcast every operand to one common shape."""
-    return jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands])
+    """Broadcast every operand to one common shape.
+
+    `jnp.broadcast_arrays` does not promise a container type and has returned
+    both a list and a tuple across patch releases, so build the published one
+    rather than borrow it.
+    """
+    return tuple(jnp.broadcast_arrays(*[jnp.asarray(operand) for operand in operands]))
 
 
 def _target_for(*, operands: tuple[FloatND, ...], f32: str, f64: str) -> str:

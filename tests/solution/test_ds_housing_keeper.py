@@ -62,7 +62,8 @@ def test_dcegm_accepts_utility_reading_passive_housing():
     validate_dcegm_regimes(user_regimes=_finalized_keeper_regimes())
 
 
-@pytest.mark.gpu(reason="DC-EGM keeper solve is GPU-scale; OOMs a CPU-only box")
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
 def test_housing_keeper_solves_to_finite_values():
     """The keeper model solves to finite, housing-monotone value functions.
 
@@ -86,7 +87,8 @@ def test_housing_keeper_solves_to_finite_values():
         assert np.all(housing_increments > 0.0), f"period={period}"
 
 
-@pytest.mark.gpu(reason="DC-EGM keeper solve is GPU-scale; OOMs a CPU-only box")
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
 def test_housing_keeper_dcegm_matches_brute():
     """The keeper DC-EGM value function matches its brute-force twin.
 

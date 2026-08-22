@@ -68,6 +68,7 @@ from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import (
     ActionName,
     FunctionName,
@@ -406,7 +407,7 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    solver: _BoundDCEGM,
+    solver: _BoundDCEGM | _BoundNBEGM,
     solver_name: str,
 ) -> None:
     """Prove every declared post-decision lower bound against the savings grid.
@@ -422,7 +423,8 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
     Args:
         regime_name: Name of the regime being validated.
         user_regime: The finalized user regime.
-        solver: The regime's bound solver, carrying the savings grid.
+        solver: The bound solver whose savings grid the bound is proved
+            against — for a nested solver, its inner one.
         solver_name: Name of the solver, for the message.
 
     Raises:
@@ -490,6 +492,37 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
                 "declare the bound the grid already implies."
             )
             raise ModelInitializationError(msg)
+
+
+def fail_if_kernel_grids_withhold_their_points(
+    *,
+    grids: Mapping[str, Grid],
+    regime_name: RegimeName,
+    solver_name: str,
+) -> None:
+    """Refuse every grid a kernel reads at model construction but cannot.
+
+    Which grids those are is the solver's to name — the case-piece kernels lay
+    out savings nodes, carry shapes, and interval geometry from them while the
+    model is built, and a continuous action grid is not among them. Naming them
+    at one call site keeps the refusal a statement about the solver rather than
+    a property of whichever `to_jax()` happens to run first, which is what a
+    reader gets otherwise: an error naming neither the regime nor the slot.
+
+    Args:
+        grids: Mapping of each grid's role, as the message should read, to the
+            grid itself.
+        regime_name: Name of the regime the grids belong to.
+        solver_name: Name of the solver, for the message.
+
+    Raises:
+        ModelInitializationError: If any of them supplies its points at runtime.
+
+    """
+    for role, grid in grids.items():
+        fail_if_grid_withholds_its_points(
+            grid=grid, role=role, regime_name=regime_name, solver_name=solver_name
+        )
 
 
 def fail_if_grid_withholds_its_points(
@@ -794,7 +827,8 @@ def _savings_stage_candidates(
 
     Args:
         user_regime: The regime whose savings-stage functions are enumerated.
-        solver: The inner DC-EGM config naming the Euler state.
+        solver: The DC-EGM config naming the Euler state. A nested solver passes
+            its inner config, so the enumeration is over the inner margin.
         exclude_states: States whose laws of motion are left out. A caller
             excludes a state when its law is part of the margin under test
             rather than something that might couple to it.

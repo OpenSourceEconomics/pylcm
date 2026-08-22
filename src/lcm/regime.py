@@ -174,9 +174,9 @@ class Regime:
     - `Regime`: `GridSearch()` (the default), or another `Solver` that does
       not require margin binding.
     - `ConsumptionSavingsRegime`: `GridSearch()` or a `OneMarginSolver`,
-      such as `EGM(...)` or `DCEGM(...)`.
+      such as `EGM(...)`, `DCEGM(...)`, or `NBEGM(...)`.
     - `NestedConsumptionSavingsRegime`: `GridSearch()` or a
-      `TwoMarginSolver`, such as `NEGM(...)`.
+      `TwoMarginSolver`, such as `NEGM(...)` or `NNBEGM(...)`.
 
     Endogenous-grid solvers validate their structural contracts during
     `Model(...)`; the specialized regime owns the state, action, resources,

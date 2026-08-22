@@ -104,8 +104,6 @@ def calculate_next_states(
         entries for other subjects are left untouched.
 
     """
-    # Identify stochastic transitions and generate random keys
-    # ---------------------------------------------------------------------------------
     transition_laws = regime.simulation.transition_laws
     # Sorted to fix a downstream-ordering bug when the nested iteration
     # yields names in a non-deterministic order.
@@ -124,8 +122,6 @@ def calculate_next_states(
         original_n_subjects=original_n_subjects,
     )
 
-    # Compute next states using regime's transition functions
-    # ---------------------------------------------------------------------------------
     next_state_vmapped = regime.simulation.next_state[period]
 
     # Carried states are true values that the decision's state-action space
@@ -226,8 +222,6 @@ def calculate_next_regime_membership(
         only for those in the current regime.
 
     """
-    # Compute regime transition probabilities
-    # ---------------------------------------------------------------------------------
     # The realized draw is built against the published pair-free pool, so it
     # reads each carried state as the subject's true carried value — feed
     # those values like `calculate_next_states` does.
@@ -255,8 +249,6 @@ def calculate_next_regime_membership(
         }
     )
 
-    # Generate random keys and draw next regimes
-    # ---------------------------------------------------------------------------------
     key, regime_transition_key = generate_simulation_keys(
         key=key,
         names=["regime_transition"],
@@ -271,8 +263,6 @@ def calculate_next_regime_membership(
         keys=regime_transition_key["key_regime_transition"],
     )
 
-    # Update global regime membership array
-    # ---------------------------------------------------------------------------------
     return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
@@ -376,9 +366,10 @@ def _advance_states_for_subjects(
             current_arr = states_per_regime[target_regime_name][state_name]
             target_dtype = current_arr.dtype
             # Preserve storage dtype only when the transition output is the
-            # same numeric kind. Across kinds (e.g. int storage + float
-            # transition output) leave JAX's promotion in place; the
-            # cross-kind boundary cast belongs to Package B.
+            # same numeric kind. Casting across kinds here — an int-stored
+            # state fed a float transition output — would silently truncate a
+            # value the model computed, so leave JAX's promotion in place and
+            # let the widened array reach whoever decides what the state means.
             new_values = (
                 next_state_values.astype(target_dtype)
                 if next_state_values.dtype.kind == target_dtype.kind

@@ -525,10 +525,9 @@ def test_constraint_naming_a_transition_output_is_rejected():
 
 
 def test_state_only_used_in_transitions():
-    """Regression guard for GitHub issue #230.
+    """A state used only in transitions, not in utility or constraints, builds.
 
-    State used only in transitions (not in utility/constraints) used to raise
-    `ValueError: list.index(x): x not in list`.
+    Such a state must not trip the state-usage walk.
     """
 
     @categorical(ordered=False)

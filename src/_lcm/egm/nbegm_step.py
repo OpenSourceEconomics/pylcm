@@ -1,0 +1,2871 @@
+"""One-period NBEGM steps for a 1-D consumption--saving regime.
+
+The step family, and where the solver dispatches each:
+
+- `nbegm_one_asset_step` — a binary *jump* case boundary on the liquid state
+  (`liquid < asset_limit`) shifting an additive subsidy into cash-on-hand.
+  Dispatched for the direct case-piece split and for a schedule whose single
+  breakpoint is a jump.
+- `nbegm_multi_interval_step` — a *continuous* piecewise-affine budget (every
+  breakpoint a kink or hard-constraint floor, no jump), where `coh(liquid)`
+  stays continuous and monotone, so one EGM pass in `coh` space and an inversion
+  of `coh(liquid)` recover the whole liquid grid with no interval seam.
+- `nbegm_unified_step` — a schedule mixing kinds (jumps and kinks together):
+  each continuous run of intervals solves by `coh` inversion and the cases are
+  masked across the jumps.
+- `nbegm_recurring_jump_step` — a schedule of multiple jump breakpoints (N
+  cliffs), resolving every jump with boundary-targeting and jump-aware
+  continuation reads.
+- `nbegm_multi_interval_step_savings` / `nbegm_unified_step_savings` —
+  savings-space variants for the ride-along path, consuming a continuation
+  supplied on the exogenous savings grid instead of the next liquid grid.
+- `nbegm_per_interval_continuation_step_savings` — the ride-along cell whose
+  next-state law reads the liquid state, so the continuation is constant only
+  within each declared interval and the step consumes one continuation row per
+  interval.
+- `nbegm_discrete_envelope_step` — a discrete action shifting a smooth budget:
+  the continuous subproblem solves per discrete-action value and the discrete
+  choice is taken by the upper envelope over the branch values.
+
+Shared mechanics: within each case/interval the budget is smooth, so the period
+solves by ordinary 1-D EGM on cash-on-hand; the recovered endogenous state is the
+budget inverse. A case's value is the upper envelope over its candidate branches
+(the Euler interior path, boundary-targeting saves that land on either side of a
+jump, and the hard borrowing corner). Cases are NaN-dead
+masked to the region where their predicate is consistent with the recovered
+state and merged by the branch-aware upper envelope; the boundary's
+`equality_owner` fixes which side owns the exact boundary point through the
+strict/non-strict comparison split.
+"""
+
+from collections.abc import Mapping
+from typing import Any, Literal
+
+import jax
+import jax.numpy as jnp
+
+from _lcm.axis_boundaries import ResolvedAxisPartition, effect_code
+from _lcm.egm.euler import invert_euler
+from _lcm.egm.ez_kernel import (
+    ez_consumption_from_euler,
+    ez_marginal_of_resource,
+    ez_period_value,
+)
+from _lcm.egm.nbegm_segments import (
+    affords_an_action,
+    mask_dead_candidates,
+    segment_ids_from_folds,
+)
+from _lcm.egm.preferences import Preferences
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic, envelope_at_query
+from lcm.case_piece import EqualityOwner
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+
+# Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
+# consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
+# the exponent is NaN-poisoned and the solve's NaN fail-fast reports it.
+_DEGENERATE_EULER_EXPONENT_TOL = 1e-8
+
+# A budget interval is flat when the consumption floor binds: cash-on-hand is constant
+# in the liquid state, so the Euler inversion onto the coh-endogenous grid is degenerate
+# and the interval is solved by a dense savings search at the constant budget, not EGM.
+# Flatness is classified by the *relative* span of cash-on-hand across the grid — its
+# range as a fraction of its magnitude — rather than an absolute slope threshold, so a
+# dollar-scaled budget whose slope is tiny but non-zero (the coh grid collapses to a
+# constant at working precision) is still recognised as flat.
+_FLAT_SPAN_REL_TOL = 1e-6
+
+# Intervals of the per-interval continuation step solve in chunks of this many at a
+# time: parallel (vmap) within a chunk, sequential (lax.map) across chunks. Larger
+# chunks run more intervals in parallel — trading peak memory (a chunk's intermediates
+# materialize together) for a shallower sequential loop. A small value keeps the
+# vmap memory bounded while still cutting the sequential depth to `n_intervals /
+# _CHUNK_SIZE`.
+_CHUNK_SIZE = 4
+
+
+def _interp_continuation_value(
+    *, query: FloatND, grid: Float1D, value: Float1D
+) -> FloatND:
+    """Read a value carry without interpolating through infeasible rows.
+
+    Feasibility carries publish ``-inf`` outside their domain. ``jnp.interp``
+    combines both bracketing ordinates even at an exact node, so a finite value
+    whose neighbour is ``-inf`` becomes NaN. This reader preserves exact nodes,
+    returns ``-inf`` throughout an infeasible link, and performs ordinary linear
+    interpolation only when both endpoints are finite.
+    """
+    upper = jnp.searchsorted(grid, query, side="right")
+    lower = jnp.clip(upper - 1, 0, grid.shape[0] - 1)
+    upper = jnp.clip(upper, 0, grid.shape[0] - 1)
+    left_grid = grid[lower]
+    right_grid = grid[upper]
+    left_value = value[lower]
+    right_value = value[upper]
+
+    width = right_grid - left_grid
+    safe_width = jnp.where(width != 0.0, width, 1.0)
+    interpolated = (
+        (right_grid - query) * left_value + (query - left_grid) * right_value
+    ) / safe_width
+    across_infeasible = jnp.isneginf(left_value) | jnp.isneginf(right_value)
+    interior = jnp.where(across_infeasible, -jnp.inf, interpolated)
+    exact = query == left_grid
+    inside = jnp.where(exact, left_value, interior)
+    return jnp.where(
+        query <= grid[0],
+        value[0],
+        jnp.where(query >= grid[-1], value[-1], inside),
+    )
+
+
+def nbegm_multi_interval_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    flat_interval_mask: tuple[bool, ...] | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+    boundary_savings_targets: Float1D | None = None,
+    boundary_next_liquid: Float1D | None = None,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a piecewise-affine, continuous-budget regime by EGM.
+
+    The breakpoints partition the liquid axis into intervals on which cash-on-hand
+    is affine, `coh = slope_i * liquid + intercept_i`. With a continuous budget
+    (every breakpoint a kink, no jump), `coh(liquid)` is continuous and monotone, so
+    its inverse is a single continuous map. EGM therefore runs once in `coh` space —
+    `coh = consumption + savings` — and the endogenous liquid is recovered by
+    inverting `coh(liquid)` on the grid, leaving no interval seam to under-cover. The
+    marginal value of liquid scales by the active interval's slope (the envelope
+    theorem through the affine budget).
+
+    A slope-0 interval is a hard-constraint floor: cash-on-hand is pinned at the
+    floor for every liquid in it, so the value is constant — the floor's own
+    optimum. The coh inversion is degenerate there, so a flat interval's interior
+    candidates are pulled onto its crossing breakpoint (where they link to the
+    rising interior just above) and a flat corner segment carries the constant value
+    across the interval below. The `s = 0` corner — consume the whole cash-on-hand,
+    the hard borrowing corner — competes over the whole grid, and the interior path,
+    the flat corners, and that corner merge by the branch-aware upper envelope.
+
+    The candidate set is the Euler path plus those corners; it carries neither the
+    dense per-savings-node corner family nor the `s = savings_grid[-1]` corner that
+    `nbegm_multi_interval_step_savings` builds. A continuation kink strictly between
+    two Euler roots has no Euler root of its own, and the finite-grid optimum at
+    high cash-on-hand can be to save the grid maximum, so a regime with either shape
+    belongs on the savings-space step; here the value would sit below the dense
+    optimum in exactly those two regions.
+
+    Args:
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        preferences: One shared preferences bundle or one bundle per branch.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is the
+            factor the Euler equation discounts the continuation marginal by.
+            For the conventional law this is the gross return at every node.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        flat_interval_mask: Static per-interval flag, length N+1, marking the
+            hard-constraint (slope-0) floor intervals. `None` means no floor.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+        feasibility_partition: Owner-aware liquid partition containing the
+            compiled feasibility boundaries. Each feasible equality boundary
+            receives a dense savings-node point-candidate block.
+        feasible_interval_mask: Whether each interval of
+            `feasibility_partition` is feasible. Must be supplied with the
+            partition.
+        boundary_savings_targets: Savings values that land on or immediately
+            beside the child carry's feasibility boundaries. `None` adds no
+            child-boundary candidates.
+        boundary_next_liquid: Child liquid landing points paired with
+            `boundary_savings_targets`. `None` adds no child-boundary
+            candidates.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    coh_grid = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+    )
+
+    value_next = _interp_continuation_value(
+        query=next_liquid, grid=next_liquid_grid, value=next_value
+    )
+    marginal_next = jnp.interp(next_liquid, next_liquid_grid, next_marginal)
+
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    coh_endog = consumption + savings_grid
+    # An endogenous cash-on-hand beyond the grid's coh range inverts to a liquid
+    # beyond the grid; the boundary segments' slopes continue the inversion there,
+    # so the branch's last live link still brackets the boundary query points.
+    liquid_endog = _invert_coh_with_linear_extension(
+        coh_endog=coh_endog, coh_case_grid=coh_grid, liquid_grid=liquid_grid
+    )
+    # Marginal value of liquid = u'(c) * d coh / d liquid; the slope is the active
+    # interval's at the recovered liquid (envelope theorem through the budget).
+    endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
+    slope_endog = coh_slopes[endog_interval]
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = slope_endog * preferences.marginal_utility(consumption)
+
+    upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
+    lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
+    flat_indices = _flat_interval_indices(
+        flat_interval_mask, n_intervals=coh_slopes.shape[0]
+    )
+    # Pull each flat interval's degenerate interior candidates onto its crossing
+    # breakpoint at the floor's own optimum, where they link to the rising interior
+    # just above; a flat corner below carries the constant value across the interval.
+    # The floor's optimum is read by a dense consumption search at `coh = floor` —
+    # robust to a recurring flat continuation, where the Euler inversion is degenerate.
+    flat_corners: list[tuple[Float1D, Float1D, Float1D, Float1D]] = []
+    for i in flat_indices:
+        floor_value, floor_policy = _floor_optimum(
+            floor_coh=coh_intercepts[i],
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
+        )
+        in_flat = endog_interval == i
+        liquid_endog = jnp.where(in_flat, upper_edges[i], liquid_endog)
+        value_endog = jnp.where(in_flat, floor_value, value_endog)
+        consumption = jnp.where(in_flat, floor_policy, consumption)
+        marginal_endog = jnp.where(in_flat, 0.0, marginal_endog)
+        flat_corners.append(
+            (
+                jnp.stack([lower_edges[i], upper_edges[i]]),
+                jnp.full((2,), floor_value),
+                jnp.full((2,), floor_policy),
+                jnp.zeros((2,)),
+            )
+        )
+    # Degenerate-inversion guard: where the continuation is flat (a recurring floor
+    # gives zero marginal value of liquid), the Euler inversion sends consumption to
+    # infinity, so those interior candidates are spurious. Drop the ones not already
+    # pulled onto a floor crossing; the floor corner and the s=0 corner cover them.
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
+    in_any_flat = jnp.isin(endog_interval, jnp.asarray(flat_indices, dtype=jnp.int32))
+    liquid_endog = jnp.where(degenerate & ~in_any_flat, jnp.nan, liquid_endog)
+    # A non-concave (convex-kinked) budget can fold the interior path back, so keep
+    # its monotone runs apart for the upper envelope.
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = _next_segment_id(interior_segment)
+
+    endog_parts: list[Float1D] = [liquid_endog]
+    value_parts: list[Float1D] = [value_endog]
+    policy_parts: list[Float1D] = [consumption]
+    marginal_parts: list[Float1D] = [marginal_endog]
+    segment_parts: list[Float1D] = [interior_segment]
+
+    # Hard borrowing corner: save nothing, consume all of this point's cash-on-hand,
+    # and land wherever the declared law sends the savings grid's lowest node. A
+    # candidate over the whole grid, since the constraint binds wherever the no-save
+    # corner beats the Euler path.
+    n_endpoint_segments = _append_savings_endpoint_corners(
+        endog_grid=liquid_grid,
+        coh=coh_grid,
+        savings_grid=savings_grid,
+        continuation_at_savings=value_next,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        coh_slope=coh_slopes[interval_of_grid],
+        valid=True,
+        first_segment=next_segment,
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
+
+    for offset, (edges, values, policies, marginals) in enumerate(flat_corners):
+        endog_parts.append(edges)
+        value_parts.append(values)
+        policy_parts.append(policies)
+        marginal_parts.append(marginals)
+        segment_parts.append(
+            jnp.full((2,), next_segment + float(n_endpoint_segments + offset))
+        )
+    first_point_segment = (
+        next_segment + float(n_endpoint_segments) + float(len(flat_corners))
+    )
+    n_current_boundary_segments = _append_current_feasibility_boundary_candidates(
+        feasibility_partition=feasibility_partition,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        continuation_at_savings=value_next,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        budget_breakpoints=breakpoints,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        first_segment=first_point_segment,
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
+    _append_boundary_savings_corners(
+        boundary_savings_targets=boundary_savings_targets,
+        boundary_next_liquid=boundary_next_liquid,
+        liquid_grid=liquid_grid,
+        coh_grid=coh_grid,
+        coh_slope=coh_slopes[interval_of_grid],
+        next_liquid_grid=next_liquid_grid,
+        next_value=next_value,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        first_segment=first_point_segment + float(n_current_boundary_segments),
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return value, marginal, policy
+
+
+def _append_current_feasibility_boundary_candidates(
+    *,
+    feasibility_partition: ResolvedAxisPartition | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    continuation_at_savings: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    budget_breakpoints: Float1D,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    first_segment: ScalarFloat,
+    endog_parts: list[Float1D],
+    value_parts: list[Float1D],
+    policy_parts: list[Float1D],
+    marginal_parts: list[Float1D],
+    segment_parts: list[Float1D],
+) -> int:
+    """Offer every savings node at an equality-owned feasibility boundary.
+
+    Feasibility masking separates the Euler path into distinct regions. At a
+    boundary owned by the feasible side, the first feasible Euler root can lie
+    strictly inside that region, so no interior link reaches the exact threshold.
+    Evaluating the finite savings grid at the threshold supplies zero-width Bellman
+    candidates there. A strict comparison classifies the same candidates into the
+    infeasible interval and masks them normally.
+
+    Returns:
+        Number of segment identifiers reserved by the fixed-shape candidate block.
+
+    """
+    if feasibility_partition is None:
+        return 0
+
+    boundaries = feasibility_partition.values
+    n_boundaries = boundaries.shape[0]
+    n_savings = savings_grid.shape[0]
+    boundary_interval = jnp.searchsorted(budget_breakpoints, boundaries, side="right")
+    boundary_coh = (
+        coh_slopes[boundary_interval] * boundaries + coh_intercepts[boundary_interval]
+    )
+    consumption = boundary_coh[:, None] - savings_grid[None, :]
+    consumption_safe = jnp.where(consumption > 0.0, consumption, 1.0)
+    value = (
+        preferences.utility(consumption_safe)
+        + discount_factor * continuation_at_savings[None, :]
+    )
+    marginal = coh_slopes[boundary_interval, None] * preferences.marginal_utility(
+        consumption_safe
+    )
+    is_feasibility = feasibility_partition.effect_codes == effect_code("feasibility")
+    in_domain = (boundaries >= liquid_grid[0]) & (boundaries <= liquid_grid[-1])
+    live = (
+        is_feasibility[:, None]
+        & in_domain[:, None]
+        & (consumption > 0.0)
+        & jnp.isfinite(continuation_at_savings)[None, :]
+    )
+
+    endog_parts.append(
+        jnp.where(
+            live, jnp.broadcast_to(boundaries[:, None], live.shape), jnp.nan
+        ).reshape(-1)
+    )
+    value_parts.append(jnp.where(live, value, jnp.nan).reshape(-1))
+    policy_parts.append(jnp.where(live, consumption, jnp.nan).reshape(-1))
+    marginal_parts.append(jnp.where(live, marginal, jnp.nan).reshape(-1))
+    segment_parts.append(
+        first_segment + jnp.arange(n_boundaries * n_savings, dtype=liquid_grid.dtype)
+    )
+    return n_boundaries * n_savings
+
+
+def _append_boundary_savings_corners(
+    *,
+    boundary_savings_targets: Float1D | None,
+    boundary_next_liquid: Float1D | None,
+    liquid_grid: Float1D,
+    coh_grid: Float1D,
+    coh_slope: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    first_segment: ScalarFloat,
+    endog_parts: list[Float1D],
+    value_parts: list[Float1D],
+    policy_parts: list[Float1D],
+    marginal_parts: list[Float1D],
+    segment_parts: list[Float1D],
+) -> None:
+    """Add fixed-savings branches where a child feasibility boundary binds."""
+    if boundary_savings_targets is None or boundary_next_liquid is None:
+        return
+
+    for offset in range(boundary_savings_targets.shape[0]):
+        fixed_savings = boundary_savings_targets[offset]
+        continuation = _interp_continuation_value(
+            query=boundary_next_liquid[offset],
+            grid=next_liquid_grid,
+            value=next_value,
+        )
+        boundary_consumption = coh_grid - fixed_savings
+        live = (boundary_consumption > 0.0) & jnp.isfinite(continuation)
+        boundary_value = (
+            preferences.utility(boundary_consumption) + discount_factor * continuation
+        )
+        boundary_marginal = coh_slope * preferences.marginal_utility(
+            boundary_consumption
+        )
+        endog_parts.append(jnp.where(live, liquid_grid, jnp.nan))
+        value_parts.append(jnp.where(live, boundary_value, jnp.nan))
+        policy_parts.append(jnp.where(live, boundary_consumption, jnp.nan))
+        marginal_parts.append(jnp.where(live, boundary_marginal, jnp.nan))
+        segment_parts.append(
+            jnp.full_like(
+                liquid_grid,
+                first_segment + float(offset),
+            )
+        )
+
+
+def _invert_coh_with_linear_extension(
+    *, coh_endog: Float1D, coh_case_grid: Float1D, liquid_grid: Float1D
+) -> Float1D:
+    """Invert the case's monotone coh map, extending linearly past its range.
+
+    `jnp.interp` clips an endogenous coh beyond the sampled range onto the
+    boundary grid node, which strands the branch's last live link inside the
+    grid span and leaves the boundary query points unbracketed — the envelope
+    then falls back to a corner there. Continuing the boundary segments'
+    slopes keeps the branch extending past the first/last grid point; the
+    per-case interval mask still bounds where its candidates may live.
+    """
+    inner = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
+    lower_width = coh_case_grid[1] - coh_case_grid[0]
+    upper_width = coh_case_grid[-1] - coh_case_grid[-2]
+    lower_slope = (liquid_grid[1] - liquid_grid[0]) / jnp.where(
+        lower_width > 0.0, lower_width, 1.0
+    )
+    upper_slope = (liquid_grid[-1] - liquid_grid[-2]) / jnp.where(
+        upper_width > 0.0, upper_width, 1.0
+    )
+    below = liquid_grid[0] + (coh_endog - coh_case_grid[0]) * lower_slope
+    above = liquid_grid[-1] + (coh_endog - coh_case_grid[-1]) * upper_slope
+    below = jnp.where(lower_width > 0.0, below, inner)
+    above = jnp.where(upper_width > 0.0, above, inner)
+    return jnp.where(
+        coh_endog < coh_case_grid[0],
+        below,
+        jnp.where(coh_endog > coh_case_grid[-1], above, inner),
+    )
+
+
+def _law_at_savings(
+    *, savings: FloatND, savings_grid: Float1D, next_liquid: Float1D
+) -> FloatND:
+    """Read the declared law of motion at savings off the tabulation's own nodes.
+
+    The law reaches the kernels as its landing points on `savings_grid`, which is
+    what the Euler inversion consumes. A corner search evaluates it at savings the
+    grid does not carry, so it is read back from that tabulation by interpolation:
+    exact for a law affine in savings, and accurate to the savings grid otherwise.
+    """
+    return jnp.interp(savings, savings_grid, next_liquid)
+
+
+def _savings_reaching(
+    *,
+    target: FloatND,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    side: Literal["below", "above"],
+) -> FloatND:
+    """Return the savings level whose landing point is `target`.
+
+    Boundary targeting needs the savings that lands exactly on a jump breakpoint,
+    which is the law read backwards. The solver accepts only laws strictly
+    increasing in savings, so the tabulation is invertible and interpolating it
+    with the roles of the two axes swapped is well posed.
+    """
+    candidate = jnp.interp(target, next_liquid, savings_grid)
+    reached = _law_at_savings(
+        savings=candidate, savings_grid=savings_grid, next_liquid=next_liquid
+    )
+    direction = jnp.asarray(
+        -jnp.inf if side == "below" else jnp.inf, dtype=candidate.dtype
+    )
+    nudged = jnp.nextafter(candidate, direction)
+    reached_nudged = _law_at_savings(
+        savings=nudged, savings_grid=savings_grid, next_liquid=next_liquid
+    )
+
+    def reaches_requested_side(value: FloatND) -> BoolND:
+        return value <= target if side == "below" else value >= target
+
+    use_candidate = reaches_requested_side(reached)
+    savings = jnp.where(use_candidate, candidate, nudged)
+    landed = jnp.where(use_candidate, reached, reached_nudged)
+    target_reachable = (target >= next_liquid[0]) & (target <= next_liquid[-1])
+    savings_in_domain = (savings >= savings_grid[0]) & (savings <= savings_grid[-1])
+    valid = target_reachable & savings_in_domain & reaches_requested_side(landed)
+    return jnp.where(valid, savings, jnp.nan)
+
+
+def _invert_euler_over_savings(
+    *,
+    cont_marginal: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+) -> Float1D:
+    """Recover the consumption action at every savings node via the Euler equation.
+
+    The expected marginal continuation is already in savings space (it carries the
+    gross-return factor `dR/ds`), so each node inverts the regime's marginal utility
+    at the discounted expected marginal continuation — `invert_euler` applies the
+    degenerate-inversion clamp before calling `inverse_marginal_utility`.
+    """
+
+    def invert_one(node_marginal: ScalarFloat) -> ScalarFloat:
+        return invert_euler(
+            expected_marginal_continuation=node_marginal,
+            discount_factor=discount_factor,
+            inverse_marginal_utility=preferences.inverse_marginal_utility,
+        )
+
+    return jax.vmap(invert_one)(cont_marginal)
+
+
+def _ez_flow_power_structure(
+    *,
+    preferences: Preferences,
+    inverse_eis: ScalarFloat,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Log-domain Euler-inversion coefficients for a single-power period flow.
+
+    The Epstein-Zin closed-form Euler inversion needs the flow's marginal as a
+    single power of consumption, `q^(-rho) q_c = kappa * c^flow_exponent`. For
+    any constant-elasticity flow `q(c) = A c^phi` — the basic good `q = c`, and
+    the fixed-service Cobb-Douglas `q = c^phi s^(1-phi)` with `s` the outer
+    durable fixed per outer node — read `A = q(1)` and the elasticity
+    `phi = q'(1) / A` from the regime's own flow, then
+    `log(kappa) = (1-rho) log(A) + log(phi)` and
+    `flow_exponent = phi (1-rho) - 1`. The coefficient stays in log form
+    throughout: the raw `A^(1-rho)` leaves the dtype's range long before the
+    inverted consumption does. Reduces to `(0, -rho)` for the basic flow
+    (`A = phi = 1`). A nonpositive `A` or `phi` (excluded by the build probe,
+    but runtime parameters can recreate it) reads NaN and poisons the solve.
+
+    Valid only for a flow with a constant consumption elasticity (a single power of
+    `c`); a flow whose elasticity varies with `c` (e.g. a nested CES) needs a
+    numeric inverse instead.
+    """
+    one = jnp.asarray(1.0)
+    flow_scale = preferences.utility(one)
+    flow_power = preferences.marginal_utility(one) / flow_scale
+    one_minus_rho = 1.0 - inverse_eis
+    log_flow_coefficient = one_minus_rho * jnp.log(flow_scale) + jnp.log(flow_power)
+    raw_exponent = flow_power * one_minus_rho - 1.0
+    # At `xi = phi (1-rho) - 1 = 0` the Euler equation is constant in
+    # consumption and the closed-form inversion `c = x^(1/xi)` is undefined.
+    # Both `phi` and `rho` are runtime parameters, so the degenerate
+    # combination cannot be rejected at model build; poison the exponent with
+    # NaN so the solve's NaN fail-fast surfaces the (regime, period) instead
+    # of the inversion computing a finite but meaningless consumption.
+    flow_exponent = jnp.where(
+        jnp.abs(raw_exponent) < _DEGENERATE_EULER_EXPONENT_TOL,
+        jnp.nan,
+        raw_exponent,
+    )
+    return log_flow_coefficient, flow_exponent
+
+
+def nbegm_multi_interval_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    inverse_eis: ScalarFloat | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve a continuous piecewise-affine regime against savings-space continuation.
+
+    Same EGM geometry as `nbegm_multi_interval_step`, but the continuation is
+    supplied as the expected value and expected marginal continuation already
+    evaluated at each post-decision savings node — the transition-aware
+    continuation reader has integrated the next-period regime transition,
+    stochastic shocks, and ride-along co-state transitions and returned both in
+    savings space. The expected marginal therefore already carries the
+    gross-return factor `dR/ds`, so the Euler inversion reads it directly with no
+    explicit return term.
+
+    The Euler inversion, the period value, and the marginal value of liquid all
+    read the regime's own utility: the consumption action solving the savings-node
+    Euler equation comes from `inverse_marginal_utility` (the regime's analytic
+    inverse, or a numeric inversion of `u'` built from the utility), the value adds
+    `preferences.utility(consumption)`, and the marginal value of liquid is the
+    cash-on-hand slope times `u'(consumption)` by the envelope theorem.
+
+    The hard-borrowing corner (save nothing) lands on the lowest savings node, so
+    its continuation value is `cont_value[0]` (the expectation at `savings = 0`).
+    The flat-interval (hard-constraint floor) case is not covered here; a regime
+    with a ride-along co-state and a floor breakpoint is a later slice.
+
+    Args:
+        cont_value: Expected continuation value at each savings node.
+        cont_marginal: Expected marginal continuation (savings space) at each
+            savings node.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
+            with `savings_grid[0] == 0` the no-save corner).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    coh_grid = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+    )
+
+    # The expected marginal is already in savings space (it carries `dR/ds`), so
+    # the Euler inversion reads it directly — no explicit gross-return factor.
+    # Under Epstein-Zin the continuation pair is `(nu, dnu/ds)` and the inversion,
+    # period value, and envelope marginal read the recursive aggregator instead of
+    # the additive `u + beta E[V']` form.
+    if inverse_eis is not None:
+        log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
+            preferences=preferences, inverse_eis=inverse_eis
+        )
+        consumption = ez_consumption_from_euler(
+            nu=cont_value,
+            dnu_ds=cont_marginal,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+            log_flow_coefficient=log_flow_coefficient,
+            flow_exponent=flow_exponent,
+        )
+    else:
+        consumption = _invert_euler_over_savings(
+            cont_marginal=cont_marginal,
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
+    coh_endog = consumption + savings_grid
+    liquid_endog = _invert_coh_with_linear_extension(
+        coh_endog=coh_endog, coh_case_grid=coh_grid, liquid_grid=liquid_grid
+    )
+    endog_interval = jnp.searchsorted(breakpoints, liquid_endog, side="right")
+    slope_endog = coh_slopes[endog_interval]
+    if inverse_eis is not None:
+        value_endog = ez_period_value(
+            flow=preferences.utility(consumption),
+            nu=cont_value,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+        marginal_endog = slope_endog * ez_marginal_of_resource(
+            log_flow_marginal=log_flow_coefficient
+            + flow_exponent * jnp.log(consumption),
+            value=value_endog,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+    else:
+        value_endog = preferences.utility(consumption) + discount_factor * cont_value
+        marginal_endog = slope_endog * preferences.marginal_utility(consumption)
+
+    # Where the continuation is flat (zero marginal value of liquid), the Euler
+    # inversion diverges; drop those interior candidates.
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
+    liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = _next_segment_id(interior_segment)
+
+    # Savings-node corner points: for every post-decision node `s_i`, consume
+    # `coh - s_i` at each liquid grid point and earn that node's continuation. The
+    # family is a dense Bellman floor on the savings grid at every query point, so
+    # a continuation kink between Euler roots (a child-value interpolation node,
+    # where the inversion has no root) still gets a candidate; the `s = 0` corner
+    # is the hard borrowing corner. Each point is its own zero-width self-pair
+    # with a distinct segment id (below), so a node feasible at a single liquid
+    # point stays bracketable by the link-only envelope at its own abscissa.
+    node_consumption = coh_grid[None, :] - savings_grid[:, None]
+    node_feasible = affords_an_action(node_consumption)
+    node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
+    if inverse_eis is not None:
+        node_value_safe = ez_period_value(
+            flow=preferences.utility(node_consumption_safe),
+            nu=cont_value[:, None],
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+        node_marginal_safe = ez_marginal_of_resource(
+            log_flow_marginal=log_flow_coefficient
+            + flow_exponent * jnp.log(node_consumption_safe),
+            value=node_value_safe,
+            discount_factor=discount_factor,
+            inverse_eis=inverse_eis,
+        )
+    else:
+        node_value_safe = (
+            preferences.utility(node_consumption_safe)
+            + discount_factor * cont_value[:, None]
+        )
+        node_marginal_safe = preferences.marginal_utility(node_consumption_safe)
+    node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
+    node_endog = jnp.where(
+        node_feasible,
+        jnp.broadcast_to(liquid_grid, node_consumption.shape),
+        jnp.nan,
+    )
+    node_marginal = coh_slopes[interval_of_grid][None, :] * node_marginal_safe
+    node_segment = next_segment + jnp.arange(
+        node_consumption.size, dtype=liquid_grid.dtype
+    ).reshape(node_consumption.shape)
+
+    def as_pairs(entries: Float1D) -> Float1D:
+        return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+    endog_parts = [liquid_endog, as_pairs(node_endog.ravel())]
+    value_parts = [value_endog, as_pairs(node_value.ravel())]
+    policy_parts = [consumption, as_pairs(node_consumption_safe.ravel())]
+    marginal_parts = [marginal_endog, as_pairs(node_marginal.ravel())]
+    segment_parts = [interior_segment, as_pairs(node_segment.ravel())]
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return value, marginal, policy
+
+
+def _interval_corner_candidates(
+    *,
+    corner_coh_grid: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    lower: ScalarFloat,
+    upper: ScalarFloat,
+    flat: BoolND,
+    value_at_no_save: ScalarFloat,
+    interval_value: Float1D,
+    coh_slope: ScalarFloat,
+    coh_intercept: ScalarFloat,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    base: ScalarFloat,
+    next_segment: ScalarFloat,
+) -> tuple[Float1D, ...]:
+    """Build one interval's no-save and upper-savings corner candidates.
+
+    Both corners consume `corner_coh_grid` — the true per-grid-point cash-on-hand — so
+    a corner is always a real feasible action's value, robust to an interval whose
+    recovered affine budget extrapolates below zero where a kink binds only in part of
+    the interval.
+
+    Both corners span the interval's liquid range and are each duplicated into an
+    interleaved self-segment pair, so a corner in an interval that holds a single liquid
+    grid point stays visible to the link-only envelope: the zero-width pair `(p, p)` is
+    a segment the envelope brackets exactly at `q == p`. Distinct segment ids keep the
+    two corners from cross-linking.
+
+    Returns the flattened `(endog, value, policy, marginal, segment)` columns of the
+    no-save corner followed by those of the upper-savings corner.
+    """
+    in_interval = (liquid_grid >= lower) & (liquid_grid < upper)
+
+    # No-save / floor corner (`s = 0`). Where the budget is flat the consumption floor
+    # binds, cash-on-hand is the constant `coh_intercept` for every liquid, so the value
+    # is the dense Bellman max over savings at the constant budget, robust to the
+    # degenerate Euler inversion. Where the budget slopes it is the ordinary no-save
+    # candidate `u(coh(liquid)) + beta * V'(0)`.
+    floor_consumption = coh_intercept - savings_grid
+    floor_feasible = affords_an_action(floor_consumption)
+    floor_node_value = jnp.where(
+        floor_feasible,
+        preferences.utility(jnp.where(floor_feasible, floor_consumption, 1.0))
+        + discount_factor * interval_value,
+        -jnp.inf,
+    )
+    best_floor = jnp.argmax(floor_node_value)
+    # `argmax` returns node 0 when every node is infeasible, so the `-jnp.inf`
+    # sentinel would be published on a finite abscissa across the whole
+    # interval and the envelope's own interpolation would turn it into NaN.
+    # A floor no savings node can afford has no corner at all.
+    floor_affordable = jnp.any(floor_feasible)
+    # A no-save corner consumes the whole cash-on-hand. `corner_coh_grid` is the true
+    # per-grid-point cash-on-hand, so consumption is feasible (positive) at every grid
+    # point where the budget is defined; the positivity guard drops any point where an
+    # undeclared kink still leaves it non-positive rather than letting `u(<=0)` = NaN
+    # leak into the envelope as a live candidate.
+    s0_feasible = affords_an_action(corner_coh_grid)
+    s0_consumption_safe = jnp.where(s0_feasible, corner_coh_grid, 1.0)
+    s0 = mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=jnp.where(
+            flat,
+            floor_node_value[best_floor],
+            preferences.utility(s0_consumption_safe)
+            + discount_factor * value_at_no_save,
+        ),
+        policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
+        marginal=coh_slope * preferences.marginal_utility(s0_consumption_safe),
+        valid=in_interval & jnp.where(flat, floor_affordable, s0_feasible),
+    )
+
+    # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
+    # finite-domain Bellman optimum at high cash-on-hand can be to save the grid maximum
+    # rather than at an interior Euler point, above where the recovered endogenous grid
+    # reaches. Feasible only where residual consumption is positive; redundant on a flat
+    # interval, whose dense floor search already spans the whole savings grid.
+    smax_consumption = corner_coh_grid - savings_grid[-1]
+    smax_feasible = affords_an_action(smax_consumption) & (~flat) & in_interval
+    smax_consumption_safe = jnp.where(smax_feasible, smax_consumption, 1.0)
+    smax = mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=preferences.utility(smax_consumption_safe)
+        + discount_factor * interval_value[-1],
+        policy=smax_consumption,
+        marginal=coh_slope * preferences.marginal_utility(smax_consumption_safe),
+        valid=smax_feasible,
+    )
+
+    s0_pair = tuple(jnp.repeat(channel, 2) for channel in s0)
+    smax_pair = tuple(jnp.repeat(channel, 2) for channel in smax)
+    s0_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment), 2)
+    smax_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment + 1.0), 2)
+    return (*s0_pair, s0_segment, *smax_pair, smax_segment)
+
+
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND,
+    cont_marginal: FloatND,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = None,
+    envelope_segment_block_size: int = 0,
+    extra_savings: FloatND | None = None,
+    extra_cont_value: FloatND | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+    feasibility_partition: ResolvedAxisPartition | None = None,
+    feasible_interval_mask: BoolND | None = None,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve a budget whose continuation differs per liquid interval.
+
+    When the next-period state law carries a current-asset boundary — a transfer,
+    eligibility scale, or tax-rate term that is piecewise-constant in the current
+    liquid state through the declared cliffs — the expected continuation is itself
+    piecewise-constant-shifted across intervals: within interval `k` the boundary
+    term is the constant the cliff partition fixes, so `next_liquid(savings)` and
+    hence the continuation `E[V'(next_liquid)]` take interval `k`'s form. The caller
+    therefore supplies one continuation row per interval (the boundary term bound to
+    that interval's value), and each interval is solved as its own case: the EGM
+    inverts interval `k`'s continuous `coh(liquid)` against interval `k`'s
+    continuation, masks to `[breakpoint_{k-1}, breakpoint_k)`, and adds its
+    hard-borrowing corner. The cases plus corners merge by the branch-aware upper
+    envelope.
+
+    Args:
+        cont_value: Expected continuation value per interval and savings node,
+            shaped `(n_intervals, n_savings)`.
+        cont_marginal: Expected marginal continuation (savings space) per interval
+            and savings node, shaped `(n_intervals, n_savings)`.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
+            with `savings_grid[0] == 0` the no-save corner).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        coh_grid: True cash-on-hand at each liquid grid point, length equal to
+            `liquid_grid`. The corners consume this instead of the recovered affine
+            budget, so a corner stays a real feasible action where an undeclared kink
+            (a consumption floor binding only in part of an interval) makes the affine
+            cash-on-hand extrapolate below zero. When `None`, the corners fall back to
+            the per-interval affine budget — exact whenever the budget is smooth across
+            the whole interval.
+        envelope_segment_block_size: Streams the merged upper envelope over
+            candidate-segment blocks of this size instead of materialising the full
+            `(n_query, n_segment)` bracket matrix; `0` keeps the one-shot dense
+            envelope. The result is identical either way — the knob trades peak
+            memory against a sequential scan.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    n_intervals = coh_slopes.shape[0]
+    interval_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
+
+    # Each interval's lower/upper liquid bound, with the open ends at the extremes.
+    edge = jnp.array([jnp.inf], dtype=breakpoints.dtype)
+    lowers = jnp.concatenate([-edge, breakpoints])
+    uppers = jnp.concatenate([breakpoints, edge])
+
+    def solve_interval(
+        interval_index: ScalarInt,
+        interval_value: Float1D,
+        interval_marginal: Float1D,
+        coh_slope: ScalarFloat,
+        coh_intercept: ScalarFloat,
+        lower: ScalarFloat,
+        upper: ScalarFloat,
+    ) -> tuple[Float1D, ...]:
+        """Solve one interval's EGM case and its no-save corner.
+
+        Returns the interior candidate (endog grid, value, policy, marginal,
+        segment id) followed by the s=0 corner candidate, each on its own grid.
+        The segment ids are offset by `interval_index * interval_stride` so the
+        per-interval folds stay disjoint when the cases merge under one envelope.
+        """
+        base = interval_index.astype(jnp.result_type(float)) * interval_stride
+        consumption = _invert_euler_over_savings(
+            cont_marginal=interval_marginal,
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
+        coh_endog = consumption + savings_grid
+        interp_value = (
+            preferences.utility(consumption) + discount_factor * interval_value
+        )
+        value_at_no_save = interval_value[0]
+        degenerate = _degenerate_inversion(
+            marginal=interval_marginal, consumption=consumption
+        )
+
+        coh_case_grid = coh_slope * liquid_grid + coh_intercept
+        coh_scale = jnp.maximum(1.0, jnp.max(jnp.abs(coh_case_grid)))
+        flat = (
+            jnp.max(coh_case_grid) - jnp.min(coh_case_grid)
+        ) <= _FLAT_SPAN_REL_TOL * coh_scale
+
+        # A flat interval's `coh_case_grid` is constant, and `jnp.interp` needs a
+        # strictly increasing `xp`; guard the recovered liquid to a finite in-interval
+        # value there so no NaN endog leaks into the envelope (interior killed below).
+        liquid_endog = jnp.where(
+            flat,
+            jnp.full_like(coh_endog, lower),
+            _invert_coh_with_linear_extension(
+                coh_endog=coh_endog,
+                coh_case_grid=coh_case_grid,
+                liquid_grid=liquid_grid,
+            ),
+        )
+        marginal_endog = coh_slope * preferences.marginal_utility(consumption)
+        in_case = (
+            (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate) & (~flat)
+        )
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = _next_segment_id(segment)
+
+        # Corners consume the true cash-on-hand at each grid point when supplied, so a
+        # no-save/upper-savings corner stays feasible where the interval's affine budget
+        # extrapolates below zero; without it they fall back to the affine budget.
+        corner_coh_grid = coh_case_grid if coh_grid is None else coh_grid
+        corners = _interval_corner_candidates(
+            corner_coh_grid=corner_coh_grid,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            lower=lower,
+            upper=upper,
+            flat=flat,
+            value_at_no_save=value_at_no_save,
+            interval_value=interval_value,
+            coh_slope=coh_slope,
+            coh_intercept=coh_intercept,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            base=base,
+            next_segment=next_segment,
+        )
+        return (
+            interior[0],
+            interior[1],
+            interior[2],
+            interior[3],
+            segment + base,
+            *corners,
+        )
+
+    # Solve the intervals with `lax.map` at a batch width of `_CHUNK_SIZE`: it
+    # vectorizes that many intervals into one `vmap` and runs the batches
+    # sequentially, so at most one batch's intermediates materialize at once —
+    # bounding peak memory — while the sequential depth is
+    # `ceil(n_intervals / _CHUNK_SIZE)` rather than `n_intervals`. The body traces
+    # once per batch shape, keeping the HLO small.
+    #
+    # `n_intervals` need not divide `_CHUNK_SIZE`; `lax.map` handles the remainder
+    # itself, so no interval input is padded and no lane is a placeholder. Each item
+    # carries its own global interval index, so an interval's segment block is
+    # `interval_index * interval_stride` whichever batch it lands in.
+    #
+    # `n_padded` shapes no array. It survives only to reserve segment-id space, so
+    # the point-candidate blocks below start above every interval block that a run
+    # at this chunk size could have used.
+    n_chunks = -(-n_intervals // _CHUNK_SIZE)
+    n_padded = n_chunks * _CHUNK_SIZE
+
+    interval_indices = jnp.arange(n_intervals, dtype=jnp.int32)
+
+    def solve_packed(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
+        """Solve the one interval carried by a mapped item."""
+        return solve_interval(*packed)
+
+    (
+        int_endog,
+        int_value,
+        int_policy,
+        int_marginal,
+        int_segment,
+        s0_endog,
+        s0_value,
+        s0_policy,
+        s0_marginal,
+        s0_segment,
+        smax_endog,
+        smax_value,
+        smax_policy,
+        smax_marginal,
+        smax_segment,
+    ) = jax.lax.map(
+        solve_packed,
+        (
+            interval_indices,
+            cont_value,
+            cont_marginal,
+            coh_slopes,
+            coh_intercepts,
+            lowers,
+            uppers,
+        ),
+        batch_size=_CHUNK_SIZE,
+    )
+
+    node_segment_base, cliff_segment_base = _point_candidate_segment_bases(
+        interval_block_end=n_padded * interval_stride,
+        n_liquid=liquid_grid.shape[0],
+        n_nodes=savings_grid.shape[-1],
+    )
+
+    node_endog, node_value, node_policy, node_marginal, node_segment = (
+        _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            cont_value=cont_value,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            segment_base=float(node_segment_base),
+        )
+    )
+
+    # Save-to-cliff point candidates: interval-dependent one-sided savings
+    # targets with the continuation's exact one-sided values, offered at every
+    # liquid grid point next to the dense savings-node floor.
+    if extra_savings is not None and extra_cont_value is not None:
+        cliff_parts = _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=extra_savings,
+            cont_value=extra_cont_value,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            segment_base=float(cliff_segment_base),
+        )
+    else:
+        cliff_parts = (jnp.empty(0),) * 5
+
+    def stack(*parts: FloatND) -> Float1D:
+        return jnp.concatenate([part.reshape(-1) for part in parts])
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]),
+        policy=stack(int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]),
+        value=stack(int_value, s0_value, smax_value, node_value, cliff_parts[1]),
+        marginal=stack(
+            int_marginal, s0_marginal, smax_marginal, node_marginal, cliff_parts[3]
+        ),
+        segment_id=stack(
+            int_segment, s0_segment, smax_segment, node_segment, cliff_parts[4]
+        ),
+        x_query=liquid_grid,
+        segment_block_size=envelope_segment_block_size,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return value, marginal, policy
+
+
+def _point_candidate_segment_bases(
+    *, interval_block_end: int, n_liquid: int, n_nodes: int
+) -> tuple[int, int]:
+    """Return the segment-id bases of the savings-node and save-to-cliff blocks.
+
+    Every candidate block owns a half-open id range starting where the previous
+    block's range ends, so two blocks can never share an id and be fused into
+    one envelope segment. The savings-node family spans one id per `(liquid
+    point, node)` pair, which outgrows any fixed per-interval stride once the
+    grids are large — basing the next block on that actual count is what keeps
+    the ranges disjoint at production grid sizes.
+
+    Args:
+        interval_block_end: One past the last id the per-interval blocks own.
+        n_liquid: Number of liquid grid points.
+        n_nodes: Number of post-decision savings nodes per liquid point.
+
+    Returns:
+        Tuple of the savings-node base and the save-to-cliff base.
+
+    """
+    return interval_block_end, interval_block_end + n_liquid * n_nodes
+
+
+def _savings_node_point_candidates(
+    *,
+    liquid_grid: Float1D,
+    savings_grid: FloatND,
+    cont_value: FloatND,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None,
+    segment_base: float,
+) -> tuple[Float1D, ...]:
+    """Build the savings-node point candidates of the per-interval merge.
+
+    At every liquid grid point, one zero-width candidate pair per post-decision
+    node: consume that point's cash-on-hand minus the node and earn the node's
+    own-interval continuation. The family is a dense Bellman floor at every
+    query point — an optimum at a continuation kink between Euler roots (where
+    the inversion has no root) is still carried — and each pair is a segment
+    the envelope brackets exactly at its own grid point, so visibility does not
+    depend on how many grid points the interval holds. Infeasible entries
+    (consumption non-positive) are NaN-dead.
+
+    Returns:
+        Tuple of the flattened pair-interleaved `(endog, value, policy,
+        marginal, segment)` columns.
+
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    point_coh = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+        if coh_grid is None
+        else coh_grid
+    )
+    # A 2-D `(n_intervals, n_nodes)` savings input holds interval-dependent
+    # entries (save-to-cliff targets under an interval-bound liquid law); each
+    # liquid grid point consumes its own interval's row.
+    per_interval_savings = savings_grid.ndim > 1
+    savings_at_grid = (
+        savings_grid[interval_of_grid, :]
+        if per_interval_savings
+        else savings_grid[None, :]
+    )
+    node_consumption = point_coh[:, None] - savings_at_grid
+    node_feasible = affords_an_action(node_consumption)
+    node_consumption_safe = jnp.where(node_feasible, node_consumption, 1.0)
+    node_utility = preferences.utility(node_consumption_safe)
+    node_value = jnp.where(
+        node_feasible,
+        node_utility + discount_factor * cont_value[interval_of_grid],
+        jnp.nan,
+    )
+    node_endog = jnp.where(
+        node_feasible,
+        jnp.broadcast_to(liquid_grid[:, None], node_consumption.shape),
+        jnp.nan,
+    )
+    node_marginal = coh_slopes[interval_of_grid][
+        :, None
+    ] * preferences.marginal_utility(node_consumption_safe)
+    node_segment = segment_base + jnp.arange(
+        node_consumption.size, dtype=jnp.result_type(float)
+    ).reshape(node_consumption.shape)
+
+    def as_pairs(entries: FloatND) -> Float1D:
+        return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+    return (
+        as_pairs(node_endog),
+        as_pairs(node_value),
+        as_pairs(node_consumption_safe),
+        as_pairs(node_marginal),
+        as_pairs(node_segment),
+    )
+
+
+def nbegm_unified_step_savings(
+    *,
+    cont_value: Float1D,
+    cont_marginal: Float1D,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_positions: tuple[Any, ...],
+    extra_savings: Float1D | None = None,
+    extra_cont_value: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve a mixed jump-and-kink piecewise-affine budget against savings continuation.
+
+    The savings-space analogue of `nbegm_unified_step`: the continuation is the
+    expected value and expected marginal already evaluated at each post-decision
+    savings node (the transition-aware reader has integrated the regime
+    transition, stochastic shocks, and ride-along co-state transition), so the
+    Euler inversion reads the marginal directly with no explicit gross-return
+    term, and the no-save corner reads `cont_value[0]`.
+
+    The jumps partition the liquid axis into cases on each of which cash-on-hand
+    is continuous (kinks only); within a case the EGM inverts the case's
+    continuous `coh(liquid)` — recovered by clamping the interval index to the
+    case's range — and the case is masked to its liquid interval. Each case adds
+    its hard-borrowing corner. The cases plus corners merge by the branch-aware
+    upper envelope. The pure-kink budget (no jump) reduces to the same answer as
+    `nbegm_multi_interval_step_savings`.
+
+    Args:
+        cont_value: Expected continuation value at each savings node.
+        cont_marginal: Expected marginal continuation (savings space) at each node.
+        liquid_grid: Regular liquid-state grid (ascending).
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
+            with `savings_grid[0] == 0` the no-save corner).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, with the ride-along cell's states and the utility params
+            already bound — `invert_euler` reads the inverse marginal to recover
+            the consumption action.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        jump_positions: Indices (into the sorted breakpoints) of the jump
+            breakpoints, length J. Static for a single variable; a per-cell traced
+            array when breakpoints declared on several variables reorder per cell.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    last_interval = coh_slopes.shape[0] - 1
+    n_cases = len(jump_positions) + 1
+    case_starts = (0, *(position + 1 for position in jump_positions))
+    case_ends = (*jump_positions, last_interval)
+    case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
+
+    # The expected marginal already carries `dR/ds`, so the Euler inversion reads
+    # it directly. The continuation does not depend on the current-period jump, so
+    # the same consumption schedule serves every subsidy case.
+    consumption = _invert_euler_over_savings(
+        cont_marginal=cont_marginal,
+        discount_factor=discount_factor,
+        preferences=preferences,
+    )
+    coh_endog = consumption + savings_grid
+    interp_value = preferences.utility(consumption) + discount_factor * cont_value
+    value_at_no_save = cont_value[0]
+    degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
+    grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for case, (start, end) in enumerate(zip(case_starts, case_ends, strict=True)):
+        case_grid_interval = jnp.clip(grid_interval, start, end)
+        coh_case_grid = (
+            coh_slopes[case_grid_interval] * liquid_grid
+            + coh_intercepts[case_grid_interval]
+        )
+        liquid_endog = _invert_coh_with_linear_extension(
+            coh_endog=coh_endog,
+            coh_case_grid=coh_case_grid,
+            liquid_grid=liquid_grid,
+        )
+        endog_interval = jnp.clip(
+            jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
+        )
+        marginal_endog = coh_slopes[endog_interval] * preferences.marginal_utility(
+            consumption
+        )
+        # The first case opens at the lower grid edge and the last closes at the
+        # upper edge; interior case edges are the adjacent breakpoints, gathered at
+        # the (possibly per-cell traced) jump positions `start - 1` and `end`.
+        lower = -jnp.inf if case == 0 else breakpoints[start - 1]
+        upper = jnp.inf if case == n_cases - 1 else breakpoints[end]
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = _next_segment_id(segment)
+        endog_parts.append(interior[0])
+        value_parts.append(interior[1])
+        policy_parts.append(interior[2])
+        marginal_parts.append(interior[3])
+        segment_parts.append(segment + float(case) * case_stride)
+
+        # Hard borrowing corner (save nothing) over this case's liquid range.
+        s0_consumption = coh_case_grid
+        s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
+        s0 = mask_dead_candidates(
+            endog_grid=liquid_grid,
+            value=preferences.utility(s0_consumption)
+            + discount_factor * value_at_no_save,
+            policy=s0_consumption,
+            marginal=coh_slopes[case_grid_interval]
+            * preferences.marginal_utility(s0_consumption),
+            valid=s0_valid,
+        )
+        endog_parts.append(s0[0])
+        value_parts.append(s0[1])
+        policy_parts.append(s0[2])
+        marginal_parts.append(s0[3])
+        segment_parts.append(
+            jnp.full_like(liquid_grid, float(case) * case_stride + next_segment)
+        )
+
+    # Save-to-cliff point candidates: the continuation's one-sided values at
+    # the child cliffs' savings targets, offered at every liquid grid point.
+    # The continuation is interval-independent here, so the extra values
+    # broadcast across the intervals for the shared point-candidate builder.
+    if extra_savings is not None and extra_cont_value is not None:
+        cliff = _savings_node_point_candidates(
+            liquid_grid=liquid_grid,
+            savings_grid=extra_savings,
+            cont_value=jnp.broadcast_to(
+                extra_cont_value[None, :],
+                (coh_slopes.shape[0], extra_cont_value.shape[0]),
+            ),
+            discount_factor=discount_factor,
+            preferences=preferences,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=None,
+            segment_base=float(n_cases * case_stride),
+        )
+        endog_parts.append(cliff[0])
+        value_parts.append(cliff[1])
+        policy_parts.append(cliff[2])
+        marginal_parts.append(cliff[3])
+        segment_parts.append(cliff[4])
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+    )
+    return value, marginal, policy
+
+
+def _flat_interval_indices(
+    flat_interval_mask: tuple[bool, ...] | None, *, n_intervals: int
+) -> tuple[int, ...]:
+    """Return the indices of the hard-constraint (slope-0) floor intervals."""
+    if flat_interval_mask is None:
+        return ()
+    return tuple(i for i in range(n_intervals) if flat_interval_mask[i])
+
+
+def _floor_optimum(
+    *,
+    floor_coh: ScalarFloat,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    n_dense: int = 512,
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Find the value and policy at a fixed floor cash-on-hand by a dense search.
+
+    Where the floor binds, cash-on-hand equals `floor_coh` for every liquid, so the
+    value is the single-point Bellman max over consumption. A dense consumption
+    search evaluates it directly — convention-free and robust to a recurring flat
+    continuation, where the Euler inversion is degenerate. The search saves what it
+    does not consume, so it reads the regime's own law at those savings levels.
+    """
+    fractions = jnp.linspace(1e-4, 1.0, n_dense)
+    consumption = fractions * floor_coh
+    landing = _law_at_savings(
+        savings=floor_coh - consumption,
+        savings_grid=savings_grid,
+        next_liquid=next_liquid,
+    )
+    value = preferences.utility(
+        consumption
+    ) + discount_factor * _interp_continuation_value(
+        query=landing,
+        grid=next_liquid_grid,
+        value=next_value,
+    )
+    best = jnp.argmax(value)
+    return value[best], consumption[best]
+
+
+def nbegm_discrete_envelope_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences | tuple[Preferences, ...],
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    choices: tuple[Mapping[str, Float1D], ...],
+    taste_shock_scale: float = 0.0,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D, IntND]:
+    """Compose per-discrete-choice NBEGM solves into a discrete upper envelope.
+
+    Each discrete choice (e.g. buy private insurance or not) shifts cash-on-hand
+    differently. NBEGM solves the continuous consumption/savings subproblem inside
+    each branch; the discrete choice is then taken by the upper envelope over the
+    branch values — the `NBEGM ∘ DC-EGM` composition with the discrete envelope
+    outside.
+
+    - With no taste shocks (`taste_shock_scale == 0`) the envelope is the hard
+      maximum, so by Danskin's theorem the winning branch's marginal value and
+      policy carry through.
+    - With an EV1 taste-shock scale the smoothed value is the scaled logsum and the
+      smoothed marginal is the choice-probability-weighted branch marginal; the
+      reported policy and choice are the modal branch's.
+
+    Args:
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
+        choices: Per-discrete-choice budgets, each a mapping with `coh_slopes`,
+            `coh_intercepts`, and `breakpoints` for `nbegm_multi_interval_step`.
+        taste_shock_scale: EV1 taste-shock scale; `0` is the hard maximum.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, consumption policy,
+        and the modal discrete-choice index, each on `liquid_grid`.
+
+    """
+    values: list[Float1D] = []
+    marginals: list[Float1D] = []
+    policies: list[Float1D] = []
+    branch_preferences = (
+        preferences if isinstance(preferences, tuple) else (preferences,) * len(choices)
+    )
+    for choice, branch_preference in zip(choices, branch_preferences, strict=True):
+        value, marginal, policy = nbegm_multi_interval_step(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            preferences=branch_preference,
+            next_liquid=next_liquid,
+            marginal_return=marginal_return,
+            coh_slopes=choice["coh_slopes"],
+            coh_intercepts=choice["coh_intercepts"],
+            breakpoints=choice["breakpoints"],
+            arithmetic=arithmetic,
+        )
+        values.append(value)
+        marginals.append(marginal)
+        policies.append(policy)
+
+    value_stack = jnp.stack(values)
+    marginal_stack = jnp.stack(marginals)
+    policy_stack = jnp.stack(policies)
+    modal = jnp.argmax(value_stack, axis=0).astype(jnp.int32)
+    index = jnp.arange(liquid_grid.shape[0])
+    if taste_shock_scale == 0.0:
+        return (
+            value_stack[modal, index],
+            marginal_stack[modal, index],
+            policy_stack[modal, index],
+            modal,
+        )
+    scaled = value_stack / taste_shock_scale
+    probabilities = jax.nn.softmax(scaled, axis=0)
+    smoothed_value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
+    smoothed_marginal = jnp.sum(probabilities * marginal_stack, axis=0)
+    return (
+        smoothed_value,
+        smoothed_marginal,
+        policy_stack[modal, index],
+        modal,
+    )
+
+
+def nbegm_unified_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    jump_mask: tuple[bool, ...],
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of a mixed jump-and-kink piecewise-affine budget by EGM.
+
+    The breakpoints split the liquid axis into intervals; `jump_mask` marks which
+    breakpoints are discontinuities (jumps) versus continuous kinks. The jumps
+    partition the axis into cases on each of which cash-on-hand is continuous (kinks
+    only); within a case the EGM runs in `coh` space and inverts the case's
+    continuous `coh(liquid)` — recovered by clamping the interval index to the
+    case's interval range, which is exactly the affine extension of the case's
+    segments. Each case is masked to its liquid range, reads the continuation
+    jump-aware at every jump, and competes a boundary-targeting candidate on each
+    side of every jump plus the hard borrowing corner; all merge by the
+    branch-aware upper envelope.
+    The pure-kink (no jump) and pure-jump (slope-1) budgets are special cases.
+
+    Args:
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
+        coh_slopes: Per-interval cash-on-hand slope in liquid, length N+1.
+        coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
+        breakpoints: Sorted ascending liquid breakpoints, length N.
+        jump_mask: Static per-breakpoint flag, length N, `True` for a jump.
+        equality_owner: Side owning each exact jump point (`when` or `otherwise`).
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    n_breakpoints = breakpoints.shape[0]
+    last_interval = coh_slopes.shape[0] - 1
+    jump_positions = tuple(j for j in range(n_breakpoints) if jump_mask[j])
+    jump_breakpoints = (
+        breakpoints[jnp.asarray(jump_positions)]
+        if jump_positions
+        else jnp.zeros((0,), dtype=breakpoints.dtype)
+    )
+    case_starts = (0, *(p + 1 for p in jump_positions))
+    case_ends = (*jump_positions, last_interval)
+    case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
+
+    value_next = _jump_aware_interp(
+        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    marginal_next = _jump_aware_interp(
+        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
+    )
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    degenerate = _degenerate_inversion(marginal=marginal_next, consumption=consumption)
+    coh_endog = consumption + savings_grid
+    interp_value = preferences.utility(consumption) + discount_factor * value_next
+
+    grid_interval = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for case, (start, end) in enumerate(zip(case_starts, case_ends, strict=True)):
+        case_grid_interval = jnp.clip(grid_interval, start, end)
+        coh_case_grid = (
+            coh_slopes[case_grid_interval] * liquid_grid
+            + coh_intercepts[case_grid_interval]
+        )
+        liquid_endog = _invert_coh_with_linear_extension(
+            coh_endog=coh_endog,
+            coh_case_grid=coh_case_grid,
+            liquid_grid=liquid_grid,
+        )
+        endog_interval = jnp.clip(
+            jnp.searchsorted(breakpoints, liquid_endog, side="right"), start, end
+        )
+        marginal_endog = coh_slopes[endog_interval] * preferences.marginal_utility(
+            consumption
+        )
+        lower = -jnp.inf if start == 0 else breakpoints[start - 1]
+        upper = jnp.inf if end == last_interval else breakpoints[end]
+        in_case = (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate)
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = _next_segment_id(segment)
+        endog_parts.append(interior[0])
+        value_parts.append(interior[1])
+        policy_parts.append(interior[2])
+        marginal_parts.append(interior[3])
+        segment_parts.append(segment + float(case) * case_stride)
+
+        # Both finite savings endpoints compete over this case.s liquid range.
+        in_case_range = (liquid_grid >= lower) & (liquid_grid < upper)
+        n_endpoint_segments = _append_savings_endpoint_corners(
+            endog_grid=liquid_grid,
+            coh=coh_case_grid,
+            savings_grid=savings_grid,
+            continuation_at_savings=value_next,
+            preferences=preferences,
+            discount_factor=discount_factor,
+            coh_slope=coh_slopes[case_grid_interval],
+            valid=in_case_range,
+            first_segment=float(case) * case_stride + next_segment,
+            endog_parts=endog_parts,
+            value_parts=value_parts,
+            policy_parts=policy_parts,
+            marginal_parts=marginal_parts,
+            segment_parts=segment_parts,
+        )
+
+        # Boundary-targeting at each jump: save to land on either side of it for
+        # whichever continuation pays more, consuming this case's cash-on-hand.
+        n_boundary_branches = 0
+        for jump_idx in jump_positions:
+            cliff = breakpoints[jump_idx]
+            # Bound each one-sided continuation read to the segment between this
+            # cliff and its neighbour, so close cliffs don't bridge.
+            prev_limit = (
+                breakpoints[jump_idx - 1] if jump_idx > 0 else liquid_grid[0] - 1.0
+            )
+            next_limit = (
+                breakpoints[jump_idx + 1]
+                if jump_idx < n_breakpoints - 1
+                else liquid_grid[-1] + 1.0
+            )
+            for side in ("below", "above"):
+                kink = _boundary_targeting_coh(
+                    liquid_grid=liquid_grid,
+                    next_liquid_grid=next_liquid_grid,
+                    coh_case_grid=coh_case_grid,
+                    next_value=next_value,
+                    discount_factor=discount_factor,
+                    preferences=preferences,
+                    savings_grid=savings_grid,
+                    next_liquid=next_liquid,
+                    asset_limit=cliff,
+                    prev_limit=prev_limit,
+                    next_limit=next_limit,
+                    equality_owner=equality_owner,
+                    side=side,
+                    coh_slope=coh_slopes[case_grid_interval],
+                    valid=in_case_range,
+                )
+                endog_parts.append(kink[0])
+                value_parts.append(kink[1])
+                policy_parts.append(kink[2])
+                marginal_parts.append(kink[3])
+                segment_parts.append(
+                    jnp.where(
+                        jnp.isnan(kink[0]),
+                        jnp.nan,
+                        float(case) * case_stride
+                        + next_segment
+                        + float(n_endpoint_segments)
+                        + float(n_boundary_branches),
+                    )
+                )
+                n_boundary_branches += 1
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+    )
+    return value, marginal, policy
+
+
+def _boundary_targeting_coh(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    coh_case_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+    coh_slope: Float1D,
+    valid: BoolND,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Save to land next-period liquid on one chosen side of a cliff.
+
+    The case's cash-on-hand `coh_case_grid` funds consumption `coh - s_kink`, where
+    `s_kink` lands next-period liquid on `side` of the cliff, paired with that
+    side's continuation so policy and value stay consistent:
+
+    - `side="below"` targets the cliff from underneath;
+    - `side="above"` targets it from over the top.
+
+    Each branch aims at the nearest liquid its side can actually hold: the exact
+    cliff where that side owns equality, and one ulp past it where the other side
+    does. Which side pays more depends on the direction of the continuation's jump,
+    a property of the model, so both are offered and the envelope decides. Each
+    one-sided continuation reads only nodes between the neighbouring breakpoints,
+    so with cliffs close together it does not bridge the neighbouring jump.
+    """
+    limit_at = jnp.asarray(asset_limit, dtype=liquid_grid.dtype)
+    owns_limit = (side == "above") == (equality_owner == "otherwise")
+    if side == "below":
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_below(
+            next_liquid_grid,
+            next_value,
+            limit=asset_limit,
+            prev_limit=prev_limit,
+            n=next_liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    else:
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_above(
+            next_liquid_grid,
+            next_value,
+            limit=asset_limit,
+            next_limit=next_limit,
+            n=next_liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    s_kink = _savings_reaching(
+        target=target, savings_grid=savings_grid, next_liquid=next_liquid, side=side
+    )
+    kink_consumption = coh_case_grid - s_kink
+    kink_value = (
+        preferences.utility(kink_consumption) + discount_factor * value_at_target
+    )
+    # The targeted saving is fixed to the cliff, so consumption moves with the
+    # case's affine cash-on-hand: `dc/da = coh_slope`, and the marginal value of
+    # liquid is `coh_slope * u'(c)`, matching the interior and corner
+    # candidates.
+    kink_marginal = coh_slope * preferences.marginal_utility(kink_consumption)
+    kink_valid = valid & affords_an_action(kink_consumption) & (jnp.isfinite(s_kink))
+    return mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=kink_value,
+        policy=kink_consumption,
+        marginal=kink_marginal,
+        valid=kink_valid,
+    )
+
+
+def nbegm_recurring_jump_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_levels: Float1D,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner = "otherwise",
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of an N-cliff budget with a recurring jumped continuation.
+
+    The N-cliff generalization of the binary `nbegm_one_asset_step`. Each of the
+    N+1 subsidy levels is a case whose budget is smooth; its 1-D EGM reads the
+    continuation jump-aware at every cliff (no bridging across a value jump) and
+    competes, on each side of every cliff, a boundary-targeting candidate that
+    saves to land next-period liquid there for that side's continuation. Each case
+    is masked to its liquid range and all cases merge by the
+    branch-aware upper envelope, so the solve is exact through every recurring jump,
+    not only at a terminal-adjacent period.
+
+    Args:
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
+        subsidy_levels: Additive subsidy per case, length N+1, in liquid order.
+        jump_breakpoints: Sorted ascending liquid cliffs, length N.
+        equality_owner: Side owning each exact cliff point (`when` or `otherwise`).
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    lower_edges = jnp.concatenate(
+        [jnp.asarray([-jnp.inf], dtype=liquid_grid.dtype), jump_breakpoints]
+    )
+    upper_edges = jnp.concatenate(
+        [jump_breakpoints, jnp.asarray([jnp.inf], dtype=liquid_grid.dtype)]
+    )
+    n_cases = subsidy_levels.shape[0]
+    case_stride = 4 * savings_grid.shape[0]
+
+    endog_parts: list[Float1D] = []
+    value_parts: list[Float1D] = []
+    policy_parts: list[Float1D] = []
+    marginal_parts: list[Float1D] = []
+    segment_parts: list[Float1D] = []
+    for k in range(n_cases):
+        case_value, case_policy, case_marginal, case_endog, case_segment = (
+            _recurring_jump_case(
+                next_value=next_value,
+                next_marginal=next_marginal,
+                liquid_grid=liquid_grid,
+                next_liquid_grid=next_liquid_grid,
+                savings_grid=savings_grid,
+                discount_factor=discount_factor,
+                preferences=preferences,
+                next_liquid=next_liquid,
+                marginal_return=marginal_return,
+                subsidy=subsidy_levels[k],
+                jump_breakpoints=jump_breakpoints,
+                equality_owner=equality_owner,
+            )
+        )
+        in_case = (case_endog >= lower_edges[k]) & (case_endog < upper_edges[k])
+        masked = mask_dead_candidates(
+            endog_grid=case_endog,
+            value=case_value,
+            policy=case_policy,
+            marginal=case_marginal,
+            valid=in_case,
+        )
+        endog_parts.append(masked[0])
+        value_parts.append(masked[1])
+        policy_parts.append(masked[2])
+        marginal_parts.append(masked[3])
+        segment_parts.append(case_segment + float(k) * case_stride)
+
+    value, policy, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+    )
+    return value, marginal, policy
+
+
+def _recurring_jump_case(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    jump_breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
+    """Build one subsidy case's candidate path: Euler, per-cliff target, s=0 corner.
+
+    `coh = liquid + subsidy`, so the endogenous liquid recovered from the Euler
+    inversion is `consumption + savings - subsidy`. The continuation is read
+    jump-aware at every cliff. A jumped continuation is nonconcave, so the case
+    contributes, beyond the Euler path, a boundary-targeting candidate on each side
+    of every cliff and the hard borrowing corner, all over the liquid grid.
+    """
+    value_next = _jump_aware_interp(
+        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
+    )
+    marginal_next = _jump_aware_interp(
+        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
+    )
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = preferences.marginal_utility(consumption)
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+    next_segment = _next_segment_id(interior_segment)
+
+    endog_parts: list[Float1D] = [liquid_endog]
+    value_parts: list[Float1D] = [value_endog]
+    policy_parts: list[Float1D] = [consumption]
+    marginal_parts: list[Float1D] = [marginal_endog]
+    segment_parts: list[Float1D] = [interior_segment]
+
+    n_cliffs = jump_breakpoints.shape[0]
+    n_boundary_branches = 0
+    for j in range(n_cliffs):
+        cliff = jump_breakpoints[j]
+        prev_cliff = jump_breakpoints[j - 1] if j > 0 else liquid_grid[0] - 1.0
+        next_cliff = (
+            jump_breakpoints[j + 1] if j < n_cliffs - 1 else liquid_grid[-1] + 1.0
+        )
+        for side in ("below", "above"):
+            kink = _boundary_targeting_branch(
+                liquid_grid=liquid_grid,
+                next_liquid_grid=next_liquid_grid,
+                next_value=next_value,
+                discount_factor=discount_factor,
+                preferences=preferences,
+                savings_grid=savings_grid,
+                next_liquid=next_liquid,
+                subsidy=subsidy,
+                asset_limit=cliff,
+                prev_limit=prev_cliff,
+                next_limit=next_cliff,
+                equality_owner=equality_owner,
+                side=side,
+            )
+            endog_parts.append(kink[0])
+            value_parts.append(kink[1])
+            policy_parts.append(kink[2])
+            marginal_parts.append(kink[3])
+            segment_parts.append(
+                jnp.where(
+                    jnp.isnan(kink[0]),
+                    jnp.nan,
+                    next_segment + float(n_boundary_branches),
+                )
+            )
+            n_boundary_branches += 1
+
+    _append_savings_endpoint_corners(
+        endog_grid=liquid_grid,
+        coh=liquid_grid + subsidy,
+        savings_grid=savings_grid,
+        continuation_at_savings=value_next,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        coh_slope=1.0,
+        valid=True,
+        first_segment=next_segment + float(n_boundary_branches),
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
+
+    return (
+        jnp.concatenate(value_parts),
+        jnp.concatenate(policy_parts),
+        jnp.concatenate(marginal_parts),
+        jnp.concatenate(endog_parts),
+        jnp.concatenate(segment_parts),
+    )
+
+
+def _jump_aware_interp(
+    query: FloatND,
+    grid: Float1D,
+    values: Float1D,
+    breakpoints: Float1D,
+    equality_owner: EqualityOwner,
+) -> FloatND:
+    """Interpolate `values` on `grid` without bridging the jumps at `breakpoints`.
+
+    The continuation carries a value jump at every cliff. Two split abscissae per
+    cliff carry the below-side and above-side values, each linearly extrapolated
+    from the two nearest same-side nodes; the owning side's node sits exactly on the
+    cliff. A query then interpolates within one side of every cliff and never bridges
+    a discontinuity — the N-cliff generalization of `_kink_aware_interp`.
+    """
+    n = grid.shape[0]
+    n_bp = breakpoints.shape[0]
+    below_nodes: list[Float1D] = []
+    below_values: list[Float1D] = []
+    above_nodes: list[Float1D] = []
+    above_values: list[Float1D] = []
+    for j in range(n_bp):
+        limit = breakpoints[j]
+        limit_at = jnp.asarray(limit, dtype=grid.dtype)
+        # Bound each side's stencil to the interval between adjacent cliffs, so a
+        # one-sided limit never extrapolates across a neighbouring jump.
+        prev_limit = breakpoints[j - 1] if j > 0 else grid[0] - 1.0
+        next_limit = breakpoints[j + 1] if j < n_bp - 1 else grid[-1] + 1.0
+        left_at = _bounded_limit_below(
+            grid, values, limit=limit_at, prev_limit=prev_limit, n=n
+        )
+        right_at = _bounded_limit_above(
+            grid, values, limit=limit_at, next_limit=next_limit, n=n
+        )
+        below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
+        above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
+        if equality_owner == "otherwise":
+            left_node, right_node = below, limit_at
+        else:
+            left_node, right_node = limit_at, above
+        below_nodes.append(left_node)
+        below_values.append(left_at)
+        above_nodes.append(right_node)
+        above_values.append(right_at)
+    aug_grid = jnp.concatenate([grid, jnp.stack(below_nodes), jnp.stack(above_nodes)])
+    aug_values = jnp.concatenate(
+        [values, jnp.stack(below_values), jnp.stack(above_values)]
+    )
+    order = jnp.argsort(aug_grid)
+    return jnp.interp(query, aug_grid[order], aug_values[order])
+
+
+def nbegm_one_asset_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy_when: ScalarFloat | float,
+    subsidy_otherwise: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one period of the Medicaid one-asset toy by case-piece EGM.
+
+    Args:
+        next_value: Next period's value on `next_liquid_grid`.
+        next_marginal: Next period's marginal value of liquid on
+            `next_liquid_grid`.
+        liquid_grid: Regular liquid-state grid (ascending). This period's value,
+            marginal, and policy are published on it.
+        next_liquid_grid: The same state's grid in the *next* period (ascending);
+            the abscissae `next_value` and `next_marginal` are tabulated on. Equal
+            to `liquid_grid` unless the liquid state is an `AgeSpecializedGrid`.
+        savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0).
+        discount_factor: Discount factor.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
+        next_liquid: The regime's own law of motion evaluated at each savings
+            node — where a given level of savings lands next period.
+        marginal_return: That law's derivative with respect to savings, same
+            shape. How the landing point moves when savings move, which is
+            the factor the Euler equation discounts the continuation marginal
+            by. For the conventional law this is the gross return everywhere.
+        subsidy_when: Subsidy into cash-on-hand where the predicate holds.
+        subsidy_otherwise: Subsidy where the predicate fails.
+        asset_limit: Medicaid asset limit; the predicate is `liquid < asset_limit`.
+        equality_owner: Predicate side owning the exact boundary point.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Tuple of this period's value, marginal value of liquid, and consumption
+        policy, each on `liquid_grid`.
+
+    """
+    when_value, when_marginal, when_policy = _case_step(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        subsidy=subsidy_when,
+        asset_limit=asset_limit,
+        equality_owner=equality_owner,
+        arithmetic=arithmetic,
+    )
+    otherwise_value, otherwise_marginal, otherwise_policy = _case_step(
+        next_value=next_value,
+        next_marginal=next_marginal,
+        liquid_grid=liquid_grid,
+        next_liquid_grid=next_liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        next_liquid=next_liquid,
+        marginal_return=marginal_return,
+        subsidy=subsidy_otherwise,
+        asset_limit=asset_limit,
+        equality_owner=equality_owner,
+        arithmetic=arithmetic,
+    )
+
+    # The owning side keeps the exact boundary point: `equality_owner="otherwise"`
+    # gives it to the otherwise case through the strict `<` / non-strict `>=`
+    # split; `equality_owner="when"` mirrors the split the other way.
+    if equality_owner == "otherwise":
+        when_valid = liquid_grid < asset_limit
+        otherwise_valid = liquid_grid >= asset_limit
+    else:
+        when_valid = liquid_grid <= asset_limit
+        otherwise_valid = liquid_grid > asset_limit
+    when = mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=when_value,
+        policy=when_policy,
+        marginal=when_marginal,
+        valid=when_valid,
+    )
+    otherwise = mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=otherwise_value,
+        policy=otherwise_policy,
+        marginal=otherwise_marginal,
+        valid=otherwise_valid,
+    )
+
+    n_grid = liquid_grid.shape[0]
+    endog_grid = jnp.concatenate([when[0], otherwise[0]])
+    value = jnp.concatenate([when[1], otherwise[1]])
+    policy = jnp.concatenate([when[2], otherwise[2]])
+    marginal = jnp.concatenate([when[3], otherwise[3]])
+    segment_id = jnp.concatenate(
+        [
+            jnp.zeros(n_grid, dtype=liquid_grid.dtype),
+            jnp.ones(n_grid, dtype=liquid_grid.dtype),
+        ]
+    )
+    env_value, env_policy, env_marginal = envelope_at_query(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal=marginal,
+        segment_id=segment_id,
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+    )
+    return env_value, env_marginal, env_policy
+
+
+def _case_step(
+    *,
+    next_value: Float1D,
+    next_marginal: Float1D,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    next_liquid: Float1D,
+    marginal_return: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Solve one case's 1-D consumption--saving sub-problem as an upper envelope.
+
+    `coh = liquid + subsidy`, so the endogenous state recovered from the Euler
+    inversion is `liquid = consumption + savings - subsidy`. A jumped continuation
+    is nonconcave, so the case value is the upper envelope over three candidate
+    branches rather than the bare Euler path:
+
+    - the Euler interior path;
+    - two boundary-targeting branches, one saving to land on each side of the
+      boundary — a corner the Euler equation never produces. Both are offered
+      because which side pays more depends on the direction of the continuation's
+      jump, which the solver reads rather than assumes;
+    - the hard borrowing corner `s = 0`, consuming all cash-on-hand.
+
+    The continuation is read kink-aware at `asset_limit`: a query landing in the
+    boundary cell reads the equality-owning side rather than a bridged average.
+    """
+    value_next = _kink_aware_interp(
+        next_liquid, next_liquid_grid, next_value, asset_limit, equality_owner
+    )
+    marginal_next = _kink_aware_interp(
+        next_liquid, next_liquid_grid, next_marginal, asset_limit, equality_owner
+    )
+
+    consumption = preferences.inverse_marginal_utility(
+        discount_factor * marginal_return * marginal_next
+    )
+    liquid_endog = jnp.where(
+        _degenerate_inversion(marginal=marginal_next, consumption=consumption),
+        jnp.nan,
+        consumption + savings_grid - subsidy,
+    )
+    value_endog = preferences.utility(consumption) + discount_factor * value_next
+    marginal_endog = preferences.marginal_utility(consumption)
+    # A kinked continuation folds `liquid_endog` back (the DC-EGM secondary kink),
+    # so the interior path may carry several monotone segments.
+    interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
+
+    # A single jump has no neighbouring cliff on either side; the sentinels leave
+    # each one-sided continuation stencil unbounded outward.
+    boundary_branches = {
+        side: _boundary_targeting_branch(
+            liquid_grid=liquid_grid,
+            next_liquid_grid=next_liquid_grid,
+            next_value=next_value,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            savings_grid=savings_grid,
+            next_liquid=next_liquid,
+            subsidy=subsidy,
+            asset_limit=asset_limit,
+            prev_limit=next_liquid_grid[0] - 1.0,
+            next_limit=next_liquid_grid[-1] + 1.0,
+            equality_owner=equality_owner,
+            side=side,
+        )
+        for side in ("below", "above")
+    }
+    kink_grid, kink_value, kink_consumption, kink_marginal = boundary_branches["below"]
+    kink_segment = jnp.where(
+        jnp.isnan(kink_grid), jnp.nan, _next_segment_id(interior_segment)
+    )
+    (
+        above_grid,
+        above_value,
+        above_consumption,
+        above_marginal,
+    ) = boundary_branches["above"]
+    above_segment = jnp.where(
+        jnp.isnan(above_grid), jnp.nan, _next_segment_id(interior_segment, offset=2.0)
+    )
+
+    endog_parts = [liquid_endog, kink_grid, above_grid]
+    value_parts = [value_endog, kink_value, above_value]
+    policy_parts = [consumption, kink_consumption, above_consumption]
+    marginal_parts = [marginal_endog, kink_marginal, above_marginal]
+    segment_parts = [interior_segment, kink_segment, above_segment]
+    _append_savings_endpoint_corners(
+        endog_grid=liquid_grid,
+        coh=liquid_grid + subsidy,
+        savings_grid=savings_grid,
+        continuation_at_savings=value_next,
+        preferences=preferences,
+        discount_factor=discount_factor,
+        coh_slope=1.0,
+        valid=True,
+        first_segment=_next_segment_id(interior_segment, offset=3.0),
+        endog_parts=endog_parts,
+        value_parts=value_parts,
+        policy_parts=policy_parts,
+        marginal_parts=marginal_parts,
+        segment_parts=segment_parts,
+    )
+
+    value, consumption_on_grid, marginal = envelope_at_query(
+        endog_grid=jnp.concatenate(endog_parts),
+        policy=jnp.concatenate(policy_parts),
+        value=jnp.concatenate(value_parts),
+        marginal=jnp.concatenate(marginal_parts),
+        segment_id=jnp.concatenate(segment_parts),
+        x_query=liquid_grid,
+        arithmetic=arithmetic,
+    )
+    return value, marginal, consumption_on_grid
+
+
+def _boundary_targeting_branch(
+    *,
+    liquid_grid: Float1D,
+    next_liquid_grid: Float1D,
+    next_value: Float1D,
+    discount_factor: ScalarFloat | float,
+    preferences: Preferences,
+    savings_grid: Float1D,
+    next_liquid: Float1D,
+    subsidy: ScalarFloat | float,
+    asset_limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+    side: Literal["below", "above"],
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Build a save-to-the-boundary candidate as a masked grid-aligned branch.
+
+    Landing on a boundary is a corner the Euler equation never produces, and which
+    side of it pays more depends on the direction of the continuation's jump — a
+    property of the model, not one the solver may assume. So each side gets its own
+    branch and the envelope decides between them:
+
+    - `side="below"` targets the boundary from underneath and is paired with the
+      below-side continuation;
+    - `side="above"` targets it from over the top and is paired with the above-side
+      continuation.
+
+    Each branch aims at the nearest liquid its side can actually hold: the exact
+    boundary where that side owns equality, and one ulp past it where the other
+    side does. Policy and continuation are then mutually consistent rather than a
+    supremum dressed as a maximum. Saving the fixed amount maps current liquid to
+    itself (`endog == liquid`), so the branch is the curve `c = coh - s_kink`. Each
+    one-sided continuation reads only nodes between the neighbouring cliffs, so with
+    cliffs close together it does not bridge the neighbouring jump.
+    """
+    limit_at = jnp.asarray(asset_limit, dtype=liquid_grid.dtype)
+    owns_limit = (side == "above") == (equality_owner == "otherwise")
+    if side == "below":
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_below(
+            next_liquid_grid,
+            next_value,
+            limit=asset_limit,
+            prev_limit=prev_limit,
+            n=next_liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    else:
+        target = (
+            limit_at
+            if owns_limit
+            else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
+        )
+        value_at_target = _bounded_limit_above(
+            next_liquid_grid,
+            next_value,
+            limit=asset_limit,
+            next_limit=next_limit,
+            n=next_liquid_grid.shape[0],
+            owns_limit_node=owns_limit,
+        )
+    s_kink = _savings_reaching(
+        target=target, savings_grid=savings_grid, next_liquid=next_liquid, side=side
+    )
+    kink_consumption = liquid_grid + subsidy - s_kink
+    kink_value = (
+        preferences.utility(kink_consumption) + discount_factor * value_at_target
+    )
+    kink_marginal = preferences.marginal_utility(kink_consumption)
+    kink_valid = affords_an_action(kink_consumption) & (jnp.isfinite(s_kink))
+    return mask_dead_candidates(
+        endog_grid=liquid_grid,
+        value=kink_value,
+        policy=kink_consumption,
+        marginal=kink_marginal,
+        valid=kink_valid,
+    )
+
+
+def _kink_aware_interp(
+    query: FloatND,
+    grid: Float1D,
+    values: Float1D,
+    limit: ScalarFloat | float,
+    equality_owner: EqualityOwner,
+) -> FloatND:
+    """Interpolate `values` on `grid` without bridging the jump at `limit`.
+
+    The continuation carries a value jump at the case boundary: the grid node
+    just below `limit` holds the `when`-side value and the node just above holds
+    the `otherwise`-side value, so a plain linear interpolation across that cell
+    returns a meaningless average. Two extra abscissae split the jump at `limit`,
+    each carrying its side's value linearly extrapolated from the two nearest
+    same-side nodes. The owning side's node sits exactly on `limit`, so a query at
+    exactly the boundary reads the owning side:
+
+    - `equality_owner="otherwise"`: the otherwise (upper) value sits on `limit`
+      and the `when` value one ulp below;
+    - `equality_owner="when"`: the `when` (lower) value sits on `limit` and the
+      otherwise value one ulp above.
+
+    A query strictly below `limit` then interpolates within the `when` branch, a
+    query strictly above within the `otherwise` branch, and neither bridges the
+    discontinuity. A grid node landing exactly on `limit` carries the owning
+    side's value, so each one-sided stencil claims it only for that side; both
+    sides share the stencil rule of the N-cliff reader.
+    """
+    n = grid.shape[0]
+    owner_is_when = equality_owner == "when"
+    left_at_limit = _bounded_limit_below(
+        grid,
+        values,
+        limit=limit,
+        prev_limit=-jnp.inf,
+        n=n,
+        owns_limit_node=owner_is_when,
+    )
+    right_at_limit = _bounded_limit_above(
+        grid,
+        values,
+        limit=limit,
+        next_limit=jnp.inf,
+        n=n,
+        owns_limit_node=not owner_is_when,
+    )
+
+    limit_at = jnp.asarray(limit, dtype=grid.dtype)
+    below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
+    above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
+    if equality_owner == "otherwise":
+        left_node, right_node = below, limit_at
+    else:
+        left_node, right_node = limit_at, above
+    aug_grid = jnp.concatenate([grid, jnp.stack([left_node, right_node])])
+    aug_values = jnp.concatenate([values, jnp.stack([left_at_limit, right_at_limit])])
+    order = jnp.argsort(aug_grid)
+    return jnp.interp(query, aug_grid[order], aug_values[order])
+
+
+def _extrapolate(
+    grid: Float1D,
+    values: Float1D,
+    lower: IntND,
+    upper: IntND,
+    target: ScalarFloat | float,
+) -> ScalarFloat:
+    """Linearly extrapolate `values` to `target` through nodes `lower`, `upper`."""
+    g0, g1 = grid[lower], grid[upper]
+    v0, v1 = values[lower], values[upper]
+    slope = (v1 - v0) / (g1 - g0)
+    return v1 + slope * (target - g1)
+
+
+def _bounded_limit_below(
+    grid: Float1D,
+    values: Float1D,
+    *,
+    limit: ScalarFloat | float,
+    prev_limit: ScalarFloat | float,
+    n: int,
+    owns_limit_node: bool = False,
+) -> ScalarFloat:
+    """One-sided limit approaching `limit` from below, using only nodes strictly
+    inside `(prev_limit, limit)` so the stencil never crosses the previous cliff.
+
+    Falls back to the nearest in-interval node's value when fewer than two such
+    nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the last node strictly below `limit`, so the result is
+    always a value from below the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
+    """
+    last_below = jnp.sum(grid <= limit if owns_limit_node else grid < limit) - 1
+    floor = jnp.sum(grid <= prev_limit)
+    hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
+    lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
+    lo = jnp.minimum(lo, hi)
+    return jnp.where(lo == hi, values[hi], _extrapolate(grid, values, lo, hi, limit))
+
+
+def _bounded_limit_above(
+    grid: Float1D,
+    values: Float1D,
+    *,
+    limit: ScalarFloat | float,
+    next_limit: ScalarFloat | float,
+    n: int,
+    owns_limit_node: bool = False,
+) -> ScalarFloat:
+    """One-sided limit approaching `limit` from above, using only nodes strictly
+    inside `(limit, next_limit)` so the stencil never crosses the next cliff.
+
+    Falls back to the nearest in-interval node's value when fewer than two such
+    nodes exist, rather than extrapolating across the neighbouring discontinuity.
+    Two cliffs inside one grid cell leave that interval with no node at all; the
+    read then stays at the first node strictly above `limit`, so the result is
+    always a value from above the cliff even though the grid samples the
+    branch's own interval nowhere. Refine the liquid grid to resolve it.
+
+    `owns_limit_node` says whether a node landing exactly on `limit` carries
+    this side's value; it does when this side owns equality at the boundary.
+    """
+    first_above = jnp.sum(grid < limit if owns_limit_node else grid <= limit)
+    ceil = jnp.sum(grid < next_limit) - 1
+    lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
+    hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)
+    hi = jnp.maximum(hi, lo)
+    return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
+
+
+def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
+    """Flag savings nodes whose Euler inversion carries no candidate.
+
+    A flat continuation has no marginal value of liquid, so the inversion sends
+    consumption to infinity and the recovered point is spurious. The test is on
+    what the inversion produced, not on the marginal's magnitude: marginal
+    utility carries the units of `u'(c)`, so a dollar-denominated model at
+    a moderate risk aversion has genuinely tiny marginals everywhere while each
+    inversion stays perfectly well conditioned. A fixed absolute floor would
+    discard that model's whole Euler branch and leave a corner-only policy the
+    solve still reports as successful.
+
+    Args:
+        marginal: Expected marginal continuation at each savings node.
+        consumption: The consumption the Euler inversion recovered there.
+        arithmetic: Which arithmetic decides envelope ownership; see
+            `envelope_at_query`. `"certified"` compares candidates in
+            double-double precision and abstains where none is separated;
+            `"ordinary"` takes the largest read in the working format, at a
+            fraction of the cost, and is adequate where candidate values are
+            separated by much more than the format's resolution.
+
+    Returns:
+        Per-node flag, `True` where the node contributes no usable candidate.
+
+    """
+    return (marginal <= 0.0) | ~jnp.isfinite(consumption)
+
+
+def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
+    """Return the first free segment id above a candidate block's ids.
+
+    A block whose candidates are all dead carries an all-NaN id column, and
+    `jnp.nanmax` of it is NaN. Handing that on as the next block's base id makes
+    every later block's ids NaN too, and the envelope links only equal *finite*
+    ids — so one dead block silently kills every corner behind it. An all-dead
+    block occupies no id, so the count simply restarts at zero.
+
+    Args:
+        segment: The block's per-candidate segment ids, NaN where dead.
+        offset: How far above the block's highest id to start.
+
+    Returns:
+        The next block's base segment id, always finite.
+
+    """
+    segment_max = jnp.nanmax(segment)
+    return jnp.where(jnp.isnan(segment_max), 0.0, segment_max) + offset
+
+
+def _append_savings_endpoint_corners(
+    *,
+    endog_grid: Float1D,
+    coh: Float1D,
+    savings_grid: Float1D,
+    continuation_at_savings: Float1D,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    coh_slope: Float1D | ScalarFloat | float,
+    valid: BoolND | bool,
+    first_segment: ScalarFloat | float,
+    endog_parts: list[Float1D],
+    value_parts: list[Float1D],
+    policy_parts: list[Float1D],
+    marginal_parts: list[Float1D],
+    segment_parts: list[Float1D],
+) -> int:
+    """Append the lower and upper savings-grid endpoint candidates."""
+    for offset, index in enumerate((0, -1)):
+        corner = _fixed_savings_corner(
+            endog_grid=endog_grid,
+            coh=coh,
+            savings=savings_grid[index],
+            preferences=preferences,
+            discount_factor=discount_factor,
+            continuation=continuation_at_savings[index],
+            coh_slope=coh_slope,
+            valid=valid,
+        )
+        endog_parts.append(corner[0])
+        value_parts.append(corner[1])
+        policy_parts.append(corner[2])
+        marginal_parts.append(corner[3])
+        segment_parts.append(
+            jnp.where(
+                jnp.isnan(corner[0]),
+                jnp.nan,
+                jnp.asarray(first_segment + float(offset), dtype=corner[0].dtype),
+            )
+        )
+    return 2
+
+
+def _fixed_savings_corner(
+    *,
+    endog_grid: Float1D,
+    coh: Float1D,
+    savings: ScalarFloat,
+    preferences: Preferences,
+    discount_factor: ScalarFloat | float,
+    continuation: FloatND,
+    coh_slope: Float1D | ScalarFloat | float = 1.0,
+    valid: BoolND | bool = True,
+) -> tuple[Float1D, Float1D, Float1D, Float1D]:
+    """Build an endpoint, dead where residual consumption is non-positive.
+
+    Consuming the whole cash-on-hand is an action only where cash-on-hand is
+    positive, and a felicity does not report the difference on its own:
+
+    - a negative cash-on-hand can return a finite number — a CRRA felicity at an
+      even-integer coefficient returns a *positive* one, larger than `u(c)` at
+      every feasible `c` — so the corner wins the envelope wherever it brackets
+      and publishes a negative consumption policy;
+    - `coh == 0` returns `-inf` with an `+inf` marginal, and the envelope's own
+      interpolation turns the pair into NaN across the bracketed cell.
+
+    Both channels are therefore evaluated on a safe consumption and every
+    channel of an infeasible point is NaN-dead, which is how the envelope reads
+    "no candidate here".
+
+    Args:
+        endog_grid: Liquid points the corner is defined on.
+        coh: Cash-on-hand at each of those points.
+        preferences: The regime's felicity, its marginal, and its inverse
+            marginal, each a callable of one array.
+        discount_factor: Discount factor.
+        continuation: Next period's value at the corner's post-decision node.
+        coh_slope: `d coh / d liquid` at each point, for the marginal channel.
+        valid: Further per-point validity (e.g. an interval or case mask).
+
+    Returns:
+        Tuple of the corner's endogenous grid, value, policy, and marginal
+        channels, each NaN where the corner has no feasible action.
+
+    """
+    consumption = coh - savings
+    feasible = affords_an_action(consumption)
+    safe = jnp.where(feasible, consumption, 1.0)
+    return mask_dead_candidates(
+        endog_grid=endog_grid,
+        value=preferences.utility(safe) + discount_factor * continuation,
+        policy=consumption,
+        marginal=coh_slope * preferences.marginal_utility(safe),
+        valid=feasible & valid,
+    )

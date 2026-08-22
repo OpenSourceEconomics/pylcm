@@ -66,6 +66,24 @@ from lcm.typing import (
 )
 
 
+def _fail_if_exact_affine_kernel_unavailable(
+    *, regime_name: RegimeName, selection: str
+) -> None:
+    """Refuse a certified envelope selection without its native payload."""
+    from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
+
+    if ffi.kernel_available_for_current_backend():
+        return
+    msg = (
+        f"Regime {regime_name!r} selects {selection}, but the native "
+        "exact-affine library is unavailable or unloadable. Install a pylcm "
+        "build carrying the library or reinstall it with `pixi reinstall pylcm`; "
+        "select ordinary or approximate envelope arithmetic only when its "
+        "documented contract is acceptable."
+    )
+    raise ExactAffineKernelUnavailableError(msg)
+
+
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ExactEnvelope:
@@ -292,20 +310,11 @@ class DCEGM(OneMarginSolver):
         it meaningful to ask whether this installation can execute its selected
         backend.
         """
-        if not isinstance(self.envelope, ExactEnvelope):
-            return
-
-        from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
-
-        if not ffi.kernel_available_for_current_backend():
-            msg = (
-                f"Regime {context.regime_name!r} selects ExactEnvelope, but "
-                "the native exact-affine library is unavailable or unloadable. "
-                "Install a pylcm build carrying the library or build it with "
-                "`pixi run build-exact-affine`; select another envelope only "
-                "when its documented approximation contract is acceptable."
+        if isinstance(self.envelope, ExactEnvelope):
+            _fail_if_exact_affine_kernel_unavailable(
+                regime_name=context.regime_name,
+                selection="ExactEnvelope",
             )
-            raise ExactAffineKernelUnavailableError(msg)
 
     def build_constraint_routes(
         self, *, context: ConstraintRouteContext

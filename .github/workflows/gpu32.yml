@@ -1,8 +1,7 @@
 ---
-name: gpu32
-# Automatically cancel a previous run.
+name: gpu
 concurrency:
-  group: gpu32-${{ github.head_ref || github.run_id }}
+  group: gpu-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 on:
   push:
@@ -18,134 +17,64 @@ on:
       - '**.ipynb'
 jobs:
   tests:
-    name: Run fp32 GPU tests (${{ matrix.suite }})
-    # Config:
-    # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
-    # Docs on GPU runners:
-    # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
+    name: Run bounded GPU policy
     runs-on: ubuntu-latest-gpu
-    strategy:
-      fail-fast: false
-      matrix:
-        # `tests/solution` is the DC-EGM battery: a fifth of the suite's files
-        # and four fifths of its GPU wall time. It gets its own job so that no
-        # single process spans the whole suite and so the two halves run at the
-        # same time rather than end to end. A GPU job that has to carry both has
-        # run for hours and been reclaimed before reporting anything.
-        suite:
-          - solution
-          - rest
-        include:
-          - suite: solution
-            pytest_paths: tests/solution
-          - suite: rest
-            pytest_paths: >-
-              tests --ignore=tests/solution
-              --ignore=tests/test_mahler_yum_2024.py
-    # Invoking `pytest` directly rather than the pixi task drops the task's
-    # `env`, so the preallocation setting is restored here. Without it JAX
-    # claims most of the device up front and the Mahler & Yum solve has nothing
-    # left to grow into.
+    timeout-minutes: 90
     env:
       XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
     steps:
-      - name: Check CUDA version
-        run: |
-          nvidia-smi
-          nvcc --version || echo "nvcc not found"
       - uses: actions/checkout@v7
+      - name: Select the runner's actual CUDA architecture
+        shell: bash
+        run: |
+          capability=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader \
+            | head -n 1 | tr -d '.')
+          test -n "$capability"
+          echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
       - uses: prefix-dev/setup-pixi@v0.10.1
         with:
           pixi-version: v0.76.1
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
-          frozen: false
-      - name: Build the exact-affine kernel
-        # The kernel is a gitignored build artifact living in the source tree,
-        # so a checkout never brings it and an environment cache cannot carry
-        # it. `pixi install` builds it only when it decides the editable
-        # package needs reinstalling, which makes its presence a function of
-        # whether the project cache hit. Tests that ask for an exact verdict
-        # without a kernel are reported as skipped, so a cache hit would turn
-        # the certified suite green by removing it. Build it explicitly.
-        run: pixi run -e tests-cuda12 build-exact-affine
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          set +e
+          pixi run -e tests-cuda12 python -m tests.ci.probe_native \
+            --report=reports/native-gpu.json
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cuda12 --locked pylcm
+            pixi run -e tests-cuda12 python -m tests.ci.probe_native \
+              --report=reports/native-gpu.json
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
       - name: Restore JAX compilation cache
-        # `cpu.yml` caches this and deferred doing so here, on the reasoning that a
-        # GPU runner's home directory might already persist between runs. The runner
-        # name differs on every job, which is what an ephemeral runner looks like, so
-        # the premise is doubtful and every GPU run may be compiling from cold — on
-        # the device where compilation is most expensive. The step below measures it.
-        #
-        # The other objection in that note does not apply here: a shared cache is what
-        # a multi-worker run races on, and these run `-n0`.
-        #
-        # Only `gpu32` carries this for now. Adding it to both at once would leave no
-        # unchanged arm to compare against, and the cache would claim twice the share
-        # of the repository's cache budget before its size is known.
         uses: actions/cache@v6
         with:
           path: ~/.cache/jax
-          key: >-
-            jax-gpu32-${{ hashFiles('pixi.lock') }}-${{ github.sha }}
+          key: jax-gpu-${{ hashFiles('pixi.lock') }}-${{ github.sha }}
           restore-keys: |
-            jax-gpu32-${{ hashFiles('pixi.lock') }}-
-            jax-gpu32-
-      - name: Report the compilation cache this job starts from
-        # A run showing no speedup and a run whose cache never restored are the same
-        # wall time. This separates them, and gives the size the budget question needs.
-        run: |
-          du -sh ~/.cache/jax 2>/dev/null || echo "cache absent"
-          find ~/.cache/jax -type f 2>/dev/null | wc -l
-      - name: Run Mahler & Yum on GPU
-        if: matrix.suite == 'rest'
-        shell: bash {0}
-        # The GPU-scale Mahler & Yum module runs in a process of its own: its
-        # solve kernels only fit the device when XLA fully fuses the
-        # max-over-actions reduction, and compiling them late in a long-lived
-        # process that has run a whole battery has produced an unfused
-        # executable whose scratch arena (half the state-action product) exceeds
-        # device memory. A fresh process pins the fused compile.
+            jax-gpu-${{ hashFiles('pixi.lock') }}-
+            jax-gpu-
+      - name: Run the bounded GPU policy
+        shell: bash
         run: >-
-          mkdir -p reports &&
-          pixi run -e tests-cuda12 pytest tests/test_mahler_yum_2024.py
-          --precision=32 -n0 -v
-          --junitxml=reports/junit-gpu-fp32-mahler.xml
-      - name: Run pytest on GPU
-        shell: bash {0}
-        # Run serially (-n0 overrides the task's -n 4): the single GPU runner is
-        # starved of host CPU/memory by parallel JAX AOT compiles, and parallel
-        # workers sharing one persistent-cache directory race on its autotune
-        # scratch files, which fails the run at collection.
-        #
-        # `-v` streams one line per test as it completes. The JUnit report is
-        # written when the run ends, so a job that is cancelled or reclaimed
-        # part-way publishes nothing at all; the streamed lines are then the
-        # only record of what ran and how far it got.
-        #
-        # The suite drops JAX's in-memory compiled-program cache at every module
-        # boundary by default. A worker's resident memory otherwise grows with
-        # every distinct program it has compiled, and the splitting above divides
-        # that growth without bounding it. A released program is recompiled from
-        # the persistent on-disk cache rather than from cold.
-        run: >-
-          mkdir -p reports &&
-          pixi run -e tests-cuda12 pytest ${{ matrix.pytest_paths }}
-          --precision=32 -n0 -v
-          --junitxml=reports/junit-gpu-fp32-${{ matrix.suite }}.xml
-      - name: Upload JUnit reports
-        # `always()` so a failing run still publishes its report: the XML is how
-        # a run's counts are read back, and a run that failed is exactly when
-        # that matters.
+          pixi run -e tests-cuda12 test --
+          --ci-policy=pr --hardware-profile=gpu-small --precision=auto
+          --environment=tests-cuda12 --report-dir=reports/policy tests
+      - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: junit-gpu-fp32-${{ matrix.suite }}
-          path: reports/junit-*.xml
+          name: gpu-reports
+          path: reports/
           if-no-files-found: warn
-  # One context for both suite legs, so branch protection names `gpu32` rather
-  # than each leg — adding a suite would otherwise silently drop out of the
-  # required set until someone remembered to add it there too.
   gpu32:
     name: gpu32
     needs:
@@ -153,7 +82,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail unless every suite leg succeeded
-        run: |-
-          echo "tests: ${{ needs.tests.result }}"
-          test "${{ needs.tests.result }}" = "success"
+      - name: Fail unless the bounded GPU policy succeeded
+        run: test "${{ needs.tests.result }}" = "success"
+  gpu64:
+    name: gpu64
+    needs:
+      - tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless the bounded GPU policy succeeded
+        run: test "${{ needs.tests.result }}" = "success"

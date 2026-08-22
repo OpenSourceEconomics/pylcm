@@ -215,6 +215,37 @@ def test_one_constraint_can_carry_different_dispositions_on_two_routes() -> None
     ]
 
 
+def test_a_plan_can_be_narrowed_to_one_solver_path() -> None:
+    """A nested solver reads only the entries for the branch it is building."""
+    adjuster = _route(_site(), path="adjuster")
+    keeper = _route(_site(), path="keeper")
+    plan = _plan(adjuster, keeper)
+
+    narrowed = plan.for_solver_path(solver_path=("adjuster",))
+
+    assert tuple(entry.route for entry in narrowed.entries) == (adjuster.key,)
+
+
+def test_a_plan_exposes_only_its_compiled_boundary_dispositions() -> None:
+    """A solver consumes boundary programs without reinterpreting other verdicts."""
+
+    def compiler(
+        *,
+        bound: BoundConstraint,
+        context: ConstraintContext,  # noqa: ARG001
+    ) -> CompileBoundary:
+        return CompileBoundary(
+            constraint=bound.constraint,
+            program=BoundaryProgram(surfaces=(), payload=None),
+        )
+
+    compiled = _route(_site(boundary_compilers=(compiler,)), path="compiled")
+    evaluated = _route(_site(), path="evaluated")
+    plan = _plan(compiled, evaluated)
+
+    assert plan.compiled_boundaries == (plan.entries[0].disposition,)
+
+
 def test_a_proof_at_a_site_takes_the_constraint_out_of_evaluation() -> None:
     """A constraint the construction enforces is not evaluated again."""
     route = _route(_site(structural_proofs=(_RecordingProof("the grid starts there"),)))

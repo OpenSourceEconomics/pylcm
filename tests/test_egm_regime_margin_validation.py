@@ -16,6 +16,7 @@ control showing the same guard accepts the valid object.
 
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import get_type_hints
 
 import pytest
 
@@ -99,13 +100,11 @@ def _regime_kwargs() -> dict[str, object]:
 
 
 def test_solver_annotations_remain_narrowed_exactly() -> None:
-    assert (
-        ConsumptionSavingsRegime.__annotations__["solver"]
-        == OneMarginSolver | GridSearch
+    assert get_type_hints(ConsumptionSavingsRegime)["solver"] == (
+        OneMarginSolver | GridSearch
     )
-    assert (
-        NestedConsumptionSavingsRegime.__annotations__["solver"]
-        == TwoMarginSolver | GridSearch
+    assert get_type_hints(NestedConsumptionSavingsRegime)["solver"] == (
+        TwoMarginSolver | GridSearch
     )
 
 
