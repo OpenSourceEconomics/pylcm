@@ -739,12 +739,17 @@ def _replace_continuous_action_with_policy_read(
     - the recovered actions;
     - the value to report for the emitted pair. Every path that keeps the grid
       pair returns `grid_values` unchanged; every accepted off-grid pair is
-      scored by the canonical Q and returns that attained value;
+      scored by the canonical Q and returns that attained value. A rejected
+      nested read keeps the feasible grid pair or reports the projected
+      baseline's canonical score;
     - a nested-fallback flag: the per-subject Boolean array from
       `_read_nested_policy`, extended to include canonical infeasibility,
       non-finite scores, and pairs that score below the grid pair; or `None`
       on every other path. The caller resolves `None` to all-False where
       the regime's subject count is known.
+
+    A nested read for which neither the proposal nor either baseline is safe
+    raises `InvalidSimulationInputError`.
     """
     if sim_policy is None:
         return optimal_actions, grid_values, None
@@ -803,6 +808,12 @@ def _replace_continuous_action_with_policy_read(
             & jnp.isfinite(nested_value)
             & ((~baseline_admissible) | (nested_value >= baseline_value))
         )
+        if bool(jnp.any(~accepted & ~baseline_admissible)):
+            msg = (
+                "For at least one simulated subject, neither the nested policy replay "
+                "nor the canonical grid baseline is feasible."
+            )
+            raise InvalidSimulationInputError(msg)
         emitted_actions = MappingProxyType(
             {
                 name: jnp.where(
@@ -1379,15 +1390,17 @@ def _nested_grid_baseline(
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return an admissible baseline for the nested no-degradation check.
 
-    The simulation grid maximizer does not know the nested solver's outer
-    post-decision domain. Where its pair lies inside that domain and respects
-    the intrinsic savings floor, retain it and its already-computed value.
-    Else project only the outer post-decision to the nearest published domain
-    endpoint, trim consumption only if the projected resources require it,
-    and score that repaired pair through canonical Q. The repaired pair stays
-    marked as a nested fallback, but it is safe to emit and evolve.
+    The grid score has already been masked by canonical feasibility. Keep the
+    pair when it also lies in the nested replay domain. Otherwise project it to
+    both published outer endpoints, trim the inner action to each endpoint's
+    resources, and choose the higher-valued intrinsically and canonically
+    admissible pair. Each endpoint is checked separately because projection
+    changes resources. When neither endpoint nor the refined proposal is safe,
+    the caller fails rather than publishing an infeasible decision.
     """
-    grid_admissible = _nested_actions_are_intrinsically_admissible(
+    grid_admissible = jnp.isfinite(
+        grid_values
+    ) & _nested_actions_are_intrinsically_admissible(
         payload=payload,
         actions=grid_actions,
         regime=regime,
@@ -1396,37 +1409,61 @@ def _nested_grid_baseline(
         period=period,
         age=age,
     )
-    projected_actions = _project_grid_pair_into_nested_domain(
-        payload=payload,
-        grid_actions=grid_actions,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-    )
-    projected_value, projected_q_feasible = _canonical_Q_at_actions(
-        candidate_actions=projected_actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-    )
-    projected_admissible = (
-        _nested_actions_are_intrinsically_admissible(
+
+    def endpoint_baseline(
+        endpoint: Literal["lower", "upper"],
+    ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
+        actions = _project_grid_pair_to_nested_endpoint(
             payload=payload,
-            actions=projected_actions,
+            grid_actions=grid_actions,
+            endpoint=endpoint,
             regime=regime,
             states=states,
             flat_params=flat_params,
             period=period,
             age=age,
         )
-        & projected_q_feasible
+        value, q_feasible = _canonical_Q_at_actions(
+            candidate_actions=actions,
+            regime=regime,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+        admissible = (
+            _nested_actions_are_intrinsically_admissible(
+                payload=payload,
+                actions=actions,
+                regime=regime,
+                states=states,
+                flat_params=flat_params,
+                period=period,
+                age=age,
+            )
+            & q_feasible
+            & jnp.isfinite(value)
+        )
+        return actions, value, admissible
+
+    lower_actions, lower_value, lower_admissible = endpoint_baseline("lower")
+    upper_actions, upper_value, upper_admissible = endpoint_baseline("upper")
+    use_upper = upper_admissible & (~lower_admissible | (upper_value > lower_value))
+    projected_actions = MappingProxyType(
+        {
+            name: jnp.where(
+                use_upper,
+                jnp.asarray(upper_actions[name]),
+                jnp.asarray(lower_action),
+            )
+            for name, lower_action in lower_actions.items()
+        }
     )
+    projected_value = jnp.where(use_upper, upper_value, lower_value)
+    projected_admissible = lower_admissible | upper_admissible
+
     baseline_actions = MappingProxyType(
         {
             name: jnp.where(
@@ -1444,17 +1481,18 @@ def _nested_grid_baseline(
     )
 
 
-def _project_grid_pair_into_nested_domain(
+def _project_grid_pair_to_nested_endpoint(
     *,
     payload: NestedEGMSimPolicy,
     grid_actions: MappingProxyType[ActionName, FloatND | IntND],
+    endpoint: Literal["lower", "upper"],
     regime: Regime,
     states: Mapping[StateOrActionName, FloatND | IntND],
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
 ) -> MappingProxyType[ActionName, FloatND | IntND]:
-    """Project a raw grid pair onto the nested outer domain and savings floor."""
+    """Project a raw grid pair onto one outer endpoint and the savings floor."""
     n_subjects = next(iter(states.values())).shape[0]
     outer_transition = _outer_transition_offset_and_slope(
         payload=payload,
@@ -1467,16 +1505,29 @@ def _project_grid_pair_into_nested_domain(
     )
     if outer_transition is None:
         return grid_actions
-    _, slope_is_unit, transition_at = outer_transition
+    offset, slope_is_unit, transition_at = outer_transition
     outer_action = jnp.asarray(grid_actions[payload.outer_action_name])
-    outer_post_decision = transition_at(outer_action)
     outer_nodes = payload.adjuster.outer_nodes
-    projected_post_decision = jnp.clip(
-        outer_post_decision, outer_nodes[0], outer_nodes[-1]
+    endpoint_index = 0 if endpoint == "lower" else -1
+    interior_index = -1 if endpoint == "lower" else 0
+    endpoint_value = outer_nodes[endpoint_index]
+    exact_outer_action = endpoint_value - offset
+    exact_post_decision = transition_at(exact_outer_action)
+    lands_inside = (exact_post_decision >= outer_nodes[0]) & (
+        exact_post_decision <= outer_nodes[-1]
     )
+    interior_value = jnp.nextafter(
+        endpoint_value,
+        outer_nodes[interior_index],
+    )
+    interior_outer_action = interior_value - offset
     projected_outer_action = jnp.where(
         slope_is_unit,
-        outer_action + (projected_post_decision - outer_post_decision),
+        jnp.where(
+            lands_inside,
+            exact_outer_action,
+            interior_outer_action,
+        ),
         outer_action,
     )
     projected_post_decision = transition_at(projected_outer_action)

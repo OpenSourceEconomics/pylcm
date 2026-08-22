@@ -8,6 +8,7 @@ convention implies — a linear read of the same row can rank two close branches
 differently.
 """
 
+import itertools
 from types import MappingProxyType, SimpleNamespace
 
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ from _lcm.simulation.simulate import (
     _interp_rows_with_support,
     _replace_continuous_action_with_policy_read,
 )
+from lcm.exceptions import InvalidSimulationInputError
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -210,6 +212,124 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
         np.asarray(fallback),
         np.array([False, True, True, True]),
     )
+
+
+def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
+    """Every accepted pair is safe.
+
+    Otherwise a safe baseline is used or simulation stops.
+    """
+    cell = {}
+    nested_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.7]),
+            "investment": jnp.asarray([0.8]),
+        }
+    )
+    baseline_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.2]),
+            "investment": jnp.asarray([0.3]),
+        }
+    )
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.1]),
+            "investment": jnp.asarray([0.1]),
+        }
+    )
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([cell["nested_fallback"]]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_canonically_refine_nested_inner_action",
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([cell["nested_value"]]),
+            jnp.asarray([cell["nested_feasible"]]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_actions_are_intrinsically_admissible",
+        lambda **_kwargs: jnp.asarray([cell["nested_admissible"]]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_grid_baseline",
+        lambda **_kwargs: (
+            baseline_actions,
+            jnp.asarray([1.0]),
+            jnp.asarray([cell["baseline_admissible"]]),
+        ),
+    )
+
+    common = {
+        "optimal_actions": grid_actions,
+        "regime": _StubRegime(simulation=SimpleNamespace()),
+        "sim_policy": object.__new__(NestedEGMSimPolicy),
+        "states": MappingProxyType({"wealth": jnp.ones(1)}),
+        "flat_params": MappingProxyType({}),
+        "period": 0,
+        "age": jnp.asarray(40.0),
+        "canonical_states": MappingProxyType({"wealth": jnp.ones(1)}),
+        "action_names": ("consumption", "investment"),
+        "next_regime_to_V_arr": MappingProxyType({}),
+        "grid_values": jnp.asarray([1.0]),
+    }
+
+    for (
+        nested_fallback,
+        nested_feasible,
+        nested_admissible,
+        finite,
+        baseline_admissible,
+        nested_ge_baseline,
+    ) in itertools.product((False, True), repeat=6):
+        nested_value = (2.0 if nested_ge_baseline else 0.5) if finite else jnp.nan
+        cell.update(
+            nested_fallback=nested_fallback,
+            nested_feasible=nested_feasible,
+            nested_admissible=nested_admissible,
+            nested_value=nested_value,
+            baseline_admissible=baseline_admissible,
+        )
+        should_accept = (
+            not nested_fallback
+            and nested_feasible
+            and nested_admissible
+            and finite
+            and (not baseline_admissible or nested_ge_baseline)
+        )
+        if not should_accept and not baseline_admissible:
+            with pytest.raises(InvalidSimulationInputError):
+                _replace_continuous_action_with_policy_read(**common)
+            continue
+
+        actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
+            **common
+        )
+        assert fallback is not None
+        assert bool(fallback[0]) == (not should_accept)
+        if should_accept:
+            np.testing.assert_array_equal(
+                np.asarray(actions["consumption"]),
+                np.asarray(nested_actions["consumption"]),
+            )
+            assert float(reported_value[0]) == float(nested_value)
+        else:
+            np.testing.assert_array_equal(
+                np.asarray(actions["consumption"]),
+                np.asarray(baseline_actions["consumption"]),
+            )
+            assert float(reported_value[0]) == 1.0
 
 
 def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
@@ -483,6 +603,254 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     np.testing.assert_array_equal(np.asarray(actions["investment"]), np.asarray([11.0]))
     np.testing.assert_array_equal(np.asarray(reported_value), np.asarray([-9.0]))
     np.testing.assert_array_equal(np.asarray(fallback), np.asarray([True]))
+
+
+@pytest.mark.parametrize("raw_outer", np.linspace(-0.75, -5.0, 25))
+def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
+    monkeypatch,
+    raw_outer,
+) -> None:
+    """A rejected replay uses the safe endpoint when the nearest one is infeasible."""
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "outer_action_name", "investment")
+    object.__setattr__(payload, "inner_action_name", "consumption")
+    object.__setattr__(payload, "savings_lower_bound", 0.0)
+    object.__setattr__(
+        payload,
+        "adjuster",
+        SimpleNamespace(outer_nodes=jnp.asarray([0.0, 1.0])),
+    )
+    raw_resources = raw_outer**2 - 0.25
+    raw_inner = max(raw_resources * 0.5, 1e-3)
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([raw_inner]),
+            "investment": jnp.asarray([raw_outer]),
+        }
+    )
+
+    def canonical_q(*, candidate_actions, **_kwargs):
+        investment = jnp.asarray(candidate_actions["investment"])
+        consumption = jnp.asarray(candidate_actions["consumption"])
+        resources = investment**2 - 0.25
+        feasible = (consumption > 0.0) & (consumption <= resources)
+        value = jnp.where(
+            feasible,
+            1.0 - (investment + 1.0) ** 2 - (consumption - 0.25) ** 2,
+            -jnp.inf,
+        )
+        return value, feasible
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_outer_transition_offset_and_slope",
+        lambda **_kwargs: (
+            jnp.zeros(1),
+            jnp.ones(1, dtype=bool),
+            jnp.asarray,
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_resources",
+        lambda *, outer_action, **_kwargs: jnp.asarray(outer_action) ** 2 - 0.25,
+    )
+    monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_kwargs: (grid_actions, jnp.asarray([True])),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_canonically_refine_nested_inner_action",
+        lambda **_kwargs: (
+            grid_actions,
+            jnp.asarray([-jnp.inf]),
+            jnp.asarray([False]),
+        ),
+    )
+
+    grid_value, grid_feasible = canonical_q(candidate_actions=grid_actions)
+    assert bool(grid_feasible[0])
+    actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
+        optimal_actions=grid_actions,
+        regime=_StubRegime(simulation=SimpleNamespace()),
+        sim_policy=payload,
+        states=MappingProxyType({"wealth": jnp.ones(1)}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+        canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        grid_values=grid_value,
+    )
+
+    expected_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([min(raw_inner, 0.75)]),
+            "investment": jnp.asarray([1.0]),
+        }
+    )
+    expected_value, expected_feasible = canonical_q(candidate_actions=expected_actions)
+    assert bool(expected_feasible[0])
+    aaae(
+        np.asarray(actions["consumption"]),
+        np.asarray(expected_actions["consumption"]),
+        decimal=DECIMAL_PRECISION,
+    )
+    aaae(
+        np.asarray(actions["investment"]),
+        np.asarray(expected_actions["investment"]),
+        decimal=DECIMAL_PRECISION,
+    )
+    aaae(
+        np.asarray(reported_value),
+        np.asarray(expected_value),
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_equal(np.asarray(fallback), np.asarray([True]))
+    _, emitted_feasible = canonical_q(candidate_actions=actions)
+    assert bool(emitted_feasible[0])
+
+
+def test_nested_grid_baseline_chooses_the_best_safe_endpoint(monkeypatch) -> None:
+    """An out-of-domain grid pair uses the higher-valued feasible endpoint."""
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "outer_action_name", "investment")
+    object.__setattr__(payload, "inner_action_name", "consumption")
+    object.__setattr__(payload, "savings_lower_bound", 0.0)
+    object.__setattr__(
+        payload,
+        "adjuster",
+        SimpleNamespace(outer_nodes=jnp.asarray([0.0, 1.0])),
+    )
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.25]),
+            "investment": jnp.asarray([-1.0]),
+        }
+    )
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_outer_transition_offset_and_slope",
+        lambda **_kwargs: (
+            jnp.zeros(1),
+            jnp.ones(1, dtype=bool),
+            jnp.asarray,
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_resources",
+        lambda *, outer_action, **_kwargs: jnp.asarray(outer_action) + 2.0,
+    )
+
+    def canonical_q(*, candidate_actions, **_kwargs):
+        investment = jnp.asarray(candidate_actions["investment"])
+        consumption = jnp.asarray(candidate_actions["consumption"])
+        resources = investment + 2.0
+        feasible = (consumption > 0.0) & (consumption <= resources)
+        return jnp.where(feasible, resources, -jnp.inf), feasible
+
+    monkeypatch.setattr(simulation_module, "_canonical_Q_at_actions", canonical_q)
+
+    actions, value, admissible = simulation_module._nested_grid_baseline(
+        payload=payload,
+        grid_actions=grid_actions,
+        grid_values=jnp.asarray([1.0]),
+        regime=_StubRegime(simulation=SimpleNamespace()),
+        states=MappingProxyType({"wealth": jnp.ones(1)}),
+        canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(actions["consumption"]),
+        np.asarray([0.25]),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(actions["investment"]),
+        np.asarray([1.0]),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(value),
+        np.asarray([3.0]),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(admissible),
+        np.asarray([True]),
+    )
+
+
+def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
+    monkeypatch,
+) -> None:
+    """Simulation stops rather than publishing an infeasible nested action pair."""
+    grid_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.25]),
+            "investment": jnp.asarray([-1.0]),
+        }
+    )
+    nested_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([0.5]),
+            "investment": jnp.asarray([0.5]),
+        }
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_kwargs: (nested_actions, jnp.asarray([True])),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_canonically_refine_nested_inner_action",
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([-jnp.inf]),
+            jnp.asarray([False]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_actions_are_intrinsically_admissible",
+        lambda **_kwargs: jnp.asarray([False]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_grid_baseline",
+        lambda **_kwargs: (
+            grid_actions,
+            jnp.asarray([-jnp.inf]),
+            jnp.asarray([False]),
+        ),
+    )
+
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"neither.*nested.*nor.*grid",
+    ):
+        _replace_continuous_action_with_policy_read(
+            optimal_actions=grid_actions,
+            regime=_StubRegime(simulation=SimpleNamespace()),
+            sim_policy=object.__new__(NestedEGMSimPolicy),
+            states=MappingProxyType({"wealth": jnp.ones(1)}),
+            flat_params=MappingProxyType({}),
+            period=0,
+            age=jnp.asarray(40.0),
+            canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+            action_names=("consumption", "investment"),
+            next_regime_to_V_arr=MappingProxyType({}),
+            grid_values=jnp.asarray([-jnp.inf]),
+        )
 
 
 def test_nested_inner_action_is_refined_under_canonical_q(monkeypatch) -> None:
