@@ -9,7 +9,7 @@ numerical engine modules.
 
 import functools
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
@@ -47,6 +47,10 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     bind_roles,
     simulation_route,
+)
+from _lcm.solution.periodization import (
+    resolve_solver_build_context,
+    solver_period_group_key,
 )
 from _lcm.typing import (
     EconFunction,
@@ -463,8 +467,8 @@ class EGM(OneMarginSolver):
             | frozenset(context.state_action_space.discrete_actions)
         )
         period_to_target = _period_to_continuation_target(context=context)
-        cores: dict[RegimeName, Callable] = {}
-        laws: dict[RegimeName, Callable[..., tuple[Float1D, Float1D]]] = {}
+        cores: dict[Hashable, Callable] = {}
+        laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         # The target's own name for its single continuous state. It is read off
         # that regime: the value grid it is tabulated on and the namespace its
@@ -478,27 +482,34 @@ class EGM(OneMarginSolver):
         }
         for period, target in period_to_target.items():
             target_state = target_state_names[target]
-            if target not in cores:
+            group_key = solver_period_group_key(
+                context=context,
+                period=period,
+                continuation_targets=(target,),
+                solver_path=("egm",),
+            )
+            if group_key not in cores:
+                resolved = resolve_solver_build_context(context=context, period=period)
                 core = _build_egm_core(
                     savings_grid=savings_grid,
-                    functions=context.functions,
+                    functions=resolved.functions,
                     koopmans_aggregator=cast(
-                        "EconFunction", context.koopmans_aggregator
+                        "EconFunction", resolved.koopmans_aggregator
                     ),
                     consumption_action=consumption_action,
                 )
-                cores[target] = jax.jit(core) if context.enable_jit else core
-                laws[target] = build_declared_liquid_law(
-                    transitions=context.transitions,
-                    functions=context.functions,
+                cores[group_key] = jax.jit(core) if context.enable_jit else core
+                laws[group_key] = build_declared_liquid_law(
+                    transitions=resolved.transitions,
+                    functions=resolved.functions,
                     post_decision_name=bound.post_decision_function,
                     target=target,
                     target_state=target_state,
                     variable_names=variable_names,
                 )
             period_kernels[period] = _EGMPeriodKernel(
-                core=cores[target],
-                declared_law=laws[target],
+                core=cores[group_key],
+                declared_law=laws[group_key],
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,

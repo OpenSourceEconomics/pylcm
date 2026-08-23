@@ -15,7 +15,7 @@ contracts the solver owes its user:
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.nbegm_step import _no_save_corner
+from _lcm.egm.nbegm_step import _fixed_savings_corner
 from tests.solution._crra_preferences import crra_preferences
 
 CRRA = 2.0
@@ -24,9 +24,10 @@ DISCOUNT_FACTOR = 0.95
 
 def _corner_value(coh: jnp.ndarray) -> np.ndarray:
     """The no-save corner's value channel on a budget grid."""
-    _endog, value, _policy, _marginal = _no_save_corner(
+    _endog, value, _policy, _marginal = _fixed_savings_corner(
         endog_grid=jnp.arange(coh.shape[0], dtype=jnp.result_type(1.0)),
         coh=coh,
+        savings=jnp.asarray(0.0),
         preferences=crra_preferences(CRRA),
         discount_factor=DISCOUNT_FACTOR,
         continuation=jnp.zeros_like(coh),
@@ -40,27 +41,27 @@ def _one_ulp_above(value: float) -> float:
     return float(np.nextafter(dtype.type(value), dtype.type(np.inf)))
 
 
-def test_no_save_corner_keeps_a_budget_positive_by_one_ulp():
+def test_fixed_savings_corner_keeps_a_budget_positive_by_one_ulp():
     """A budget of one ULP is an attainable action and carries a finite value."""
     tiny = _one_ulp_above(0.0) * 2.0**60
     value = _corner_value(jnp.asarray([tiny, 10.0]))
     assert np.isfinite(value[0])
 
 
-def test_no_save_corner_is_unchanged_by_a_far_away_grid_node():
+def test_fixed_savings_corner_is_unchanged_by_a_far_away_grid_node():
     """Extending the budget grid upward leaves the other nodes' values untouched."""
     near = _corner_value(jnp.asarray([1.0, 2.0]))
     far = _corner_value(jnp.asarray([1.0, 1.0 / jnp.finfo(jnp.result_type(1.0)).eps]))
     np.testing.assert_array_equal(far[0], near[0])
 
 
-def test_no_save_corner_kills_an_exactly_zero_budget():
+def test_fixed_savings_corner_kills_an_exactly_zero_budget():
     """A budget of exactly zero affords no action, at any grid scale."""
     value = _corner_value(jnp.asarray([0.0, 10.0]))
     assert np.isnan(value[0])
 
 
-def test_no_save_corner_kills_a_negative_budget():
+def test_fixed_savings_corner_kills_a_negative_budget():
     """A negative budget affords no action, at any grid scale."""
     value = _corner_value(jnp.asarray([-1e-30, 10.0]))
     assert np.isnan(value[0])
