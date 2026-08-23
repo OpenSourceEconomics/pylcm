@@ -94,7 +94,6 @@ from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
     affine_breakpoint,
-    boundary,
     case_boundary,
     piece,
     piecewise_affine,
@@ -218,7 +217,6 @@ __all__ = [
     "UniformIIDProcess",
     "__version__",
     "affine_breakpoint",
-    "boundary",
     "case_boundary",
     "cash_on_hand_with_subsidy",
     "categorical",

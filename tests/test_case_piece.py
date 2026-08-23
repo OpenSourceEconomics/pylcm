@@ -1,94 +1,55 @@
-"""Behavior of the NBEGM case-boundary and formula-piece decorators.
+"""Behavior of NBEGM's structured case boundaries and formula pieces."""
 
-The decorators only attach metadata to a user's DAG function and return the
-same object unchanged; they never wrap or alter runtime behavior.
-"""
-
+import jax.numpy as jnp
 import pytest
 
 import lcm
 from lcm.case_piece import (
     AffineBreakpoint,
-    BoundarySurface,
-    CaseBoundaryMeta,
     PieceMeta,
     PiecewiseAffineMeta,
     affine_breakpoint,
-    boundary,
     case_boundary,
     piece,
     piecewise_affine,
 )
 from lcm.exceptions import NBEGMCaseError
 
+medicaid_eligible = case_boundary(
+    lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+    kind="jump",
+)
 
-def medicaid_eligible(assets, medicaid_asset_limit):
-    return assets < medicaid_asset_limit
 
-
-def test_boundary_captures_variable_threshold_equality_and_kind():
-    """`boundary(...)` records the equality surface, its owner, and its kind."""
-    surface = boundary(
-        variable="assets",
-        threshold="medicaid_asset_limit",
-        equality="otherwise",
-        kind="jump",
-    )
-    assert surface == BoundarySurface(
-        variable="assets",
-        threshold="medicaid_asset_limit",
-        equality_owner="otherwise",
+def test_case_boundary_is_an_executable_structured_condition():
+    """One comparison supplies both executable truth and boundary structure."""
+    predicate = case_boundary(
+        lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
         kind="jump",
     )
 
-
-def test_case_boundary_attaches_one_boundary_surface():
-    """`case_boundary` stores each declared surface in `__lcm_case_boundary__`."""
-
-    @case_boundary(
-        boundary(
-            variable="assets",
-            threshold="medicaid_asset_limit",
-            equality="otherwise",
-            kind="jump",
-        )
+    assert isinstance(predicate, lcm.Condition)
+    assert bool(
+        predicate(assets=jnp.asarray(9.0), medicaid_asset_limit=jnp.asarray(10.0))
     )
-    def predicate(assets, medicaid_asset_limit):
-        return assets < medicaid_asset_limit
-
-    assert predicate.__lcm_case_boundary__ == CaseBoundaryMeta(  # ty: ignore[unresolved-attribute]
-        boundaries=(
-            BoundarySurface(
-                variable="assets",
-                threshold="medicaid_asset_limit",
-                equality_owner="otherwise",
-                kind="jump",
-            ),
-        )
+    assert not bool(
+        predicate(assets=jnp.asarray(10.0), medicaid_asset_limit=jnp.asarray(10.0))
     )
 
 
-def test_case_boundary_returns_the_same_function_object():
-    """The decorator returns the original function, never a wrapper (claw-safe)."""
-
-    def predicate(assets, medicaid_asset_limit):
-        return assets < medicaid_asset_limit
-
-    decorated = case_boundary(
-        boundary(
-            variable="assets",
-            threshold="medicaid_asset_limit",
-            equality="otherwise",
-            kind="jump",
-        )
-    )(predicate)
-    assert decorated is predicate
-
-
-def test_case_boundary_rejects_bare_two_tuple_without_explicit_ownership():
-    """A bare `(variable, threshold)` tuple cannot declare equality ownership."""
-    with pytest.raises(NBEGMCaseError, match=r"lcm\.boundary"):
-        case_boundary(("assets", "medicaid_asset_limit"))
+@pytest.mark.parametrize(
+    "condition",
+    [
+        lcm.ref("assets") == lcm.ref("limit"),
+        (lcm.ref("assets") < lcm.ref("limit"))
+        & (lcm.ref("income") < lcm.ref("income_limit")),
+        lcm.Condition.from_callable(lambda assets: assets > 0),
+    ],
+)
+def test_case_boundary_rejects_shapes_that_are_not_one_ordering(condition):
+    """A binary case split is exactly one ordered structured comparison."""
+    with pytest.raises(NBEGMCaseError, match="exactly one"):
+        case_boundary(condition, kind="jump")
 
 
 def test_piece_records_output_predicate_and_when_side():
@@ -99,7 +60,7 @@ def test_piece_records_output_predicate_and_when_side():
         return medical_expense
 
     assert oop_medicaid.__lcm_piece__ == PieceMeta(  # ty: ignore[unresolved-attribute]
-        output="oop", predicate_name="medicaid_eligible", side="when"
+        output="oop", predicate=medicaid_eligible, side="when"
     )
 
 
@@ -111,7 +72,7 @@ def test_piece_records_otherwise_side():
         return medical_expense
 
     assert oop_private.__lcm_piece__ == PieceMeta(  # ty: ignore[unresolved-attribute]
-        output="oop", predicate_name="medicaid_eligible", side="otherwise"
+        output="oop", predicate=medicaid_eligible, side="otherwise"
     )
 
 
@@ -184,10 +145,9 @@ def test_piecewise_affine_returns_the_same_function_object():
     assert decorated is tax_schedule
 
 
-def test_decorators_are_reexported_from_lcm():
+def test_case_piece_declarations_are_reexported_from_lcm():
     """The user-facing entry points live on the top-level `lcm` namespace."""
     assert lcm.case_boundary is case_boundary
     assert lcm.piece is piece
-    assert lcm.boundary is boundary
     assert lcm.piecewise_affine is piecewise_affine
     assert lcm.affine_breakpoint is affine_breakpoint

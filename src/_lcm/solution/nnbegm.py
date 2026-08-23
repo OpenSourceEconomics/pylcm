@@ -11,7 +11,7 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import cast
@@ -52,6 +52,10 @@ from _lcm.solution.negm import (
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
     _without_outer_post_decision,
+)
+from _lcm.solution.periodization import (
+    resolve_solver_build_context,
+    solver_period_group_key,
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
@@ -284,48 +288,77 @@ class NNBEGM(TwoMarginSolver):
         # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore
         # the stock the continuation is read at, not the raw node the outer
         # search picked.
-        adjuster_context = replace(
-            context,
-            functions=_without_outer_post_decision(
-                functions=context.functions,
-                outer_post_decision=bound.outer_post_decision,
-            ),
-            flat_param_names=context.flat_param_names | {bound.outer_post_decision},
-            constraint_plan=(
-                None
-                if context.constraint_plan is None
-                else context.constraint_plan.for_solver_path(
-                    solver_path=("nnbegm", "adjuster")
+        grouped_periods: dict[Hashable, list[int]] = {}
+        for period in context.regimes_to_active_periods[context.regime_name]:
+            targets = (
+                ()
+                if period == context.solution_reachability.n_periods - 1
+                else context.solution_reachability.targets(
+                    period=period, source=context.regime_name
                 )
-            ),
-        )
-        adjuster_kernels = bound.inner.build_period_kernels(context=adjuster_context)
-        no_adjustment_func = (
-            context.functions[bound.outer_no_adjustment_candidate]
-            if bound.outer_no_adjustment_candidate is not None
-            else None
-        )
-        # The keeper computes the post-decision from the durable leaf instead of
-        # taking it as a bound param, so the declared law again stands and what
-        # the keeper carries is `next_<durable>(keep(<durable>))`.
-        keeper_context = replace(
-            context,
-            functions=_with_no_adjustment_outer_function(
-                functions=context.functions,
-                durable_state=bound.outer_state,
-                outer_post_decision=bound.outer_post_decision,
-                no_adjustment_func=no_adjustment_func,
-            ),
-            constraint_plan=(
-                None
-                if context.constraint_plan is None
-                else context.constraint_plan.for_solver_path(
-                    solver_path=("nnbegm", "keeper")
-                )
-            ),
-        )
-        keeper_kernels = bound.inner.build_period_kernels(context=keeper_context)
-        keeper_continuation_spec = keeper_kernels.continuation_spec
+            )
+            key = solver_period_group_key(
+                context=context,
+                period=period,
+                continuation_targets=targets,
+                solver_path=("nnbegm",),
+            )
+            grouped_periods.setdefault(key, []).append(period)
+
+        adjuster_by_period: dict[int, PeriodKernel] = {}
+        keeper_by_period: dict[int, PeriodKernel] = {}
+        grouped_param_checks = []
+        keeper_continuation_spec = None
+        for periods in grouped_periods.values():
+            representative_period = periods[0]
+            resolved = resolve_solver_build_context(
+                context=context, period=representative_period
+            )
+            adjuster_context = replace(
+                resolved,
+                functions=_without_outer_post_decision(
+                    functions=resolved.functions,
+                    outer_post_decision=bound.outer_post_decision,
+                ),
+                flat_param_names=context.flat_param_names | {bound.outer_post_decision},
+                constraint_plan=(
+                    None
+                    if context.constraint_plan is None
+                    else context.constraint_plan.for_solver_path(
+                        solver_path=("nnbegm", "adjuster")
+                    )
+                ),
+            )
+            adjuster_group = bound.inner.build_period_kernels(context=adjuster_context)
+            no_adjustment_func = (
+                resolved.functions[bound.outer_no_adjustment_candidate]
+                if bound.outer_no_adjustment_candidate is not None
+                else None
+            )
+            keeper_context = replace(
+                resolved,
+                functions=_with_no_adjustment_outer_function(
+                    functions=resolved.functions,
+                    durable_state=bound.outer_state,
+                    outer_post_decision=bound.outer_post_decision,
+                    no_adjustment_func=no_adjustment_func,
+                ),
+                constraint_plan=(
+                    None
+                    if context.constraint_plan is None
+                    else context.constraint_plan.for_solver_path(
+                        solver_path=("nnbegm", "keeper")
+                    )
+                ),
+            )
+            keeper_group = bound.inner.build_period_kernels(context=keeper_context)
+            for period in periods:
+                adjuster_by_period[period] = adjuster_group.period_kernels[period]
+                keeper_by_period[period] = keeper_group.period_kernels[period]
+            grouped_param_checks.extend(adjuster_group.param_checks)
+            grouped_param_checks.extend(keeper_group.param_checks)
+            if keeper_continuation_spec is None:
+                keeper_continuation_spec = keeper_group.continuation_spec
         template = (
             None
             if keeper_continuation_spec is None
@@ -339,14 +372,14 @@ class NNBEGM(TwoMarginSolver):
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
-                    keeper_kernel=keeper_kernels.period_kernels[period],
+                    keeper_kernel=keeper_by_period[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=bound.outer_post_decision,
                     outer_batch_size=self.outer_batch_size,
                 )
-                for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
+                for period, adjuster_kernel in adjuster_by_period.items()
             }
         )
         n_candidates = int(outer_grid_values.shape[0]) + 1
@@ -364,10 +397,7 @@ class NNBEGM(TwoMarginSolver):
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
-            param_checks=(
-                *adjuster_kernels.param_checks,
-                *keeper_kernels.param_checks,
-            ),
+            param_checks=tuple(grouped_param_checks),
         )
 
 

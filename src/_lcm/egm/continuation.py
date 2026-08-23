@@ -816,6 +816,18 @@ def _expect_over_stochastic_nodes(
     if not resources_reads_stochastic:
         shared_queries, shared_gradients = queries_and_gradients(())
 
+    # Co-mapped deterministic axes have already been sliced from the carry and
+    # therefore have no corresponding entry in ``deterministic_index``.
+    carry_axis_stochastic_flags = tuple(
+        is_stochastic
+        for name, is_stochastic in zip(
+            read.discrete_state_names,
+            read.stochastic_flags,
+            strict=True,
+        )
+        if name not in read.co_map_state_names
+    )
+
     def read_at_nodes(
         node_indices: tuple[ScalarInt, ...],
     ) -> tuple[ScalarFloat, ScalarFloat]:
@@ -838,7 +850,7 @@ def _expect_over_stochastic_nodes(
             child_index=_interleave_child_index(
                 deterministic_index=deterministic_index,
                 node_indices=node_indices,
-                stochastic_flags=read.stochastic_flags,
+                stochastic_flags=carry_axis_stochastic_flags,
             ),
             child_passive_values=child_passive_values,
             child_passive_grids=read.passive_grids,

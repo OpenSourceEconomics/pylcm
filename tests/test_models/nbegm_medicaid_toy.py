@@ -21,7 +21,8 @@ import jax.numpy as jnp
 import lcm
 from _lcm.grids.base import Grid
 from lcm import LinSpacedGrid, Model, cash_on_hand_with_subsidy
-from lcm.typing import BoolND, ContinuousState, FloatND
+from lcm.transition import AgeSpecializedFunction
+from lcm.typing import BoolND, FloatND
 
 # RegimeId, bequest, and the survival probabilities are re-exported: the
 # medicaid agreement test assembles its own validation models from these
@@ -39,18 +40,10 @@ from tests.test_models.nbegm_common import (
     utility,
 )
 
-
-@lcm.case_boundary(
-    lcm.boundary(
-        variable="liquid",
-        threshold="medicaid_asset_limit",
-        equality="otherwise",
-        kind="jump",
-    )
+medicaid_eligible = lcm.case_boundary(
+    lcm.ref("liquid") < lcm.ref("medicaid_asset_limit"),
+    kind="jump",
 )
-def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
-    """Medicaid asset test: eligible while liquid wealth is below the limit."""
-    return liquid < medicaid_asset_limit
 
 
 @lcm.piece(output="subsidy", when=medicaid_eligible)
@@ -88,6 +81,7 @@ def build_model(
     savings_max: float = 20.0,
     liquid_grid: Grid | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
+    utility_function: Callable[..., object] | AgeSpecializedFunction = utility,
     include_split_output: bool = True,
     envelope_arithmetic: str = "certified",
 ) -> Model:
@@ -115,7 +109,7 @@ def build_model(
         liquid_max=liquid_max,
         n_consumption=n_consumption,
         alive_functions={
-            "utility": utility,
+            "utility": utility_function,
             "medicaid_eligible": medicaid_eligible,
             "subsidy_medicaid": subsidy_medicaid,
             "subsidy_private": subsidy_private,

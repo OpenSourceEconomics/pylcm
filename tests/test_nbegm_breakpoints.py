@@ -22,16 +22,10 @@ from _lcm.egm.nbegm_breakpoints import (
 def _medicaid_pool():
     """A one-boundary Medicaid asset-test pool with both subsidy pieces."""
 
-    @lcm.case_boundary(
-        lcm.boundary(
-            variable="assets",
-            threshold="medicaid_asset_limit",
-            equality="otherwise",
-            kind="jump",
-        )
+    medicaid_eligible = lcm.case_boundary(
+        lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+        kind="jump",
     )
-    def medicaid_eligible(assets, medicaid_asset_limit):
-        return assets < medicaid_asset_limit
 
     @lcm.piece(output="subsidy", when=medicaid_eligible)
     def subsidy_medicaid(subsidy_amount):

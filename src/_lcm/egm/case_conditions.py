@@ -1,19 +1,18 @@
-"""Case boundaries and schedule thresholds, as conditions.
+"""Normalize schedule thresholds onto the shared condition representation.
 
-A case boundary declares that one variable stands on one side of a threshold,
-and so does a piecewise-affine bracket edge. That is the same assertion a
-constraint makes, so both normalize onto the shared condition IR and a solver
-reads one kind of object rather than three.
+A piecewise-affine bracket edge says that one variable stands on one side of a
+threshold. That is the same comparison shape used by a structured constraint
+or case boundary, so the schedule normalization emits the shared condition IR.
 
 The normalization moves the exact-equality point out of a metadata field and
 into the comparison operator, which is where a reader already looks for it:
 `equality="otherwise"` is `<` and `equality="when"` is `<=`. A solver that
-proves a declared boundary therefore proves it by its shape, and a boundary
-written by hand as a condition gets the same treatment as a decorated one.
+reads a declared schedule threshold by its comparison shape rather than a
+second boundary representation.
 """
 
 from _lcm.constraints.ir import Compare, ComparisonOperator, Condition, Ref
-from lcm.case_piece import AffineBreakpoint, BoundarySurface, EqualityOwner
+from lcm.case_piece import AffineBreakpoint, EqualityOwner
 from lcm.exceptions import ModelInitializationError
 
 # Which comparison leaves the exact threshold point on the `when` side.
@@ -21,27 +20,6 @@ _OPERATOR_OWNING_EQUALITY: dict[EqualityOwner, ComparisonOperator] = {
     "when": "<=",
     "otherwise": "<",
 }
-
-
-def condition_of_boundary_surface(*, surface: BoundarySurface) -> Condition:
-    """State one equality surface of a case boundary as a condition.
-
-    The condition is the `when` side of the split: it holds where the boundary
-    predicate holds, with the exact threshold point included exactly when the
-    surface declares `when` owns it.
-
-    Args:
-        surface: The declared equality surface.
-
-    Returns:
-        The `when` side, as an inspectable condition.
-
-    """
-    return _threshold_condition(
-        variable=surface.variable,
-        threshold=surface.threshold,
-        equality_owner=surface.equality_owner,
-    )
 
 
 def condition_of_breakpoint(*, edge: AffineBreakpoint, variable: str) -> Condition:

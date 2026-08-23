@@ -22,10 +22,12 @@ from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.constraints.ir import Condition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
+from lcm.case_piece import CaseBoundary
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
@@ -173,9 +175,12 @@ def _compose_case_piece_outputs(
     for name in producer_names:
         function = functions[name]
         if callable(function) and not isinstance(function, _AgeSpecialized):
-            functions[name] = _with_inferred_case_annotations(
+            annotated = _with_inferred_case_annotations(
                 function=cast("UserFunction", function), functions=functions
             )
+            if isinstance(function, CaseBoundary):
+                annotated.__lcm_case_boundary__ = function  # ty: ignore[unresolved-attribute]
+            functions[name] = annotated
     for piece_set in registry.piece_sets:
         functions[piece_set.output] = build(piece_set)
 
@@ -187,14 +192,17 @@ def _with_inferred_case_annotations(
 ) -> UserFunction:
     """Fill only missing DAG annotations on an internal case-function proxy."""
     annotations = ensure_annotations_are_strings(get_annotations(function))
-    argument_annotations = {
-        name: (
-            annotations[name]
-            if annotations.get(name) not in {None, "no_annotation_found"}
-            else _annotation_for_argument(functions=functions, name=name)
+    argument_annotations = {}
+    for name in inspect.signature(function).parameters:
+        inferred = _annotation_for_argument(functions=functions, name=name)
+        declared = annotations.get(name)
+        argument_annotations[name] = (
+            inferred
+            if isinstance(function, Condition) and inferred != "no_annotation_found"
+            else declared
+            if declared not in {None, "no_annotation_found"}
+            else inferred
         )
-        for name in inspect.signature(function).parameters
-    }
 
     @with_signature(
         args=argument_annotations,
@@ -214,7 +222,7 @@ def _annotation_for_argument(
 ) -> str:
     """Return a concrete annotation used for a generated function argument."""
     for func in functions.values():
-        if not callable(func) or isinstance(func, _AgeSpecialized):
+        if not callable(func) or isinstance(func, (Condition, _AgeSpecialized)):
             continue
         annotation = ensure_annotations_are_strings(get_annotations(func)).get(name)
         if annotation not in {None, "no_annotation_found"}:

@@ -9,10 +9,7 @@ import pytest
 import lcm
 from lcm.exceptions import NBEGMCaseError, PyLCMError
 
-
-def predicate(liquid, limit):
-    """Boundary predicate for the toy split."""
-    return liquid < limit
+predicate = lcm.case_boundary(lcm.ref("liquid") < lcm.ref("limit"), kind="jump")
 
 
 def test_a_piece_naming_neither_side_is_an_lcm_error() -> None:
@@ -27,10 +24,10 @@ def test_a_piece_naming_both_sides_is_rejected() -> None:
         lcm.piece(output="subsidy", when=predicate, otherwise=predicate)
 
 
-def test_a_piece_keyed_by_a_lambda_predicate_is_rejected() -> None:
-    """Pieces are keyed by the predicate's name, so lambdas would all collide."""
-    with pytest.raises(NBEGMCaseError, match="lambda"):
-        lcm.piece(output="subsidy", when=lambda liquid, limit: liquid < limit)
+def test_an_equality_condition_cannot_declare_a_binary_case_split() -> None:
+    """A case boundary must order the liquid coordinate around one threshold."""
+    with pytest.raises(NBEGMCaseError, match="exactly one"):
+        lcm.case_boundary(lcm.ref("liquid") == lcm.ref("limit"), kind="jump")
 
 
 def test_a_multi_dotted_breakpoint_threshold_is_rejected() -> None:

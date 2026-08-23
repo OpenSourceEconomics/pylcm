@@ -17,8 +17,9 @@ from lcm import (
     NestedConsumptionSavingsRegime,
     OuterContinuousMargin,
     categorical,
+    ref,
 )
-from lcm.case_piece import boundary, case_boundary, piece
+from lcm.case_piece import case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, NNBEGM
@@ -37,13 +38,10 @@ class RegimeId:
     dead: ScalarInt
 
 
-@case_boundary(
-    boundary(
-        variable="wealth", threshold="means_test", equality="otherwise", kind="jump"
-    )
+eligible = case_boundary(
+    ref("wealth") < ref("means_test"),
+    kind="jump",
 )
-def eligible(wealth: ContinuousState, means_test: float) -> FloatND:
-    return wealth < means_test
 
 
 @piece(output="subsidy", when=eligible)
