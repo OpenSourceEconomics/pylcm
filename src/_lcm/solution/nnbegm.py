@@ -55,6 +55,7 @@ from _lcm.solution.negm import (
 )
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
+    restrict_solver_build_context_to_period_group,
     solver_period_group_key,
 )
 from _lcm.typing import FlatParams, RegimeName
@@ -310,14 +311,25 @@ class NNBEGM(TwoMarginSolver):
         grouped_param_checks = []
         keeper_continuation_spec = None
         for periods in grouped_periods.values():
-            representative_period = periods[0]
+            # The complete key above has already established that every period in
+            # this group may share one concrete inner build. Resolve that pool once,
+            # then narrow only the source regime's active-period tuple before handing
+            # it to NBEGM. Otherwise the inner builder pairs this representative pool
+            # with foreign periods and retains checks for combinations the model never
+            # evaluates. The target regimes' lifecycle metadata remains intact.
+            group_periods = tuple(periods)
+            representative_period = group_periods[0]
             resolved = resolve_solver_build_context(
                 context=context, period=representative_period
             )
+            group_context = restrict_solver_build_context_to_period_group(
+                context=resolved,
+                periods=group_periods,
+            )
             adjuster_context = replace(
-                resolved,
+                group_context,
                 functions=_without_outer_post_decision(
-                    functions=resolved.functions,
+                    functions=group_context.functions,
                     outer_post_decision=bound.outer_post_decision,
                 ),
                 flat_param_names=context.flat_param_names | {bound.outer_post_decision},
@@ -331,14 +343,14 @@ class NNBEGM(TwoMarginSolver):
             )
             adjuster_group = bound.inner.build_period_kernels(context=adjuster_context)
             no_adjustment_func = (
-                resolved.functions[bound.outer_no_adjustment_candidate]
+                group_context.functions[bound.outer_no_adjustment_candidate]
                 if bound.outer_no_adjustment_candidate is not None
                 else None
             )
             keeper_context = replace(
-                resolved,
+                group_context,
                 functions=_with_no_adjustment_outer_function(
-                    functions=resolved.functions,
+                    functions=group_context.functions,
                     durable_state=bound.outer_state,
                     outer_post_decision=bound.outer_post_decision,
                     no_adjustment_func=no_adjustment_func,
@@ -352,7 +364,7 @@ class NNBEGM(TwoMarginSolver):
                 ),
             )
             keeper_group = bound.inner.build_period_kernels(context=keeper_context)
-            for period in periods:
+            for period in group_periods:
                 adjuster_by_period[period] = adjuster_group.period_kernels[period]
                 keeper_by_period[period] = keeper_group.period_kernels[period]
             grouped_param_checks.extend(adjuster_group.param_checks)
