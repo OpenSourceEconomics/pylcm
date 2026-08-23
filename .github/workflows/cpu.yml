@@ -144,6 +144,7 @@ jobs:
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
@@ -151,11 +152,13 @@ jobs:
             pixi run -e tests-cpu pytest \
             tests/solution/test_nbegm_multi_discrete_agreement.py \
             -m "slow and not manual" -k certified \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=2400 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-certified.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             -m "slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
             --cov=./ --cov-append --cov-report=xml -n 2
@@ -294,11 +297,13 @@ jobs:
           mkdir -p reports
           pixi run -e tests-cpu pytest tests --precision=32 \
             -m "not slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision=32 -m "slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
       - name: Upload JUnit reports

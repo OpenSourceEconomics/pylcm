@@ -9,6 +9,7 @@ coefficients — consumed by the NBEGM solver's core builders.
 """
 
 from collections.abc import Callable
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -65,6 +66,26 @@ def linear_asset_preimage(
     """
     slope, intercept = affine_coefficients(z_of_liquid)
     return (threshold - intercept) / slope
+
+
+def linear_asset_selection_preimage(
+    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
+    *,
+    threshold: ScalarFloat,
+    equality_owner: Literal["below", "above"],
+) -> ScalarFloat:
+    """Map a coordinate threshold to the first float owned by its right interval.
+
+    The schedule declares ownership in its own coordinate. A decreasing affine
+    map reverses that ownership on the liquid axis. Returning the right interval
+    selection threshold states the open side exactly on the representable domain:
+    a left-owned boundary advances to its next representable liquid value.
+    """
+    slope, intercept = affine_coefficients(z_of_liquid)
+    preimage = (threshold - intercept) / slope
+    coordinate_above_is_liquid_right = slope > 0.0
+    liquid_right_owns = coordinate_above_is_liquid_right == (equality_owner == "above")
+    return jnp.where(liquid_right_owns, preimage, jnp.nextafter(preimage, jnp.inf))
 
 
 def clamp_breakpoints_to_grid(*, breakpoints: Float1D, liquid_grid: Float1D) -> Float1D:
