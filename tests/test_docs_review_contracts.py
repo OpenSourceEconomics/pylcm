@@ -19,7 +19,7 @@ _DOCS = _ROOT / "docs"
 
 def test_getting_started_sources_live_with_their_navigation_section() -> None:
     """Getting Started owns its installation and tiny-example source files."""
-    config = yaml.safe_load((_DOCS / "myst.yml").read_text())
+    config = yaml.safe_load((_DOCS / "myst.yml").read_text(encoding="utf-8"))
     getting_started = config["project"]["toc"][1]
     children = [entry["file"] for entry in getting_started["children"]]
 
@@ -34,8 +34,12 @@ def test_getting_started_sources_live_with_their_navigation_section() -> None:
 def test_public_constructor_examples_use_supported_shapes() -> None:
     """Reference examples use the public breakpoint and joint-transition fields."""
     grid_breakpoint = GridBreakpoint(value=1.0, owner="right")
-    transition_text = (_DOCS / "reference" / "transitions.md").read_text()
-    grid_text = (_DOCS / "reference" / "grids_and_processes.md").read_text()
+    transition_text = (_DOCS / "reference" / "transitions.md").read_text(
+        encoding="utf-8"
+    )
+    grid_text = (_DOCS / "reference" / "grids_and_processes.md").read_text(
+        encoding="utf-8"
+    )
 
     joint = JointTransition(
         support_size=2,
@@ -66,8 +70,10 @@ def test_specialized_authoring_examples_build_the_declared_regime_types() -> Non
 
 def test_curated_egm_examples_instantiate_the_specialized_paths() -> None:
     """Curated EGM pages run their specialized builders as the principal path."""
-    iskhakov = (_DOCS / "examples" / "iskhakov_et_al_2017.md").read_text()
-    mahler_yum = (_DOCS / "examples" / "mahler_yum_2024.md").read_text()
+    iskhakov = (_DOCS / "examples" / "iskhakov_et_al_2017.md").read_text(
+        encoding="utf-8"
+    )
+    mahler_yum = (_DOCS / "examples" / "mahler_yum_2024.md").read_text(encoding="utf-8")
 
     assert "model = get_dcegm_model(n_periods=6)" in iskhakov
     assert 'create_mahler_yum_model(implementation="paper")' in mahler_yum
@@ -123,15 +129,19 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
 def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> None:
     """User docs separate native capability from fixed-window scheduling."""
     installation = " ".join(
-        (_DOCS / "getting_started" / "installation.md").read_text().split()
+        (_DOCS / "getting_started" / "installation.md")
+        .read_text(encoding="utf-8")
+        .split()
     )
     solver_reference = " ".join(
-        (_DOCS / "reference" / "solvers.md").read_text().split()
+        (_DOCS / "reference" / "solvers.md").read_text(encoding="utf-8").split()
     )
-    tuning = " ".join((_DOCS / "user_guide" / "tuning.md").read_text().split())
+    tuning = " ".join(
+        (_DOCS / "user_guide" / "tuning.md").read_text(encoding="utf-8").split()
+    )
     paper_source = (
         _ROOT / "src" / "lcm_examples" / "mahler_yum_2024" / "paper.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
     assert 'NBEGM(envelope_arithmetic="ordinary")' in installation
     assert "fails before returning a certified result" in installation
@@ -151,7 +161,9 @@ def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> 
 def test_dcegm_methods_notebook_ends_with_counterpart_links() -> None:
     """The DCEGM Methods notebook links to every neighboring documentation role."""
     notebook = json.loads(
-        (_DOCS / "explanations" / "iskhakov_et_al_2017.ipynb").read_text()
+        (_DOCS / "explanations" / "iskhakov_et_al_2017.ipynb").read_text(
+            encoding="utf-8"
+        )
     )
     final_source = "".join(notebook["cells"][-1]["source"])
 

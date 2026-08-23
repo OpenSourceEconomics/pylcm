@@ -22,7 +22,7 @@ _SUBMODULE_ENTRY = re.compile(
 
 def test_public_api_index_covers_exactly_the_lcm_exports():
     """Every top-level public name has one entry in the curated API index."""
-    text = _API_INDEX.read_text()
+    text = _API_INDEX.read_text(encoding="utf-8")
     documented = set(_LCM_ENTRY.findall(text))
 
     assert documented == set(lcm.__all__)
@@ -30,7 +30,7 @@ def test_public_api_index_covers_exactly_the_lcm_exports():
 
 def test_public_api_index_covers_exactly_the_solver_exports():
     """Every solver-related public name has one entry in the curated API index."""
-    text = _API_INDEX.read_text()
+    text = _API_INDEX.read_text(encoding="utf-8")
     documented = set(_SOLVER_ENTRY.findall(text))
 
     assert documented == set(lcm.solvers.__all__)
@@ -38,7 +38,7 @@ def test_public_api_index_covers_exactly_the_solver_exports():
 
 def test_public_api_index_lists_each_symbol_once():
     """Every indexed public symbol has exactly one canonical destination."""
-    text = _API_INDEX.read_text()
+    text = _API_INDEX.read_text(encoding="utf-8")
     entries = _ALL_ENTRY.findall(text)
 
     assert len(entries) == len(set(entries))
@@ -46,7 +46,7 @@ def test_public_api_index_lists_each_symbol_once():
 
 def test_public_api_index_local_destinations_exist():
     """Every local API-index link points to an existing documentation file."""
-    text = _API_INDEX.read_text()
+    text = _API_INDEX.read_text(encoding="utf-8")
 
     missing = []
     for destination in _LOCAL_DESTINATION.findall(text):
@@ -59,7 +59,7 @@ def test_public_api_index_local_destinations_exist():
 
 def test_public_api_index_covers_allowlisted_submodule_surfaces():
     """The deliberate public submodule exports have canonical destinations."""
-    text = _API_INDEX.read_text()
+    text = _API_INDEX.read_text(encoding="utf-8")
     documented = set(_SUBMODULE_ENTRY.findall(text))
     expected = {
         *{("lcm.params", name) for name in lcm.params.__all__},
